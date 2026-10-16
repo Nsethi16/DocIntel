@@ -1,0 +1,186 @@
+using System.Text.Json.Serialization;
+using DocIntel.Core.Harness;
+
+namespace DocIntel.Core.Features.DocumentSplitting;
+
+/// <summary>
+/// Represents the extracted layout and text of a single 1-based page.
+/// </summary>
+public sealed class PageLayout
+{
+    public required int PageNumber { get; init; }
+
+    public double PageWidth { get; init; }
+
+    public double PageHeight { get; init; }
+
+    public int? SubDocPageNumber { get; set; }
+
+    public int? SubDocTotalPages { get; set; }
+
+    public string BodyText { get; set; } = string.Empty;
+
+    public string Markdown { get; set; } = string.Empty;
+
+    public string FooterText { get; set; } = string.Empty;
+
+    public bool IsAmendment { get; set; }
+
+    public string? AmendmentId { get; set; }
+}
+
+/// <summary>
+/// Represents a single extracted key-value field with confidence score (0-100) for Data Extraction.
+/// </summary>
+public sealed record ExtractedFieldValue(
+    [property: JsonPropertyName("fieldName")] string FieldName,
+    [property: JsonPropertyName("fieldValue")] string FieldValue,
+    [property: JsonPropertyName("confidenceValue")] double ConfidenceValue = 98.0);
+
+/// <summary>
+/// Represents a single extracted table row containing column values.
+/// </summary>
+public sealed record ExtractedTableRow(
+    [property: JsonPropertyName("fields")] IReadOnlyList<ExtractedFieldValue> Fields);
+
+/// <summary>
+/// Represents a structured table extracted from a document slice.
+/// </summary>
+public sealed record ExtractedTableValue(
+    [property: JsonPropertyName("tableName")] string TableName,
+    [property: JsonPropertyName("rows")] IReadOnlyList<ExtractedTableRow> Rows);
+
+/// <summary>
+/// Document-level structured Data Extraction output (key-value fields + tables) for a single PDF slice.
+/// </summary>
+public sealed record DocumentDataExtractionResult(
+    [property: JsonPropertyName("documentName")] string DocumentName,
+    [property: JsonPropertyName("footerId")] string FooterId,
+    [property: JsonPropertyName("pageRange")] string PageRange,
+    [property: JsonPropertyName("fields")] IReadOnlyList<ExtractedFieldValue> Fields,
+    [property: JsonPropertyName("tables")] IReadOnlyList<ExtractedTableValue> Tables);
+public sealed record ExtractedEntity(
+    [property: JsonPropertyName("name")] string Name,
+    [property: JsonPropertyName("value")] string Value,
+    [property: JsonPropertyName("category")] string Category,
+    [property: JsonPropertyName("confidence")] double Confidence = 0.95,
+    [property: JsonPropertyName("sourceSliceIndex")] int? SourceSliceIndex = null);
+
+/// <summary>
+/// Represents a single logical sub-document identified and sliced from a multi-document file.
+/// </summary>
+public sealed class DocumentSlice
+{
+    [JsonPropertyName("segmentIndex")]
+    public int SegmentIndex { get; set; }
+
+    [JsonPropertyName("documentTypeName")]
+    public string? DocumentTypeName { get; set; }
+
+    [JsonPropertyName("identifiedDocumentName")]
+    public string? IdentifiedDocumentName { get; set; }
+
+    [JsonPropertyName("identificationConfidence")]
+    public double IdentificationConfidence { get; set; }
+
+    [JsonPropertyName("matchedIdentificationRule")]
+    public string? MatchedIdentificationRule { get; set; }
+
+    [JsonPropertyName("isInferred")]
+    public bool IsInferred { get; set; }
+
+    [JsonPropertyName("startPage")]
+    public int StartPage { get; set; }
+
+    [JsonPropertyName("endPage")]
+    public int EndPage { get; set; }
+
+    [JsonPropertyName("footers")]
+    public IReadOnlyList<string> Footers { get; set; } = [];
+
+    [JsonPropertyName("isAmendment")]
+    public bool IsAmendment { get; set; }
+
+    [JsonPropertyName("amendmentId")]
+    public string? AmendmentId { get; set; }
+
+    [JsonPropertyName("schemaId")]
+    public string? SchemaId { get; set; }
+
+    [JsonPropertyName("detectedLanguage")]
+    public string? DetectedLanguage { get; set; }
+
+    [JsonPropertyName("targetLanguage")]
+    public string? TargetLanguage { get; set; }
+
+    [JsonPropertyName("wasTranslated")]
+    public bool WasTranslated { get; set; }
+
+    [JsonPropertyName("translatedText")]
+    public string? TranslatedText { get; set; }
+
+    [JsonPropertyName("insightSummary")]
+    public string? InsightSummary { get; set; }
+
+    [JsonPropertyName("extractedEntities")]
+    public List<ExtractedEntity> ExtractedEntities { get; set; } = [];
+
+    [JsonPropertyName("dataExtraction")]
+    public DocumentDataExtractionResult? DataExtraction { get; set; }
+
+    [JsonPropertyName("markdown")]
+    public string Markdown { get; set; } = string.Empty;
+
+    [JsonPropertyName("bodyText")]
+    public string BodyText { get; set; } = string.Empty;
+
+    [JsonIgnore]
+    public byte[]? SplitPdfBytes { get; set; }
+
+    [JsonPropertyName("splitPdfSizeBytes")]
+    public int SplitPdfSizeBytes => SplitPdfBytes?.Length ?? 0;
+}
+
+/// <summary>
+/// Telemetry trace entry recorded by each executor in the Microsoft Agent Framework workflow.
+/// </summary>
+public sealed record WorkflowStepTrace(
+    string ExecutorName,
+    bool Executed,
+    bool Succeeded,
+    string? ModelIdUsed,
+    double DurationMs,
+    string? Notes);
+
+/// <summary>
+/// State message flowing through the Microsoft Agent Framework <c>DocumentSplittingWorkflow</c>.
+/// </summary>
+public sealed class SplittingState
+{
+    public required TenantHarness Tenant { get; init; }
+
+    public required string FileName { get; init; }
+
+    public string DocumentId { get; init; } = Guid.NewGuid().ToString("N");
+
+    public Guid CorrelationId { get; init; } = Guid.NewGuid();
+
+    [JsonIgnore]
+    public byte[]? SourcePdfBytes { get; init; }
+
+    public List<PageLayout> Pages { get; set; } = [];
+
+    public List<DocumentSlice> Slices { get; set; } = [];
+
+    public string StrategyUsed { get; set; } = "Skipped";
+
+    public string? ModelIdUsed { get; set; }
+
+    public string? PacketSummary { get; set; }
+
+    public List<ExtractedEntity> ExtractedEntities { get; set; } = [];
+
+    public List<DocumentDataExtractionResult> DataExtractions { get; set; } = [];
+
+    public List<WorkflowStepTrace> ExecutionTrace { get; set; } = [];
+}

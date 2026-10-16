@@ -1,0 +1,1723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agent Harness</title>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --rail-bg: #ffffff;
+      --border: #efefef;
+      --card-border: #e6e6e6;
+      --text-primary: #1f1f1f;
+      --text-secondary: #686868;
+      --text-muted: #8e8e8e;
+      --pill-active: #ededed;
+      --pill-hover: #f5f5f5;
+      --accent-coral: #f28b7d;
+      --accent-sand: #f4f1ea;
+      --switch-on: #1f1f1f;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: "Segoe UI", -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--text-primary);
+      height: 100vh;
+      display: flex;
+      overflow: hidden;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Left Navigation Rail — Collapsible / Expandable */
+    .sidebar {
+      width: 245px;
+      background: var(--rail-bg);
+      border-right: 1px solid var(--border);
+      padding: 14px 12px;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      user-select: none;
+      transition: width 0.2s cubic-bezier(0.4, 0, 0.2, 1), padding 0.2s ease;
+      overflow: hidden;
+    }
+
+    .sidebar.collapsed {
+      width: 56px;
+      padding: 14px 8px;
+    }
+
+    .sidebar-top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+      padding: 0 4px;
+    }
+
+    .sidebar.collapsed .sidebar-top-row {
+      justify-content: center;
+      padding: 0;
+    }
+
+    .sidebar-brand-label {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    .sidebar.collapsed .sidebar-brand-label,
+    .sidebar.collapsed .nav-label,
+    .sidebar.collapsed .sidebar-section-header span,
+    .sidebar.collapsed .tenant-row-name,
+    .sidebar.collapsed .tenant-row-version,
+    .sidebar.collapsed .new-tenant-popover {
+      display: none !important;
+    }
+
+    .sidebar.collapsed .sidebar-section-header {
+      justify-content: center;
+      padding: 4px 0;
+    }
+
+    .sidebar.collapsed .nav-item {
+      justify-content: center;
+      padding: 9px 0;
+    }
+
+    .sidebar.collapsed .tenant-row {
+      justify-content: center;
+      padding: 8px 0;
+    }
+
+    .tenant-initials {
+      display: none;
+      font-size: 11.5px;
+      font-weight: 600;
+    }
+
+    .sidebar.collapsed .tenant-initials {
+      display: inline;
+    }
+
+    .collapse-btn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.12s ease, color 0.12s ease;
+      flex-shrink: 0;
+    }
+
+    .collapse-btn:hover {
+      background: var(--pill-hover);
+      color: var(--text-primary);
+    }
+
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 13.5px;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: background 0.12s ease;
+      margin-bottom: 2px;
+    }
+
+    .nav-item:hover {
+      background: var(--pill-hover);
+    }
+
+    .nav-item.primary-pill {
+      background: var(--pill-active);
+      font-weight: 500;
+      margin-bottom: 8px;
+    }
+
+    .nav-item svg {
+      width: 16px;
+      height: 16px;
+      color: #444;
+      flex-shrink: 0;
+    }
+
+    .sidebar-divider {
+      height: 1px;
+      background: var(--border);
+      margin: 14px 4px;
+    }
+
+    .sidebar-section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 12px;
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin-bottom: 4px;
+    }
+
+    .icon-btn {
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      color: var(--text-secondary);
+      width: 24px;
+      height: 24px;
+      border-radius: 6px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 17px;
+      line-height: 1;
+      transition: background 0.12s ease;
+    }
+
+    .icon-btn:hover {
+      background: var(--pill-hover);
+      color: var(--text-primary);
+    }
+
+    .tenant-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      overflow-y: auto;
+      flex: 1;
+    }
+
+    .tenant-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-radius: 999px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.12s ease;
+    }
+
+    .tenant-row:hover {
+      background: var(--pill-hover);
+      color: var(--text-primary);
+    }
+
+    .tenant-row.active {
+      background: var(--pill-active);
+      color: var(--text-primary);
+      font-weight: 500;
+    }
+
+    .tenant-row-name {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .tenant-row-version {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-left: 8px;
+    }
+
+    .empty-tenants {
+      padding: 6px 12px;
+      font-size: 12.5px;
+      color: var(--text-muted);
+    }
+
+    /* Inline New Tenant Creator in Sidebar */
+    .new-tenant-popover {
+      margin: 4px 6px 10px 6px;
+      padding: 12px;
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      background: #ffffff;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.05);
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .new-tenant-popover input {
+      width: 100%;
+      border: 1px solid var(--card-border);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-size: 12.5px;
+      font-family: inherit;
+      color: var(--text-primary);
+    }
+
+    .new-tenant-popover input:focus {
+      outline: none;
+      border-color: #999;
+    }
+
+    .popover-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 6px;
+    }
+
+    .btn-mini {
+      border: 1px solid var(--card-border);
+      background: #ffffff;
+      color: var(--text-primary);
+      border-radius: 999px;
+      padding: 4px 11px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+
+    .btn-mini.dark {
+      background: var(--text-primary);
+      color: #ffffff;
+      border-color: var(--text-primary);
+    }
+
+    /* Right Main Canvas — Left-aligned, full width, minimal */
+    .main-canvas {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      padding: 28px 36px;
+    }
+
+    .canvas-column {
+      width: 100%;
+    }
+
+    /* Top Tenant Header */
+    .tenant-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding-bottom: 12px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .editorial-heading {
+      font-family: Georgia, "Times New Roman", serif;
+      font-size: 28px;
+      font-weight: 400;
+      color: var(--text-primary);
+      margin: 0 0 4px 0;
+      letter-spacing: -0.3px;
+    }
+
+    .tenant-meta-line {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .version-chip {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      background: #f5f5f5;
+      padding: 2px 9px;
+      border-radius: 999px;
+      white-space: nowrap;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    .btn-action {
+      border: 1px solid var(--card-border);
+      background: #ffffff;
+      color: var(--text-primary);
+      border-radius: 999px;
+      padding: 7px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.12s ease;
+    }
+
+    .btn-action:hover {
+      background: var(--pill-hover);
+    }
+
+    .btn-action.primary {
+      background: var(--text-primary);
+      color: #ffffff;
+      border-color: var(--text-primary);
+    }
+
+    .btn-action.primary:hover {
+      background: #333333;
+    }
+
+    .btn-action:disabled,
+    .btn-action.primary:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+      pointer-events: none;
+    }
+
+    .unsaved-dot {
+      font-size: 12px;
+      color: #b45309;
+      background: #fef3c7;
+      padding: 3px 10px;
+      border-radius: 999px;
+      display: none;
+      font-weight: 500;
+    }
+
+    .unsaved-dot.visible {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    /* Features Section */
+    .section-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .section-bar-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .section-bar-meta {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+    }
+
+    .features-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 100%;
+    }
+
+    .feature-tile {
+      width: 100%;
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 16px 20px;
+      background: #ffffff;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .feature-tile:hover {
+      border-color: #d4d4d4;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.03);
+    }
+
+    .feature-tile-header {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+    }
+
+    .feature-tile-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+      cursor: pointer;
+      flex: 1;
+    }
+
+    .feature-tile-controls {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-shrink: 0;
+    }
+
+    .chevron-btn {
+      background: transparent;
+      border: 1px solid transparent;
+      width: 28px;
+      height: 28px;
+      border-radius: 8px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: background 0.12s ease, color 0.12s ease, transform 0.18s ease;
+    }
+
+    .chevron-btn:hover {
+      background: var(--pill-hover);
+      color: var(--text-primary);
+    }
+
+    .chevron-btn.expanded {
+      transform: rotate(180deg);
+      color: var(--text-primary);
+    }
+
+    .feature-drawer {
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+      display: none;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .feature-drawer.open {
+      display: flex;
+    }
+
+    .drawer-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .drawer-label {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-secondary);
+    }
+
+    .clean-input,
+    .clean-select,
+    .clean-textarea {
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      padding: 7px 11px;
+      font-size: 12.5px;
+      font-family: inherit;
+      color: var(--text-primary);
+      background: #fafafa;
+      transition: border-color 0.12s ease, background 0.12s ease;
+    }
+
+    .clean-input:focus,
+    .clean-select:focus,
+    .clean-textarea:focus {
+      outline: none;
+      border-color: #999;
+      background: #ffffff;
+    }
+
+    .clean-textarea {
+      width: 100%;
+      resize: vertical;
+      line-height: 1.45;
+    }
+
+    .rules-list {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .rule-item {
+      display: grid;
+      grid-template-columns: 220px 1fr auto;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .table-schema-box {
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: #fcfcfc;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .sub-section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 6px;
+    }
+
+    .models-harness-bar {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      margin-bottom: 24px;
+      width: 100%;
+    }
+
+    .model-harness-card {
+      width: 100%;
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 16px 20px;
+      background: #ffffff;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+
+    .model-harness-card:hover {
+      border-color: #d4d4d4;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.03);
+    }
+
+    .model-card-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    .model-icon-box {
+      width: 56px;
+      height: 56px;
+      border-radius: 12px;
+      background: var(--accent-sand);
+      border: 1px solid #ece7df;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .model-harness-label {
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+    }
+
+    .model-harness-label strong {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .model-harness-label span {
+      font-size: 12px;
+      color: var(--text-secondary);
+    }
+
+    .modern-model-pill {
+      width: 225px;
+      height: 36px;
+      flex-shrink: 0;
+      appearance: none;
+      -webkit-appearance: none;
+      background-color: #f7f6f4;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 20 20' fill='none' stroke='%23555' stroke-width='1.8'%3E%3Cpath d='M5.5 7.5L10 12l4.5-4.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 13px center;
+      border: 1px solid #e2ded8;
+      border-radius: 999px;
+      padding: 0 36px 0 15px;
+      font-size: 12.5px;
+      font-weight: 600;
+      font-family: inherit;
+      color: var(--text-primary);
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+
+    .modern-model-pill:hover {
+      background-color: #f0eee9;
+      border-color: #ccc6bc;
+    }
+
+    .modern-model-pill:focus {
+      outline: none;
+      border-color: var(--text-primary);
+      background-color: #ffffff;
+    }
+
+    .feature-tile-left {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      min-width: 0;
+    }
+
+    /* Warm editorial mini-illustration */
+    .feature-illustration {
+      width: 56px;
+      height: 56px;
+      border-radius: 12px;
+      background: var(--accent-sand);
+      border: 1px solid #ece7df;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .illus-bar {
+      height: 7px;
+      border-radius: 3px;
+      background: #e5dfd5;
+    }
+
+    .illus-bar.highlight {
+      background: #f5b5a8;
+      width: 85%;
+    }
+
+    .illus-bar.short {
+      width: 60%;
+    }
+
+    .feature-title {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0 0 3px 0;
+    }
+
+    .feature-desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      margin: 0;
+      line-height: 1.35;
+    }
+
+    /* Minimal Pill Switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 40px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+    }
+
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      inset: 0;
+      background-color: #e4e4e4;
+      transition: 0.18s ease;
+      border-radius: 999px;
+    }
+
+    .slider::before {
+      position: absolute;
+      content: "";
+      height: 16px;
+      width: 16px;
+      left: 3px;
+      bottom: 3px;
+      background-color: #ffffff;
+      transition: 0.18s ease;
+      border-radius: 50%;
+      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+    }
+
+    .switch input:checked + .slider {
+      background-color: var(--switch-on);
+    }
+
+    .switch input:checked + .slider::before {
+      transform: translateX(18px);
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 22px;
+      right: 24px;
+      background: #1f1f1f;
+      color: #ffffff;
+      padding: 9px 16px;
+      border-radius: 999px;
+      font-size: 12.5px;
+      display: none;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+    }
+  </style>
+</head>
+<body>
+  <!-- Left Panel: Tenant Navigation & Creation (Collapsible) -->
+  <aside class="sidebar" id="leftSidebar">
+    <div class="sidebar-top-row">
+      <span class="sidebar-brand-label">DocIntel</span>
+      <button class="collapse-btn" id="btnToggleSidebar" title="Collapse or expand sidebar" onclick="toggleSidebar()">
+        <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+          <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
+          <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
+        </svg>
+      </button>
+    </div>
+
+    <div class="nav-item primary-pill" title="New tenant" onclick="expandAndOpenNewTenant()">
+      <svg viewBox="0 0 20 20" fill="currentColor">
+        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
+      </svg>
+      <span class="nav-label">New tenant</span>
+    </div>
+
+    <div class="nav-item" title="Agent harness">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M9.5 3.5a2 2 0 013 0l4 6.5a2 2 0 01-1.5 3H7a2 2 0 01-1.5-3l4-6.5z" />
+      </svg>
+      <span class="nav-label">Agent harness</span>
+    </div>
+
+    <div class="sidebar-divider"></div>
+
+    <div class="sidebar-section-header">
+      <span>Tenants</span>
+      <button class="icon-btn" title="Create tenant" onclick="expandAndOpenNewTenant()">+</button>
+    </div>
+
+    <!-- Inline New Tenant Popover -->
+    <div class="new-tenant-popover" id="newTenantPopover">
+      <input type="text" id="newTenantName" placeholder="Tenant name (e.g. Woodgrove)" />
+      <input type="text" id="newTenantId" placeholder="tenant-id" />
+      <div class="popover-actions">
+        <button class="btn-mini" onclick="toggleNewTenantPopover(false)">Cancel</button>
+        <button class="btn-mini dark" onclick="createTenant()">Create</button>
+      </div>
+    </div>
+
+    <div class="tenant-list" id="tenantList"></div>
+  </aside>
+
+  <!-- Right Panel: Tenant Agent Harness Canvas -->
+  <main class="main-canvas">
+    <div class="canvas-column">
+      <!-- Tenant Name on Top + Save & Cancel -->
+      <div class="tenant-header">
+        <div>
+          <h1 class="editorial-heading" id="tenantHeading">Agent harness settings</h1>
+          <div class="tenant-meta-line">
+            <span id="tenantIdDisplay">Tenant ID: —</span>
+            <span class="version-chip" id="harnessVersionChip">Harness v1</span>
+          </div>
+        </div>
+        <div class="header-actions">
+          <span class="unsaved-dot" id="unsavedBadge">Unsaved changes</span>
+          <button class="btn-action" id="btnCancelHarness" onclick="cancelTenantChanges()" disabled>Cancel</button>
+          <button class="btn-action primary" id="btnSaveHarness" onclick="saveTenantHarness()" disabled>Save</button>
+        </div>
+      </div>
+
+      <!-- Harness-Level Model Selection (Stacked One After Another Above Features) -->
+      <div class="section-bar">
+        <span class="section-bar-title">Models</span>
+        <span class="section-bar-meta">Harness-level routing</span>
+      </div>
+
+      <div class="models-harness-bar">
+        <div class="model-harness-card">
+          <div class="model-card-left">
+            <div class="model-icon-box" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <circle cx="6.5" cy="12" r="2.8" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.3"/>
+                <circle cx="17.5" cy="7.5" r="2.5" fill="#e5dfd5" stroke="#8c8273" stroke-width="1.3"/>
+                <circle cx="17.5" cy="16.5" r="2.5" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.3"/>
+                <path d="M9.3 11L15 8.3M9.3 13L15 15.7" stroke="#8c8273" stroke-width="1.4" stroke-linecap="round"/>
+              </svg>
+            </div>
+            <div class="model-harness-label">
+              <strong>Decision Model</strong>
+              <span>Classifies and routes PDF slices into defined document types</span>
+            </div>
+          </div>
+          <select class="modern-model-pill" id="harnessDecisionModelSelect" onchange="onHarnessChanged()">
+            <option value="decision-1">Microsoft Decision 1</option>
+          </select>
+        </div>
+
+        <div class="model-harness-card">
+          <div class="model-card-left">
+            <div class="model-icon-box" aria-hidden="true">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+                <path d="M12 4l1.9 4.5L18.5 10.4l-4.6 1.9L12 17l-1.9-4.7-4.6-1.9 4.6-1.9L12 4z" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.3" stroke-linejoin="round"/>
+                <circle cx="18" cy="17.5" r="1.8" fill="#8c8273"/>
+              </svg>
+            </div>
+            <div class="model-harness-label">
+              <strong>Language Model</strong>
+              <span>Powers Document Insights, Entity Extraction, and Data Extraction</span>
+            </div>
+          </div>
+          <select class="modern-model-pill" id="harnessLanguageModelSelect" onchange="onHarnessChanged()">
+            <option value="phi-4">Microsoft Phi-4</option>
+            <option value="mai-reasoning">Microsoft MAI-Reasoning</option>
+            <option value="llama-3.3-70b">Meta Llama 3.3 70B</option>
+            <option value="deepseek-r1">DeepSeek R1</option>
+            <option value="mistral-large">Mistral Large</option>
+            <option value="gpt-5-mini">GPT-5 Mini</option>
+            <option value="gpt-4o">GPT-4o</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Features Section -->
+      <div class="section-bar">
+        <span class="section-bar-title">Features</span>
+        <span class="section-bar-meta" id="featureStatusCount">1 enabled</span>
+      </div>
+
+      <div class="features-grid">
+        <!-- 1. File Splitting & Grouping -->
+        <div class="feature-tile">
+          <div class="feature-tile-header">
+            <div class="feature-tile-left" onclick="toggleFeatureDrawer('split')">
+              <div class="feature-illustration" aria-hidden="true">
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                  <rect x="6" y="4" width="20" height="9" rx="2" fill="#e5dfd5" stroke="#c8bfb0" stroke-width="1.2"/>
+                  <line x1="3" y1="16" x2="29" y2="16" stroke="#e06d53" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="3 2.5"/>
+                  <rect x="6" y="19" width="20" height="9" rx="2" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.2"/>
+                </svg>
+              </div>
+              <div>
+                <h3 class="feature-title">File Splitting &amp; Grouping</h3>
+                <p class="feature-desc">Identify and break each document in a multi-document file</p>
+              </div>
+            </div>
+
+            <div class="feature-tile-controls">
+              <button class="chevron-btn" id="splitChevron" type="button" title="Expand or collapse settings" onclick="toggleFeatureDrawer('split')">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <label class="switch" title="Toggle File Splitting & Grouping">
+                <input type="checkbox" id="splitFeatureToggle" onchange="onHarnessChanged()" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="feature-drawer" id="splitDrawer">
+            <div class="drawer-row">
+              <div style="display:flex;align-items:center;gap:8px;flex:1;">
+                <span class="drawer-label">Footers to ignore</span>
+                <input type="text" class="clean-input" id="footersToIgnoreInput" style="flex:1;" placeholder="Confidential, Page" oninput="onHarnessChanged()" />
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex:1;">
+                <span class="drawer-label">Amendment indicators</span>
+                <input type="text" class="clean-input" id="amendmentIndicatorsInput" style="flex:1;" placeholder="amendment, avenant, ctm" oninput="onHarnessChanged()" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2. Identify Documents (Microsoft Decision 1 Model) -->
+        <div class="feature-tile">
+          <div class="feature-tile-header">
+            <div class="feature-tile-left" onclick="toggleFeatureDrawer('identify')">
+              <div class="feature-illustration" aria-hidden="true">
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                  <rect x="5" y="4" width="16" height="22" rx="2.5" fill="#e5dfd5" stroke="#c8bfb0" stroke-width="1.2"/>
+                  <line x1="9" y1="10" x2="17" y2="10" stroke="#9e9587" stroke-width="1.5" stroke-linecap="round"/>
+                  <line x1="9" y1="14" x2="15" y2="14" stroke="#9e9587" stroke-width="1.5" stroke-linecap="round"/>
+                  <circle cx="21.5" cy="20.5" r="5.5" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.4"/>
+                  <path d="M19.5 20.5l1.4 1.4 2.8-2.8" stroke="#8a2d1b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </div>
+              <div>
+                <h3 class="feature-title">Identify Documents</h3>
+                <p class="feature-desc">Classify PDF slices into defined document names + Undefined using Microsoft Decision 1</p>
+              </div>
+            </div>
+
+            <div class="feature-tile-controls">
+              <button class="chevron-btn" id="identifyChevron" type="button" title="Expand or collapse settings" onclick="toggleFeatureDrawer('identify')">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <label class="switch" title="Toggle Identify Documents">
+                <input type="checkbox" id="identifyFeatureToggle" onchange="onHarnessChanged()" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="feature-drawer" id="identifyDrawer">
+            <div class="drawer-row">
+              <span class="drawer-label">Defined document identification rules (unmatched slices classify as "Undefined")</span>
+              <button class="btn-mini" type="button" onclick="addIdentificationRuleRow()">+ Add document</button>
+            </div>
+            <div class="rules-list" id="identificationRulesList"></div>
+          </div>
+        </div>
+
+        <!-- 3. Document Translation (Azure Document Translation) -->
+        <div class="feature-tile">
+          <div class="feature-tile-header">
+            <div class="feature-tile-left" onclick="toggleFeatureDrawer('translation')">
+              <div class="feature-illustration" aria-hidden="true">
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                  <rect x="4" y="5" width="14" height="14" rx="3" fill="#e5dfd5" stroke="#c8bfb0" stroke-width="1.2"/>
+                  <text x="11" y="15" text-anchor="middle" font-size="9.5" font-weight="700" fill="#5c5549" font-family="Segoe UI, sans-serif">A</text>
+                  <rect x="14" y="13" width="14" height="14" rx="3" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.2"/>
+                  <text x="21" y="23" text-anchor="middle" font-size="9" font-weight="700" fill="#8a2d1b" font-family="Segoe UI, sans-serif">文</text>
+                </svg>
+              </div>
+              <div>
+                <h3 class="feature-title">Document Translation</h3>
+                <p class="feature-desc">Translate non-target language slices using Azure Document Translation</p>
+              </div>
+            </div>
+
+            <div class="feature-tile-controls">
+              <button class="chevron-btn" id="translationChevron" type="button" title="Expand or collapse settings" onclick="toggleFeatureDrawer('translation')">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <label class="switch" title="Toggle Document Translation">
+                <input type="checkbox" id="translationFeatureToggle" onchange="onHarnessChanged()" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="feature-drawer" id="translationDrawer">
+            <div class="drawer-row">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span class="drawer-label">Target language</span>
+                <select class="clean-select" id="translationTargetLang" onchange="onHarnessChanged()">
+                  <option value="en">English (en)</option>
+                  <option value="es">Spanish (es)</option>
+                  <option value="fr">French (fr)</option>
+                  <option value="de">German (de)</option>
+                  <option value="pt">Portuguese (pt)</option>
+                  <option value="ja">Japanese (ja)</option>
+                </select>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex:1;justify-content:flex-end;">
+                <span class="drawer-label">Do-not-translate terms</span>
+                <input type="text" class="clean-input" id="doNotTranslateInput" style="width:260px;" placeholder="Microsoft, MBSA, OXXO" oninput="onHarnessChanged()" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 4. Document Insights -->
+        <div class="feature-tile">
+          <div class="feature-tile-header">
+            <div class="feature-tile-left" onclick="toggleFeatureDrawer('insight')">
+              <div class="feature-illustration" aria-hidden="true">
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                  <path d="M16 5l2.2 5.3L23.5 12.5l-5.3 2.2L16 20l-2.2-5.3L8.5 12.5l5.3-2.2L16 5z" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.3" stroke-linejoin="round"/>
+                  <rect x="7" y="23" width="18" height="3.5" rx="1.75" fill="#d8d0c5"/>
+                </svg>
+              </div>
+              <div>
+                <h3 class="feature-title">Document Insights</h3>
+                <p class="feature-desc">Generate executive insights guided by custom instructions</p>
+              </div>
+            </div>
+
+            <div class="feature-tile-controls">
+              <button class="chevron-btn" id="insightChevron" type="button" title="Expand or collapse settings" onclick="toggleFeatureDrawer('insight')">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <label class="switch" title="Toggle Document Insights">
+                <input type="checkbox" id="insightFeatureToggle" onchange="onHarnessChanged()" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="feature-drawer" id="insightDrawer">
+            <div class="drawer-row">
+              <span class="drawer-label">Insight instructions</span>
+            </div>
+            <textarea class="clean-textarea" id="insightInstructionsInput" rows="2" placeholder="Describe how the insights should be generated..." oninput="onHarnessChanged()"></textarea>
+          </div>
+        </div>
+
+        <!-- 5. Entity Extraction -->
+        <div class="feature-tile">
+          <div class="feature-tile-header">
+            <div class="feature-tile-left" onclick="toggleFeatureDrawer('entity')">
+              <div class="feature-illustration" aria-hidden="true">
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                  <path d="M10 7H8a2 2 0 00-2 2v4a2 2 0 01-2 2 2 2 0 012 2v4a2 2 0 002 2h2" stroke="#8c8273" stroke-width="1.6" stroke-linecap="round"/>
+                  <path d="M22 7h2a2 2 0 012 2v4a2 2 0 002 2 2 2 0 00-2 2v4a2 2 0 01-2 2h-2" stroke="#8c8273" stroke-width="1.6" stroke-linecap="round"/>
+                  <rect x="11.5" y="10.5" width="9" height="4" rx="1.5" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.1"/>
+                  <rect x="11.5" y="17.5" width="9" height="4" rx="1.5" fill="#e5dfd5" stroke="#c8bfb0" stroke-width="1.1"/>
+                </svg>
+              </div>
+              <div>
+                <h3 class="feature-title">Entity Extraction</h3>
+                <p class="feature-desc">Extract structured entities from documents using a custom extraction prompt</p>
+              </div>
+            </div>
+
+            <div class="feature-tile-controls">
+              <button class="chevron-btn" id="entityChevron" type="button" title="Expand or collapse settings" onclick="toggleFeatureDrawer('entity')">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <label class="switch" title="Toggle Entity Extraction">
+                <input type="checkbox" id="entityFeatureToggle" onchange="onHarnessChanged()" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="feature-drawer" id="entityDrawer">
+            <div class="drawer-row">
+              <span class="drawer-label">Entity extraction prompt (what entities to extract)</span>
+            </div>
+            <textarea class="clean-textarea" id="entityPromptInput" rows="2" placeholder="Specify which entities and fields to extract..." oninput="onHarnessChanged()"></textarea>
+          </div>
+        </div>
+
+        <!-- 6. Data Extraction (Per Defined Document Key-Value Fields + Tables & Columns) -->
+        <div class="feature-tile">
+          <div class="feature-tile-header">
+            <div class="feature-tile-left" onclick="toggleFeatureDrawer('dataExtraction')">
+              <div class="feature-illustration" aria-hidden="true">
+                <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+                  <rect x="4.5" y="5.5" width="23" height="21" rx="3" fill="#e5dfd5" stroke="#c8bfb0" stroke-width="1.2"/>
+                  <rect x="4.5" y="5.5" width="23" height="6.5" rx="2.5" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.2"/>
+                  <line x1="13" y1="12" x2="13" y2="26.5" stroke="#c8bfb0" stroke-width="1.2"/>
+                  <line x1="4.5" y1="19" x2="27.5" y2="19" stroke="#c8bfb0" stroke-width="1.2"/>
+                </svg>
+              </div>
+              <div>
+                <h3 class="feature-title">Data Extraction</h3>
+                <p class="feature-desc">Extract structured key-value pairs and tables with columns at the defined document level</p>
+              </div>
+            </div>
+
+            <div class="feature-tile-controls">
+              <button class="chevron-btn" id="dataExtractionChevron" type="button" title="Expand or collapse settings" onclick="toggleFeatureDrawer('dataExtraction')">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+              </button>
+              <label class="switch" title="Toggle Data Extraction">
+                <input type="checkbox" id="dataExtractionFeatureToggle" onchange="onHarnessChanged()" />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="feature-drawer" id="dataExtractionDrawer">
+            <div class="drawer-row">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span class="drawer-label">Defined document</span>
+                <select class="clean-select" id="dataExtractionDocSelect" onchange="onSelectedExtractionDocChanged()"></select>
+              </div>
+            </div>
+
+            <div class="sub-section-header">
+              <span class="drawer-label">Key-Value Pairs (Field Name &amp; Extraction Instruction)</span>
+              <button class="btn-mini" type="button" onclick="addDataExtractionFieldRow()">+ Add key-value field</button>
+            </div>
+            <div class="rules-list" id="dataExtractionFieldsList"></div>
+
+            <div class="sub-section-header">
+              <span class="drawer-label">Tables (Table Name, Instruction &amp; Columns)</span>
+              <button class="btn-mini" type="button" onclick="addDataExtractionTableBlock()">+ Add table</button>
+            </div>
+            <div class="rules-list" id="dataExtractionTablesList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    let tenants = [];
+    let currentTenant = null;
+
+    async function init() {
+      await loadTenants();
+    }
+
+    async function loadTenants(selectedId) {
+      const resp = await fetch('/api/harness/tenants');
+      tenants = await resp.json();
+
+      if (!selectedId && currentTenant) {
+        selectedId = currentTenant.tenantId;
+      }
+      if (!selectedId && tenants.length > 0) {
+        selectedId = tenants[0].tenantId;
+      }
+
+      currentTenant = tenants.find(t => t.tenantId === selectedId) || tenants[0] || null;
+      renderSidebarTenants();
+      renderMainCanvas();
+    }
+
+    function renderSidebarTenants() {
+      const list = document.getElementById('tenantList');
+      list.innerHTML = '';
+
+      if (tenants.length === 0) {
+        list.innerHTML = '<div class="empty-tenants">No tenants created yet</div>';
+        return;
+      }
+
+      tenants.forEach(t => {
+        const isActive = currentTenant && t.tenantId === currentTenant.tenantId;
+        const initials = (t.displayName || t.tenantId)
+          .split(' ')
+          .map(w => w[0])
+          .join('')
+          .substring(0, 2)
+          .toUpperCase();
+        const row = document.createElement('div');
+        row.className = 'tenant-row' + (isActive ? ' active' : '');
+        row.title = `${t.displayName} (v${t.harnessVersion || 1})`;
+        row.onclick = () => selectTenant(t.tenantId);
+        row.innerHTML = `
+          <span class="tenant-initials">${escapeHtml(initials)}</span>
+          <span class="tenant-row-name">${escapeHtml(t.displayName)}</span>
+          <span class="tenant-row-version">v${t.harnessVersion || 1}</span>
+        `;
+        list.appendChild(row);
+      });
+    }
+
+    function toggleSidebar() {
+      const sb = document.getElementById('leftSidebar');
+      sb.classList.toggle('collapsed');
+    }
+
+    function expandAndOpenNewTenant() {
+      const sb = document.getElementById('leftSidebar');
+      sb.classList.remove('collapsed');
+      toggleNewTenantPopover(true);
+    }
+
+    let savedSnapshotJson = '';
+
+    function selectTenant(tenantId) {
+      currentTenant = tenants.find(t => t.tenantId === tenantId) || null;
+      renderSidebarTenants();
+      renderMainCanvas();
+    }
+
+    const expandedCards = new Set();
+    let workingDataExtractionProfiles = [];
+    let activeExtractionDocName = '';
+
+    function toggleFeatureDrawer(key) {
+      if (expandedCards.has(key)) {
+        expandedCards.delete(key);
+      } else {
+        expandedCards.add(key);
+      }
+      renderExpandedState();
+    }
+
+    function renderExpandedState() {
+      ['split', 'identify', 'translation', 'insight', 'entity', 'dataExtraction'].forEach(key => {
+        const drawer = document.getElementById(key + 'Drawer');
+        const chevron = document.getElementById(key + 'Chevron');
+        const isOpen = expandedCards.has(key);
+        if (drawer) drawer.classList.toggle('open', isOpen);
+        if (chevron) chevron.classList.toggle('expanded', isOpen);
+      });
+    }
+
+    function syncActiveDocProfileFromDom() {
+      if (!activeExtractionDocName) return;
+      let profile = workingDataExtractionProfiles.find(p => p.documentName === activeExtractionDocName);
+      if (!profile) {
+        profile = { documentName: activeExtractionDocName, fields: [], tables: [] };
+        workingDataExtractionProfiles.push(profile);
+      }
+
+      const fields = [];
+      document.querySelectorAll('#dataExtractionFieldsList .rule-item').forEach(row => {
+        const fName = row.querySelector('[data-field="fieldName"]').value.trim();
+        const instr = row.querySelector('[data-field="instruction"]').value.trim();
+        if (fName) {
+          fields.push({ fieldName: fName, instruction: instr });
+        }
+      });
+      profile.fields = fields;
+
+      const tables = [];
+      document.querySelectorAll('#dataExtractionTablesList .table-schema-box').forEach(box => {
+        const tName = box.querySelector('[data-field="tableName"]').value.trim();
+        const tInstr = box.querySelector('[data-field="tableInstruction"]').value.trim();
+        if (!tName) return;
+        const cols = [];
+        box.querySelectorAll('.col-row').forEach(cr => {
+          const cName = cr.querySelector('[data-field="colName"]').value.trim();
+          const cInstr = cr.querySelector('[data-field="colInstruction"]').value.trim();
+          if (cName) {
+            cols.push({ columnName: cName, instruction: cInstr });
+          }
+        });
+        tables.push({ tableName: tName, instruction: tInstr, columns: cols });
+      });
+      profile.tables = tables;
+    }
+
+    function renderDataExtractionDocDropdown(definedDocs) {
+      const sel = document.getElementById('dataExtractionDocSelect');
+      const docNames = [...new Set([
+        ...definedDocs,
+        ...workingDataExtractionProfiles.map(p => p.documentName)
+      ])].filter(Boolean);
+
+      if (docNames.length === 0) {
+        docNames.push('Program Signature Form', 'Customer Price Sheet');
+      }
+
+      if (!activeExtractionDocName || !docNames.includes(activeExtractionDocName)) {
+        activeExtractionDocName = docNames[0];
+      }
+
+      sel.innerHTML = '';
+      docNames.forEach(name => {
+        const opt = document.createElement('option');
+        opt.value = name;
+        opt.textContent = name;
+        sel.appendChild(opt);
+      });
+      sel.value = activeExtractionDocName;
+      renderActiveDocExtractionSchema();
+    }
+
+    function onSelectedExtractionDocChanged() {
+      syncActiveDocProfileFromDom();
+      activeExtractionDocName = document.getElementById('dataExtractionDocSelect').value;
+      renderActiveDocExtractionSchema();
+    }
+
+    function renderActiveDocExtractionSchema() {
+      const profile = workingDataExtractionProfiles.find(p => p.documentName === activeExtractionDocName)
+        || { documentName: activeExtractionDocName, fields: [], tables: [] };
+
+      const fieldsList = document.getElementById('dataExtractionFieldsList');
+      fieldsList.innerHTML = '';
+      (profile.fields || []).forEach(f => appendDataFieldRow(f.fieldName || '', f.instruction || ''));
+
+      const tablesList = document.getElementById('dataExtractionTablesList');
+      tablesList.innerHTML = '';
+      (profile.tables || []).forEach(t => appendDataTableBlock(t.tableName || '', t.instruction || '', t.columns || []));
+    }
+
+    function appendDataFieldRow(fieldName, instruction) {
+      const container = document.getElementById('dataExtractionFieldsList');
+      const div = document.createElement('div');
+      div.className = 'rule-item';
+      div.innerHTML = `
+        <input type="text" class="clean-input" data-field="fieldName" placeholder="Field name (e.g. QuoteNumber)" value="${escapeHtml(fieldName)}" oninput="onDataExtractionSchemaEdited()" />
+        <input type="text" class="clean-input" data-field="instruction" placeholder="Instruction on how to extract this field..." value="${escapeHtml(instruction)}" oninput="onDataExtractionSchemaEdited()" />
+        <button class="btn-mini" type="button" onclick="this.closest('.rule-item').remove(); onDataExtractionSchemaEdited();">✕</button>
+      `;
+      container.appendChild(div);
+    }
+
+    function addDataExtractionFieldRow() {
+      appendDataFieldRow('', '');
+      onDataExtractionSchemaEdited();
+    }
+
+    function appendDataTableBlock(tableName, instruction, columns) {
+      const container = document.getElementById('dataExtractionTablesList');
+      const box = document.createElement('div');
+      box.className = 'table-schema-box';
+      box.innerHTML = `
+        <div class="rule-item">
+          <input type="text" class="clean-input" data-field="tableName" placeholder="Table name (e.g. SubscriptionPricing)" value="${escapeHtml(tableName)}" oninput="onDataExtractionSchemaEdited()" />
+          <input type="text" class="clean-input" data-field="tableInstruction" placeholder="Table extraction instruction..." value="${escapeHtml(instruction)}" oninput="onDataExtractionSchemaEdited()" />
+          <button class="btn-mini" type="button" onclick="this.closest('.table-schema-box').remove(); onDataExtractionSchemaEdited();">Remove table</button>
+        </div>
+        <div style="padding-left:14px;display:flex;flex-direction:column;gap:6px;" class="cols-container"></div>
+        <div style="padding-left:14px;">
+          <button class="btn-mini" type="button" onclick="addColumnToTableBox(this.closest('.table-schema-box'))">+ Add column</button>
+        </div>
+      `;
+      container.appendChild(box);
+      const colsContainer = box.querySelector('.cols-container');
+      (columns || []).forEach(c => appendColumnRow(colsContainer, c.columnName || '', c.instruction || ''));
+    }
+
+    function appendColumnRow(colsContainer, colName, colInstruction) {
+      const row = document.createElement('div');
+      row.className = 'rule-item col-row';
+      row.innerHTML = `
+        <input type="text" class="clean-input" data-field="colName" placeholder="Column name (e.g. PartNumber)" value="${escapeHtml(colName)}" oninput="onDataExtractionSchemaEdited()" />
+        <input type="text" class="clean-input" data-field="colInstruction" placeholder="Column extraction instruction..." value="${escapeHtml(colInstruction)}" oninput="onDataExtractionSchemaEdited()" />
+        <button class="btn-mini" type="button" onclick="this.closest('.col-row').remove(); onDataExtractionSchemaEdited();">✕</button>
+      `;
+      colsContainer.appendChild(row);
+    }
+
+    function addColumnToTableBox(box) {
+      const colsContainer = box.querySelector('.cols-container');
+      appendColumnRow(colsContainer, '', '');
+      onDataExtractionSchemaEdited();
+    }
+
+    function addDataExtractionTableBlock() {
+      appendDataTableBlock('', '', [{ columnName: '', instruction: '' }]);
+      onDataExtractionSchemaEdited();
+    }
+
+    function onDataExtractionSchemaEdited() {
+      syncActiveDocProfileFromDom();
+      onHarnessChanged();
+    }
+
+    function buildPayloadFromUi() {
+      if (!currentTenant) return null;
+
+      const updated = JSON.parse(JSON.stringify(currentTenant));
+      const decisionModel = document.getElementById('harnessDecisionModelSelect').value || 'decision-1';
+      const languageModel = document.getElementById('harnessLanguageModelSelect').value || 'phi-4';
+
+      updated.decisionModelId = decisionModel;
+      updated.defaultModelId = languageModel;
+      updated.capabilities = updated.capabilities || {};
+
+      // 1. SplitAndGroup
+      updated.capabilities.SplitAndGroup = updated.capabilities.SplitAndGroup || { splitAndGroup: {} };
+      updated.capabilities.SplitAndGroup.enabled = document.getElementById('splitFeatureToggle').checked;
+      updated.capabilities.SplitAndGroup.splitAndGroup = updated.capabilities.SplitAndGroup.splitAndGroup || {};
+      updated.capabilities.SplitAndGroup.splitAndGroup.footersToIgnore = document.getElementById('footersToIgnoreInput').value
+        .split(',').map(s => s.trim()).filter(Boolean);
+      updated.capabilities.SplitAndGroup.splitAndGroup.amendmentIndicators = document.getElementById('amendmentIndicatorsInput').value
+        .split(',').map(s => s.trim()).filter(Boolean);
+
+      // 2. IdentifyDocuments
+      const idRules = [];
+      document.querySelectorAll('#identificationRulesList .rule-item').forEach(row => {
+        const docName = row.querySelector('[data-field="docName"]').value.trim();
+        const prompt = row.querySelector('[data-field="prompt"]').value.trim();
+        if (docName && prompt) {
+          idRules.push({ documentName: docName, identificationPrompt: prompt, isActive: true });
+        }
+      });
+      updated.capabilities.IdentifyDocuments = {
+        enabled: document.getElementById('identifyFeatureToggle').checked,
+        modelIdOverride: decisionModel,
+        identifyDocuments: {
+          decisionModelId: decisionModel,
+          rules: idRules
+        }
+      };
+
+      // 3. DocumentTranslation
+      updated.capabilities.DocumentTranslation = {
+        enabled: document.getElementById('translationFeatureToggle').checked,
+        documentTranslation: {
+          targetLanguage: document.getElementById('translationTargetLang').value || 'en',
+          doNotTranslateTerms: document.getElementById('doNotTranslateInput').value
+            .split(',')
+            .map(s => s.trim())
+            .filter(Boolean)
+        }
+      };
+
+      // 4. DocumentInsight
+      const insightPrompt = document.getElementById('insightInstructionsInput').value.trim();
+      updated.capabilities.DocumentInsight = {
+        enabled: document.getElementById('insightFeatureToggle').checked,
+        modelIdOverride: languageModel,
+        documentInsight: {
+          summaryInstructions: insightPrompt
+        }
+      };
+
+      // 5. EntityExtraction
+      const entityPrompt = document.getElementById('entityPromptInput').value.trim();
+      updated.capabilities.EntityExtraction = {
+        enabled: document.getElementById('entityFeatureToggle').checked,
+        modelIdOverride: languageModel,
+        entityExtraction: {
+          extractionPrompt: entityPrompt
+        }
+      };
+
+      // 6. DataExtraction
+      syncActiveDocProfileFromDom();
+      updated.capabilities.DataExtraction = {
+        enabled: document.getElementById('dataExtractionFeatureToggle').checked,
+        modelIdOverride: languageModel,
+        dataExtraction: {
+          profiles: JSON.parse(JSON.stringify(workingDataExtractionProfiles))
+        }
+      };
+
+      return updated;
+    }
+
+    function updateDrawersAndCount() {
+      const splitOn = document.getElementById('splitFeatureToggle').checked;
+      const idOn = document.getElementById('identifyFeatureToggle').checked;
+      const transOn = document.getElementById('translationFeatureToggle').checked;
+      const insightOn = document.getElementById('insightFeatureToggle').checked;
+      const entityOn = document.getElementById('entityFeatureToggle').checked;
+      const dataExtOn = document.getElementById('dataExtractionFeatureToggle').checked;
+
+      renderExpandedState();
+
+      const enabledCount = [splitOn, idOn, transOn, insightOn, entityOn, dataExtOn].filter(Boolean).length;
+      document.getElementById('featureStatusCount').textContent = `${enabledCount} of 6 enabled`;
+    }
+
+    function updateDirtyState() {
+      const currentPayload = buildPayloadFromUi();
+      const currentJson = currentPayload
+        ? JSON.stringify({
+            decisionModelId: currentPayload.decisionModelId,
+            defaultModelId: currentPayload.defaultModelId,
+            capabilities: currentPayload.capabilities
+          })
+        : '';
+      const dirty = currentTenant ? (currentJson !== savedSnapshotJson) : false;
+
+      document.getElementById('btnCancelHarness').disabled = !dirty;
+      document.getElementById('btnSaveHarness').disabled = !dirty;
+      document.getElementById('unsavedBadge').classList.toggle('visible', dirty);
+    }
+
+    function renderIdentificationRules(rules) {
+      const container = document.getElementById('identificationRulesList');
+      container.innerHTML = '';
+      (rules || []).forEach(r => appendRuleRow(r.documentName || '', r.identificationPrompt || ''));
+    }
+
+    function appendRuleRow(docName, prompt) {
+      const container = document.getElementById('identificationRulesList');
+      const div = document.createElement('div');
+      div.className = 'rule-item';
+      div.innerHTML = `
+        <input type="text" class="clean-input" data-field="docName" placeholder="Document name (e.g. Customer Price Sheet)" value="${escapeHtml(docName)}" oninput="onHarnessChanged()" />
+        <input type="text" class="clean-input" data-field="prompt" placeholder="If footer contains..., or title contains..." value="${escapeHtml(prompt)}" oninput="onHarnessChanged()" />
+        <button class="btn-mini" type="button" title="Remove rule" onclick="this.closest('.rule-item').remove(); onHarnessChanged();">✕</button>
+      `;
+      container.appendChild(div);
+    }
+
+    function addIdentificationRuleRow() {
+      appendRuleRow('', '');
+      onHarnessChanged();
+    }
+
+    function renderMainCanvas() {
+      if (!currentTenant) return;
+
+      document.getElementById('harnessVersionChip').textContent = `Harness v${currentTenant.harnessVersion || 1}`;
+      document.getElementById('tenantHeading').textContent = `${currentTenant.displayName}`;
+      document.getElementById('tenantIdDisplay').textContent = `Tenant ID: ${currentTenant.tenantId}`;
+
+      document.getElementById('harnessDecisionModelSelect').value = currentTenant.decisionModelId || 'decision-1';
+      document.getElementById('harnessLanguageModelSelect').value =
+        (currentTenant.defaultModelId && currentTenant.defaultModelId !== 'decision-1')
+          ? currentTenant.defaultModelId
+          : 'phi-4';
+
+      const caps = currentTenant.capabilities || {};
+
+      // 1. Split
+      const splitCap = caps.SplitAndGroup || { enabled: true, splitAndGroup: {} };
+      const splitCfg = splitCap.splitAndGroup || {};
+      document.getElementById('splitFeatureToggle').checked = splitCap.enabled !== false;
+      document.getElementById('footersToIgnoreInput').value = (splitCfg.footersToIgnore || ['Confidential', 'Microsoft Confidential', 'Page']).join(', ');
+      document.getElementById('amendmentIndicatorsInput').value = (splitCfg.amendmentIndicators || ['amendment', 'avenant', 'enmienda', 'nachtrag', 'ctm']).join(', ');
+
+      // 2. Identify Documents
+      const idCap = caps.IdentifyDocuments || { enabled: true, identifyDocuments: {} };
+      const idCfg = idCap.identifyDocuments || {};
+      document.getElementById('identifyFeatureToggle').checked = idCap.enabled !== false;
+      renderIdentificationRules(idCfg.rules || []);
+
+      // 3. Document Translation
+      const transCap = caps.DocumentTranslation || { enabled: true, documentTranslation: {} };
+      const transCfg = transCap.documentTranslation || {};
+      document.getElementById('translationFeatureToggle').checked = transCap.enabled !== false;
+      document.getElementById('translationTargetLang').value = transCfg.targetLanguage || 'en';
+      document.getElementById('doNotTranslateInput').value = (transCfg.doNotTranslateTerms || ['Microsoft', 'MBSA', 'OXXO']).join(', ');
+
+      // 4. Document Insight
+      const inCap = caps.DocumentInsight || { enabled: true, documentInsight: {} };
+      const inCfg = inCap.documentInsight || {};
+      document.getElementById('insightFeatureToggle').checked = inCap.enabled !== false;
+      document.getElementById('insightInstructionsInput').value =
+        inCfg.summaryInstructions || 'Summarize the document concisely, highlighting the customer entity, agreement/quote identifiers, key commercial terms, and total financial value.';
+
+      // 5. Entity Extraction
+      const exCap = caps.EntityExtraction || { enabled: true, entityExtraction: {} };
+      const exCfg = exCap.entityExtraction || {};
+      document.getElementById('entityFeatureToggle').checked = exCap.enabled !== false;
+      document.getElementById('entityPromptInput').value =
+        exCfg.extractionPrompt || 'Extract Customer Name, MBA/MBSA Number, Contract/Agreement Number, Quote Number, Billing Currency, Tenant ID, and Total Deal Value.';
+
+      // 6. Data Extraction
+      const deCap = caps.DataExtraction || { enabled: true, dataExtraction: {} };
+      const deCfg = deCap.dataExtraction || {};
+      document.getElementById('dataExtractionFeatureToggle').checked = deCap.enabled !== false;
+      workingDataExtractionProfiles = JSON.parse(JSON.stringify(deCfg.profiles || []));
+      activeExtractionDocName = '';
+      const definedDocNames = (idCfg.rules || []).map(r => r.documentName).filter(Boolean);
+      renderDataExtractionDocDropdown(definedDocNames);
+
+      updateDrawersAndCount();
+      const initialPayload = buildPayloadFromUi();
+      savedSnapshotJson = initialPayload
+        ? JSON.stringify({
+            decisionModelId: initialPayload.decisionModelId,
+            defaultModelId: initialPayload.defaultModelId,
+            capabilities: initialPayload.capabilities
+          })
+        : '';
+      updateDirtyState();
+    }
+
+    function onHarnessChanged() {
+      updateDrawersAndCount();
+      updateDirtyState();
+    }
+
+    function cancelTenantChanges() {
+      renderMainCanvas();
+      showToast('Reverted unsaved changes');
+    }
+
+    async function saveTenantHarness() {
+      if (!currentTenant) return;
+
+      const updated = buildPayloadFromUi();
+
+      const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updated)
+      });
+
+      if (resp.ok) {
+        const saved = await resp.json();
+        await loadTenants(saved.tenantId);
+        showToast(`Saved ${saved.displayName} (v${saved.harnessVersion})`);
+      }
+    }
+
+    function toggleNewTenantPopover(show) {
+      const pop = document.getElementById('newTenantPopover');
+      pop.style.display = show ? 'flex' : 'none';
+      if (show) {
+        document.getElementById('newTenantName').value = '';
+        document.getElementById('newTenantId').value = '';
+        document.getElementById('newTenantName').focus();
+      }
+    }
+
+    document.getElementById('newTenantName').addEventListener('input', (e) => {
+      const slug = e.target.value
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '');
+      document.getElementById('newTenantId').value = slug;
+    });
+
+    async function createTenant() {
+      const displayName = document.getElementById('newTenantName').value.trim();
+      const tenantId = document.getElementById('newTenantId').value.trim();
+      if (!displayName || !tenantId) return;
+
+      const payload = {
+        tenantId,
+        displayName,
+        isActive: true,
+        defaultModelId: 'gpt-5-mini',
+        allowedModels: ['gpt-5-mini', 'gpt-4o', 'o3-mini'],
+        capabilities: {
+          SplitAndGroup: {
+            enabled: true,
+            splitAndGroup: {
+              strategy: 'Hybrid',
+              enableFooterNormalization: true,
+              footerNormalizationThreshold: 0.85,
+              footerBoundarySimilarityThreshold: 0.90,
+              inferNameWhenNotInCatalog: true,
+              produceSplitPdfBytes: true
+            }
+          }
+        }
+      };
+
+      const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(tenantId)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (resp.ok) {
+        toggleNewTenantPopover(false);
+        await loadTenants(tenantId);
+        showToast(`Created ${displayName}`);
+      }
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.style.display = 'block';
+      setTimeout(() => { t.style.display = 'none'; }, 2200);
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+    }
+
+    init();
+  </script>
+</body>
+</html>

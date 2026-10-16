@@ -1,0 +1,717 @@
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.RegularExpressions;
+using Azure.AI.Inference;
+using Azure.AI.OpenAI;
+using Azure.Core;
+using Azure.Identity;
+using DocIntel.Core.Harness;
+using Microsoft.Extensions.AI;
+using OpenAI;
+using ChatRole = Microsoft.Extensions.AI.ChatRole;
+
+namespace DocIntel.Core.Models;
+
+/// <summary>
+/// Identifies the backing AI provider family for a model in the catalog.
+/// </summary>
+[JsonConverter(typeof(JsonStringEnumConverter))]
+public enum ModelProvider
+{
+    /// <summary>
+    /// Microsoft Foundry Unified Inference API (supports Meta Llama, DeepSeek, Mistral, Microsoft Phi-4, MAI, Cohere).
+    /// </summary>
+    FoundryInference,
+
+    /// <summary>
+    /// Azure OpenAI / Foundry OpenAI deployments (gpt-5-mini, gpt-4o, o3-mini).
+    /// </summary>
+    AzureOpenAI,
+
+    /// <summary>
+    /// Any OpenAI-compatible HTTP endpoint (Foundry Local, Ollama, vLLM, Anthropic Claude Gateway).
+    /// </summary>
+    OpenAICompatible,
+
+    /// <summary>
+    /// Built-in deterministic simulator for offline development and unit testing.
+    /// </summary>
+    Simulated
+}
+
+/// <summary>
+/// Metadata and connection settings for a selectable model in the Agent Harness catalog.
+/// </summary>
+public sealed record ModelDescriptor(
+    string ModelId,
+    string DisplayName,
+    string Family,
+    ModelProvider Provider,
+    string DeploymentName,
+    string? Endpoint = null);
+
+/// <summary>
+/// Resolves provider-agnostic <see cref="IChatClient"/> instances for any model in the catalog.
+/// </summary>
+public interface IModelCatalog
+{
+    IReadOnlyList<ModelDescriptor> ListModels();
+
+    string ResolveModelId(TenantHarness tenant, string? modelOverride = null);
+
+    IChatClient ResolveChatClient(TenantHarness tenant, string? modelOverride = null);
+}
+
+/// <summary>
+/// Default implementation of <see cref="IModelCatalog"/> supporting Microsoft Foundry Inference (Llama, DeepSeek, Mistral, Phi-4),
+/// Azure OpenAI, local OpenAI-compatible endpoints (Foundry Local / Ollama), and offline simulation.
+/// </summary>
+public sealed class ModelCatalog : IModelCatalog
+{
+    private readonly IReadOnlyList<ModelDescriptor> _descriptors;
+    private readonly Dictionary<string, IChatClient> _customClients;
+    private readonly TokenCredential _credential;
+
+    public ModelCatalog(
+        IEnumerable<ModelDescriptor>? descriptors = null,
+        IDictionary<string, IChatClient>? customClients = null,
+        TokenCredential? credential = null)
+    {
+        _descriptors = (descriptors ?? CreateDefaultDescriptors()).ToList();
+        _customClients = customClients is not null
+            ? new Dictionary<string, IChatClient>(customClients, StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, IChatClient>(StringComparer.OrdinalIgnoreCase);
+
+        var managedIdentityClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
+        _credential = credential ?? (!string.IsNullOrWhiteSpace(managedIdentityClientId)
+            ? new ManagedIdentityCredential(ManagedIdentityId.FromUserAssignedClientId(managedIdentityClientId))
+            : new DefaultAzureCredential());
+    }
+
+    public IReadOnlyList<ModelDescriptor> ListModels() => _descriptors;
+
+    public string ResolveModelId(TenantHarness tenant, string? modelOverride = null)
+    {
+        ArgumentNullException.ThrowIfNull(tenant);
+
+        var target = !string.IsNullOrWhiteSpace(modelOverride) ? modelOverride : tenant.DefaultModelId;
+
+        if (tenant.AllowedModels.Count > 0 &&
+            !string.Equals(target, tenant.DecisionModelId, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(target, tenant.DefaultModelId, StringComparison.OrdinalIgnoreCase) &&
+            !tenant.AllowedModels.Contains(target, StringComparer.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Model '{target}' is not enabled in the allowed model list for tenant '{tenant.TenantId}'.");
+        }
+
+        return target;
+    }
+
+    public IChatClient ResolveChatClient(TenantHarness tenant, string? modelOverride = null)
+    {
+        var modelId = ResolveModelId(tenant, modelOverride);
+
+        if (_customClients.TryGetValue(modelId, out var injectedClient))
+        {
+            return new ReasoningCleanupChatClient(injectedClient);
+        }
+
+        var descriptor = _descriptors.FirstOrDefault(d =>
+            string.Equals(d.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
+
+        if (descriptor is null || string.IsNullOrWhiteSpace(descriptor.Endpoint) || descriptor.Provider == ModelProvider.Simulated)
+        {
+            return new SimulatedSliceChatClient(modelId);
+        }
+
+        IChatClient rawClient = descriptor.Provider switch
+        {
+            ModelProvider.FoundryInference => new FoundryInferenceChatClient(
+                new ChatCompletionsClient(new Uri(descriptor.Endpoint), _credential),
+                descriptor.DeploymentName),
+
+            ModelProvider.AzureOpenAI => new AzureOpenAIClient(new Uri(descriptor.Endpoint), _credential)
+                .GetChatClient(descriptor.DeploymentName)
+                .AsIChatClient(),
+
+            ModelProvider.OpenAICompatible => new OpenAIClient(
+                    new System.ClientModel.ApiKeyCredential("local"),
+                    new OpenAIClientOptions { Endpoint = new Uri(descriptor.Endpoint) })
+                .GetChatClient(descriptor.DeploymentName)
+                .AsIChatClient(),
+
+            _ => new SimulatedSliceChatClient(modelId)
+        };
+
+        return new ReasoningCleanupChatClient(rawClient);
+    }
+
+    public static IReadOnlyList<ModelDescriptor> CreateDefaultDescriptors(
+        string? foundryInferenceEndpoint = null,
+        string? azureOpenAiEndpoint = null,
+        string? localOpenAiEndpoint = null) =>
+    [
+        new("decision-1", "Microsoft Decision 1", "Microsoft", ModelProvider.FoundryInference, "Decision-1", foundryInferenceEndpoint),
+        new("phi-4", "Microsoft Phi-4 (Foundry)", "Microsoft", ModelProvider.FoundryInference, "Phi-4", foundryInferenceEndpoint),
+        new("mai-reasoning", "Microsoft MAI-Reasoning (Foundry)", "Microsoft", ModelProvider.FoundryInference, "MAI-Reasoning", foundryInferenceEndpoint),
+        new("llama-3.3-70b", "Meta Llama 3.3 70B Instruct (Foundry)", "Meta", ModelProvider.FoundryInference, "Llama-3.3-70B-Instruct", foundryInferenceEndpoint),
+        new("deepseek-r1", "DeepSeek R1 Reasoning (Foundry)", "DeepSeek", ModelProvider.FoundryInference, "DeepSeek-R1", foundryInferenceEndpoint),
+        new("mistral-large", "Mistral Large 2411 (Foundry)", "Mistral", ModelProvider.FoundryInference, "Mistral-Large-2411", foundryInferenceEndpoint),
+        new("gpt-5-mini", "GPT-5 Mini (Foundry / Azure OpenAI)", "OpenAI", ModelProvider.AzureOpenAI, "gpt-5-mini", azureOpenAiEndpoint ?? foundryInferenceEndpoint),
+        new("gpt-4o", "GPT-4o (Foundry / Azure OpenAI)", "OpenAI", ModelProvider.AzureOpenAI, "gpt-4o", azureOpenAiEndpoint ?? foundryInferenceEndpoint),
+        new("foundry-local-phi4", "Phi-4 (On-Device Foundry Local / Ollama)", "Local", ModelProvider.OpenAICompatible, "phi-4", localOpenAiEndpoint)
+    ];
+}
+
+/// <summary>
+/// Adapts <see cref="Azure.AI.Inference.ChatCompletionsClient"/> (used by non-OpenAI models in Microsoft Foundry
+/// such as Meta Llama, DeepSeek, Mistral, Phi-4, and Cohere) to <see cref="Microsoft.Extensions.AI.IChatClient"/>.
+/// </summary>
+public sealed class FoundryInferenceChatClient : IChatClient
+{
+    private readonly ChatCompletionsClient _client;
+    private readonly string _modelName;
+
+    public FoundryInferenceChatClient(ChatCompletionsClient client, string modelName)
+    {
+        _client = client ?? throw new ArgumentNullException(nameof(client));
+        ArgumentException.ThrowIfNullOrWhiteSpace(modelName);
+        _modelName = modelName;
+        Metadata = new ChatClientMetadata("Azure.AI.Inference", null, modelName);
+    }
+
+    public ChatClientMetadata Metadata { get; }
+
+    public async Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        var requestOptions = new ChatCompletionsOptions
+        {
+            Model = _modelName,
+            Temperature = options?.Temperature ?? 0.1f
+        };
+
+        foreach (var msg in messages)
+        {
+            var text = msg.Text ?? string.Empty;
+            if (msg.Role == ChatRole.System)
+            {
+                requestOptions.Messages.Add(new ChatRequestSystemMessage(text));
+            }
+            else if (msg.Role == ChatRole.Assistant)
+            {
+                requestOptions.Messages.Add(new ChatRequestAssistantMessage(text));
+            }
+            else
+            {
+                requestOptions.Messages.Add(new ChatRequestUserMessage(text));
+            }
+        }
+
+        var response = await _client.CompleteAsync(requestOptions, cancellationToken).ConfigureAwait(false);
+        var content = response.Value.Content ?? string.Empty;
+
+        return new ChatResponse(new ChatMessage(ChatRole.Assistant, content))
+        {
+            ModelId = _modelName
+        };
+    }
+
+    public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("Use GetResponseAsync for structured document analysis.");
+
+    public object? GetService(Type serviceType, object? serviceKey = null) =>
+        serviceType.IsInstanceOfType(this) ? this : null;
+
+    public void Dispose()
+    {
+    }
+}
+
+/// <summary>
+/// Normalizes responses from reasoning models (e.g. DeepSeek-R1, Phi-4-reasoning) by stripping
+/// <c>&lt;think&gt;...&lt;/think&gt;</c> chains and markdown code fences around structured JSON outputs.
+/// </summary>
+public sealed class ReasoningCleanupChatClient : DelegatingChatClient
+{
+    private static readonly Regex ThinkBlockRegex = new(
+        @"<think>[\s\S]*?</think>",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex MarkdownJsonFenceRegex = new(
+        @"^```(?:json)?\s*([\s\S]*?)\s*```$",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    public ReasoningCleanupChatClient(IChatClient innerClient)
+        : base(innerClient)
+    {
+    }
+
+    public override async Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        var response = await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+        var rawText = response.Text;
+        if (string.IsNullOrWhiteSpace(rawText))
+        {
+            return response;
+        }
+
+        var cleaned = CleanModelText(rawText);
+        if (string.Equals(cleaned, rawText, StringComparison.Ordinal))
+        {
+            return response;
+        }
+
+        return new ChatResponse(new ChatMessage(ChatRole.Assistant, cleaned))
+        {
+            ModelId = response.ModelId
+        };
+    }
+
+    public static string CleanModelText(string input)
+    {
+        if (string.IsNullOrWhiteSpace(input))
+        {
+            return string.Empty;
+        }
+
+        var withoutThink = ThinkBlockRegex.Replace(input, string.Empty).Trim();
+        var fenceMatch = MarkdownJsonFenceRegex.Match(withoutThink);
+        return fenceMatch.Success ? fenceMatch.Groups[1].Value.Trim() : withoutThink;
+    }
+}
+
+/// <summary>
+/// Deterministic offline <see cref="IChatClient"/> that simulates structured document slice detection
+/// for local runs and automated tests without requiring live cloud endpoints.
+/// </summary>
+public sealed class SimulatedSliceChatClient : IChatClient
+{
+    private static readonly Regex PageMarkerRegex = new(
+        @"<!--\s*Page\s+(\d+)\s*-->\s*([\s\S]*?)(?=<!--\s*PageBreak\s*-->|$)",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex FooterCommentRegex = new(
+        @"<!--\s*PageFooter=""([^""]+)""\s*-->",
+        RegexOptions.IgnoreCase | RegexOptions.Compiled);
+
+    private static readonly Regex CatalogLineRegex = new(
+        @"^-\s+([^:\r\n]+)(?::\s*""([^""]+)"")?",
+        RegexOptions.Multiline | RegexOptions.Compiled);
+
+    private readonly string _modelId;
+
+    public SimulatedSliceChatClient(string modelId)
+    {
+        _modelId = modelId;
+        Metadata = new ChatClientMetadata("DocIntel.Simulated", null, modelId);
+    }
+
+    public ChatClientMetadata Metadata { get; }
+
+    public Task<ChatResponse> GetResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default)
+    {
+        var list = messages.ToList();
+        var systemPrompt = options?.Instructions
+            ?? list.FirstOrDefault(m => m.Role == ChatRole.System)?.Text
+            ?? string.Empty;
+        var userText = list.LastOrDefault(m => m.Role == ChatRole.User)?.Text ?? string.Empty;
+
+        if (systemPrompt.Contains("[TASK:IDENTIFY_DOCUMENT]", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(SimulateDocumentIdentification(systemPrompt, userText));
+        }
+
+        if (systemPrompt.Contains("[TASK:DOCUMENT_INSIGHT]", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(SimulateDocumentInsight(systemPrompt, userText));
+        }
+
+        if (systemPrompt.Contains("[TASK:ENTITY_EXTRACTION]", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(SimulateEntityExtraction(systemPrompt, userText));
+        }
+
+        if (systemPrompt.Contains("[TASK:DATA_EXTRACTION]", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(SimulateDataExtraction(systemPrompt, userText));
+        }
+
+        var catalog = new List<(string Name, string Hint)>();
+        foreach (Match m in CatalogLineRegex.Matches(systemPrompt))
+        {
+            catalog.Add((m.Groups[1].Value.Trim(), m.Groups[2].Value.Trim()));
+        }
+
+        var pages = new List<(int PageNumber, string Content, string Footer)>();
+        foreach (Match pm in PageMarkerRegex.Matches(userText))
+        {
+            var pageNum = int.Parse(pm.Groups[1].Value);
+            var content = pm.Groups[2].Value.Trim();
+            var footerMatch = FooterCommentRegex.Match(content);
+            var footer = footerMatch.Success ? footerMatch.Groups[1].Value.Trim() : $"Page-{pageNum}";
+            pages.Add((pageNum, content, footer));
+        }
+
+        var groups = new List<(int Start, int End, string Footer, string CombinedContent)>();
+        foreach (var page in pages.OrderBy(p => p.PageNumber))
+        {
+            if (groups.Count > 0 && string.Equals(groups[^1].Footer, page.Footer, StringComparison.OrdinalIgnoreCase))
+            {
+                var prev = groups[^1];
+                groups[^1] = (prev.Start, page.PageNumber, prev.Footer, prev.CombinedContent + "\n" + page.Content);
+            }
+            else
+            {
+                groups.Add((page.PageNumber, page.PageNumber, page.Footer, page.Content));
+            }
+        }
+
+        var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "form", "footer", "contains", "title", "states", "look", "body", "references", "agreement", "amendment"
+        };
+
+        var segments = groups.Select(g =>
+        {
+            var topLines = g.CombinedContent
+                .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+                .Select(l => l.Trim())
+                .Where(l => !l.StartsWith("<!--", StringComparison.Ordinal))
+                .Take(4)
+                .ToList();
+
+            string[] docKeywords =
+            [
+                "Price Sheet", "Signature Form", "Formulario de Firma", "Agreement",
+                "Enrollment", "Amendment", "Addendum", "Statement of Work", "Invoice"
+            ];
+
+            var bestTitleLine = topLines.FirstOrDefault(l =>
+                    docKeywords.Any(k => l.Contains(k, StringComparison.OrdinalIgnoreCase)))
+                ?? topLines.FirstOrDefault()
+                ?? string.Empty;
+
+            var titleLine = bestTitleLine.Contains(" - ", StringComparison.Ordinal)
+                ? string.Join(" - ", bestTitleLine.Split(" - ", StringSplitOptions.TrimEntries).Skip(1))
+                : bestTitleLine.Split('-')[0].Trim();
+
+            string? matchedName = null;
+            foreach (var (name, hint) in catalog)
+            {
+                var tokens = (name + " " + hint)
+                    .Split([' ', ',', '"', '\'', ':'], StringSplitOptions.RemoveEmptyEntries)
+                    .Where(t => t.Length >= 4 && !stopWords.Contains(t))
+                    .ToList();
+
+                if (titleLine.Contains(name, StringComparison.OrdinalIgnoreCase) ||
+                    tokens.Any(t => g.Footer.Contains(t, StringComparison.OrdinalIgnoreCase) ||
+                                    titleLine.Contains(t, StringComparison.OrdinalIgnoreCase)))
+                {
+                    matchedName = name;
+                    break;
+                }
+            }
+
+            var resolvedName = matchedName ?? (!string.IsNullOrWhiteSpace(titleLine) ? titleLine : g.Footer);
+
+            return new
+            {
+                footers = new[] { g.Footer },
+                startPage = g.Start,
+                endPage = g.End,
+                documentTypeName = resolvedName,
+                isInferred = matchedName is null
+            };
+        }).ToArray();
+
+        var json = JsonSerializer.Serialize(new { segments });
+        return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, json))
+        {
+            ModelId = _modelId
+        });
+    }
+
+    private ChatResponse SimulateDocumentIdentification(string systemPrompt, string userText)
+    {
+        var ruleLines = systemPrompt
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Where(l => l.TrimStart().StartsWith("RULE|", StringComparison.Ordinal))
+            .ToList();
+
+        var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "if", "document", "footer", "contains", "title", "or", "and", "the", "has", "states", "with", "when", "this", "that", "body", "references", "form"
+        };
+
+        string matchedDocName = "Undefined";
+        string? matchedRulePrompt = null;
+        double confidence = 0.50;
+
+        foreach (var line in ruleLines)
+        {
+            var parts = line.Split('|', 3);
+            if (parts.Length < 3) continue;
+
+            var docName = parts[1].Trim();
+            var prompt = parts[2].Trim();
+
+            // Extract meaningful phrases or tokens from the admin's identification prompt
+            var tokens = prompt
+                .Split([',', ';', '.', '"', '\'', '(', ')'], StringSplitOptions.RemoveEmptyEntries)
+                .SelectMany(chunk => chunk.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                .Where(w => w.Length >= 3 && !stopWords.Contains(w))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            if (userText.Contains(docName, StringComparison.OrdinalIgnoreCase) ||
+                tokens.Any(t => userText.Contains(t, StringComparison.OrdinalIgnoreCase)))
+            {
+                matchedDocName = docName;
+                matchedRulePrompt = prompt;
+                confidence = 0.96;
+                break;
+            }
+        }
+
+        var json = JsonSerializer.Serialize(new
+        {
+            identifiedDocumentName = matchedDocName,
+            confidence,
+            matchedRule = matchedRulePrompt
+        });
+
+        return new ChatResponse(new ChatMessage(ChatRole.Assistant, json))
+        {
+            ModelId = _modelId
+        };
+    }
+
+    private ChatResponse SimulateDocumentInsight(string systemPrompt, string userText)
+    {
+        var lines = userText
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 3 && !l.StartsWith("<!--", StringComparison.Ordinal))
+            .Take(6)
+            .ToList();
+
+        var instructionLine = systemPrompt
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .LastOrDefault(l => !l.StartsWith("[TASK:", StringComparison.Ordinal))
+            ?? "Executive summary";
+
+        var preview = string.Join(" · ", lines.Take(3));
+        var summary = $"[{_modelId} Insight] {preview} (Guided by: {instructionLine})";
+
+        var json = JsonSerializer.Serialize(new { summary });
+        return new ChatResponse(new ChatMessage(ChatRole.Assistant, json))
+        {
+            ModelId = _modelId
+        };
+    }
+
+    private ChatResponse SimulateEntityExtraction(string systemPrompt, string userText)
+    {
+        var entities = new List<object>();
+
+        void TryMatch(string pattern, string name, string category)
+        {
+            var m = Regex.Match(userText, pattern, RegexOptions.IgnoreCase);
+            if (m.Success && m.Groups.Count > 1)
+            {
+                var val = m.Groups[1].Value.Trim();
+                if (!string.IsNullOrWhiteSpace(val))
+                {
+                    entities.Add(new { name, value = val, category, confidence = 0.97 });
+                }
+            }
+        }
+
+        TryMatch(@"(?:MBA/MBSA(?:\s+Number)?|MBSA)\s+([A-Z0-9\-]+)", "MBA/MBSA Number", "Identifier");
+        TryMatch(@"(?:contrato|Contract(?:\s+Number)?|Agreement(?:\s+Number)?)\s+([A-Z][0-9]{5,})", "Contract Number", "Identifier");
+        TryMatch(@"Quote\s+Number:\s*([0-9\.]+)", "Quote Number", "Identifier");
+        TryMatch(@"Billing\s+currency:\s*([A-Z]{3})", "Billing Currency", "Financial");
+        TryMatch(@"Total\s+deal\s+value\s+([0-9,\.]+)", "Total Deal Value", "Financial");
+        TryMatch(@"Tenant\s+ID:\s*([^\r\n\{]+)", "Tenant ID", "Customer");
+
+        if (userText.Contains("Cadena Comercial OXXO", StringComparison.OrdinalIgnoreCase))
+        {
+            entities.Add(new { name = "Customer Name", value = "Cadena Comercial OXXO SA de CV", category = "Party", confidence = 0.99 });
+        }
+        else
+        {
+            var firstLine = userText.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim();
+            if (!string.IsNullOrWhiteSpace(firstLine))
+            {
+                entities.Add(new { name = "Document Heading", value = firstLine, category = "Metadata", confidence = 0.92 });
+            }
+        }
+
+        var json = JsonSerializer.Serialize(new { entities });
+        return new ChatResponse(new ChatMessage(ChatRole.Assistant, json))
+        {
+            ModelId = _modelId
+        };
+    }
+
+    private ChatResponse SimulateDataExtraction(string systemPrompt, string userText)
+    {
+        var lines = systemPrompt.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        var fields = new List<object>();
+
+        foreach (var line in lines.Where(l => l.StartsWith("FIELD|", StringComparison.Ordinal)))
+        {
+            var parts = line.Split('|', 3);
+            if (parts.Length < 3) continue;
+
+            var fieldName = parts[1].Trim();
+            var instruction = parts[2].Trim();
+            var val = ResolveFieldFromText(fieldName, instruction, userText);
+            fields.Add(new { fieldName, fieldValue = val, confidenceValue = string.IsNullOrEmpty(val) ? 50.0 : 98.5 });
+        }
+
+        var tables = new List<object>();
+        var tableLines = lines.Where(l => l.StartsWith("TABLE|", StringComparison.Ordinal)).ToList();
+        var colLines = lines.Where(l => l.StartsWith("COLUMN|", StringComparison.Ordinal)).ToList();
+
+        foreach (var tLine in tableLines)
+        {
+            var tParts = tLine.Split('|', 3);
+            if (tParts.Length < 3) continue;
+            var tableName = tParts[1].Trim();
+
+            var cols = colLines
+                .Select(c => c.Split('|', 4))
+                .Where(c => c.Length >= 4 && string.Equals(c[1].Trim(), tableName, StringComparison.OrdinalIgnoreCase))
+                .Select(c => (ColName: c[2].Trim(), ColInstruction: c[3].Trim()))
+                .ToList();
+
+            var rows = ExtractTableRowsFromText(tableName, cols, userText);
+            tables.Add(new { tableName, rows });
+        }
+
+        var json = JsonSerializer.Serialize(new { fields, tables });
+        return new ChatResponse(new ChatMessage(ChatRole.Assistant, json))
+        {
+            ModelId = _modelId
+        };
+    }
+
+    private static string ResolveFieldFromText(string fieldName, string instruction, string text)
+    {
+        var key = (fieldName + " " + instruction).ToLowerInvariant();
+
+        if (key.Contains("mba") || key.Contains("mbsa"))
+        {
+            var m = Regex.Match(text, @"(?:MBA/MBSA(?:\s+Number)?|MBSA)\s+([A-Z0-9\-]+)", RegexOptions.IgnoreCase);
+            if (m.Success) return m.Groups[1].Value.Trim();
+        }
+
+        if (key.Contains("contract") || key.Contains("contrato") || key.Contains("agreement"))
+        {
+            var m = Regex.Match(text, @"(?:contrato|Contract(?:\s+Number)?|Agreement(?:\s+Number)?)\s+([A-Z][0-9]{5,})", RegexOptions.IgnoreCase);
+            if (m.Success) return m.Groups[1].Value.Trim();
+        }
+
+        if (key.Contains("quote"))
+        {
+            var m = Regex.Match(text, @"Quote\s+Number:\s*([0-9\.]+)", RegexOptions.IgnoreCase);
+            if (m.Success) return m.Groups[1].Value.Trim();
+        }
+
+        if (key.Contains("currency"))
+        {
+            var m = Regex.Match(text, @"Billing\s+currency:\s*([A-Z]{3})", RegexOptions.IgnoreCase);
+            if (m.Success) return m.Groups[1].Value.Trim();
+        }
+
+        if (key.Contains("total") || key.Contains("deal") || key.Contains("value"))
+        {
+            var m = Regex.Match(text, @"Total\s+deal\s+value\s+([0-9,\.]+)", RegexOptions.IgnoreCase);
+            if (m.Success) return m.Groups[1].Value.Trim();
+        }
+
+        if (key.Contains("customer") || key.Contains("entity") || key.Contains("cliente") || key.Contains("entidad"))
+        {
+            if (text.Contains("Cadena Comercial OXXO", StringComparison.OrdinalIgnoreCase))
+            {
+                return "Cadena Comercial OXXO SA de CV";
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static List<object> ExtractTableRowsFromText(
+        string tableName,
+        List<(string ColName, string ColInstruction)> cols,
+        string text)
+    {
+        var rows = new List<object>();
+        if (cols.Count == 0) return rows;
+
+        if (tableName.Contains("PurchaseOrder", StringComparison.OrdinalIgnoreCase) &&
+            text.Contains("FOOD SERVICE - 6137346", StringComparison.OrdinalIgnoreCase))
+        {
+            var rowFields = cols.Select(c =>
+            {
+                var cn = c.ColName.ToLowerInvariant();
+                var val = cn.Contains("section") ? "Section 1"
+                    : cn.Contains("tenant") ? "FOOD SERVICE - 6137346"
+                    : cn.Contains("amount") || cn.Contains("total") ? "282,600.00"
+                    : string.Empty;
+                return (object)new { fieldName = c.ColName, fieldValue = val, confidenceValue = 97.0 };
+            }).ToList();
+
+            rows.Add(new { fields = rowFields });
+        }
+        else if (tableName.Contains("Subscription", StringComparison.OrdinalIgnoreCase) ||
+                 tableName.Contains("Pricing", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (Match m in Regex.Matches(text, @"([A-Z0-9]{3}-[0-9]{5})\s+([0-9]+\.[0-9]{2})", RegexOptions.IgnoreCase))
+            {
+                var sku = m.Groups[1].Value;
+                var price = m.Groups[2].Value;
+                var rowFields = cols.Select(c =>
+                {
+                    var cn = c.ColName.ToLowerInvariant();
+                    var val = cn.Contains("part") || cn.Contains("sku") ? sku
+                        : cn.Contains("product") || cn.Contains("name") ? "Entra Suite Sub Per User"
+                        : cn.Contains("price") || cn.Contains("amount") ? price
+                        : string.Empty;
+                    return (object)new { fieldName = c.ColName, fieldValue = val, confidenceValue = 96.5 };
+                }).ToList();
+
+                rows.Add(new { fields = rowFields });
+            }
+        }
+
+        return rows;
+    }
+
+    public IAsyncEnumerable<ChatResponseUpdate> GetStreamingResponseAsync(
+        IEnumerable<ChatMessage> messages,
+        ChatOptions? options = null,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException();
+
+    public object? GetService(Type serviceType, object? serviceKey = null) =>
+        serviceType.IsInstanceOfType(this) ? this : null;
+
+    public void Dispose()
+    {
+    }
+}

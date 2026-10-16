@@ -1,0 +1,9 @@
+bin/
+obj/
+.vs/
+.nuget/
+*.user
+*.suo
+TestResults/
+TestOutput/
+**/App_Data/

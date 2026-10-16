@@ -1,0 +1,7 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+name: docintel-agent-harness
+services:
+  app:
+    language: dotnet
+    project: ./src/DocIntel.AppHost/DocIntel.AppHost.csproj
+    host: containerapp
