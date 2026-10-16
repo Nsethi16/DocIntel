@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "12101277627309651483"
+      "templateHash": "16899131273657492877"
     }
   },
   "parameters": {
@@ -41,21 +41,21 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Microsoft Foundry Inference endpoint (e.g. https://<foundry>.services.ai.azure.com/models)."
+        "description": "Optional existing Microsoft Foundry Inference endpoint. When empty, a new Foundry (AIServices) resource is provisioned automatically."
       }
     },
     "azureOpenAiEndpoint": {
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Azure OpenAI endpoint (e.g. https://<foundry>.openai.azure.com/)."
+        "description": "Optional existing Azure OpenAI endpoint. Defaults to the provisioned Foundry resource when empty."
       }
     },
     "translatorEndpoint": {
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Azure AI Translator endpoint (e.g. https://<translator>.cognitiveservices.azure.com/)."
+        "description": "Optional existing Azure AI Translator endpoint. Defaults to the provisioned Foundry resource when empty."
       }
     }
   },
@@ -66,6 +66,14 @@
     "caeName": "[format('cae-docintel-{0}', parameters('environmentName'))]",
     "appName": "[format('ca-docintel-{0}', parameters('environmentName'))]",
     "storageName": "[take(format('sadocintel{0}{1}', parameters('environmentName'), variables('uniqueSuffix')), 24)]",
+    "foundryName": "[format('aif-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix'))]",
+    "createFoundryResource": "[empty(parameters('foundryInferenceEndpoint'))]",
+    "cognitiveServicesUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
+    "cognitiveServicesOpenAiUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
+    "acrPullRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
+    "effectiveFoundryEndpoint": "[if(not(empty(parameters('foundryInferenceEndpoint'))), parameters('foundryInferenceEndpoint'), format('https://{0}.services.ai.azure.com/models', variables('foundryName')))]",
+    "effectiveOpenAiEndpoint": "[if(not(empty(parameters('azureOpenAiEndpoint'))), parameters('azureOpenAiEndpoint'), format('https://{0}.openai.azure.com/', variables('foundryName')))]",
+    "effectiveTranslatorEndpoint": "[if(not(empty(parameters('translatorEndpoint'))), parameters('translatorEndpoint'), format('https://{0}.cognitiveservices.azure.com/', variables('foundryName')))]",
     "storageBlobDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]"
   },
   "resources": [
@@ -74,6 +82,69 @@
       "apiVersion": "2023-01-31",
       "name": "[variables('uamiName')]",
       "location": "[parameters('location')]"
+    },
+    {
+      "condition": "[variables('createFoundryResource')]",
+      "type": "Microsoft.CognitiveServices/accounts",
+      "apiVersion": "2024-10-01",
+      "name": "[variables('foundryName')]",
+      "location": "[parameters('location')]",
+      "kind": "AIServices",
+      "sku": {
+        "name": "S0"
+      },
+      "properties": {
+        "customSubDomainName": "[variables('foundryName')]",
+        "publicNetworkAccess": "Enabled",
+        "disableLocalAuth": true
+      }
+    },
+    {
+      "condition": "[variables('createFoundryResource')]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName'))]",
+      "name": "[guid(resourceGroup().id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('cognitiveServicesUserRoleId'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[variables('cognitiveServicesUserRoleId')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
+      ]
+    },
+    {
+      "condition": "[variables('createFoundryResource')]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName'))]",
+      "name": "[guid(resourceGroup().id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('cognitiveServicesOpenAiUserRoleId'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[variables('cognitiveServicesOpenAiUserRoleId')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
+      ]
+    },
+    {
+      "condition": "[not(empty(parameters('acrName')))]",
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', if(not(empty(parameters('acrName'))), parameters('acrName'), 'placeholder'))]",
+      "name": "[guid(resourceGroup().id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('acrPullRoleId'), parameters('acrName'))]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[variables('acrPullRoleId')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
+      ]
     },
     {
       "type": "Microsoft.Storage/storageAccounts",
@@ -173,15 +244,15 @@
                 },
                 {
                   "name": "AzureAI__FoundryInferenceEndpoint",
-                  "value": "[parameters('foundryInferenceEndpoint')]"
+                  "value": "[variables('effectiveFoundryEndpoint')]"
                 },
                 {
                   "name": "AzureAI__AzureOpenAIEndpoint",
-                  "value": "[parameters('azureOpenAiEndpoint')]"
+                  "value": "[variables('effectiveOpenAiEndpoint')]"
                 },
                 {
                   "name": "AzureAI__TranslatorEndpoint",
-                  "value": "[parameters('translatorEndpoint')]"
+                  "value": "[variables('effectiveTranslatorEndpoint')]"
                 }
               ]
             }
@@ -214,6 +285,10 @@
     "storageAccountName": {
       "type": "string",
       "value": "[variables('storageName')]"
+    },
+    "foundryEndpoint": {
+      "type": "string",
+      "value": "[variables('effectiveFoundryEndpoint')]"
     }
   }
 }

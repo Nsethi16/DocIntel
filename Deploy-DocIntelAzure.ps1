@@ -2,11 +2,11 @@
 .SYNOPSIS
     One-command deployment script for DocIntel Agent Harness Studio to Azure Container Apps.
 .EXAMPLE
-    .\Deploy-DocIntelAzure.ps1 -SubscriptionId "<your-subscription-id>" -ResourceGroup "rg-docintel-dev-westus2" -Location "westus2" -FoundryEndpoint "https://<your-foundry>.services.ai.azure.com/models"
+    .\Deploy-DocIntelAzure.ps1
 #>
 param(
-    [Parameter(Mandatory = $true)]
-    [string]$SubscriptionId,
+    [Parameter(Mandatory = $false)]
+    [string]$SubscriptionId = "",
 
     [Parameter(Mandatory = $false)]
     [string]$ResourceGroup = "rg-docintel-dev-westus2",
@@ -32,8 +32,13 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-Write-Host "1. Setting Azure subscription to $SubscriptionId..." -ForegroundColor Cyan
-az account set --subscription $SubscriptionId
+if (-not [string]::IsNullOrWhiteSpace($SubscriptionId)) {
+    Write-Host "1. Setting Azure subscription to $SubscriptionId..." -ForegroundColor Cyan
+    az account set --subscription $SubscriptionId
+} else {
+    $currentSub = az account show --query "id" -o tsv
+    Write-Host "1. Using current Azure CLI subscription: $currentSub..." -ForegroundColor Cyan
+}
 
 Write-Host "2. Ensuring Resource Group '$ResourceGroup' exists in '$Location'..." -ForegroundColor Cyan
 az group create --name $ResourceGroup --location $Location --output none
