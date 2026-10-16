@@ -19,8 +19,20 @@ public enum JobStatus
 /// </summary>
 public sealed class DocumentJob
 {
+    /// <summary>
+    /// Cosmos DB document id (mirrors <see cref="JobId"/>).
+    /// </summary>
+    [JsonPropertyName("id")]
+    public string Id
+    {
+        get => JobId;
+        init => JobId = value;
+    }
+
+    [JsonPropertyName("jobId")]
     public required string JobId { get; init; }
 
+    [JsonPropertyName("tenantId")]
     public required string TenantId { get; init; }
 
     public required string TenantDisplayName { get; init; }

@@ -134,11 +134,14 @@ public sealed class DocumentSlice
     [JsonPropertyName("bodyText")]
     public string BodyText { get; set; } = string.Empty;
 
+    [JsonPropertyName("splitPdfBlobUri")]
+    public string? SplitPdfBlobUri { get; set; }
+
     [JsonIgnore]
     public byte[]? SplitPdfBytes { get; set; }
 
     [JsonPropertyName("splitPdfSizeBytes")]
-    public int SplitPdfSizeBytes => SplitPdfBytes?.Length ?? 0;
+    public int SplitPdfSizeBytes { get; set; }
 }
 
 /// <summary>

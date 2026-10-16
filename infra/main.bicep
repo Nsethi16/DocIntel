@@ -27,6 +27,8 @@ var logAnalyticsName = 'law-docintel-${environmentName}-${uniqueSuffix}'
 var caeName = 'cae-docintel-${environmentName}'
 var appName = 'ca-docintel-${environmentName}'
 var storageName = take('sadocintel${environmentName}${uniqueSuffix}', 24)
+var cosmosAccountName = 'cosmos-docintel-${environmentName}-${uniqueSuffix}'
+var cosmosDatabaseName = 'DocIntel'
 var foundryName = 'aif-docintel-${environmentName}-${uniqueSuffix}'
 var createFoundryResource = empty(foundryInferenceEndpoint)
 
@@ -128,6 +130,82 @@ resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-
   }
 }
 
+// 2b. Serverless Azure Cosmos DB (Shared 'harnesses' and 'jobs' containers partitioned by /tenantId)
+resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
+  name: cosmosAccountName
+  location: location
+  kind: 'GlobalDocumentDB'
+  properties: {
+    databaseAccountOfferType: 'Standard'
+    capabilities: [
+      {
+        name: 'EnableServerless'
+      }
+    ]
+    locations: [
+      {
+        locationName: location
+        failoverPriority: 0
+        isZoneRedundant: false
+      }
+    ]
+  }
+}
+
+resource cosmosDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024-05-15' = {
+  parent: cosmosAccount
+  name: cosmosDatabaseName
+  properties: {
+    resource: {
+      id: cosmosDatabaseName
+    }
+  }
+}
+
+resource harnessesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = {
+  parent: cosmosDatabase
+  name: 'harnesses'
+  properties: {
+    resource: {
+      id: 'harnesses'
+      partitionKey: {
+        paths: [
+          '/tenantId'
+        ]
+        kind: 'Hash'
+      }
+    }
+  }
+}
+
+resource jobsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = {
+  parent: cosmosDatabase
+  name: 'jobs'
+  properties: {
+    resource: {
+      id: 'jobs'
+      partitionKey: {
+        paths: [
+          '/tenantId'
+        ]
+        kind: 'Hash'
+      }
+    }
+  }
+}
+
+// Cosmos DB Built-in Data Contributor Role Assignment for UAMI
+var cosmosDataContributorRoleId = '${cosmosAccount.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
+resource cosmosSqlRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {
+  parent: cosmosAccount
+  name: guid(cosmosAccount.id, uami.id, '00000000-0000-0000-0000-000000000002')
+  properties: {
+    roleDefinitionId: cosmosDataContributorRoleId
+    principalId: uami.properties.principalId
+    scope: cosmosAccount.id
+  }
+}
+
 // 3. Log Analytics + Container Apps Environment
 resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   name: logAnalyticsName
@@ -206,6 +284,14 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'AzureAI__TranslatorEndpoint'
               value: effectiveTranslatorEndpoint
             }
+            {
+              name: 'AzureAI__CosmosEndpoint'
+              value: cosmosAccount.properties.documentEndpoint
+            }
+            {
+              name: 'AzureAI__BlobEndpoint'
+              value: storage.properties.primaryEndpoints.blob
+            }
           ]
         }
       ]
@@ -221,4 +307,5 @@ output containerAppFqdn string = 'https://${containerApp.properties.configuratio
 output managedIdentityClientId string = uami.properties.clientId
 output managedIdentityPrincipalId string = uami.properties.principalId
 output storageAccountName string = storage.name
+output cosmosAccountName string = cosmosAccount.name
 output foundryEndpoint string = effectiveFoundryEndpoint

@@ -207,6 +207,17 @@ public sealed class FeatureHarness
 /// </summary>
 public sealed class TenantHarness
 {
+    /// <summary>
+    /// Cosmos DB document id (mirrors <see cref="TenantId"/>).
+    /// </summary>
+    [JsonPropertyName("id")]
+    public string Id
+    {
+        get => TenantId;
+        set => TenantId = value;
+    }
+
+    [JsonPropertyName("tenantId")]
     public required string TenantId { get; set; }
 
     public required string DisplayName { get; set; }

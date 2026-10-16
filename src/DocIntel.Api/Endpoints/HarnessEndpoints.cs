@@ -2,6 +2,7 @@ using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Models;
+using DocIntel.Core.Storage;
 using Microsoft.AspNetCore.Mvc;
 
 namespace DocIntel.Api.Endpoints;
@@ -14,7 +15,12 @@ public static class HarnessEndpoints
 
         group.MapGet("/catalog", (IModelCatalog modelCatalog, IHarnessStore store) =>
         {
-            var storageLocation = (store as FileHarnessStore)?.StorageFilePath ?? "In-Memory";
+            var storageLocation = store switch
+            {
+                CosmosHarnessStore cosmos => cosmos.StorageDescription,
+                FileHarnessStore file => file.StorageFilePath,
+                _ => "In-Memory"
+            };
             return TypedResults.Ok(new
             {
                 models = modelCatalog.ListModels().Select(m => m.ModelId).ToArray(),
@@ -249,6 +255,7 @@ public static class HarnessEndpoints
         s.DataExtraction,
         s.BodyText,
         s.Markdown,
+        s.SplitPdfBlobUri,
         s.SplitPdfSizeBytes,
         splitPdfBase64 = s.SplitPdfBytes is not null ? Convert.ToBase64String(s.SplitPdfBytes) : null
     };

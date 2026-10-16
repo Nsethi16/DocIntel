@@ -6,6 +6,7 @@ using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Features.EntityExtraction;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Models;
+using DocIntel.Core.Storage;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.Logging;
 
@@ -28,6 +29,7 @@ public sealed class DocumentSplittingWorkflow
     private readonly IPdfSlicer _pdfSlicer;
     private readonly IModelCatalog _modelCatalog;
     private readonly IDocumentTranslationService _translationService;
+    private readonly IArtifactStore? _artifactStore;
     private readonly AzureIntegrationOptions _azureOptions;
     private readonly ILogger<DocumentSplittingWorkflow> _logger;
 
@@ -37,7 +39,8 @@ public sealed class DocumentSplittingWorkflow
         IModelCatalog modelCatalog,
         IDocumentTranslationService translationService,
         ILogger<DocumentSplittingWorkflow> logger,
-        AzureIntegrationOptions? azureOptions = null)
+        AzureIntegrationOptions? azureOptions = null,
+        IArtifactStore? artifactStore = null)
     {
         _layoutExtractor = layoutExtractor ?? throw new ArgumentNullException(nameof(layoutExtractor));
         _pdfSlicer = pdfSlicer ?? throw new ArgumentNullException(nameof(pdfSlicer));
@@ -45,6 +48,7 @@ public sealed class DocumentSplittingWorkflow
         _translationService = translationService ?? throw new ArgumentNullException(nameof(translationService));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _azureOptions = azureOptions ?? new AzureIntegrationOptions();
+        _artifactStore = artifactStore;
     }
 
     public async Task<SplittingState> ExecuteAsync(
@@ -83,7 +87,7 @@ public sealed class DocumentSplittingWorkflow
 
         var extractExecutor = new ExtractPageLayoutsExecutor(_layoutExtractor);
         var detectExecutor = new DetectSliceBoundariesExecutor();
-        var slicePdfExecutor = new WritePdfSlicesExecutor(_pdfSlicer);
+        var slicePdfExecutor = new WritePdfSlicesExecutor(_pdfSlicer, _artifactStore);
         var identifyExecutor = new IdentifyDocumentsExecutor(_modelCatalog);
         var translateExecutor = new TranslateDocumentsExecutor(_translationService, _azureOptions.ResolveEffectiveTranslatorEndpoint());
         var insightExecutor = new GenerateDocumentInsightsExecutor(_modelCatalog);
@@ -263,11 +267,13 @@ internal sealed class DetectSliceBoundariesExecutor : Executor<SplittingState, S
 internal sealed class WritePdfSlicesExecutor : Executor<SplittingState, SplittingState>
 {
     private readonly IPdfSlicer _pdfSlicer;
+    private readonly IArtifactStore? _artifactStore;
 
-    public WritePdfSlicesExecutor(IPdfSlicer pdfSlicer)
+    public WritePdfSlicesExecutor(IPdfSlicer pdfSlicer, IArtifactStore? artifactStore = null)
         : base(nameof(WritePdfSlicesExecutor))
     {
         _pdfSlicer = pdfSlicer;
+        _artifactStore = artifactStore;
     }
 
     public override async ValueTask<SplittingState> HandleAsync(
@@ -291,6 +297,17 @@ internal sealed class WritePdfSlicesExecutor : Executor<SplittingState, Splittin
             {
                 message.Slices[i].SegmentIndex = i;
                 message.Slices[i].SplitPdfBytes = splitBytes[i];
+                message.Slices[i].SplitPdfSizeBytes = splitBytes[i].Length;
+
+                if (_artifactStore is not null)
+                {
+                    message.Slices[i].SplitPdfBlobUri = await _artifactStore.SaveSlicePdfAsync(
+                        message.Tenant.TenantId,
+                        message.DocumentId,
+                        i,
+                        splitBytes[i],
+                        cancellationToken);
+                }
             }
         }
 

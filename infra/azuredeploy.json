@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "16899131273657492877"
+      "templateHash": "15110240308448484918"
     }
   },
   "parameters": {
@@ -66,6 +66,8 @@
     "caeName": "[format('cae-docintel-{0}', parameters('environmentName'))]",
     "appName": "[format('ca-docintel-{0}', parameters('environmentName'))]",
     "storageName": "[take(format('sadocintel{0}{1}', parameters('environmentName'), variables('uniqueSuffix')), 24)]",
+    "cosmosAccountName": "[format('cosmos-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix'))]",
+    "cosmosDatabaseName": "DocIntel",
     "foundryName": "[format('aif-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix'))]",
     "createFoundryResource": "[empty(parameters('foundryInferenceEndpoint'))]",
     "cognitiveServicesUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -74,7 +76,8 @@
     "effectiveFoundryEndpoint": "[if(not(empty(parameters('foundryInferenceEndpoint'))), parameters('foundryInferenceEndpoint'), format('https://{0}.services.ai.azure.com/models', variables('foundryName')))]",
     "effectiveOpenAiEndpoint": "[if(not(empty(parameters('azureOpenAiEndpoint'))), parameters('azureOpenAiEndpoint'), format('https://{0}.openai.azure.com/', variables('foundryName')))]",
     "effectiveTranslatorEndpoint": "[if(not(empty(parameters('translatorEndpoint'))), parameters('translatorEndpoint'), format('https://{0}.cognitiveservices.azure.com/', variables('foundryName')))]",
-    "storageBlobDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]"
+    "storageBlobDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
+    "cosmosDataContributorRoleId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')))]"
   },
   "resources": [
     {
@@ -177,6 +180,93 @@
       ]
     },
     {
+      "type": "Microsoft.DocumentDB/databaseAccounts",
+      "apiVersion": "2024-05-15",
+      "name": "[variables('cosmosAccountName')]",
+      "location": "[parameters('location')]",
+      "kind": "GlobalDocumentDB",
+      "properties": {
+        "databaseAccountOfferType": "Standard",
+        "capabilities": [
+          {
+            "name": "EnableServerless"
+          }
+        ],
+        "locations": [
+          {
+            "locationName": "[parameters('location')]",
+            "failoverPriority": 0,
+            "isZoneRedundant": false
+          }
+        ]
+      }
+    },
+    {
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
+      "apiVersion": "2024-05-15",
+      "name": "[format('{0}/{1}', variables('cosmosAccountName'), variables('cosmosDatabaseName'))]",
+      "properties": {
+        "resource": {
+          "id": "[variables('cosmosDatabaseName')]"
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+      "apiVersion": "2024-05-15",
+      "name": "[format('{0}/{1}/{2}', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'harnesses')]",
+      "properties": {
+        "resource": {
+          "id": "harnesses",
+          "partitionKey": {
+            "paths": [
+              "/tenantId"
+            ],
+            "kind": "Hash"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('cosmosAccountName'), variables('cosmosDatabaseName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+      "apiVersion": "2024-05-15",
+      "name": "[format('{0}/{1}/{2}', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'jobs')]",
+      "properties": {
+        "resource": {
+          "id": "jobs",
+          "partitionKey": {
+            "paths": [
+              "/tenantId"
+            ],
+            "kind": "Hash"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('cosmosAccountName'), variables('cosmosDatabaseName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
+      "apiVersion": "2024-05-15",
+      "name": "[format('{0}/{1}', variables('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '00000000-0000-0000-0000-000000000002'))]",
+      "properties": {
+        "roleDefinitionId": "[variables('cosmosDataContributorRoleId')]",
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').principalId]",
+        "scope": "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName'))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
+      ]
+    },
+    {
       "type": "Microsoft.OperationalInsights/workspaces",
       "apiVersion": "2023-09-01",
       "name": "[variables('logAnalyticsName')]",
@@ -253,6 +343,14 @@
                 {
                   "name": "AzureAI__TranslatorEndpoint",
                   "value": "[variables('effectiveTranslatorEndpoint')]"
+                },
+                {
+                  "name": "AzureAI__CosmosEndpoint",
+                  "value": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')), '2024-05-15').documentEndpoint]"
+                },
+                {
+                  "name": "AzureAI__BlobEndpoint",
+                  "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob]"
                 }
               ]
             }
@@ -265,6 +363,8 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.App/managedEnvironments', variables('caeName'))]",
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
       ]
     }
@@ -285,6 +385,10 @@
     "storageAccountName": {
       "type": "string",
       "value": "[variables('storageName')]"
+    },
+    "cosmosAccountName": {
+      "type": "string",
+      "value": "[variables('cosmosAccountName')]"
     },
     "foundryEndpoint": {
       "type": "string",
