@@ -334,7 +334,7 @@
     .meridian-header {
       background: var(--header-surface);
       border-bottom: 1px solid var(--line);
-      padding: 24px 36px 14px 36px;
+      padding: 22px 28px 12px 28px;
       flex-shrink: 0;
     }
 
@@ -342,44 +342,45 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
-      margin-bottom: 18px;
+      gap: 12px;
+      margin-bottom: 16px;
     }
 
     .meridian-identity {
       display: flex;
-      align-items: center;
-      gap: 13px;
+      align-items: baseline;
+      gap: 11px;
       min-width: 0;
       flex: 1;
     }
 
     .meridian-monogram {
-      width: 36px;
-      height: 36px;
-      border-radius: 9px;
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
       background: var(--monogram-bg);
       color: #ffffff;
       font-family: var(--font-serif);
       font-style: italic;
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 400;
       letter-spacing: 0.02em;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
+      align-self: center;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
     }
 
     .meridian-title {
       font-family: var(--font-serif);
-      font-size: 27px;
+      font-size: 24px;
       font-weight: 400;
       color: var(--text-primary);
       margin: 0;
       letter-spacing: -0.015em;
-      line-height: 1.15;
+      line-height: 1.2;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -389,17 +390,16 @@
     .meridian-folder-meta {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
-      font-size: 12.5px;
+      gap: 5px;
+      font-size: 12px;
       color: var(--text-secondary);
       white-space: nowrap;
       flex-shrink: 0;
-      padding-top: 3px;
     }
 
     .meridian-folder-meta svg {
-      width: 14px;
-      height: 14px;
+      width: 13.5px;
+      height: 13.5px;
       color: var(--text-muted);
     }
 
@@ -414,16 +414,15 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
+      gap: 10px;
       flex-wrap: nowrap;
     }
 
     .meridian-tabs {
       display: flex;
       align-items: center;
-      gap: 6px;
+      gap: 2px;
       flex-wrap: nowrap;
-      overflow-x: auto;
       min-width: 0;
     }
 
@@ -432,16 +431,16 @@
       background: transparent;
       color: var(--text-secondary);
       font-family: var(--font-sans);
-      font-size: 13.5px;
+      font-size: 13px;
       font-weight: 500;
-      padding: 6.5px 14px;
-      border-radius: 9px;
+      padding: 6px 11px;
+      border-radius: 8px;
       cursor: pointer;
       white-space: nowrap;
       transition: all 0.12s ease;
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 5px;
     }
 
     .meridian-tab:hover {
@@ -465,16 +464,16 @@
     .meridian-slice-select {
       border: 1px solid #dfddd6;
       background: #ffffff;
-      border-radius: 8px;
-      padding: 5.5px 11px;
-      font-size: 12.5px;
+      border-radius: 6px;
+      padding: 3.5px 8px;
+      font-size: 11.5px;
       font-weight: 500;
-      color: var(--text-primary);
+      color: var(--text-secondary);
       font-family: inherit;
       cursor: pointer;
-      max-width: 260px;
+      width: 116px;
+      text-overflow: ellipsis;
       outline: none;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.03);
     }
 
     .meridian-slice-select:hover {
@@ -737,7 +736,7 @@
     <header class="meridian-header">
       <div class="meridian-top-row">
         <div class="meridian-identity">
-          <button type="button" class="icon-toggle-btn" id="btnHeaderExpandDocList" title="Toggle documents drawer" onclick="toggleDocListPane()">
+          <button type="button" class="icon-toggle-btn" id="btnHeaderExpandDocList" style="display:none;align-self:center;" title="Show documents drawer" onclick="toggleDocListPane()">
             <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
               <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
               <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
@@ -754,8 +753,8 @@
         </div>
 
         <div class="meridian-actions">
-          <button type="button" class="ghost-action-btn" onclick="exportSelectedJobJson()" title="Download extracted JSON">Export JSON</button>
-          <a href="/admin.html" class="ghost-action-btn" title="Configure tenant models and capabilities">Admin Studio ↗</a>
+          <div id="sliceSelectorRow" style="display:flex;align-items:center;gap:6px;"></div>
+          <button type="button" class="ghost-action-btn" onclick="exportSelectedJobJson()" title="Download extracted JSON">Export</button>
         </div>
       </div>
 
@@ -767,8 +766,6 @@
           <button type="button" class="meridian-tab" data-tab="structured" onclick="setDocResultTab('structured')">Structured Data</button>
           <button type="button" class="meridian-tab" data-tab="metadata" onclick="setDocResultTab('metadata')">Metadata</button>
         </nav>
-
-        <div id="sliceSelectorRow" style="display:flex;align-items:center;gap:8px;flex-shrink:0;"></div>
       </div>
     </header>
 
@@ -818,8 +815,12 @@
 
     function toggleDocListPane() {
       const pane = document.getElementById('docListPane');
+      const expandBtn = document.getElementById('btnHeaderExpandDocList');
       if (!pane) return;
-      pane.classList.toggle('collapsed');
+      const isCollapsed = pane.classList.toggle('collapsed');
+      if (expandBtn) {
+        expandBtn.style.display = isCollapsed ? 'inline-flex' : 'none';
+      }
     }
 
     async function init() {
@@ -1031,7 +1032,7 @@
       const cleanTitle = (job.fileName || 'Document').replace(/\.pdf$/i, '');
       document.getElementById('selectedDocTitle').textContent = cleanTitle;
       document.getElementById('selectedDocTitle').title = job.fileName;
-      document.getElementById('selectedDocMetaText').textContent = `${job.tenantId} · ${job.totalPages || 0} pp · ${job.status}`;
+      document.getElementById('selectedDocMetaText').textContent = `${job.totalPages || 0} pp`;
 
       const totalEntitiesCount = segs.reduce((acc, s) => acc + ((s.extractedEntities || []).length), 0);
       const totalStructuredCount = segs.reduce((acc, s) => {
