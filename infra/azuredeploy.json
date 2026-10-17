@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "14320881211925666567"
+      "templateHash": "14085599803804296865"
     }
   },
   "parameters": {
@@ -93,6 +93,7 @@
     "cosmosAccountName": "[format('cosmos-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix'))]",
     "cosmosDatabaseName": "DocIntel",
     "foundryName": "[format('aif-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix'))]",
+    "effectiveAcrName": "[if(not(empty(parameters('acrName'))), parameters('acrName'), take(format('acrdocintel{0}{1}', parameters('environmentName'), variables('uniqueSuffix')), 50))]",
     "createFoundryResource": "[empty(parameters('foundryInferenceEndpoint'))]",
     "cognitiveServicesUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
     "cognitiveServicesOpenAiUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
@@ -211,17 +212,29 @@
       ]
     },
     {
-      "condition": "[not(empty(parameters('acrName')))]",
+      "type": "Microsoft.ContainerRegistry/registries",
+      "apiVersion": "2023-07-01",
+      "name": "[variables('effectiveAcrName')]",
+      "location": "[parameters('location')]",
+      "sku": {
+        "name": "Basic"
+      },
+      "properties": {
+        "adminUserEnabled": true
+      }
+    },
+    {
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', if(not(empty(parameters('acrName'))), parameters('acrName'), 'placeholder'))]",
-      "name": "[guid(resourceGroup().id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('acrPullRoleId'), parameters('acrName'))]",
+      "scope": "[resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName'))]",
+      "name": "[guid(resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('acrPullRoleId'))]",
       "properties": {
         "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').principalId]",
         "principalType": "ServicePrincipal",
         "roleDefinitionId": "[variables('acrPullRoleId')]"
       },
       "dependsOn": [
+        "[resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName'))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
       ]
     },
@@ -392,7 +405,12 @@
             "targetPort": 8080,
             "transport": "auto"
           },
-          "registries": "[if(not(empty(parameters('acrName'))), createArray(createObject('server', format('{0}.azurecr.io', parameters('acrName')), 'identity', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')))), createArray())]"
+          "registries": [
+            {
+              "server": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName')), '2023-07-01').loginServer]",
+              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
+            }
+          ]
         },
         "template": {
           "containers": [
@@ -438,6 +456,7 @@
         }
       },
       "dependsOn": [
+        "[resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName'))]",
         "[resourceId('Microsoft.App/managedEnvironments', variables('caeName'))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName'))]",
         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
@@ -449,6 +468,14 @@
     "containerAppFqdn": {
       "type": "string",
       "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('appName')), '2024-03-01').configuration.ingress.fqdn)]"
+    },
+    "containerRegistryName": {
+      "type": "string",
+      "value": "[variables('effectiveAcrName')]"
+    },
+    "containerRegistryLoginServer": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName')), '2023-07-01').loginServer]"
     },
     "managedIdentityClientId": {
       "type": "string",

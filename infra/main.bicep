@@ -50,6 +50,7 @@ var storageName = take('sadocintel${environmentName}${uniqueSuffix}', 24)
 var cosmosAccountName = 'cosmos-docintel-${environmentName}-${uniqueSuffix}'
 var cosmosDatabaseName = 'DocIntel'
 var foundryName = 'aif-docintel-${environmentName}-${uniqueSuffix}'
+var effectiveAcrName = !empty(acrName) ? acrName : take('acrdocintel${environmentName}${uniqueSuffix}', 50)
 var createFoundryResource = empty(foundryInferenceEndpoint)
 
 // 1. User-Assigned Managed Identity (Passwordless Auth for Foundry, Translator, Blob, and ACR)
@@ -132,15 +133,22 @@ resource foundryAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' 
   }
 }
 
-// Grant UAMI "AcrPull" when an ACR in the same resource group is provided
-var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
-resource existingAcr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = if (!empty(acrName)) {
-  name: !empty(acrName) ? acrName : 'placeholder'
+// 1d. Azure Container Registry (Provisioned automatically + AcrPull RBAC for UAMI)
+resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
+  name: effectiveAcrName
+  location: location
+  sku: {
+    name: 'Basic'
+  }
+  properties: {
+    adminUserEnabled: true
+  }
 }
 
-resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (!empty(acrName)) {
-  name: guid(resourceGroup().id, uami.id, acrPullRoleId, acrName)
-  scope: existingAcr
+var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(acr.id, uami.id, acrPullRoleId)
+  scope: acr
   properties: {
     principalId: uami.properties.principalId
     principalType: 'ServicePrincipal'
@@ -306,12 +314,12 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
         targetPort: 8080
         transport: 'auto'
       }
-      registries: !empty(acrName) ? [
+      registries: [
         {
-          server: '${acrName}.azurecr.io'
+          server: acr.properties.loginServer
           identity: uami.id
         }
-      ] : []
+      ]
     }
     template: {
       containers: [
@@ -359,6 +367,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
 }
 
 output containerAppFqdn string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
+output containerRegistryName string = acr.name
+output containerRegistryLoginServer string = acr.properties.loginServer
 output managedIdentityClientId string = uami.properties.clientId
 output managedIdentityPrincipalId string = uami.properties.principalId
 output storageAccountName string = storage.name
