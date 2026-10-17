@@ -802,7 +802,7 @@
       display: none;
     }
 
-    /* Pane 1: Document List by Tenant */
+    /* Pane 1: Document List by Tenant (Collapsible / Expandable) */
     .doc-list-pane {
       width: 300px;
       background: #ffffff;
@@ -810,6 +810,169 @@
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
+      transition: width 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+      overflow: hidden;
+    }
+
+    .doc-list-pane.collapsed {
+      width: 56px;
+    }
+
+    .doc-list-pane.collapsed .doc-list-title,
+    .doc-list-pane.collapsed .tenant-mini-badge,
+    .doc-list-pane.collapsed .search-box,
+    .doc-list-pane.collapsed .doc-count-bar,
+    .doc-list-pane.collapsed .doc-card-body,
+    .doc-list-pane.collapsed #uploadBtnLabel {
+      display: none;
+    }
+
+    .doc-list-pane.collapsed .doc-list-top {
+      padding: 14px 10px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .doc-list-pane.collapsed .doc-list-title-row {
+      margin-bottom: 0;
+      justify-content: center;
+    }
+
+    .doc-list-pane.collapsed .doc-items-scroll {
+      padding: 8px 6px;
+      align-items: center;
+    }
+
+    .doc-list-pane.collapsed .doc-card-item {
+      padding: 6px;
+      justify-content: center;
+    }
+
+    .doc-list-pane.collapsed .doc-list-footer {
+      padding: 10px 8px;
+      justify-content: center;
+    }
+
+    .doc-list-pane.collapsed .btn-upload-full {
+      padding: 9px;
+    }
+
+    .doc-pane-collapse-btn {
+      width: 28px;
+      height: 28px;
+      border-radius: 7px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      transition: all 0.14s ease;
+    }
+
+    .doc-pane-collapse-btn:hover {
+      background: #f3f1ed;
+      color: var(--text-primary);
+      border-color: #e4e0d8;
+    }
+
+    .packet-kpi-strip {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .packet-kpi-card {
+      background: #ffffff;
+      border: 1px solid var(--card-border);
+      border-radius: 14px;
+      padding: 13px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+    }
+
+    .packet-kpi-label {
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.45px;
+      color: var(--text-muted);
+    }
+
+    .packet-kpi-value {
+      font-size: 15px;
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+
+    .packet-kpi-sub {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .copy-chip-btn {
+      border: 1px solid #e5e0d5;
+      background: #ffffff;
+      color: var(--text-secondary);
+      border-radius: 7px;
+      padding: 3px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.12s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .copy-chip-btn:hover {
+      background: var(--accent-sand);
+      color: #7c2816;
+      border-color: #dec2b4;
+    }
+
+    .entity-filter-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 14px;
+      padding-bottom: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .entity-cat-pills {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .entity-cat-pill {
+      border: 1px solid #e4dfd5;
+      background: #f8f7f4;
+      color: var(--text-secondary);
+      border-radius: 999px;
+      padding: 4px 11px;
+      font-size: 11.5px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.12s ease;
+    }
+
+    .entity-cat-pill.active {
+      background: var(--text-primary);
+      color: #ffffff;
+      border-color: var(--text-primary);
     }
 
     .doc-list-top {
@@ -1668,19 +1831,27 @@
 
   <!-- VIEW 1: Modern 3-Column Document Intelligence Results by Tenant -->
   <section class="doc-intel-workspace active-view" id="docIntelWorkspace">
-    <!-- Column 1: Document List by Tenant -->
-    <div class="doc-list-pane">
+    <!-- Column 1: Document List by Tenant (Collapsible) -->
+    <div class="doc-list-pane" id="docListPane">
       <div class="doc-list-top">
         <div class="doc-list-title-row">
-          <h2 class="doc-list-title">Document Intelligence</h2>
-          <span class="tenant-mini-badge" id="docListTenantBadge">Tenant</span>
+          <div style="display:flex;align-items:center;gap:8px;min-width:0;">
+            <h2 class="doc-list-title">Document Intelligence</h2>
+            <span class="tenant-mini-badge" id="docListTenantBadge">Tenant</span>
+          </div>
+          <button type="button" class="doc-pane-collapse-btn" id="btnToggleDocListPane" title="Collapse or expand document list panel" onclick="toggleDocListPane()">
+            <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+              <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
+              <line x1="8" y1="3.5" x2="8" y2="16.5" />
+            </svg>
+          </button>
         </div>
         <div class="search-box">
           <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
             <circle cx="8.5" cy="8.5" r="5.5" />
             <path d="M13 13l4 4" stroke-linecap="round" />
           </svg>
-          <input type="text" id="docSearchInput" placeholder="Search documents" oninput="renderDocumentList()" />
+          <input type="text" id="docSearchInput" placeholder="Search documents or types..." oninput="renderDocumentList()" />
         </div>
       </div>
 
@@ -1692,7 +1863,7 @@
       <div class="doc-items-scroll" id="docItemsList"></div>
 
       <div class="doc-list-footer">
-        <label class="btn-upload-full">
+        <label class="btn-upload-full" title="Upload PDF document">
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
             <path d="M10 13V4m0 0L6.5 7.5M10 4l3.5 3.5M4 15.5h12" stroke-linecap="round" stroke-linejoin="round"/>
           </svg>
@@ -1706,8 +1877,16 @@
     <div class="doc-center-pane">
       <div class="doc-center-header">
         <div class="doc-title-bar">
-          <h2 class="doc-title-text" id="selectedDocTitle">Select or upload a document</h2>
-          <div style="display:flex;align-items:center;gap:8px;">
+          <div style="display:flex;align-items:center;gap:10px;min-width:0;">
+            <button type="button" class="doc-pane-collapse-btn" id="btnHeaderExpandDocList" style="display:none;" title="Expand document list panel" onclick="toggleDocListPane()">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.7">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M7 5l5 5-5 5" />
+              </svg>
+            </button>
+            <h2 class="doc-title-text" id="selectedDocTitle">Select or upload a document</h2>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+            <button type="button" class="btn-mini" onclick="exportSelectedJobJson()" title="Download full extracted JSON result">⬇ Export JSON</button>
             <span class="version-chip" id="selectedDocHarnessBadge">Harness v1</span>
             <span class="status-pill-mini" id="selectedDocStatusBadge">Ready</span>
           </div>
@@ -2636,7 +2815,48 @@
     let selectedSliceIndex = -1; // -1 = All Slices
     let docResultTab = 'insights'; // 'insights' | 'document' | 'entities' | 'structured' | 'metadata'
     let docStageViewMode = 'split'; // 'pdf' | 'split' | 'text'
+    let selectedEntityCategory = 'ALL';
     let jobPollTimer = null;
+
+    function toggleDocListPane() {
+      const pane = document.getElementById('docListPane');
+      const expandHeaderBtn = document.getElementById('btnHeaderExpandDocList');
+      if (!pane) return;
+      const isCollapsed = pane.classList.toggle('collapsed');
+      if (expandHeaderBtn) {
+        expandHeaderBtn.style.display = isCollapsed ? 'inline-flex' : 'none';
+      }
+    }
+
+    function jumpToSlicePdf(sliceIndex) {
+      selectedSliceIndex = sliceIndex;
+      setDocResultTab('document');
+    }
+
+    function copyTextValue(val) {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(String(val || ''));
+      }
+      showToast('Copied to clipboard');
+    }
+
+    function setEntityCategoryFilter(cat) {
+      selectedEntityCategory = cat;
+      renderSelectedDocument();
+    }
+
+    function exportSelectedJobJson() {
+      const job = tenantJobs.find(j => j.jobId === selectedJobId);
+      if (!job) return;
+      const blob = new Blob([JSON.stringify(job, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(job.fileName || 'document').replace(/\.pdf$/i, '')}-docintel-result.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Exported JSON result');
+    }
 
     function switchWorkspaceView(view) {
       activeWorkspaceView = view;
@@ -2717,6 +2937,7 @@
 
         const card = document.createElement('div');
         card.className = 'doc-card-item' + (isSelected ? ' selected' : '');
+        card.title = `${job.fileName} (${segs.length} slices · ${job.status})`;
         card.onclick = () => {
           selectedJobId = job.jobId;
           selectedSliceIndex = -1;
@@ -2965,16 +3186,46 @@
       }
 
       if (docResultTab === 'insights') {
-        body.innerHTML = activeSegs.map(s => `
+        const distinctTypes = [...new Set(segs.map(s => s.identifiedDocumentName || s.documentTypeName || 'Undefined'))];
+        const distinctLangs = [...new Set(segs.map(s => (s.detectedLanguage || 'en').toUpperCase()))];
+        const anyTranslated = segs.some(s => s.wasTranslated);
+
+        const kpiStripHtml = `
+          <div class="packet-kpi-strip">
+            <div class="packet-kpi-card">
+              <span class="packet-kpi-label">Packet Structure</span>
+              <span class="packet-kpi-value">${segs.length} Slice${segs.length === 1 ? '' : 's'} · ${job.totalPages || 0} Pages</span>
+              <span class="packet-kpi-sub">Deterministic layout &amp; footer split</span>
+            </div>
+            <div class="packet-kpi-card">
+              <span class="packet-kpi-label">Identified Document Types</span>
+              <span class="packet-kpi-value">${distinctTypes.filter(t => t !== 'Undefined').length} Matched / ${distinctTypes.length} Total</span>
+              <span class="packet-kpi-sub" title="${escapeHtml(distinctTypes.join(', '))}">${escapeHtml(distinctTypes.join(', '))}</span>
+            </div>
+            <div class="packet-kpi-card">
+              <span class="packet-kpi-label">Language &amp; Translation</span>
+              <span class="packet-kpi-value">${escapeHtml(distinctLangs.join(', '))}${anyTranslated ? ' → EN' : ''}</span>
+              <span class="packet-kpi-sub">${anyTranslated ? 'Translated via Azure AI Translator' : 'Native source language'}</span>
+            </div>
+            <div class="packet-kpi-card">
+              <span class="packet-kpi-label">Extracted Intelligence</span>
+              <span class="packet-kpi-value">${totalEntitiesCount} Entities · ${totalStructuredCount} Schema Items</span>
+              <span class="packet-kpi-sub">Model: ${escapeHtml(job.modelIdUsed || 'gpt-5-mini')}</span>
+            </div>
+          </div>
+        `;
+
+        body.innerHTML = kpiStripHtml + activeSegs.map(s => `
           <div class="result-card">
             <div class="result-card-header">
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
                 <span class="version-chip" style="background:var(--accent-sand);color:#7c2816;border-color:#e5c5b8;">Slice #${s.segmentIndex + 1} · p.${s.startPage}–${s.endPage}</span>
                 <h3 class="result-card-title" style="font-size:15px;">${escapeHtml(s.identifiedDocumentName || s.documentTypeName || 'Document')}</h3>
               </div>
-              <div style="display:flex;align-items:center;gap:8px;">
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
                 <span class="version-chip">${escapeHtml((s.detectedLanguage || 'en').toUpperCase())}${s.wasTranslated ? ` → ${escapeHtml((s.targetLanguage || 'en').toUpperCase())}` : ''}</span>
                 <span class="conf-badge">${s.identifiedDocumentName && s.identifiedDocumentName !== 'Undefined' ? 'Matched Rule' : 'Identified'}</span>
+                <button type="button" class="copy-chip-btn" onclick="jumpToSlicePdf(${s.segmentIndex})" title="Open this slice in View Document">📄 View Slice PDF</button>
               </div>
             </div>
             <div class="insight-summary-box">
@@ -2987,8 +3238,8 @@
           </div>
         `).join('');
       } else if (docResultTab === 'entities') {
-        const entities = activeSegs.flatMap(s => (s.extractedEntities || []).map(e => ({ ...e, sliceNum: s.segmentIndex + 1, docType: s.identifiedDocumentName || s.documentTypeName })));
-        if (entities.length === 0) {
+        const allEntities = activeSegs.flatMap(s => (s.extractedEntities || []).map(e => ({ ...e, sliceIndex: s.segmentIndex, sliceNum: s.segmentIndex + 1, docType: s.identifiedDocumentName || s.documentTypeName })));
+        if (allEntities.length === 0) {
           body.innerHTML = `
             <div class="result-card" style="text-align:center;padding:42px 20px;">
               <div style="font-size:14.5px;font-weight:600;color:var(--text-primary);margin-bottom:4px;">Entity extraction artifact unavailable</div>
@@ -2997,23 +3248,41 @@
           `;
           return;
         }
+        const categories = ['ALL', ...new Set(allEntities.map(e => (e.category || 'Entity').toUpperCase()))];
+        if (!categories.includes(selectedEntityCategory)) selectedEntityCategory = 'ALL';
+        const filteredEntities = selectedEntityCategory === 'ALL'
+          ? allEntities
+          : allEntities.filter(e => (e.category || 'Entity').toUpperCase() === selectedEntityCategory);
+
         body.innerHTML = `
           <div class="result-card">
             <div class="result-card-header">
-              <h3 class="result-card-title">Extracted Entities (${entities.length})</h3>
+              <h3 class="result-card-title">Extracted Entities (${filteredEntities.length} of ${allEntities.length})</h3>
               <span class="version-chip">Model: ${escapeHtml(job.modelIdUsed || 'gpt-5-mini')}</span>
             </div>
+            <div class="entity-filter-bar">
+              <div class="entity-cat-pills">
+                ${categories.map(cat => `
+                  <button type="button" class="entity-cat-pill ${selectedEntityCategory === cat ? 'active' : ''}" onclick="setEntityCategoryFilter('${escapeHtml(cat)}')">
+                    ${cat === 'ALL' ? `All (${allEntities.length})` : escapeHtml(cat)}
+                  </button>
+                `).join('')}
+              </div>
+            </div>
             <div class="entity-grid">
-              ${entities.map(e => {
+              ${filteredEntities.map(e => {
                 const pct = Math.round((e.confidence <= 1 ? e.confidence * 100 : e.confidence));
                 return `
                   <div class="entity-chip-card">
                     <div class="entity-chip-top">
-                      <span>${escapeHtml(e.category || 'Entity')} · Slice #${e.sliceNum}</span>
+                      <span>${escapeHtml(e.category || 'Entity')} · <a href="javascript:void(0)" onclick="jumpToSlicePdf(${e.sliceIndex})" style="color:#c25138;text-decoration:none;">Slice #${e.sliceNum} ↗</a></span>
                       <span class="conf-badge">${pct}%</span>
                     </div>
                     <div class="entity-chip-name">${escapeHtml(e.name)}</div>
-                    <div class="entity-chip-val">${escapeHtml(e.value)}</div>
+                    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+                      <div class="entity-chip-val">${escapeHtml(e.value)}</div>
+                      <button type="button" class="copy-chip-btn" onclick="copyTextValue(${JSON.stringify(String(e.value || '')).replace(/"/g, '&quot;')})" title="Copy value">Copy</button>
+                    </div>
                     <div style="height:4px;background:#eeeae2;border-radius:99px;overflow:hidden;margin-top:6px;">
                       <div style="height:100%;width:${Math.min(100, Math.max(10, pct))}%;background:#16a34a;border-radius:99px;"></div>
                     </div>
