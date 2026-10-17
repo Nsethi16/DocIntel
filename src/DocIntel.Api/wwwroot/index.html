@@ -1110,34 +1110,135 @@
     }
 
     .result-tabs {
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 4px;
+      background: #f4f2ee;
+      padding: 4px;
+      border-radius: 12px;
+      border: 1px solid #e6e2da;
       flex-wrap: wrap;
     }
 
     .result-tab-btn {
       border: 1px solid transparent;
       background: transparent;
-      padding: 6px 13px;
-      border-radius: 999px;
+      padding: 6px 14px;
+      border-radius: 8px;
       font-size: 12.5px;
       font-weight: 500;
       color: var(--text-secondary);
       cursor: pointer;
-      transition: all 0.12s ease;
+      transition: all 0.14s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
     }
 
     .result-tab-btn:hover {
-      background: var(--pill-hover);
       color: var(--text-primary);
+      background: rgba(255, 255, 255, 0.55);
     }
 
     .result-tab-btn.active {
-      background: var(--accent-sand);
+      background: #ffffff;
       color: var(--text-primary);
-      border-color: #e4ddd0;
+      border-color: #e4dfd5;
       font-weight: 600;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+    }
+
+    .tab-count-pill {
+      font-size: 10.5px;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 999px;
+      background: #ebe7df;
+      color: #4b463e;
+    }
+
+    .result-tab-btn.active .tab-count-pill {
+      background: var(--accent-sand);
+      color: #7c2816;
+    }
+
+    .slice-switcher-group {
+      display: inline-flex;
+      align-items: center;
+      background: #f4f2ee;
+      border: 1px solid #e6e2da;
+      border-radius: 10px;
+      padding: 3px;
+      gap: 3px;
+    }
+
+    .slice-step-btn {
+      border: none;
+      background: #ffffff;
+      color: var(--text-primary);
+      width: 26px;
+      height: 26px;
+      border-radius: 7px;
+      font-size: 11px;
+      font-weight: 700;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px solid #e5e1d8;
+      transition: all 0.12s ease;
+    }
+
+    .slice-step-btn:hover:not(:disabled) {
+      background: var(--accent-sand);
+      border-color: #d9b8aa;
+    }
+
+    .slice-step-btn:disabled {
+      opacity: 0.38;
+      cursor: not-allowed;
+    }
+
+    .slice-select-modern {
+      border: none;
+      background: transparent;
+      padding: 4px 10px;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+      font-family: inherit;
+      cursor: pointer;
+      max-width: 310px;
+      outline: none;
+    }
+
+    .insight-summary-box {
+      background: linear-gradient(135deg, #fdfcfb 0%, #f8f5ef 100%);
+      border: 1px solid #eae4d7;
+      border-left: 3.5px solid #d96b43;
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-size: 13.5px;
+      line-height: 1.6;
+      color: var(--text-primary);
+      margin-bottom: 12px;
+    }
+
+    .kv-modern-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+
+    .kv-modern-card {
+      background: #faf9f6;
+      border: 1px solid #ebe6dc;
+      border-radius: 11px;
+      padding: 11px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
     }
 
     .doc-center-body {
@@ -2729,22 +2830,59 @@
       statusBadge.className = 'status-pill-mini ' + (job.status === 'Completed' ? '' : (job.status === 'Failed' ? 'failed' : 'running'));
 
       const segs = job.segments || [];
+      const totalEntitiesCount = segs.reduce((acc, s) => acc + ((s.extractedEntities || []).length), 0);
+      const totalStructuredCount = segs.reduce((acc, s) => {
+        const de = s.dataExtraction;
+        if (!de) return acc;
+        return acc + ((de.fields || []).length) + ((de.tables || []).length);
+      }, 0);
+
+      // Update tab button labels with live count badges
+      const tabButtons = document.querySelectorAll('#insightsTabBar .result-tab-btn');
+      tabButtons.forEach(btn => {
+        const t = btn.dataset.tab;
+        if (t === 'insights') btn.innerHTML = `<span>✦ Insights</span>`;
+        else if (t === 'document') btn.innerHTML = `<span>📄 View Document</span>`;
+        else if (t === 'entities') btn.innerHTML = `<span>🏷 Entities</span>${totalEntitiesCount > 0 ? `<span class="tab-count-pill">${totalEntitiesCount}</span>` : ''}`;
+        else if (t === 'structured') btn.innerHTML = `<span>📊 Structured Data</span>${totalStructuredCount > 0 ? `<span class="tab-count-pill">${totalStructuredCount}</span>` : ''}`;
+        else if (t === 'metadata') btn.innerHTML = `<span>⚙ Metadata</span>`;
+      });
+
       sliceRow.innerHTML = '';
       if (segs.length > 0) {
+        const group = document.createElement('div');
+        group.className = 'slice-switcher-group';
+
+        const prevBtn = document.createElement('button');
+        prevBtn.type = 'button';
+        prevBtn.className = 'slice-step-btn';
+        prevBtn.title = 'Previous slice';
+        prevBtn.textContent = '◀';
+        const effectiveIdx = selectedSliceIndex === -1 ? 0 : selectedSliceIndex;
+        prevBtn.disabled = segs.length <= 1 || effectiveIdx <= 0;
+        prevBtn.onclick = () => {
+          selectedSliceIndex = Math.max(0, effectiveIdx - 1);
+          renderSelectedDocument();
+        };
+
         const select = document.createElement('select');
-        select.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;font-size:12.5px;color:var(--text-primary);font-family:inherit;cursor:pointer;max-width:280px;';
-        const allOpt = document.createElement('option');
-        allOpt.value = '-1';
-        allOpt.textContent = `All Slices (${segs.length})`;
-        if (selectedSliceIndex === -1) allOpt.selected = true;
-        select.appendChild(allOpt);
+        select.className = 'slice-select-modern';
+        if (docResultTab !== 'document') {
+          const allOpt = document.createElement('option');
+          allOpt.value = '-1';
+          allOpt.textContent = `All Slices (${segs.length})`;
+          if (selectedSliceIndex === -1) allOpt.selected = true;
+          select.appendChild(allOpt);
+        }
+
+        const activePdfSliceIdx = (docResultTab === 'document' && selectedSliceIndex === -1) ? 0 : selectedSliceIndex;
 
         segs.forEach(s => {
           const opt = document.createElement('option');
           opt.value = String(s.segmentIndex);
           const labelName = s.identifiedDocumentName || s.documentTypeName || `Slice ${s.segmentIndex + 1}`;
-          opt.textContent = `Slice ${s.segmentIndex + 1}: ${labelName} (p.${s.startPage}–${s.endPage})`;
-          if (selectedSliceIndex === s.segmentIndex) opt.selected = true;
+          opt.textContent = `Slice ${s.segmentIndex + 1} of ${segs.length} · ${labelName} (p.${s.startPage}–${s.endPage})`;
+          if (activePdfSliceIdx === s.segmentIndex) opt.selected = true;
           select.appendChild(opt);
         });
 
@@ -2752,7 +2890,34 @@
           selectedSliceIndex = parseInt(e.target.value, 10);
           renderSelectedDocument();
         };
-        sliceRow.appendChild(select);
+
+        const nextBtn = document.createElement('button');
+        nextBtn.type = 'button';
+        nextBtn.className = 'slice-step-btn';
+        nextBtn.title = 'Next slice';
+        nextBtn.textContent = '▶';
+        nextBtn.disabled = segs.length <= 1 || effectiveIdx >= segs.length - 1;
+        nextBtn.onclick = () => {
+          selectedSliceIndex = Math.min(segs.length - 1, (selectedSliceIndex === -1 ? 0 : selectedSliceIndex) + 1);
+          renderSelectedDocument();
+        };
+
+        group.appendChild(prevBtn);
+        group.appendChild(select);
+        group.appendChild(nextBtn);
+        sliceRow.appendChild(group);
+
+        if (docResultTab === 'document') {
+          const focusedSeg = (selectedSliceIndex >= 0 ? segs.find(s => s.segmentIndex === selectedSliceIndex) : segs[0]) || segs[0];
+          const pdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf`;
+          const openLink = document.createElement('a');
+          openLink.href = pdfUrl;
+          openLink.target = '_blank';
+          openLink.className = 'btn-mini';
+          openLink.style.cssText = 'text-decoration:none;font-size:12px;padding:6px 10px;border-radius:8px;';
+          openLink.textContent = '↗ Open PDF';
+          sliceRow.appendChild(openLink);
+        }
       }
 
       if (job.status === 'Queued' || job.status === 'Running') {
@@ -2794,7 +2959,7 @@
         const pdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf`;
 
         body.innerHTML = `
-          <iframe src="${pdfUrl}" style="width:100%;height:calc(100vh - 210px);min-height:560px;border:1px solid var(--border);border-radius:12px;background:#f4f4f4;display:block;" title="PDF Preview"></iframe>
+          <iframe src="${pdfUrl}" style="width:100%;height:calc(100vh - 185px);min-height:580px;border:1px solid var(--card-border);border-radius:14px;background:#f4f4f4;display:block;box-shadow:0 4px 16px rgba(0,0,0,0.04);" title="PDF Preview"></iframe>
         `;
         return;
       }
@@ -2803,20 +2968,21 @@
         body.innerHTML = activeSegs.map(s => `
           <div class="result-card">
             <div class="result-card-header">
-              <div>
-                <h3 class="result-card-title">Slice #${s.segmentIndex + 1} · ${escapeHtml(s.identifiedDocumentName || s.documentTypeName || 'Document')}</h3>
-                <div style="font-size:11.5px;color:var(--text-secondary);margin-top:2px;">
-                  Pages ${s.startPage}–${s.endPage} · Language: ${escapeHtml((s.detectedLanguage || 'en').toUpperCase())}${s.wasTranslated ? ` → ${escapeHtml((s.targetLanguage || 'en').toUpperCase())} (Translated)` : ''}
-                </div>
+              <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <span class="version-chip" style="background:var(--accent-sand);color:#7c2816;border-color:#e5c5b8;">Slice #${s.segmentIndex + 1} · p.${s.startPage}–${s.endPage}</span>
+                <h3 class="result-card-title" style="font-size:15px;">${escapeHtml(s.identifiedDocumentName || s.documentTypeName || 'Document')}</h3>
               </div>
-              <span class="conf-badge">${s.identifiedDocumentName && s.identifiedDocumentName !== 'Undefined' ? 'Matched Rule' : 'Identified'}</span>
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span class="version-chip">${escapeHtml((s.detectedLanguage || 'en').toUpperCase())}${s.wasTranslated ? ` → ${escapeHtml((s.targetLanguage || 'en').toUpperCase())}` : ''}</span>
+                <span class="conf-badge">${s.identifiedDocumentName && s.identifiedDocumentName !== 'Undefined' ? 'Matched Rule' : 'Identified'}</span>
+              </div>
             </div>
-            <div style="font-size:13.5px;line-height:1.55;color:var(--text-primary);margin-bottom:12px;">
+            <div class="insight-summary-box">
               ${escapeHtml(s.insightSummary || 'No insight summary generated (Document Insights capability was disabled for this run).')}
             </div>
             <details>
-              <summary style="cursor:pointer;font-size:12px;color:var(--text-secondary);font-weight:600;">Content Highlights (${s.wasTranslated ? 'Translated Text' : 'Extracted Text'})</summary>
-              <pre style="background:#faf9f7;padding:12px;border-radius:10px;border:1px solid var(--border);font-size:12px;white-space:pre-wrap;margin-top:8px;max-height:220px;overflow:auto;">${escapeHtml(s.translatedText || s.bodyText)}</pre>
+              <summary style="cursor:pointer;font-size:12px;color:var(--text-secondary);font-weight:600;user-select:none;">View Extracted / Translated Source Text (${(s.translatedText || s.bodyText || '').length.toLocaleString()} chars)</summary>
+              <pre style="background:#faf9f7;padding:14px;border-radius:10px;border:1px solid var(--border);font-size:12px;line-height:1.55;white-space:pre-wrap;margin-top:8px;max-height:240px;overflow:auto;">${escapeHtml(s.translatedText || s.bodyText)}</pre>
             </details>
           </div>
         `).join('');
@@ -2835,19 +3001,25 @@
           <div class="result-card">
             <div class="result-card-header">
               <h3 class="result-card-title">Extracted Entities (${entities.length})</h3>
-              <span style="font-size:12px;color:var(--text-secondary);">Model: ${escapeHtml(job.modelIdUsed || 'gpt-5-mini')}</span>
+              <span class="version-chip">Model: ${escapeHtml(job.modelIdUsed || 'gpt-5-mini')}</span>
             </div>
             <div class="entity-grid">
-              ${entities.map(e => `
-                <div class="entity-chip-card">
-                  <div class="entity-chip-top">
-                    <span>${escapeHtml(e.category || 'Entity')} · Slice #${e.sliceNum}</span>
-                    <span class="conf-badge">${Math.round((e.confidence <= 1 ? e.confidence * 100 : e.confidence))}%</span>
+              ${entities.map(e => {
+                const pct = Math.round((e.confidence <= 1 ? e.confidence * 100 : e.confidence));
+                return `
+                  <div class="entity-chip-card">
+                    <div class="entity-chip-top">
+                      <span>${escapeHtml(e.category || 'Entity')} · Slice #${e.sliceNum}</span>
+                      <span class="conf-badge">${pct}%</span>
+                    </div>
+                    <div class="entity-chip-name">${escapeHtml(e.name)}</div>
+                    <div class="entity-chip-val">${escapeHtml(e.value)}</div>
+                    <div style="height:4px;background:#eeeae2;border-radius:99px;overflow:hidden;margin-top:6px;">
+                      <div style="height:100%;width:${Math.min(100, Math.max(10, pct))}%;background:#16a34a;border-radius:99px;"></div>
+                    </div>
                   </div>
-                  <div class="entity-chip-name">${escapeHtml(e.name)}</div>
-                  <div class="entity-chip-val">${escapeHtml(e.value)}</div>
-                </div>
-              `).join('')}
+                `;
+              }).join('')}
             </div>
           </div>
         `;
@@ -2865,20 +3037,17 @@
         body.innerHTML = slicesWithData.map(s => {
           const de = s.dataExtraction;
           const fieldsHtml = (de.fields && de.fields.length > 0) ? `
-            <table class="data-table" style="margin-bottom:16px;">
-              <thead>
-                <tr><th>Field Name</th><th>Extracted Value</th><th>Confidence</th></tr>
-              </thead>
-              <tbody>
-                ${de.fields.map(f => `
-                  <tr>
-                    <td style="font-weight:600;">${escapeHtml(f.fieldName)}</td>
-                    <td>${escapeHtml(f.fieldValue || '—')}</td>
-                    <td><span class="conf-badge">${Math.round(f.confidenceValue)}%</span></td>
-                  </tr>
-                `).join('')}
-              </tbody>
-            </table>
+            <div class="kv-modern-grid">
+              ${de.fields.map(f => `
+                <div class="kv-modern-card">
+                  <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                    <span style="font-size:11.5px;font-weight:600;color:var(--text-secondary);">${escapeHtml(f.fieldName)}</span>
+                    <span class="conf-badge">${Math.round(f.confidenceValue)}%</span>
+                  </div>
+                  <div style="font-size:14px;font-weight:600;color:var(--text-primary);word-break:break-word;">${escapeHtml(f.fieldValue || '—')}</div>
+                </div>
+              `).join('')}
+            </div>
           ` : '';
 
           const tablesHtml = (de.tables || []).map(t => {
@@ -2886,7 +3055,7 @@
             const colNames = rows.length > 0 ? (rows[0].fields || []).map(c => c.fieldName) : [];
             return `
               <div style="margin-top:12px;">
-                <div style="font-size:12.5px;font-weight:600;color:var(--text-secondary);margin-bottom:6px;">Table: ${escapeHtml(t.tableName)} (${rows.length} row(s))</div>
+                <div style="font-size:12.5px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">Table: ${escapeHtml(t.tableName)} (${rows.length} row(s))</div>
                 ${rows.length > 0 ? `
                   <table class="data-table">
                     <thead>
@@ -2906,7 +3075,7 @@
           return `
             <div class="result-card">
               <div class="result-card-header">
-                <h3 class="result-card-title">${escapeHtml(de.documentName)} · Pages ${escapeHtml(de.pageRange)}</h3>
+                <h3 class="result-card-title">Slice #${s.segmentIndex + 1} · ${escapeHtml(de.documentName)} (Pages ${escapeHtml(de.pageRange)})</h3>
                 <span class="version-chip">Footer: ${escapeHtml(de.footerId || 'none')}</span>
               </div>
               ${fieldsHtml}
