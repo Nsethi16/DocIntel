@@ -21,6 +21,26 @@ param azureOpenAiEndpoint string = ''
 @description('Optional existing Azure AI Translator endpoint. Defaults to the provisioned Foundry resource when empty.')
 param translatorEndpoint string = ''
 
+@description('Foundry model deployments to provision automatically under the Foundry account.')
+param modelDeployments array = [
+  {
+    name: 'Phi-4'
+    format: 'Microsoft'
+    modelName: 'Phi-4'
+    modelVersion: '1'
+    skuName: 'GlobalStandard'
+    capacity: 1
+  }
+  {
+    name: 'gpt-5-mini'
+    format: 'OpenAI'
+    modelName: 'gpt-5-mini'
+    modelVersion: '2025-08-07'
+    skuName: 'GlobalStandard'
+    capacity: 10
+  }
+]
+
 var uniqueSuffix = uniqueString(resourceGroup().id, environmentName)
 var uamiName = 'uami-docintel-${environmentName}'
 var logAnalyticsName = 'law-docintel-${environmentName}-${uniqueSuffix}'
@@ -46,6 +66,12 @@ resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' = if (createF
   sku: {
     name: 'S0'
   }
+  identity: {
+    type: 'UserAssigned'
+    userAssignedIdentities: {
+      '${uami.id}': {}
+    }
+  }
   properties: {
     customSubDomainName: foundryName
     publicNetworkAccess: 'Enabled'
@@ -53,9 +79,28 @@ resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' = if (createF
   }
 }
 
-// Grant UAMI "Cognitive Services User" and "Cognitive Services OpenAI User" on the provisioned Foundry resource
+// 1c. Model Deployments inside the Microsoft Foundry resource (serialized with @batchSize(1))
+@batchSize(1)
+resource foundryModelDeployments 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = [for m in modelDeployments: if (createFoundryResource) {
+  parent: foundry
+  name: m.name
+  sku: {
+    name: contains(m, 'skuName') ? m.skuName : 'GlobalStandard'
+    capacity: contains(m, 'capacity') ? int(m.capacity) : 10
+  }
+  properties: {
+    model: {
+      format: contains(m, 'format') ? m.format : 'OpenAI'
+      name: m.modelName
+      version: m.modelVersion
+    }
+  }
+}]
+
+// Grant UAMI "Cognitive Services User", "Cognitive Services OpenAI User", and "Azure AI User (Foundry)" on the provisioned Foundry resource
 var cognitiveServicesUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')
 var cognitiveServicesOpenAiUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
+var foundryAiUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')
 
 resource foundryCogUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createFoundryResource) {
   name: guid(resourceGroup().id, uami.id, cognitiveServicesUserRoleId)
@@ -74,6 +119,16 @@ resource foundryOpenAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-
     principalId: uami.properties.principalId
     principalType: 'ServicePrincipal'
     roleDefinitionId: cognitiveServicesOpenAiUserRoleId
+  }
+}
+
+resource foundryAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createFoundryResource) {
+  name: guid(resourceGroup().id, uami.id, foundryAiUserRoleId)
+  scope: foundry
+  properties: {
+    principalId: uami.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: foundryAiUserRoleId
   }
 }
 
