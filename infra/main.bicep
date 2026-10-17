@@ -24,14 +24,6 @@ param translatorEndpoint string = ''
 @description('Foundry model deployments to provision automatically under the Foundry account.')
 param modelDeployments array = [
   {
-    name: 'Phi-4'
-    format: 'Microsoft'
-    modelName: 'Phi-4'
-    modelVersion: '1'
-    skuName: 'GlobalStandard'
-    capacity: 1
-  }
-  {
     name: 'gpt-5-mini'
     format: 'OpenAI'
     modelName: 'gpt-5-mini'

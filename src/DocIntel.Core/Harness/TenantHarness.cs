@@ -232,9 +232,9 @@ public sealed class TenantHarness
     public string DecisionModelId { get; set; } = "decision-1";
 
     /// <summary>
-    /// Harness-level Language Model (e.g., "phi-4", "llama-3.3-70b", "deepseek-r1", "gpt-5-mini") used for insights and extraction tasks.
+    /// Harness-level Language Model (e.g., "gpt-5-mini", "phi-4", "llama-3.3-70b", "deepseek-r1") used for insights and extraction tasks.
     /// </summary>
-    public string DefaultModelId { get; set; } = "phi-4";
+    public string DefaultModelId { get; set; } = "gpt-5-mini";
 
     public List<string> AllowedModels { get; set; } =
         ["decision-1", "phi-4", "mai-reasoning", "llama-3.3-70b", "deepseek-r1", "mistral-large", "gpt-5-mini", "gpt-4o"];
@@ -295,19 +295,19 @@ public sealed class TenantHarness
             [FeatureHarness.DocumentInsightKey] = new FeatureHarness
             {
                 Enabled = true,
-                ModelIdOverride = "phi-4",
+                ModelIdOverride = "gpt-5-mini",
                 DocumentInsight = new DocumentInsightConfig()
             },
             [FeatureHarness.EntityExtractionKey] = new FeatureHarness
             {
                 Enabled = true,
-                ModelIdOverride = "phi-4",
+                ModelIdOverride = "gpt-5-mini",
                 EntityExtraction = new EntityExtractionConfig()
             },
             [FeatureHarness.DataExtractionKey] = new FeatureHarness
             {
                 Enabled = true,
-                ModelIdOverride = "phi-4",
+                ModelIdOverride = "gpt-5-mini",
                 DataExtraction = new DataExtractionConfig
                 {
                     Profiles =
@@ -591,8 +591,8 @@ public sealed class FileHarnessStore : IHarnessStore
             DisplayName = "Contoso Legal & Licensing",
             HarnessVersion = 1,
             DecisionModelId = "decision-1",
-            DefaultModelId = "phi-4",
-            AllowedModels = ["decision-1", "phi-4", "mai-reasoning", "llama-3.3-70b", "deepseek-r1", "mistral-large", "gpt-5-mini", "gpt-4o"]
+            DefaultModelId = "gpt-5-mini",
+            AllowedModels = ["decision-1", "gpt-5-mini", "gpt-4o", "phi-4", "mai-reasoning", "llama-3.3-70b", "deepseek-r1", "mistral-large"]
         },
         new TenantHarness
         {
