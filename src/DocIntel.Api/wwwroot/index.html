@@ -1612,9 +1612,7 @@
           </div>
         </div>
 
-        <div class="slice-pills-row" id="sliceSelectorRow"></div>
-
-        <div class="doc-toolbar-row">
+        <div class="doc-toolbar-row" style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;">
           <div class="result-tabs" id="insightsTabBar">
             <button type="button" class="result-tab-btn active" data-tab="insights" onclick="setDocResultTab('insights')">Insights</button>
             <button type="button" class="result-tab-btn" data-tab="document" onclick="setDocResultTab('document')">View Document</button>
@@ -1622,6 +1620,7 @@
             <button type="button" class="result-tab-btn" data-tab="structured" onclick="setDocResultTab('structured')">Structured Data</button>
             <button type="button" class="result-tab-btn" data-tab="metadata" onclick="setDocResultTab('metadata')">Metadata</button>
           </div>
+          <div id="sliceSelectorRow" style="display:flex;align-items:center;gap:8px;"></div>
         </div>
       </div>
 
@@ -2732,22 +2731,28 @@
       const segs = job.segments || [];
       sliceRow.innerHTML = '';
       if (segs.length > 0) {
-        const allBtn = document.createElement('button');
-        allBtn.type = 'button';
-        allBtn.className = 'slice-pill' + (selectedSliceIndex === -1 ? ' active' : '');
-        allBtn.textContent = `All Slices (${segs.length})`;
-        allBtn.onclick = () => { selectedSliceIndex = -1; renderSelectedDocument(); };
-        sliceRow.appendChild(allBtn);
+        const select = document.createElement('select');
+        select.style.cssText = 'padding:6px 10px;border-radius:8px;border:1px solid var(--border);background:#fff;font-size:12.5px;color:var(--text-primary);font-family:inherit;cursor:pointer;max-width:280px;';
+        const allOpt = document.createElement('option');
+        allOpt.value = '-1';
+        allOpt.textContent = `All Slices (${segs.length})`;
+        if (selectedSliceIndex === -1) allOpt.selected = true;
+        select.appendChild(allOpt);
 
         segs.forEach(s => {
-          const btn = document.createElement('button');
-          btn.type = 'button';
-          btn.className = 'slice-pill' + (selectedSliceIndex === s.segmentIndex ? ' active' : '');
+          const opt = document.createElement('option');
+          opt.value = String(s.segmentIndex);
           const labelName = s.identifiedDocumentName || s.documentTypeName || `Slice ${s.segmentIndex + 1}`;
-          btn.textContent = `Slice ${s.segmentIndex + 1}: ${labelName} (p.${s.startPage}–${s.endPage})`;
-          btn.onclick = () => { selectedSliceIndex = s.segmentIndex; renderSelectedDocument(); };
-          sliceRow.appendChild(btn);
+          opt.textContent = `Slice ${s.segmentIndex + 1}: ${labelName} (p.${s.startPage}–${s.endPage})`;
+          if (selectedSliceIndex === s.segmentIndex) opt.selected = true;
+          select.appendChild(opt);
         });
+
+        select.onchange = (e) => {
+          selectedSliceIndex = parseInt(e.target.value, 10);
+          renderSelectedDocument();
+        };
+        sliceRow.appendChild(select);
       }
 
       if (job.status === 'Queued' || job.status === 'Running') {
@@ -2781,126 +2786,15 @@
 
       if (docResultTab === 'document') {
         if (segs.length === 0) {
-          body.innerHTML = `<div class="result-card">No PDF slices available.</div>`;
+          body.innerHTML = `<div class="result-card">No PDF available.</div>`;
           return;
         }
 
         const focusedSeg = (selectedSliceIndex >= 0 ? segs.find(s => s.segmentIndex === selectedSliceIndex) : segs[0]) || segs[0];
-        const totalPages = Math.max(job.totalPages || 1, segs.reduce((acc, s) => Math.max(acc, s.endPage || 1), 1));
         const pdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf`;
 
-        // 1. Visual Proportional Slice Ribbon Map
-        const ribbonHtml = segs.map((s, idx) => {
-          const spanPages = Math.max(1, (s.endPage - s.startPage + 1));
-          const pct = Math.round((spanPages / totalPages) * 100);
-          const isFocused = s.segmentIndex === focusedSeg.segmentIndex;
-          const docName = s.identifiedDocumentName || s.documentTypeName || `Slice #${s.segmentIndex + 1}`;
-          const cutIcon = idx < segs.length - 1
-            ? `<div class="slice-ribbon-cut" title="Split boundary between p.${s.endPage} and p.${segs[idx + 1].startPage}">✂<div style="width:1px;height:28px;border-left:1.5px dashed #e06d53;"></div></div>`
-            : '';
-
-          return `
-            <div class="slice-ribbon-block ${isFocused ? 'active' : ''}" style="flex:${spanPages};" onclick="selectSliceInViewer(${s.segmentIndex})">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-                <span style="font-size:11px;font-weight:700;color:#8a2d1b;">SLICE #${s.segmentIndex + 1}</span>
-                <span style="font-size:11px;color:var(--text-secondary);">p.${s.startPage}–${s.endPage} (${pct}%)</span>
-              </div>
-              <div style="font-size:12.5px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px;" title="${escapeHtml(docName)}">
-                ${escapeHtml(docName)}
-              </div>
-            </div>
-            ${cutIcon}
-          `;
-        }).join('');
-
-        // 2. Left Filmstrip Cards with Mini Page Thumbnails
-        const filmstripHtml = segs.map(s => {
-          const isFocused = s.segmentIndex === focusedSeg.segmentIndex;
-          const docName = s.identifiedDocumentName || s.documentTypeName || `Slice #${s.segmentIndex + 1}`;
-          const pageThumbs = [];
-          for (let p = s.startPage; p <= s.endPage; p++) {
-            pageThumbs.push(`<div class="page-mini-thumb" title="Page ${p}"><span>p.${p}</span></div>`);
-          }
-          const slicePdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${s.segmentIndex}/pdf`;
-
-          return `
-            <div class="filmstrip-card ${isFocused ? 'active' : ''}" onclick="selectSliceInViewer(${s.segmentIndex})">
-              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
-                <span style="font-size:11px;font-weight:700;color:var(--text-secondary);">SLICE #${s.segmentIndex + 1} · PAGES ${s.startPage}–${s.endPage}</span>
-                <span class="conf-badge">${((s.splitPdfSizeBytes || 0) / 1024).toFixed(1)} KB</span>
-              </div>
-              <div style="font-size:13.5px;font-weight:600;color:var(--text-primary);margin-bottom:4px;">
-                ${escapeHtml(docName)}
-              </div>
-              <div style="font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml((s.footers || []).join(', '))}">
-                Footer: ${escapeHtml((s.footers || [])[0] || 'none')}
-              </div>
-              <div class="page-mini-grid">${pageThumbs.join('')}</div>
-              <div style="margin-top:10px;display:flex;justify-content:flex-end;">
-                <a href="${slicePdfUrl}" target="_blank" download="slice-${s.segmentIndex + 1}-pages-${s.startPage}-${s.endPage}.pdf" class="btn-mini" style="text-decoration:none;font-size:11px;" onclick="event.stopPropagation()">⬇ Download PDF</a>
-              </div>
-            </div>
-          `;
-        }).join('');
-
-        // 3. Right Interactive Stage (Side-by-Side PDF + Text, PDF Only, or Text Only)
-        const prevIdx = focusedSeg.segmentIndex > 0 ? focusedSeg.segmentIndex - 1 : null;
-        const nextIdx = focusedSeg.segmentIndex < segs.length - 1 ? focusedSeg.segmentIndex + 1 : null;
-
-        let stageContentHtml = '';
-        if (docStageViewMode === 'pdf') {
-          stageContentHtml = `<iframe src="${pdfUrl}" style="width:100%;height:540px;border:1px solid var(--border);border-radius:12px;background:#f4f4f4;" title="PDF Slice Preview"></iframe>`;
-        } else if (docStageViewMode === 'text') {
-          stageContentHtml = `<pre style="background:#faf9f7;padding:16px;border-radius:12px;border:1px solid var(--border);font-size:12.5px;line-height:1.55;white-space:pre-wrap;margin:0;height:540px;overflow:auto;">${escapeHtml(focusedSeg.translatedText || focusedSeg.bodyText)}</pre>`;
-        } else {
-          stageContentHtml = `
-            <div class="stage-split-grid">
-              <iframe src="${pdfUrl}" style="width:100%;height:520px;border:1px solid var(--border);border-radius:12px;background:#f4f4f4;" title="PDF Slice Preview"></iframe>
-              <div style="display:flex;flex-direction:column;height:520px;border:1px solid var(--border);border-radius:12px;background:#faf9f7;overflow:hidden;">
-                <div style="padding:10px 14px;border-bottom:1px solid var(--border);background:#ffffff;font-size:12px;font-weight:600;color:var(--text-secondary);display:flex;justify-content:space-between;">
-                  <span>${focusedSeg.wasTranslated ? 'Translated Content (' + (focusedSeg.targetLanguage || 'en').toUpperCase() + ')' : 'Extracted Slice Text'}</span>
-                  <span>Pages ${focusedSeg.startPage}–${focusedSeg.endPage}</span>
-                </div>
-                <pre style="padding:14px;margin:0;font-size:12px;line-height:1.5;white-space:pre-wrap;overflow:auto;flex:1;">${escapeHtml(focusedSeg.translatedText || focusedSeg.bodyText)}</pre>
-              </div>
-            </div>
-          `;
-        }
-
         body.innerHTML = `
-          <div class="slice-map-card">
-            <div class="slice-map-header">
-              <span><strong>Document Slice Anatomy</strong> — ${segs.length} logical sub-document(s) across ${totalPages} page(s)</span>
-              <span>Click any slice block or card to inspect</span>
-            </div>
-            <div class="slice-ribbon">${ribbonHtml}</div>
-          </div>
-
-          <div class="slice-workbench">
-            <div class="slice-filmstrip">${filmstripHtml}</div>
-
-            <div class="slice-stage-card">
-              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--border);">
-                <div>
-                  <h3 class="result-card-title">Slice #${focusedSeg.segmentIndex + 1}: ${escapeHtml(focusedSeg.identifiedDocumentName || focusedSeg.documentTypeName || 'Document')}</h3>
-                  <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
-                    Pages ${focusedSeg.startPage}–${focusedSeg.endPage} of ${totalPages} · Language: ${escapeHtml((focusedSeg.detectedLanguage || 'en').toUpperCase())}
-                  </div>
-                </div>
-
-                <div style="display:flex;align-items:center;gap:8px;">
-                  <div class="mode-segmented">
-                    <button type="button" class="mode-seg-btn ${docStageViewMode === 'split' ? 'active' : ''}" onclick="setDocStageViewMode('split')">PDF + Text</button>
-                    <button type="button" class="mode-seg-btn ${docStageViewMode === 'pdf' ? 'active' : ''}" onclick="setDocStageViewMode('pdf')">PDF Only</button>
-                    <button type="button" class="mode-seg-btn ${docStageViewMode === 'text' ? 'active' : ''}" onclick="setDocStageViewMode('text')">Text Only</button>
-                  </div>
-                  <button type="button" class="btn-mini" ${prevIdx === null ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : `onclick="selectSliceInViewer(${prevIdx})"`}>← Prev</button>
-                  <button type="button" class="btn-mini" ${nextIdx === null ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : `onclick="selectSliceInViewer(${nextIdx})"`}>Next →</button>
-                </div>
-              </div>
-              ${stageContentHtml}
-            </div>
-          </div>
+          <iframe src="${pdfUrl}" style="width:100%;height:calc(100vh - 210px);min-height:560px;border:1px solid var(--border);border-radius:12px;background:#f4f4f4;display:block;" title="PDF Preview"></iframe>
         `;
         return;
       }
