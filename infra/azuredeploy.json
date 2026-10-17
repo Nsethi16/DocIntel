@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "18004052194706930861"
+      "templateHash": "14320881211925666567"
     }
   },
   "parameters": {
@@ -148,12 +148,12 @@
       "apiVersion": "2024-10-01",
       "name": "[format('{0}/{1}', variables('foundryName'), parameters('modelDeployments')[copyIndex()].name)]",
       "sku": {
-        "name": "[if(contains(parameters('modelDeployments')[copyIndex()], 'skuName'), parameters('modelDeployments')[copyIndex()].skuName, 'GlobalStandard')]",
-        "capacity": "[if(contains(parameters('modelDeployments')[copyIndex()], 'capacity'), int(parameters('modelDeployments')[copyIndex()].capacity), 10)]"
+        "name": "[coalesce(tryGet(parameters('modelDeployments')[copyIndex()], 'skuName'), 'GlobalStandard')]",
+        "capacity": "[int(coalesce(tryGet(parameters('modelDeployments')[copyIndex()], 'capacity'), 10))]"
       },
       "properties": {
         "model": {
-          "format": "[if(contains(parameters('modelDeployments')[copyIndex()], 'format'), parameters('modelDeployments')[copyIndex()].format, 'OpenAI')]",
+          "format": "[coalesce(tryGet(parameters('modelDeployments')[copyIndex()], 'format'), 'OpenAI')]",
           "name": "[parameters('modelDeployments')[copyIndex()].modelName]",
           "version": "[parameters('modelDeployments')[copyIndex()].modelVersion]"
         }

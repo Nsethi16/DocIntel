@@ -85,12 +85,12 @@ resource foundryModelDeployments 'Microsoft.CognitiveServices/accounts/deploymen
   parent: foundry
   name: m.name
   sku: {
-    name: contains(m, 'skuName') ? m.skuName : 'GlobalStandard'
-    capacity: contains(m, 'capacity') ? int(m.capacity) : 10
+    name: m.?skuName ?? 'GlobalStandard'
+    capacity: int(m.?capacity ?? 10)
   }
   properties: {
     model: {
-      format: contains(m, 'format') ? m.format : 'OpenAI'
+      format: m.?format ?? 'OpenAI'
       name: m.modelName
       version: m.modelVersion
     }
