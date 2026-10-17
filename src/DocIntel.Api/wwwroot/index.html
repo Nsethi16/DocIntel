@@ -1253,6 +1253,145 @@
       flex-shrink: 0;
     }
 
+    /* Creative Visual Slice Map & Filmstrip inside View Document */
+    .slice-map-card {
+      background: #ffffff;
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 16px 20px;
+      margin-bottom: 16px;
+    }
+
+    .slice-map-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+      font-size: 12.5px;
+      color: var(--text-secondary);
+    }
+
+    .slice-ribbon {
+      display: flex;
+      align-items: stretch;
+      gap: 6px;
+      width: 100%;
+      min-height: 58px;
+    }
+
+    .slice-ribbon-block {
+      border: 1.5px solid #e4ddd0;
+      background: #f9f7f3;
+      border-radius: 12px;
+      padding: 8px 12px;
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      min-width: 110px;
+      transition: all 0.15s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .slice-ribbon-block:hover {
+      border-color: #c8bfb0;
+      transform: translateY(-1px);
+    }
+
+    .slice-ribbon-block.active {
+      background: var(--accent-sand);
+      border-color: #e06d53;
+      box-shadow: 0 4px 12px rgba(224, 109, 83, 0.14);
+    }
+
+    .slice-ribbon-cut {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: #e06d53;
+      font-size: 12px;
+      padding: 0 2px;
+      user-select: none;
+    }
+
+    .slice-workbench {
+      display: grid;
+      grid-template-columns: 270px 1fr;
+      gap: 16px;
+      align-items: start;
+    }
+
+    .slice-filmstrip {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .filmstrip-card {
+      background: #ffffff;
+      border: 1.5px solid var(--card-border);
+      border-radius: 14px;
+      padding: 13px 14px;
+      cursor: pointer;
+      transition: all 0.14s ease;
+    }
+
+    .filmstrip-card:hover {
+      border-color: #c8bfb0;
+    }
+
+    .filmstrip-card.active {
+      border-color: var(--text-primary);
+      background: #fcfbfa;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.05);
+    }
+
+    .page-mini-grid {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      margin-top: 9px;
+    }
+
+    .page-mini-thumb {
+      width: 28px;
+      height: 36px;
+      border-radius: 5px;
+      background: var(--accent-sand);
+      border: 1px solid #e0d8c8;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-size: 9.5px;
+      font-weight: 700;
+      color: #5c5549;
+    }
+
+    .filmstrip-card.active .page-mini-thumb {
+      background: #f5b5a8;
+      border-color: #e06d53;
+      color: #5a180b;
+    }
+
+    .slice-stage-card {
+      background: #ffffff;
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .stage-split-grid {
+      display: grid;
+      grid-template-columns: 1.15fr 0.85fr;
+      gap: 14px;
+    }
+
     /* Pane 3: Right Ask AI / Prompt Column Rail */
     .doc-chat-pane {
       width: 340px;
@@ -1476,13 +1615,9 @@
         <div class="slice-pills-row" id="sliceSelectorRow"></div>
 
         <div class="doc-toolbar-row">
-          <div class="mode-segmented">
-            <button type="button" class="mode-seg-btn active" id="btnModeInsights" onclick="setDocDisplayMode('insights')">Insights</button>
-            <button type="button" class="mode-seg-btn" id="btnModeViewDoc" onclick="setDocDisplayMode('document')">View Document</button>
-          </div>
-
           <div class="result-tabs" id="insightsTabBar">
-            <button type="button" class="result-tab-btn active" data-tab="summary" onclick="setDocResultTab('summary')">Summary &amp; Highlights</button>
+            <button type="button" class="result-tab-btn active" data-tab="insights" onclick="setDocResultTab('insights')">Insights</button>
+            <button type="button" class="result-tab-btn" data-tab="document" onclick="setDocResultTab('document')">View Document</button>
             <button type="button" class="result-tab-btn" data-tab="entities" onclick="setDocResultTab('entities')">Entities</button>
             <button type="button" class="result-tab-btn" data-tab="structured" onclick="setDocResultTab('structured')">Structured Data</button>
             <button type="button" class="result-tab-btn" data-tab="metadata" onclick="setDocResultTab('metadata')">Metadata</button>
@@ -2399,10 +2534,8 @@
     let tenantJobs = [];
     let selectedJobId = null;
     let selectedSliceIndex = -1; // -1 = All Slices
-    let docDisplayMode = 'insights'; // 'insights' | 'document'
-    let docResultTab = 'summary'; // 'summary' | 'entities' | 'structured' | 'metadata'
-    let rightRailTab = 'ask'; // 'ask' | 'prompts'
-    let chatHistory = [];
+    let docResultTab = 'insights'; // 'insights' | 'document' | 'entities' | 'structured' | 'metadata'
+    let docStageViewMode = 'split'; // 'pdf' | 'split' | 'text'
     let jobPollTimer = null;
 
     function switchWorkspaceView(view) {
@@ -2553,19 +2686,21 @@
       }
     }
 
-    function setDocDisplayMode(mode) {
-      docDisplayMode = mode;
-      document.getElementById('btnModeInsights').classList.toggle('active', mode === 'insights');
-      document.getElementById('btnModeViewDoc').classList.toggle('active', mode === 'document');
-      document.getElementById('insightsTabBar').style.display = mode === 'insights' ? 'flex' : 'none';
-      renderSelectedDocument();
-    }
-
     function setDocResultTab(tab) {
       docResultTab = tab;
       document.querySelectorAll('#insightsTabBar .result-tab-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tab === tab);
       });
+      renderSelectedDocument();
+    }
+
+    function setDocStageViewMode(mode) {
+      docStageViewMode = mode;
+      renderSelectedDocument();
+    }
+
+    function selectSliceInViewer(idx) {
+      selectedSliceIndex = idx;
       renderSelectedDocument();
     }
 
@@ -2644,33 +2779,133 @@
         ? segs
         : segs.filter(s => s.segmentIndex === selectedSliceIndex);
 
-      if (docDisplayMode === 'document') {
-        const targetSeg = activeSegs[0] || segs[0];
-        if (!targetSeg) {
+      if (docResultTab === 'document') {
+        if (segs.length === 0) {
           body.innerHTML = `<div class="result-card">No PDF slices available.</div>`;
           return;
         }
-        const pdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${targetSeg.segmentIndex}/pdf`;
-        body.innerHTML = `
-          <div class="result-card">
-            <div class="result-card-header">
-              <div>
-                <h3 class="result-card-title">Slice #${targetSeg.segmentIndex + 1}: ${escapeHtml(targetSeg.identifiedDocumentName || targetSeg.documentTypeName || 'Document')} (Pages ${targetSeg.startPage}–${targetSeg.endPage})</h3>
+
+        const focusedSeg = (selectedSliceIndex >= 0 ? segs.find(s => s.segmentIndex === selectedSliceIndex) : segs[0]) || segs[0];
+        const totalPages = Math.max(job.totalPages || 1, segs.reduce((acc, s) => Math.max(acc, s.endPage || 1), 1));
+        const pdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf`;
+
+        // 1. Visual Proportional Slice Ribbon Map
+        const ribbonHtml = segs.map((s, idx) => {
+          const spanPages = Math.max(1, (s.endPage - s.startPage + 1));
+          const pct = Math.round((spanPages / totalPages) * 100);
+          const isFocused = s.segmentIndex === focusedSeg.segmentIndex;
+          const docName = s.identifiedDocumentName || s.documentTypeName || `Slice #${s.segmentIndex + 1}`;
+          const cutIcon = idx < segs.length - 1
+            ? `<div class="slice-ribbon-cut" title="Split boundary between p.${s.endPage} and p.${segs[idx + 1].startPage}">✂<div style="width:1px;height:28px;border-left:1.5px dashed #e06d53;"></div></div>`
+            : '';
+
+          return `
+            <div class="slice-ribbon-block ${isFocused ? 'active' : ''}" style="flex:${spanPages};" onclick="selectSliceInViewer(${s.segmentIndex})">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                <span style="font-size:11px;font-weight:700;color:#8a2d1b;">SLICE #${s.segmentIndex + 1}</span>
+                <span style="font-size:11px;color:var(--text-secondary);">p.${s.startPage}–${s.endPage} (${pct}%)</span>
               </div>
-              <a href="${pdfUrl}" target="_blank" download="slice-${targetSeg.segmentIndex + 1}-pages-${targetSeg.startPage}-${targetSeg.endPage}.pdf" class="btn-mini dark" style="text-decoration:none;">⬇ Download Slice PDF (${((targetSeg.splitPdfSizeBytes || 0)/1024).toFixed(1)} KB)</a>
+              <div style="font-size:12.5px;font-weight:600;color:var(--text-primary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px;" title="${escapeHtml(docName)}">
+                ${escapeHtml(docName)}
+              </div>
             </div>
-            <iframe src="${pdfUrl}" style="width:100%;height:480px;border:1px solid var(--border);border-radius:10px;background:#f4f4f4;" title="PDF Slice Preview"></iframe>
-            <details style="margin-top:14px;">
-              <summary style="cursor:pointer;font-size:12.5px;font-weight:600;color:var(--text-secondary);">View Extracted Page Text / Markdown</summary>
-              <pre style="background:#f8f8f7;padding:12px;border-radius:10px;border:1px solid var(--border);font-size:12px;white-space:pre-wrap;margin-top:8px;">${escapeHtml(targetSeg.translatedText || targetSeg.bodyText)}</pre>
-            </details>
+            ${cutIcon}
+          `;
+        }).join('');
+
+        // 2. Left Filmstrip Cards with Mini Page Thumbnails
+        const filmstripHtml = segs.map(s => {
+          const isFocused = s.segmentIndex === focusedSeg.segmentIndex;
+          const docName = s.identifiedDocumentName || s.documentTypeName || `Slice #${s.segmentIndex + 1}`;
+          const pageThumbs = [];
+          for (let p = s.startPage; p <= s.endPage; p++) {
+            pageThumbs.push(`<div class="page-mini-thumb" title="Page ${p}"><span>p.${p}</span></div>`);
+          }
+          const slicePdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${s.segmentIndex}/pdf`;
+
+          return `
+            <div class="filmstrip-card ${isFocused ? 'active' : ''}" onclick="selectSliceInViewer(${s.segmentIndex})">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">
+                <span style="font-size:11px;font-weight:700;color:var(--text-secondary);">SLICE #${s.segmentIndex + 1} · PAGES ${s.startPage}–${s.endPage}</span>
+                <span class="conf-badge">${((s.splitPdfSizeBytes || 0) / 1024).toFixed(1)} KB</span>
+              </div>
+              <div style="font-size:13.5px;font-weight:600;color:var(--text-primary);margin-bottom:4px;">
+                ${escapeHtml(docName)}
+              </div>
+              <div style="font-size:11px;color:var(--text-muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml((s.footers || []).join(', '))}">
+                Footer: ${escapeHtml((s.footers || [])[0] || 'none')}
+              </div>
+              <div class="page-mini-grid">${pageThumbs.join('')}</div>
+              <div style="margin-top:10px;display:flex;justify-content:flex-end;">
+                <a href="${slicePdfUrl}" target="_blank" download="slice-${s.segmentIndex + 1}-pages-${s.startPage}-${s.endPage}.pdf" class="btn-mini" style="text-decoration:none;font-size:11px;" onclick="event.stopPropagation()">⬇ Download PDF</a>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        // 3. Right Interactive Stage (Side-by-Side PDF + Text, PDF Only, or Text Only)
+        const prevIdx = focusedSeg.segmentIndex > 0 ? focusedSeg.segmentIndex - 1 : null;
+        const nextIdx = focusedSeg.segmentIndex < segs.length - 1 ? focusedSeg.segmentIndex + 1 : null;
+
+        let stageContentHtml = '';
+        if (docStageViewMode === 'pdf') {
+          stageContentHtml = `<iframe src="${pdfUrl}" style="width:100%;height:540px;border:1px solid var(--border);border-radius:12px;background:#f4f4f4;" title="PDF Slice Preview"></iframe>`;
+        } else if (docStageViewMode === 'text') {
+          stageContentHtml = `<pre style="background:#faf9f7;padding:16px;border-radius:12px;border:1px solid var(--border);font-size:12.5px;line-height:1.55;white-space:pre-wrap;margin:0;height:540px;overflow:auto;">${escapeHtml(focusedSeg.translatedText || focusedSeg.bodyText)}</pre>`;
+        } else {
+          stageContentHtml = `
+            <div class="stage-split-grid">
+              <iframe src="${pdfUrl}" style="width:100%;height:520px;border:1px solid var(--border);border-radius:12px;background:#f4f4f4;" title="PDF Slice Preview"></iframe>
+              <div style="display:flex;flex-direction:column;height:520px;border:1px solid var(--border);border-radius:12px;background:#faf9f7;overflow:hidden;">
+                <div style="padding:10px 14px;border-bottom:1px solid var(--border);background:#ffffff;font-size:12px;font-weight:600;color:var(--text-secondary);display:flex;justify-content:space-between;">
+                  <span>${focusedSeg.wasTranslated ? 'Translated Content (' + (focusedSeg.targetLanguage || 'en').toUpperCase() + ')' : 'Extracted Slice Text'}</span>
+                  <span>Pages ${focusedSeg.startPage}–${focusedSeg.endPage}</span>
+                </div>
+                <pre style="padding:14px;margin:0;font-size:12px;line-height:1.5;white-space:pre-wrap;overflow:auto;flex:1;">${escapeHtml(focusedSeg.translatedText || focusedSeg.bodyText)}</pre>
+              </div>
+            </div>
+          `;
+        }
+
+        body.innerHTML = `
+          <div class="slice-map-card">
+            <div class="slice-map-header">
+              <span><strong>Document Slice Anatomy</strong> — ${segs.length} logical sub-document(s) across ${totalPages} page(s)</span>
+              <span>Click any slice block or card to inspect</span>
+            </div>
+            <div class="slice-ribbon">${ribbonHtml}</div>
+          </div>
+
+          <div class="slice-workbench">
+            <div class="slice-filmstrip">${filmstripHtml}</div>
+
+            <div class="slice-stage-card">
+              <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;padding-bottom:10px;border-bottom:1px solid var(--border);">
+                <div>
+                  <h3 class="result-card-title">Slice #${focusedSeg.segmentIndex + 1}: ${escapeHtml(focusedSeg.identifiedDocumentName || focusedSeg.documentTypeName || 'Document')}</h3>
+                  <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
+                    Pages ${focusedSeg.startPage}–${focusedSeg.endPage} of ${totalPages} · Language: ${escapeHtml((focusedSeg.detectedLanguage || 'en').toUpperCase())}
+                  </div>
+                </div>
+
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <div class="mode-segmented">
+                    <button type="button" class="mode-seg-btn ${docStageViewMode === 'split' ? 'active' : ''}" onclick="setDocStageViewMode('split')">PDF + Text</button>
+                    <button type="button" class="mode-seg-btn ${docStageViewMode === 'pdf' ? 'active' : ''}" onclick="setDocStageViewMode('pdf')">PDF Only</button>
+                    <button type="button" class="mode-seg-btn ${docStageViewMode === 'text' ? 'active' : ''}" onclick="setDocStageViewMode('text')">Text Only</button>
+                  </div>
+                  <button type="button" class="btn-mini" ${prevIdx === null ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : `onclick="selectSliceInViewer(${prevIdx})"`}>← Prev</button>
+                  <button type="button" class="btn-mini" ${nextIdx === null ? 'disabled style="opacity:0.4;cursor:not-allowed;"' : `onclick="selectSliceInViewer(${nextIdx})"`}>Next →</button>
+                </div>
+              </div>
+              ${stageContentHtml}
+            </div>
           </div>
         `;
         return;
       }
 
-      // Insights Mode: Render selected tab
-      if (docResultTab === 'summary') {
+      if (docResultTab === 'insights') {
         body.innerHTML = activeSegs.map(s => `
           <div class="result-card">
             <div class="result-card-header">
