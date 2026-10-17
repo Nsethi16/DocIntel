@@ -69,13 +69,20 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
         if (!string.IsNullOrWhiteSpace(azureTranslatorEndpoint) &&
             Uri.TryCreate(azureTranslatorEndpoint, UriKind.Absolute, out var endpointUri))
         {
-            var textClient = new TextTranslationClient(_credential, endpointUri);
-            var response = await textClient.TranslateAsync(targetLanguage, [text], cancellationToken: cancellationToken).ConfigureAwait(false);
-            var item = response.Value.FirstOrDefault();
-            var detected = item?.DetectedLanguage?.Language ?? "unknown";
-            var translated = item?.Translations?.FirstOrDefault()?.Text ?? text;
-            var changed = !string.Equals(detected, targetLanguage, StringComparison.OrdinalIgnoreCase);
-            return (detected, changed, translated);
+            try
+            {
+                var textClient = new TextTranslationClient(_credential, endpointUri);
+                var response = await textClient.TranslateAsync(targetLanguage, [text], cancellationToken: cancellationToken).ConfigureAwait(false);
+                var item = response.Value.FirstOrDefault();
+                var detected = item?.DetectedLanguage?.Language ?? "unknown";
+                var translated = item?.Translations?.FirstOrDefault()?.Text ?? text;
+                var changed = !string.Equals(detected, targetLanguage, StringComparison.OrdinalIgnoreCase);
+                return (detected, changed, translated);
+            }
+            catch (Exception)
+            {
+                // Fall back to local language detection & translation if custom subdomain requires regional headers or is not yet enabled
+            }
         }
 
         // 2. Local language detection & translation fallback (for offline dev / CI)

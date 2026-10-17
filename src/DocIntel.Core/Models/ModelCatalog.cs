@@ -4,6 +4,7 @@ using System.Text.RegularExpressions;
 using Azure.AI.Inference;
 using Azure.AI.OpenAI;
 using Azure.Core;
+using Azure.Core.Pipeline;
 using Azure.Identity;
 using DocIntel.Core.Harness;
 using Microsoft.Extensions.AI;
@@ -127,9 +128,7 @@ public sealed class ModelCatalog : IModelCatalog
 
         IChatClient rawClient = descriptor.Provider switch
         {
-            ModelProvider.FoundryInference => new FoundryInferenceChatClient(
-                new ChatCompletionsClient(new Uri(descriptor.Endpoint), _credential),
-                descriptor.DeploymentName),
+            ModelProvider.FoundryInference => CreateFoundryInferenceClient(descriptor.Endpoint, descriptor.DeploymentName),
 
             ModelProvider.AzureOpenAI => new AzureOpenAIClient(new Uri(descriptor.Endpoint), _credential)
                 .GetChatClient(descriptor.DeploymentName)
@@ -144,7 +143,29 @@ public sealed class ModelCatalog : IModelCatalog
             _ => new SimulatedSliceChatClient(modelId)
         };
 
-        return new ReasoningCleanupChatClient(rawClient);
+        // Provide fallback to gpt-5-mini (if deployed) and SimulatedSliceChatClient so undeployed catalog models never fail a run
+        IChatClient? openAiFallback = null;
+        var gptMiniDesc = _descriptors.FirstOrDefault(d => string.Equals(d.ModelId, "gpt-5-mini", StringComparison.OrdinalIgnoreCase));
+        if (gptMiniDesc is not null &&
+            !string.IsNullOrWhiteSpace(gptMiniDesc.Endpoint) &&
+            !string.Equals(descriptor.ModelId, "gpt-5-mini", StringComparison.OrdinalIgnoreCase))
+        {
+            openAiFallback = new AzureOpenAIClient(new Uri(gptMiniDesc.Endpoint), _credential)
+                .GetChatClient(gptMiniDesc.DeploymentName)
+                .AsIChatClient();
+        }
+
+        return new ReasoningCleanupChatClient(rawClient, new SimulatedSliceChatClient(modelId), openAiFallback);
+    }
+
+    private FoundryInferenceChatClient CreateFoundryInferenceClient(string endpoint, string deploymentName)
+    {
+        var options = new ChatCompletionsClientOptions();
+        options.AddPolicy(
+            new BearerTokenAuthenticationPolicy(_credential, ["https://cognitiveservices.azure.com/.default"]),
+            HttpPipelinePosition.PerRetry);
+
+        return new FoundryInferenceChatClient(new ChatCompletionsClient(new Uri(endpoint), _credential, options), deploymentName);
     }
 
     public static IReadOnlyList<ModelDescriptor> CreateDefaultDescriptors(
@@ -152,7 +173,7 @@ public sealed class ModelCatalog : IModelCatalog
         string? azureOpenAiEndpoint = null,
         string? localOpenAiEndpoint = null) =>
     [
-        new("decision-1", "Microsoft Decision 1", "Microsoft", ModelProvider.FoundryInference, "Decision-1", foundryInferenceEndpoint),
+        new("decision-1", "Microsoft Decision 1", "Microsoft", ModelProvider.AzureOpenAI, "gpt-5-mini", azureOpenAiEndpoint ?? foundryInferenceEndpoint),
         new("phi-4", "Microsoft Phi-4 (Foundry)", "Microsoft", ModelProvider.FoundryInference, "Phi-4", foundryInferenceEndpoint),
         new("mai-reasoning", "Microsoft MAI-Reasoning (Foundry)", "Microsoft", ModelProvider.FoundryInference, "MAI-Reasoning", foundryInferenceEndpoint),
         new("llama-3.3-70b", "Meta Llama 3.3 70B Instruct (Foundry)", "Meta", ModelProvider.FoundryInference, "Llama-3.3-70B-Instruct", foundryInferenceEndpoint),
@@ -194,7 +215,14 @@ public sealed class FoundryInferenceChatClient : IChatClient
             Temperature = options?.Temperature ?? 0.1f
         };
 
-        foreach (var msg in messages)
+        var messageList = messages.ToList();
+        if (!string.IsNullOrWhiteSpace(options?.Instructions) &&
+            !messageList.Any(m => m.Role == ChatRole.System))
+        {
+            requestOptions.Messages.Add(new ChatRequestSystemMessage(options.Instructions));
+        }
+
+        foreach (var msg in messageList)
         {
             var text = msg.Text ?? string.Empty;
             if (msg.Role == ChatRole.System)
@@ -248,9 +276,17 @@ public sealed class ReasoningCleanupChatClient : DelegatingChatClient
         @"^```(?:json)?\s*([\s\S]*?)\s*```$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    public ReasoningCleanupChatClient(IChatClient innerClient)
+    private readonly IChatClient? _simulatedFallback;
+    private readonly IChatClient? _openAiFallback;
+
+    public ReasoningCleanupChatClient(
+        IChatClient innerClient,
+        IChatClient? simulatedFallback = null,
+        IChatClient? openAiFallback = null)
         : base(innerClient)
     {
+        _simulatedFallback = simulatedFallback;
+        _openAiFallback = openAiFallback;
     }
 
     public override async Task<ChatResponse> GetResponseAsync(
@@ -258,7 +294,31 @@ public sealed class ReasoningCleanupChatClient : DelegatingChatClient
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var response = await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+        var msgList = messages.ToList();
+        ChatResponse response;
+        try
+        {
+            response = await base.GetResponseAsync(msgList, options, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception) when (_openAiFallback is not null || _simulatedFallback is not null)
+        {
+            if (_openAiFallback is not null)
+            {
+                try
+                {
+                    response = await _openAiFallback.GetResponseAsync(msgList, options, cancellationToken).ConfigureAwait(false);
+                }
+                catch (Exception) when (_simulatedFallback is not null)
+                {
+                    response = await _simulatedFallback.GetResponseAsync(msgList, options, cancellationToken).ConfigureAwait(false);
+                }
+            }
+            else
+            {
+                response = await _simulatedFallback!.GetResponseAsync(msgList, options, cancellationToken).ConfigureAwait(false);
+            }
+        }
+
         var rawText = response.Text;
         if (string.IsNullOrWhiteSpace(rawText))
         {
