@@ -22,6 +22,12 @@ public interface IArtifactStore
         int sliceIndex,
         byte[] pdfBytes,
         CancellationToken cancellationToken = default);
+
+    Task<byte[]?> GetSlicePdfAsync(
+        string tenantId,
+        string documentId,
+        int sliceIndex,
+        CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -50,6 +56,21 @@ public sealed class LocalFileArtifactStore : IArtifactStore
         var filePath = Path.Combine(containerFolder, $"slice-{sliceIndex + 1}.pdf");
         await File.WriteAllBytesAsync(filePath, pdfBytes, cancellationToken).ConfigureAwait(false);
         return filePath;
+    }
+
+    public async Task<byte[]?> GetSlicePdfAsync(
+        string tenantId,
+        string documentId,
+        int sliceIndex,
+        CancellationToken cancellationToken = default)
+    {
+        var filePath = Path.Combine(_baseDirectory, SanitizeContainerName(tenantId), documentId, $"slice-{sliceIndex + 1}.pdf");
+        if (!File.Exists(filePath))
+        {
+            return null;
+        }
+
+        return await File.ReadAllBytesAsync(filePath, cancellationToken).ConfigureAwait(false);
     }
 
     internal static string SanitizeContainerName(string tenantId)
@@ -95,6 +116,27 @@ public sealed class BlobArtifactStore : IArtifactStore
         await blobClient.UploadAsync(ms, overwrite: true, cancellationToken: cancellationToken).ConfigureAwait(false);
 
         return blobClient.Uri.ToString();
+    }
+
+    public async Task<byte[]?> GetSlicePdfAsync(
+        string tenantId,
+        string documentId,
+        int sliceIndex,
+        CancellationToken cancellationToken = default)
+    {
+        var containerName = LocalFileArtifactStore.SanitizeContainerName(tenantId);
+        var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
+        var blobName = $"{documentId}/slices/slice-{sliceIndex + 1}.pdf";
+        var blobClient = containerClient.GetBlobClient(blobName);
+
+        if (!await blobClient.ExistsAsync(cancellationToken).ConfigureAwait(false))
+        {
+            return null;
+        }
+
+        using var ms = new MemoryStream();
+        await blobClient.DownloadToAsync(ms, cancellationToken).ConfigureAwait(false);
+        return ms.ToArray();
     }
 }
 
@@ -304,5 +346,26 @@ public sealed class CosmosJobStore : IJobStore
         }
 
         return null;
+    }
+
+    public async Task<IReadOnlyList<DocumentJob>> ListJobsByTenantAsync(string tenantId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.tenantId = @tenantId")
+            .WithParameter("@tenantId", tenantId);
+
+        using var iterator = _container.GetItemQueryIterator<DocumentJob>(
+            query,
+            requestOptions: new QueryRequestOptions { PartitionKey = new PartitionKey(tenantId) });
+
+        var results = new List<DocumentJob>();
+        while (iterator.HasMoreResults)
+        {
+            var page = await iterator.ReadNextAsync(cancellationToken).ConfigureAwait(false);
+            results.AddRange(page);
+        }
+
+        return results.OrderByDescending(j => j.CreatedAtUtc).ToList();
     }
 }

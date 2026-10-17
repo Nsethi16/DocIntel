@@ -775,6 +775,599 @@
       font-size: 12.5px;
       display: none;
       box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+      z-index: 200;
+    }
+
+    .nav-item.active-nav {
+      background: var(--pill-active);
+      font-weight: 600;
+    }
+
+    /* =========================================================================
+       Document Intelligence Results Workspace (3-Pane Modern Layout)
+       ========================================================================= */
+    .doc-intel-workspace {
+      flex: 1;
+      display: none;
+      height: 100vh;
+      overflow: hidden;
+      background: #fbfbfa;
+    }
+
+    .doc-intel-workspace.active-view {
+      display: flex;
+    }
+
+    .main-canvas.hidden-view {
+      display: none;
+    }
+
+    /* Pane 1: Document List by Tenant */
+    .doc-list-pane {
+      width: 300px;
+      background: #ffffff;
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .doc-list-top {
+      padding: 18px 16px 12px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .doc-list-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .doc-list-title {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0;
+    }
+
+    .tenant-mini-badge {
+      font-size: 11px;
+      font-weight: 600;
+      color: #5c5549;
+      background: var(--accent-sand);
+      border: 1px solid #e6dfd3;
+      padding: 2px 9px;
+      border-radius: 999px;
+      max-width: 130px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .search-box {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
+
+    .search-box svg {
+      position: absolute;
+      left: 11px;
+      width: 14px;
+      height: 14px;
+      color: var(--text-muted);
+      pointer-events: none;
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 8px 12px 8px 32px;
+      border: 1px solid var(--card-border);
+      border-radius: 10px;
+      font-size: 12.5px;
+      font-family: inherit;
+      background: #f8f8f7;
+      color: var(--text-primary);
+      transition: all 0.15s ease;
+    }
+
+    .search-box input:focus {
+      outline: none;
+      background: #ffffff;
+      border-color: #999;
+    }
+
+    .doc-count-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 16px 6px 16px;
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .doc-items-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 6px 10px 14px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .doc-card-item {
+      padding: 11px 12px;
+      border-radius: 12px;
+      border: 1px solid transparent;
+      cursor: pointer;
+      display: flex;
+      align-items: flex-start;
+      gap: 11px;
+      transition: all 0.12s ease;
+    }
+
+    .doc-card-item:hover {
+      background: #f6f5f3;
+    }
+
+    .doc-card-item.selected {
+      background: var(--accent-sand);
+      border-color: #e4ddd0;
+    }
+
+    .doc-card-icon {
+      width: 34px;
+      height: 34px;
+      border-radius: 8px;
+      background: #f5f3ef;
+      border: 1px solid #e6e2da;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #c25138;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+
+    .doc-card-item.selected .doc-card-icon {
+      background: #ffffff;
+    }
+
+    .doc-card-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .doc-card-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-bottom: 3px;
+    }
+
+    .doc-card-sub {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .status-pill-mini {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 10.5px;
+      font-weight: 600;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: #eef7f1;
+      color: #166534;
+    }
+
+    .status-pill-mini.running {
+      background: #eff6ff;
+      color: #1d4ed8;
+    }
+
+    .status-pill-mini.failed {
+      background: #fef2f2;
+      color: #b91c1c;
+    }
+
+    .doc-list-footer {
+      padding: 12px 14px;
+      border-top: 1px solid var(--border);
+      background: #ffffff;
+      display: flex;
+      gap: 8px;
+    }
+
+    .btn-upload-full {
+      flex: 1;
+      background: var(--text-primary);
+      color: #ffffff;
+      border: none;
+      border-radius: 10px;
+      padding: 9px 14px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: background 0.15s ease;
+    }
+
+    .btn-upload-full:hover {
+      background: #333333;
+    }
+
+    /* Pane 2: Center Document Results Viewer */
+    .doc-center-pane {
+      flex: 1;
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      background: #fbfbfa;
+    }
+
+    .doc-center-header {
+      padding: 16px 26px 0 26px;
+      background: #ffffff;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .doc-title-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 12px;
+    }
+
+    .doc-title-text {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .slice-pills-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin-bottom: 12px;
+    }
+
+    .slice-pill {
+      border: 1px solid var(--card-border);
+      background: #f9f8f6;
+      color: var(--text-secondary);
+      border-radius: 999px;
+      padding: 4px 12px;
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+      transition: all 0.12s ease;
+    }
+
+    .slice-pill:hover {
+      background: #f0eee9;
+      color: var(--text-primary);
+    }
+
+    .slice-pill.active {
+      background: var(--text-primary);
+      color: #ffffff;
+      border-color: var(--text-primary);
+    }
+
+    .doc-toolbar-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 20px;
+      padding-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .mode-segmented {
+      display: inline-flex;
+      background: #f2f1ee;
+      padding: 3px;
+      border-radius: 10px;
+      border: 1px solid #e6e4e0;
+    }
+
+    .mode-seg-btn {
+      border: none;
+      background: transparent;
+      padding: 5px 14px;
+      border-radius: 7px;
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.12s ease;
+    }
+
+    .mode-seg-btn.active {
+      background: #ffffff;
+      color: var(--text-primary);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+    }
+
+    .result-tabs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .result-tab-btn {
+      border: 1px solid transparent;
+      background: transparent;
+      padding: 6px 13px;
+      border-radius: 999px;
+      font-size: 12.5px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.12s ease;
+    }
+
+    .result-tab-btn:hover {
+      background: var(--pill-hover);
+      color: var(--text-primary);
+    }
+
+    .result-tab-btn.active {
+      background: var(--accent-sand);
+      color: var(--text-primary);
+      border-color: #e4ddd0;
+      font-weight: 600;
+    }
+
+    .doc-center-body {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px 28px;
+    }
+
+    .result-card {
+      background: #ffffff;
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 18px 22px;
+      margin-bottom: 16px;
+    }
+
+    .result-card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .result-card-title {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0;
+    }
+
+    .entity-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+      gap: 12px;
+    }
+
+    .entity-chip-card {
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: #fcfcfb;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .entity-chip-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 11px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      font-weight: 600;
+    }
+
+    .entity-chip-name {
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-weight: 500;
+    }
+
+    .entity-chip-val {
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-primary);
+      word-break: break-word;
+    }
+
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12.5px;
+    }
+
+    .data-table th,
+    .data-table td {
+      text-align: left;
+      padding: 9px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .data-table th {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: var(--text-secondary);
+      background: #faf9f7;
+    }
+
+    .conf-badge {
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #eef7f1;
+      color: #166534;
+    }
+
+    .doc-disclaimer-footer {
+      padding: 10px 26px;
+      border-top: 1px solid var(--border);
+      background: #ffffff;
+      font-size: 12px;
+      color: var(--text-secondary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-shrink: 0;
+    }
+
+    /* Pane 3: Right Ask AI / Prompt Column Rail */
+    .doc-chat-pane {
+      width: 340px;
+      background: #ffffff;
+      border-left: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+    }
+
+    .chat-pane-tabs {
+      display: flex;
+      align-items: center;
+      border-bottom: 1px solid var(--border);
+      padding: 10px 14px 0 14px;
+      gap: 14px;
+    }
+
+    .chat-pane-tab {
+      background: transparent;
+      border: none;
+      border-bottom: 2px solid transparent;
+      padding: 8px 4px 10px 4px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      cursor: pointer;
+    }
+
+    .chat-pane-tab.active {
+      color: var(--text-primary);
+      border-bottom-color: var(--text-primary);
+    }
+
+    .chat-subheader {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .chat-subheader strong {
+      font-size: 13.5px;
+      color: var(--text-primary);
+    }
+
+    .chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .chat-bubble {
+      padding: 11px 14px;
+      border-radius: 14px;
+      font-size: 12.5px;
+      line-height: 1.45;
+      max-width: 92%;
+      white-space: pre-wrap;
+    }
+
+    .chat-bubble.user {
+      align-self: flex-end;
+      background: var(--accent-sand);
+      color: var(--text-primary);
+      border: 1px solid #e5dfd3;
+    }
+
+    .chat-bubble.assistant {
+      align-self: flex-start;
+      background: #f7f7f6;
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+
+    .chat-input-bar {
+      padding: 12px 14px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .chat-input-bar input {
+      flex: 1;
+      border: 1px solid var(--card-border);
+      border-radius: 999px;
+      padding: 9px 14px;
+      font-size: 12.5px;
+      font-family: inherit;
+      background: #faf9f8;
+    }
+
+    .chat-input-bar input:focus {
+      outline: none;
+      border-color: #888;
+      background: #ffffff;
+    }
+
+    .chat-send-btn {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      border: none;
+      background: var(--text-primary);
+      color: #ffffff;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
     }
   </style>
 </head>
@@ -798,7 +1391,15 @@
       <span class="nav-label">New tenant</span>
     </div>
 
-    <div class="nav-item" title="Agent harness">
+    <div class="nav-item active-nav" id="navDocumentIntel" title="Document Intelligence Results" onclick="switchWorkspaceView('documents')">
+      <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M5.5 3h6l4 4v9.5A1.5 1.5 0 0114 18H5.5A1.5 1.5 0 014 16.5v-12A1.5 1.5 0 015.5 3z" />
+        <path stroke-linecap="round" stroke-linejoin="round" d="M7 10h6M7 13.5h4" />
+      </svg>
+      <span class="nav-label">Document Intelligence</span>
+    </div>
+
+    <div class="nav-item" id="navAgentHarness" title="Agent harness" onclick="switchWorkspaceView('harness')">
       <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9.5 3.5a2 2 0 013 0l4 6.5a2 2 0 01-1.5 3H7a2 2 0 01-1.5-3l4-6.5z" />
       </svg>
@@ -825,8 +1426,108 @@
     <div class="tenant-list" id="tenantList"></div>
   </aside>
 
-  <!-- Right Panel: Tenant Agent Harness Canvas -->
-  <main class="main-canvas">
+  <!-- VIEW 1: Modern 3-Column Document Intelligence Results by Tenant -->
+  <section class="doc-intel-workspace active-view" id="docIntelWorkspace">
+    <!-- Column 1: Document List by Tenant -->
+    <div class="doc-list-pane">
+      <div class="doc-list-top">
+        <div class="doc-list-title-row">
+          <h2 class="doc-list-title">Document Intelligence</h2>
+          <span class="tenant-mini-badge" id="docListTenantBadge">Tenant</span>
+        </div>
+        <div class="search-box">
+          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+            <circle cx="8.5" cy="8.5" r="5.5" />
+            <path d="M13 13l4 4" stroke-linecap="round" />
+          </svg>
+          <input type="text" id="docSearchInput" placeholder="Search documents" oninput="renderDocumentList()" />
+        </div>
+      </div>
+
+      <div class="doc-count-bar">
+        <span id="docListCountLabel">0 of 0</span>
+        <button class="btn-mini" type="button" onclick="submitSampleDocumentJob()" title="Run built-in 5-page sample contract packet">+ Sample run</button>
+      </div>
+
+      <div class="doc-items-scroll" id="docItemsList"></div>
+
+      <div class="doc-list-footer">
+        <label class="btn-upload-full">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+            <path d="M10 13V4m0 0L6.5 7.5M10 4l3.5 3.5M4 15.5h12" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <span id="uploadBtnLabel">Upload File</span>
+          <input type="file" id="docUploadInput" accept=".pdf" style="display:none" onchange="uploadAndRunTenantDocument(this)" />
+        </label>
+      </div>
+    </div>
+
+    <!-- Column 2: Selected Document Results Workspace -->
+    <div class="doc-center-pane">
+      <div class="doc-center-header">
+        <div class="doc-title-bar">
+          <h2 class="doc-title-text" id="selectedDocTitle">Select or upload a document</h2>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span class="version-chip" id="selectedDocHarnessBadge">Harness v1</span>
+            <span class="status-pill-mini" id="selectedDocStatusBadge">Ready</span>
+          </div>
+        </div>
+
+        <div class="slice-pills-row" id="sliceSelectorRow"></div>
+
+        <div class="doc-toolbar-row">
+          <div class="mode-segmented">
+            <button type="button" class="mode-seg-btn active" id="btnModeInsights" onclick="setDocDisplayMode('insights')">Insights</button>
+            <button type="button" class="mode-seg-btn" id="btnModeViewDoc" onclick="setDocDisplayMode('document')">View Document</button>
+          </div>
+
+          <div class="result-tabs" id="insightsTabBar">
+            <button type="button" class="result-tab-btn active" data-tab="summary" onclick="setDocResultTab('summary')">Summary &amp; Highlights</button>
+            <button type="button" class="result-tab-btn" data-tab="entities" onclick="setDocResultTab('entities')">Entities</button>
+            <button type="button" class="result-tab-btn" data-tab="structured" onclick="setDocResultTab('structured')">Structured Data</button>
+            <button type="button" class="result-tab-btn" data-tab="metadata" onclick="setDocResultTab('metadata')">Metadata</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="doc-center-body" id="docCenterBody"></div>
+
+      <div class="doc-disclaimer-footer">
+        <span>✦ Generated by AI to summarize and surface insights. For best results, review key details alongside the source.</span>
+      </div>
+    </div>
+
+    <!-- Column 3: Ask AI / Prompt Column Copilot Rail -->
+    <aside class="doc-chat-pane">
+      <div class="chat-pane-tabs">
+        <button type="button" class="chat-pane-tab active" id="tabAskAi" onclick="switchRightRailTab('ask')">Ask AI</button>
+        <button type="button" class="chat-pane-tab" id="tabPromptCol" onclick="switchRightRailTab('prompts')">Prompt Column</button>
+      </div>
+
+      <div id="askAiPanel" style="display:flex;flex-direction:column;flex:1;min-height:0;">
+        <div class="chat-subheader">
+          <strong>Ask AI</strong>
+          <button type="button" class="btn-mini" onclick="clearAskAiChat()">Clear chat</button>
+        </div>
+
+        <div class="chat-messages" id="askAiMessages"></div>
+
+        <div class="chat-input-bar">
+          <input type="text" id="askAiInput" placeholder="What questions do you have?" onkeydown="if(event.key==='Enter') sendAskAiQuestion()" />
+          <button type="button" class="chat-send-btn" title="Send question" onclick="sendAskAiQuestion()">
+            <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M4 10h12m0 0l-4.5-4.5M16 10l-4.5 4.5" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </button>
+        </div>
+      </div>
+
+      <div id="promptColumnPanel" style="display:none;flex-direction:column;flex:1;overflow-y:auto;padding:16px;gap:12px;"></div>
+    </aside>
+  </section>
+
+  <!-- VIEW 2: Right Panel: Tenant Agent Harness Canvas -->
+  <main class="main-canvas hidden-view" id="agentHarnessCanvas">
     <div class="canvas-column">
       <!-- Tenant Name on Top + Save & Cancel -->
       <div class="tenant-header">
@@ -1196,6 +1897,8 @@
       currentTenant = tenants.find(t => t.tenantId === selectedId) || tenants[0] || null;
       renderSidebarTenants();
       renderMainCanvas();
+      await loadTenantJobs();
+      renderPromptColumn();
     }
 
     function renderSidebarTenants() {
@@ -1245,6 +1948,8 @@
       currentTenant = tenants.find(t => t.tenantId === tenantId) || null;
       renderSidebarTenants();
       renderMainCanvas();
+      loadTenantJobs();
+      renderPromptColumn();
     }
 
     const expandedCards = new Set();
@@ -1714,7 +2419,559 @@
     }
 
     function escapeHtml(str) {
-      return String(str).replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+      return String(str == null ? '' : str).replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
+    }
+
+    // =========================================================================
+    // Document Intelligence Results Workspace (3-Pane View by Tenant)
+    // =========================================================================
+    let activeWorkspaceView = 'documents'; // 'documents' | 'harness'
+    let tenantJobs = [];
+    let selectedJobId = null;
+    let selectedSliceIndex = -1; // -1 = All Slices
+    let docDisplayMode = 'insights'; // 'insights' | 'document'
+    let docResultTab = 'summary'; // 'summary' | 'entities' | 'structured' | 'metadata'
+    let rightRailTab = 'ask'; // 'ask' | 'prompts'
+    let chatHistory = [];
+    let jobPollTimer = null;
+
+    function switchWorkspaceView(view) {
+      activeWorkspaceView = view;
+      document.getElementById('docIntelWorkspace').classList.toggle('active-view', view === 'documents');
+      document.getElementById('agentHarnessCanvas').classList.toggle('hidden-view', view === 'documents');
+      document.getElementById('navDocumentIntel').classList.toggle('active-nav', view === 'documents');
+      document.getElementById('navAgentHarness').classList.toggle('active-nav', view === 'harness');
+      if (view === 'documents') {
+        loadTenantJobs();
+        renderPromptColumn();
+      }
+    }
+
+    async function loadTenantJobs(preferredJobId) {
+      if (!currentTenant) return;
+      document.getElementById('docListTenantBadge').textContent = currentTenant.displayName;
+      document.getElementById('docListTenantBadge').title = currentTenant.displayName;
+
+      const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/jobs`);
+      if (!resp.ok) return;
+      tenantJobs = await resp.json();
+
+      if (preferredJobId) {
+        selectedJobId = preferredJobId;
+      } else if (!selectedJobId || !tenantJobs.some(j => j.jobId === selectedJobId)) {
+        selectedJobId = tenantJobs.length > 0 ? tenantJobs[0].jobId : null;
+        selectedSliceIndex = -1;
+      }
+
+      renderDocumentList();
+      renderSelectedDocument();
+      scheduleJobPollingIfNeeded();
+    }
+
+    function scheduleJobPollingIfNeeded() {
+      if (jobPollTimer) {
+        clearTimeout(jobPollTimer);
+        jobPollTimer = null;
+      }
+      if (tenantJobs.some(j => j.status === 'Queued' || j.status === 'Running')) {
+        jobPollTimer = setTimeout(() => loadTenantJobs(selectedJobId), 2000);
+      }
+    }
+
+    function renderDocumentList() {
+      const container = document.getElementById('docItemsList');
+      const query = (document.getElementById('docSearchInput').value || '').trim().toLowerCase();
+
+      const filtered = tenantJobs.filter(j => {
+        if (!query) return true;
+        const hay = `${j.fileName} ${j.jobId} ${(j.segments || []).map(s => s.identifiedDocumentName || s.documentTypeName || '').join(' ')}`.toLowerCase();
+        return hay.includes(query);
+      });
+
+      document.getElementById('docListCountLabel').textContent = `${filtered.length} of ${tenantJobs.length}`;
+      container.innerHTML = '';
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div style="padding:28px 14px;text-align:center;color:var(--text-secondary);font-size:12.5px;line-height:1.5;">
+            No documents processed for <strong>${escapeHtml(currentTenant ? currentTenant.displayName : 'this tenant')}</strong> yet.<br/><br/>
+            Click <strong>Upload File</strong> below or <strong>+ Sample run</strong> above to process a document.
+          </div>
+        `;
+        return;
+      }
+
+      filtered.forEach(job => {
+        const isSelected = job.jobId === selectedJobId;
+        const dt = job.createdAtUtc ? new Date(job.createdAtUtc) : new Date();
+        const dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const segs = job.segments || [];
+        const langs = [...new Set(segs.map(s => s.detectedLanguage).filter(Boolean))];
+        const langLabel = langs.length > 0
+          ? langs.map(l => l === 'es' ? 'Spanish' : l === 'en' ? 'English' : l.toUpperCase()).join(', ')
+          : 'English';
+
+        const statusCls = job.status === 'Completed' ? '' : (job.status === 'Failed' ? 'failed' : 'running');
+
+        const card = document.createElement('div');
+        card.className = 'doc-card-item' + (isSelected ? ' selected' : '');
+        card.onclick = () => {
+          selectedJobId = job.jobId;
+          selectedSliceIndex = -1;
+          renderDocumentList();
+          renderSelectedDocument();
+        };
+
+        card.innerHTML = `
+          <div class="doc-card-icon">
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M5.5 2.5h5.8l3.7 3.7v10.3a1.5 1.5 0 01-1.5 1.5h-8A1.5 1.5 0 014 16.5v-12A1.5 1.5 0 015.5 2.5z" />
+              <path stroke-linecap="round" d="M7 11h6M7 14h4" />
+            </svg>
+          </div>
+          <div class="doc-card-body">
+            <div class="doc-card-name" title="${escapeHtml(job.fileName)}">${escapeHtml(job.fileName)}</div>
+            <div class="doc-card-sub">
+              <span>${escapeHtml(dateStr)}</span>
+              <span>·</span>
+              <span>${escapeHtml(langLabel)}</span>
+              ${segs.length > 1 ? `<span>· ${segs.length} slices</span>` : ''}
+            </div>
+            <div style="margin-top:5px;">
+              <span class="status-pill-mini ${statusCls}">${escapeHtml(job.status)}</span>
+            </div>
+          </div>
+        `;
+        container.appendChild(card);
+      });
+    }
+
+    async function uploadAndRunTenantDocument(inputEl) {
+      if (!currentTenant || !inputEl.files || !inputEl.files[0]) return;
+      const file = inputEl.files[0];
+      const lbl = document.getElementById('uploadBtnLabel');
+      lbl.textContent = 'Uploading...';
+
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/jobs`, {
+          method: 'POST',
+          body: fd
+        });
+        if (resp.ok) {
+          const accepted = await resp.json();
+          showToast(`Submitted ${file.name}`);
+          await loadTenantJobs(accepted.jobId);
+        } else {
+          showToast('Upload failed');
+        }
+      } finally {
+        lbl.textContent = 'Upload File';
+        inputEl.value = '';
+      }
+    }
+
+    async function submitSampleDocumentJob() {
+      if (!currentTenant) return;
+      const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/jobs`, {
+        method: 'POST'
+      });
+      if (resp.ok) {
+        const accepted = await resp.json();
+        showToast('Submitted sample 5-page contract packet');
+        await loadTenantJobs(accepted.jobId);
+      }
+    }
+
+    function setDocDisplayMode(mode) {
+      docDisplayMode = mode;
+      document.getElementById('btnModeInsights').classList.toggle('active', mode === 'insights');
+      document.getElementById('btnModeViewDoc').classList.toggle('active', mode === 'document');
+      document.getElementById('insightsTabBar').style.display = mode === 'insights' ? 'flex' : 'none';
+      renderSelectedDocument();
+    }
+
+    function setDocResultTab(tab) {
+      docResultTab = tab;
+      document.querySelectorAll('#insightsTabBar .result-tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tab);
+      });
+      renderSelectedDocument();
+    }
+
+    function renderSelectedDocument() {
+      const body = document.getElementById('docCenterBody');
+      const sliceRow = document.getElementById('sliceSelectorRow');
+      const job = tenantJobs.find(j => j.jobId === selectedJobId);
+
+      if (!job) {
+        document.getElementById('selectedDocTitle').textContent = 'No document selected';
+        document.getElementById('selectedDocHarnessBadge').textContent = currentTenant ? `Harness v${currentTenant.harnessVersion || 1}` : 'Harness';
+        document.getElementById('selectedDocStatusBadge').textContent = 'Idle';
+        sliceRow.innerHTML = '';
+        body.innerHTML = `
+          <div class="result-card" style="text-align:center;padding:48px 24px;color:var(--text-secondary);">
+            <div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:6px;">No document selected</div>
+            <div style="font-size:13px;">Upload a PDF using <strong>Upload File</strong> on the left or click <strong>+ Sample run</strong> to inspect results for this tenant.</div>
+          </div>
+        `;
+        return;
+      }
+
+      document.getElementById('selectedDocTitle').textContent = `${job.fileName}`;
+      document.getElementById('selectedDocHarnessBadge').textContent = `Harness v${job.appliedHarnessVersion || 1}`;
+      const statusBadge = document.getElementById('selectedDocStatusBadge');
+      statusBadge.textContent = `${job.status} · ${job.totalPages || 0} pages`;
+      statusBadge.className = 'status-pill-mini ' + (job.status === 'Completed' ? '' : (job.status === 'Failed' ? 'failed' : 'running'));
+
+      const segs = job.segments || [];
+      sliceRow.innerHTML = '';
+      if (segs.length > 0) {
+        const allBtn = document.createElement('button');
+        allBtn.type = 'button';
+        allBtn.className = 'slice-pill' + (selectedSliceIndex === -1 ? ' active' : '');
+        allBtn.textContent = `All Slices (${segs.length})`;
+        allBtn.onclick = () => { selectedSliceIndex = -1; renderSelectedDocument(); };
+        sliceRow.appendChild(allBtn);
+
+        segs.forEach(s => {
+          const btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'slice-pill' + (selectedSliceIndex === s.segmentIndex ? ' active' : '');
+          const labelName = s.identifiedDocumentName || s.documentTypeName || `Slice ${s.segmentIndex + 1}`;
+          btn.textContent = `Slice ${s.segmentIndex + 1}: ${labelName} (p.${s.startPage}–${s.endPage})`;
+          btn.onclick = () => { selectedSliceIndex = s.segmentIndex; renderSelectedDocument(); };
+          sliceRow.appendChild(btn);
+        });
+      }
+
+      if (job.status === 'Queued' || job.status === 'Running') {
+        body.innerHTML = `
+          <div class="result-card">
+            <div class="result-card-header">
+              <h3 class="result-card-title">Processing Document through Agent Harness...</h3>
+              <span class="status-pill-mini running">${escapeHtml(job.status)}</span>
+            </div>
+            <div style="font-size:13px;color:var(--text-secondary);">
+              Completed steps so far: ${(job.executionTrace || []).length}
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      if (job.status === 'Failed') {
+        body.innerHTML = `
+          <div class="result-card" style="border-color:#fca5a5;background:#fef2f2;">
+            <h3 class="result-card-title" style="color:#991b1b;margin-bottom:8px;">Processing Failed</h3>
+            <div style="font-size:12.5px;color:#7f1d1d;white-space:pre-wrap;">${escapeHtml(job.errorMessage || 'Unknown error')}</div>
+          </div>
+        `;
+        return;
+      }
+
+      const activeSegs = selectedSliceIndex === -1
+        ? segs
+        : segs.filter(s => s.segmentIndex === selectedSliceIndex);
+
+      if (docDisplayMode === 'document') {
+        const targetSeg = activeSegs[0] || segs[0];
+        if (!targetSeg) {
+          body.innerHTML = `<div class="result-card">No PDF slices available.</div>`;
+          return;
+        }
+        const pdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${targetSeg.segmentIndex}/pdf`;
+        body.innerHTML = `
+          <div class="result-card">
+            <div class="result-card-header">
+              <div>
+                <h3 class="result-card-title">Slice #${targetSeg.segmentIndex + 1}: ${escapeHtml(targetSeg.identifiedDocumentName || targetSeg.documentTypeName || 'Document')} (Pages ${targetSeg.startPage}–${targetSeg.endPage})</h3>
+              </div>
+              <a href="${pdfUrl}" target="_blank" download="slice-${targetSeg.segmentIndex + 1}-pages-${targetSeg.startPage}-${targetSeg.endPage}.pdf" class="btn-mini dark" style="text-decoration:none;">⬇ Download Slice PDF (${((targetSeg.splitPdfSizeBytes || 0)/1024).toFixed(1)} KB)</a>
+            </div>
+            <iframe src="${pdfUrl}" style="width:100%;height:480px;border:1px solid var(--border);border-radius:10px;background:#f4f4f4;" title="PDF Slice Preview"></iframe>
+            <details style="margin-top:14px;">
+              <summary style="cursor:pointer;font-size:12.5px;font-weight:600;color:var(--text-secondary);">View Extracted Page Text / Markdown</summary>
+              <pre style="background:#f8f8f7;padding:12px;border-radius:10px;border:1px solid var(--border);font-size:12px;white-space:pre-wrap;margin-top:8px;">${escapeHtml(targetSeg.translatedText || targetSeg.bodyText)}</pre>
+            </details>
+          </div>
+        `;
+        return;
+      }
+
+      // Insights Mode: Render selected tab
+      if (docResultTab === 'summary') {
+        body.innerHTML = activeSegs.map(s => `
+          <div class="result-card">
+            <div class="result-card-header">
+              <div>
+                <h3 class="result-card-title">Slice #${s.segmentIndex + 1} · ${escapeHtml(s.identifiedDocumentName || s.documentTypeName || 'Document')}</h3>
+                <div style="font-size:11.5px;color:var(--text-secondary);margin-top:2px;">
+                  Pages ${s.startPage}–${s.endPage} · Language: ${escapeHtml((s.detectedLanguage || 'en').toUpperCase())}${s.wasTranslated ? ` → ${escapeHtml((s.targetLanguage || 'en').toUpperCase())} (Translated)` : ''}
+                </div>
+              </div>
+              <span class="conf-badge">${s.identifiedDocumentName && s.identifiedDocumentName !== 'Undefined' ? 'Matched Rule' : 'Identified'}</span>
+            </div>
+            <div style="font-size:13.5px;line-height:1.55;color:var(--text-primary);margin-bottom:12px;">
+              ${escapeHtml(s.insightSummary || 'No insight summary generated (Document Insights capability was disabled for this run).')}
+            </div>
+            <details>
+              <summary style="cursor:pointer;font-size:12px;color:var(--text-secondary);font-weight:600;">Content Highlights (${s.wasTranslated ? 'Translated Text' : 'Extracted Text'})</summary>
+              <pre style="background:#faf9f7;padding:12px;border-radius:10px;border:1px solid var(--border);font-size:12px;white-space:pre-wrap;margin-top:8px;max-height:220px;overflow:auto;">${escapeHtml(s.translatedText || s.bodyText)}</pre>
+            </details>
+          </div>
+        `).join('');
+      } else if (docResultTab === 'entities') {
+        const entities = activeSegs.flatMap(s => (s.extractedEntities || []).map(e => ({ ...e, sliceNum: s.segmentIndex + 1, docType: s.identifiedDocumentName || s.documentTypeName })));
+        if (entities.length === 0) {
+          body.innerHTML = `
+            <div class="result-card" style="text-align:center;padding:42px 20px;">
+              <div style="font-size:14.5px;font-weight:600;color:var(--text-primary);margin-bottom:4px;">Entity extraction artifact unavailable</div>
+              <div style="font-size:12.5px;color:var(--text-secondary);">This document has no extracted entities or Entity Extraction was disabled.</div>
+            </div>
+          `;
+          return;
+        }
+        body.innerHTML = `
+          <div class="result-card">
+            <div class="result-card-header">
+              <h3 class="result-card-title">Extracted Entities (${entities.length})</h3>
+              <span style="font-size:12px;color:var(--text-secondary);">Model: ${escapeHtml(job.modelIdUsed || 'gpt-5-mini')}</span>
+            </div>
+            <div class="entity-grid">
+              ${entities.map(e => `
+                <div class="entity-chip-card">
+                  <div class="entity-chip-top">
+                    <span>${escapeHtml(e.category || 'Entity')} · Slice #${e.sliceNum}</span>
+                    <span class="conf-badge">${Math.round((e.confidence <= 1 ? e.confidence * 100 : e.confidence))}%</span>
+                  </div>
+                  <div class="entity-chip-name">${escapeHtml(e.name)}</div>
+                  <div class="entity-chip-val">${escapeHtml(e.value)}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      } else if (docResultTab === 'structured') {
+        const slicesWithData = activeSegs.filter(s => s.dataExtraction && ((s.dataExtraction.fields && s.dataExtraction.fields.length > 0) || (s.dataExtraction.tables && s.dataExtraction.tables.length > 0)));
+        if (slicesWithData.length === 0) {
+          body.innerHTML = `
+            <div class="result-card" style="text-align:center;padding:42px 20px;">
+              <div style="font-size:14.5px;font-weight:600;color:var(--text-primary);margin-bottom:4px;">Structured data extraction unavailable</div>
+              <div style="font-size:12.5px;color:var(--text-secondary);">Configure key-value pairs and tables for "${escapeHtml((activeSegs[0] && activeSegs[0].identifiedDocumentName) || 'your document type')}" in Agent Harness → Data Extraction.</div>
+            </div>
+          `;
+          return;
+        }
+        body.innerHTML = slicesWithData.map(s => {
+          const de = s.dataExtraction;
+          const fieldsHtml = (de.fields && de.fields.length > 0) ? `
+            <table class="data-table" style="margin-bottom:16px;">
+              <thead>
+                <tr><th>Field Name</th><th>Extracted Value</th><th>Confidence</th></tr>
+              </thead>
+              <tbody>
+                ${de.fields.map(f => `
+                  <tr>
+                    <td style="font-weight:600;">${escapeHtml(f.fieldName)}</td>
+                    <td>${escapeHtml(f.fieldValue || '—')}</td>
+                    <td><span class="conf-badge">${Math.round(f.confidenceValue)}%</span></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          ` : '';
+
+          const tablesHtml = (de.tables || []).map(t => {
+            const rows = t.rows || [];
+            const colNames = rows.length > 0 ? (rows[0].fields || []).map(c => c.fieldName) : [];
+            return `
+              <div style="margin-top:12px;">
+                <div style="font-size:12.5px;font-weight:600;color:var(--text-secondary);margin-bottom:6px;">Table: ${escapeHtml(t.tableName)} (${rows.length} row(s))</div>
+                ${rows.length > 0 ? `
+                  <table class="data-table">
+                    <thead>
+                      <tr>${colNames.map(cn => `<th>${escapeHtml(cn)}</th>`).join('')}</tr>
+                    </thead>
+                    <tbody>
+                      ${rows.map(r => `
+                        <tr>${(r.fields || []).map(cell => `<td>${escapeHtml(cell.fieldValue)}</td>`).join('')}</tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                ` : '<div style="font-size:12px;color:var(--text-muted);">No rows matched in this slice.</div>'}
+              </div>
+            `;
+          }).join('');
+
+          return `
+            <div class="result-card">
+              <div class="result-card-header">
+                <h3 class="result-card-title">${escapeHtml(de.documentName)} · Pages ${escapeHtml(de.pageRange)}</h3>
+                <span class="version-chip">Footer: ${escapeHtml(de.footerId || 'none')}</span>
+              </div>
+              ${fieldsHtml}
+              ${tablesHtml}
+            </div>
+          `;
+        }).join('');
+      } else if (docResultTab === 'metadata') {
+        const trace = job.executionTrace || [];
+        body.innerHTML = `
+          <div class="result-card">
+            <div class="result-card-header">
+              <h3 class="result-card-title">Document Slices &amp; Classification Metadata</h3>
+              <span class="version-chip">Job ID: ${escapeHtml(job.jobId)}</span>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr><th>Slice</th><th>Pages</th><th>Identified Document</th><th>Matched Rule</th><th>Footers</th><th>Blob Artifact</th></tr>
+              </thead>
+              <tbody>
+                ${activeSegs.map(s => `
+                  <tr>
+                    <td>#${s.segmentIndex + 1}</td>
+                    <td>${s.startPage}–${s.endPage}</td>
+                    <td><strong>${escapeHtml(s.identifiedDocumentName || s.documentTypeName || 'Undefined')}</strong></td>
+                    <td style="font-size:11.5px;color:var(--text-secondary);">${escapeHtml(s.matchedIdentificationRule || '—')}</td>
+                    <td style="font-size:11.5px;font-family:monospace;">${escapeHtml((s.footers || []).join(', ') || '—')}</td>
+                    <td style="font-size:11.5px;">${s.splitPdfBlobUri ? `<a href="/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${s.segmentIndex}/pdf" target="_blank" style="color:#c25138;font-weight:600;">Open PDF</a>` : '—'}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+
+          <div class="result-card">
+            <div class="result-card-header">
+              <h3 class="result-card-title">Microsoft Agent Framework Execution Trace</h3>
+              <span class="version-chip">Applied Harness v${job.appliedHarnessVersion}</span>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr><th>Executor Step</th><th>Executed</th><th>Model / Service</th><th>Duration</th><th>Notes</th></tr>
+              </thead>
+              <tbody>
+                ${trace.map(t => `
+                  <tr>
+                    <td style="font-weight:600;">${escapeHtml(t.executorName)}</td>
+                    <td>${t.executed ? '✓ Yes' : 'Skipped'}</td>
+                    <td>${escapeHtml(t.modelIdUsed || 'Deterministic')}</td>
+                    <td>${t.durationMs ? t.durationMs.toFixed(1) + ' ms' : '0 ms'}</td>
+                    <td style="color:var(--text-secondary);">${escapeHtml(t.notes || '')}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+      }
+    }
+
+    function switchRightRailTab(tab) {
+      rightRailTab = tab;
+      document.getElementById('tabAskAi').classList.toggle('active', tab === 'ask');
+      document.getElementById('tabPromptCol').classList.toggle('active', tab === 'prompts');
+      document.getElementById('askAiPanel').style.display = tab === 'ask' ? 'flex' : 'none';
+      document.getElementById('promptColumnPanel').style.display = tab === 'prompts' ? 'flex' : 'none';
+      if (tab === 'prompts') renderPromptColumn();
+    }
+
+    function renderAskAiMessages() {
+      const container = document.getElementById('askAiMessages');
+      if (chatHistory.length === 0) {
+        container.innerHTML = `
+          <div style="color:var(--text-secondary);font-size:12.5px;line-height:1.5;padding:8px 4px;">
+            Ask questions across all processed documents for <strong>${escapeHtml(currentTenant ? currentTenant.displayName : 'this tenant')}</strong>:
+            <div style="display:flex;flex-direction:column;gap:6px;margin-top:12px;">
+              <button type="button" class="btn-mini" style="text-align:left;padding:7px 11px;border-radius:10px;" onclick="askQuickQuestion('What documents have been processed and what are their key entities?')">What documents have been processed and what are their key entities?</button>
+              <button type="button" class="btn-mini" style="text-align:left;padding:7px 11px;border-radius:10px;" onclick="askQuickQuestion('What all documents have Customer name as Cadena Comercial OXXO?')">What all documents have Customer name as Cadena Comercial OXXO?</button>
+              <button type="button" class="btn-mini" style="text-align:left;padding:7px 11px;border-radius:10px;" onclick="askQuickQuestion('What is the quote number and total deal value?')">What is the quote number and total deal value?</button>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = chatHistory.map(m => `
+        <div class="chat-bubble ${m.role === 'user' ? 'user' : 'assistant'}">${escapeHtml(m.text)}</div>
+      `).join('');
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function clearAskAiChat() {
+      chatHistory = [];
+      renderAskAiMessages();
+    }
+
+    function askQuickQuestion(q) {
+      document.getElementById('askAiInput').value = q;
+      sendAskAiQuestion();
+    }
+
+    async function sendAskAiQuestion() {
+      if (!currentTenant) return;
+      const input = document.getElementById('askAiInput');
+      const question = input.value.trim();
+      if (!question) return;
+
+      input.value = '';
+      chatHistory.push({ role: 'user', text: question });
+      chatHistory.push({ role: 'assistant', text: 'Thinking…' });
+      renderAskAiMessages();
+
+      try {
+        const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question, jobId: selectedJobId })
+        });
+        const data = await resp.json();
+        chatHistory[chatHistory.length - 1] = {
+          role: 'assistant',
+          text: data.answer || data.error || 'No response returned.'
+        };
+      } catch (err) {
+        chatHistory[chatHistory.length - 1] = {
+          role: 'assistant',
+          text: 'Failed to reach Ask AI service.'
+        };
+      }
+      renderAskAiMessages();
+    }
+
+    function renderPromptColumn() {
+      const panel = document.getElementById('promptColumnPanel');
+      if (!panel || !currentTenant) return;
+      const caps = currentTenant.capabilities || {};
+      const idRules = (caps.IdentifyDocuments && caps.IdentifyDocuments.identifyDocuments && caps.IdentifyDocuments.identifyDocuments.rules) || [];
+      const insightPrompt = (caps.DocumentInsight && caps.DocumentInsight.documentInsight && caps.DocumentInsight.documentInsight.summaryInstructions) || '';
+      const entityPrompt = (caps.EntityExtraction && caps.EntityExtraction.entityExtraction && caps.EntityExtraction.entityExtraction.extractionPrompt) || '';
+
+      panel.innerHTML = `
+        <div style="display:flex;align-items:center;justify-content:space-between;">
+          <strong style="font-size:13.5px;">Active Tenant Harness</strong>
+          <button type="button" class="btn-mini dark" onclick="switchWorkspaceView('harness')">Edit Harness →</button>
+        </div>
+        <div style="font-size:12px;color:var(--text-secondary);">
+          Decision Model: <strong>${escapeHtml(currentTenant.decisionModelId || 'decision-1')}</strong><br/>
+          Language Model: <strong>${escapeHtml(currentTenant.defaultModelId || 'gpt-5-mini')}</strong>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:10px;">
+          <div class="drawer-label" style="margin-bottom:6px;">Identification Rules (${idRules.length})</div>
+          ${idRules.map(r => `<div style="font-size:12px;margin-bottom:6px;"><strong>${escapeHtml(r.documentName)}</strong>: <span style="color:var(--text-secondary);">${escapeHtml(r.identificationPrompt)}</span></div>`).join('') || '<div style="font-size:12px;color:var(--text-muted);">None</div>'}
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:10px;">
+          <div class="drawer-label" style="margin-bottom:4px;">Insight Instructions</div>
+          <div style="font-size:12px;color:var(--text-secondary);">${escapeHtml(insightPrompt)}</div>
+        </div>
+        <div style="border-top:1px solid var(--border);padding-top:10px;">
+          <div class="drawer-label" style="margin-bottom:4px;">Entity Extraction Prompt</div>
+          <div style="font-size:12px;color:var(--text-secondary);">${escapeHtml(entityPrompt)}</div>
+        </div>
+      `;
+      renderAskAiMessages();
     }
 
     init();

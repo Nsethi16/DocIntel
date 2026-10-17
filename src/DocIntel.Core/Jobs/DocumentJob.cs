@@ -73,6 +73,8 @@ public interface IJobStore
     Task UpsertJobAsync(DocumentJob job, CancellationToken cancellationToken = default);
 
     Task<DocumentJob?> GetJobAsync(string jobId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<DocumentJob>> ListJobsByTenantAsync(string tenantId, CancellationToken cancellationToken = default);
 }
 
 public interface IJobQueue
@@ -98,6 +100,16 @@ public sealed class InMemoryJobStore : IJobStore
         ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
         _jobs.TryGetValue(jobId, out var job);
         return Task.FromResult(job);
+    }
+
+    public Task<IReadOnlyList<DocumentJob>> ListJobsByTenantAsync(string tenantId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        IReadOnlyList<DocumentJob> list = _jobs.Values
+            .Where(j => string.Equals(j.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(j => j.CreatedAtUtc)
+            .ToList();
+        return Task.FromResult(list);
     }
 }
 

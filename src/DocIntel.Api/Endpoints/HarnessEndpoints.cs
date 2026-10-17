@@ -1,9 +1,11 @@
+using System.Text;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Models;
 using DocIntel.Core.Storage;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.AI;
 
 namespace DocIntel.Api.Endpoints;
 
@@ -86,6 +88,140 @@ public static class HarnessEndpoints
             updated.TenantId = tenantId;
             var saved = await store.UpsertTenantAsync(updated, ct);
             return TypedResults.Ok(saved);
+        });
+
+        // List all jobs for a tenant (newest first)
+        group.MapGet("/tenants/{tenantId}/jobs", async (
+            string tenantId,
+            IJobStore jobStore,
+            CancellationToken ct) =>
+        {
+            var jobs = await jobStore.ListJobsByTenantAsync(tenantId, ct);
+            return Results.Ok(jobs.Select(FormatJobResponse));
+        });
+
+        // Stream or download a split PDF slice through the API (works with private Blob Storage via Managed Identity)
+        group.MapGet("/tenants/{tenantId}/jobs/{jobId}/slices/{sliceIndex:int}/pdf", async (
+            string tenantId,
+            string jobId,
+            int sliceIndex,
+            IJobStore jobStore,
+            IArtifactStore? artifactStore,
+            CancellationToken ct) =>
+        {
+            byte[]? pdfBytes = null;
+            if (artifactStore is not null)
+            {
+                pdfBytes = await artifactStore.GetSlicePdfAsync(tenantId, jobId, sliceIndex, ct);
+            }
+
+            if (pdfBytes is null)
+            {
+                var job = await jobStore.GetJobAsync(jobId, ct);
+                var seg = job?.Segments.FirstOrDefault(s => s.SegmentIndex == sliceIndex);
+                pdfBytes = seg?.SplitPdfBytes;
+            }
+
+            if (pdfBytes is null || pdfBytes.Length == 0)
+            {
+                return Results.NotFound(new { error = $"PDF slice {sliceIndex} for job '{jobId}' was not found." });
+            }
+
+            return Results.File(pdfBytes, "application/pdf", enableRangeProcessing: true);
+        });
+
+        // Ask AI across a tenant's processed documents
+        group.MapPost("/tenants/{tenantId}/ask", async (
+            string tenantId,
+            [FromBody] AskTenantDocumentsRequest req,
+            IHarnessStore harnessStore,
+            IJobStore jobStore,
+            IModelCatalog modelCatalog,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(req?.Question))
+            {
+                return Results.BadRequest(new { error = "Question is required." });
+            }
+
+            var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
+            if (tenant is null)
+            {
+                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+            }
+
+            var jobs = (await jobStore.ListJobsByTenantAsync(tenantId, ct))
+                .Where(j => j.Status == JobStatus.Completed)
+                .Take(15)
+                .ToList();
+
+            if (jobs.Count == 0)
+            {
+                return Results.Ok(new
+                {
+                    answer = "No processed documents were found for this tenant yet. Upload a document using the 'Upload File' button to start asking questions.",
+                    matchedDocuments = Array.Empty<string>(),
+                    modelIdUsed = tenant.DefaultModelId
+                });
+            }
+
+            var contextBuilder = new StringBuilder();
+            foreach (var j in jobs)
+            {
+                contextBuilder.AppendLine($"=== Document: {j.FileName} (JobId: {j.JobId}, Date: {j.CreatedAtUtc:yyyy-MM-dd}) ===");
+                if (!string.IsNullOrWhiteSpace(j.PacketSummary))
+                {
+                    contextBuilder.AppendLine($"Summary: {j.PacketSummary}");
+                }
+                if (j.ExtractedEntities.Count > 0)
+                {
+                    contextBuilder.AppendLine("Entities: " + string.Join("; ", j.ExtractedEntities.Select(e => $"{e.Name}={e.Value}")));
+                }
+                foreach (var de in j.DataExtractions)
+                {
+                    contextBuilder.AppendLine($"Structured Data ({de.DocumentName}, Pages {de.PageRange}): " +
+                        string.Join("; ", de.Fields.Select(f => $"{f.FieldName}={f.FieldValue}")));
+                }
+                foreach (var s in j.Segments)
+                {
+                    var preview = s.BodyText.Length > 500 ? s.BodyText[..500] : s.BodyText;
+                    contextBuilder.AppendLine($"Slice #{s.SegmentIndex + 1} ({s.IdentifiedDocumentName ?? s.DocumentTypeName}, Pages {s.StartPage}-{s.EndPage}): {preview}");
+                }
+                contextBuilder.AppendLine();
+            }
+
+            var modelId = modelCatalog.ResolveModelId(tenant, tenant.DefaultModelId);
+            var chatClient = modelCatalog.ResolveChatClient(tenant, tenant.DefaultModelId);
+
+            string answer;
+            try
+            {
+                var messages = new List<ChatMessage>
+                {
+                    new(ChatRole.System, "You are the Document Intelligence Ask AI assistant. Answer the user's question concisely and accurately using ONLY the provided tenant documents context. Cite matching document file names and slice page ranges when relevant. If no document matches the request, state 'No document found matching the request.'"),
+                    new(ChatRole.User, $"Tenant Documents Context:\n{contextBuilder}\n\nUser Question: {req.Question}")
+                };
+
+                var response = await chatClient.GetResponseAsync(messages, cancellationToken: ct);
+                answer = response.Text ?? string.Empty;
+
+                // If running against SimulatedSliceChatClient (which returns JSON segments), synthesize a direct answer from context
+                if (answer.TrimStart().StartsWith("{\"segments\"", StringComparison.Ordinal))
+                {
+                    answer = SynthesizeLocalAnswer(req.Question, jobs);
+                }
+            }
+            catch
+            {
+                answer = SynthesizeLocalAnswer(req.Question, jobs);
+            }
+
+            return Results.Ok(new
+            {
+                answer,
+                modelIdUsed = modelId,
+                documentsEvaluated = jobs.Count
+            });
         });
 
         // Async Job Submission (202 Accepted)
@@ -259,4 +395,35 @@ public static class HarnessEndpoints
         s.SplitPdfSizeBytes,
         splitPdfBase64 = s.SplitPdfBytes is not null ? Convert.ToBase64String(s.SplitPdfBytes) : null
     };
+
+    private static string SynthesizeLocalAnswer(string question, IReadOnlyList<DocumentJob> jobs)
+    {
+        var qTerms = question
+            .Split([' ', ',', '.', '?', '"', '\'', ':'], StringSplitOptions.RemoveEmptyEntries)
+            .Where(w => w.Length >= 3 && !new[] { "what", "all", "documents", "have", "the", "for", "with", "from", "are", "who", "show", "find", "list" }.Contains(w.ToLowerInvariant()))
+            .ToList();
+
+        var matches = new List<string>();
+        foreach (var j in jobs)
+        {
+            var blob = $"{j.FileName} {j.PacketSummary} " +
+                       string.Join(" ", j.ExtractedEntities.Select(e => $"{e.Name}:{e.Value}")) + " " +
+                       string.Join(" ", j.DataExtractions.SelectMany(d => d.Fields).Select(f => $"{f.FieldName}:{f.FieldValue}")) + " " +
+                       string.Join(" ", j.Segments.Select(s => $"{s.IdentifiedDocumentName} {s.BodyText}"));
+
+            if (qTerms.Count == 0 || qTerms.Any(t => blob.Contains(t, StringComparison.OrdinalIgnoreCase)))
+            {
+                var entitiesSummary = j.ExtractedEntities.Count > 0
+                    ? string.Join(", ", j.ExtractedEntities.Take(4).Select(e => $"{e.Name}: {e.Value}"))
+                    : "No entities extracted";
+                matches.Add($"• **{j.FileName}** ({j.Segments.Count} slice(s), {j.TotalPages} pages) — {entitiesSummary}");
+            }
+        }
+
+        return matches.Count > 0
+            ? $"Found {matches.Count} matching document(s):\n" + string.Join("\n", matches)
+            : "No document found matching the request.";
+    }
+
+    public sealed record AskTenantDocumentsRequest(string Question, string? JobId = null);
 }
