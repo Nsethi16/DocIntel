@@ -26,6 +26,7 @@ app.UseExceptionHandler();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
+app.MapGet("/admin", () => Results.Redirect("/admin.html"));
 app.MapDefaultEndpoints();
 app.MapHarnessEndpoints();
 

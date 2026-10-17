@@ -573,8 +573,10 @@ public sealed class SimulatedSliceChatClient : IChatClient
             .LastOrDefault(l => !l.StartsWith("[TASK:", StringComparison.Ordinal))
             ?? "Executive summary";
 
-        var preview = string.Join(" · ", lines.Take(3));
-        var summary = $"[{_modelId} Insight] {preview} (Guided by: {instructionLine})";
+        var preview = string.Join(" — ", lines.Take(3));
+        var summary = string.IsNullOrWhiteSpace(preview)
+            ? "Executive summary of document slice."
+            : $"{preview}.";
 
         var json = JsonSerializer.Serialize(new { summary });
         return new ChatResponse(new ChatMessage(ChatRole.Assistant, json))
