@@ -160,7 +160,7 @@ public sealed class ModelCatalog : IModelCatalog
 
     private FoundryInferenceChatClient CreateFoundryInferenceClient(string endpoint, string deploymentName)
     {
-        var options = new ChatCompletionsClientOptions();
+        var options = new AzureAIInferenceClientOptions();
         options.AddPolicy(
             new BearerTokenAuthenticationPolicy(_credential, ["https://cognitiveservices.azure.com/.default"]),
             HttpPipelinePosition.PerRetry);
