@@ -21,13 +21,15 @@ public interface IArtifactStore
         string documentId,
         int sliceIndex,
         byte[] pdfBytes,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        bool isTranslated = false);
 
     Task<byte[]?> GetSlicePdfAsync(
         string tenantId,
         string documentId,
         int sliceIndex,
-        CancellationToken cancellationToken = default);
+        CancellationToken cancellationToken = default,
+        bool isTranslated = false);
 }
 
 /// <summary>
@@ -48,12 +50,14 @@ public sealed class LocalFileArtifactStore : IArtifactStore
         string documentId,
         int sliceIndex,
         byte[] pdfBytes,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool isTranslated = false)
     {
         var containerFolder = Path.Combine(_baseDirectory, SanitizeContainerName(tenantId), documentId);
         Directory.CreateDirectory(containerFolder);
 
-        var filePath = Path.Combine(containerFolder, $"slice-{sliceIndex + 1}.pdf");
+        var fileName = isTranslated ? $"slice-{sliceIndex + 1}-translated.pdf" : $"slice-{sliceIndex + 1}.pdf";
+        var filePath = Path.Combine(containerFolder, fileName);
         await File.WriteAllBytesAsync(filePath, pdfBytes, cancellationToken).ConfigureAwait(false);
         return filePath;
     }
@@ -62,9 +66,11 @@ public sealed class LocalFileArtifactStore : IArtifactStore
         string tenantId,
         string documentId,
         int sliceIndex,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool isTranslated = false)
     {
-        var filePath = Path.Combine(_baseDirectory, SanitizeContainerName(tenantId), documentId, $"slice-{sliceIndex + 1}.pdf");
+        var fileName = isTranslated ? $"slice-{sliceIndex + 1}-translated.pdf" : $"slice-{sliceIndex + 1}.pdf";
+        var filePath = Path.Combine(_baseDirectory, SanitizeContainerName(tenantId), documentId, fileName);
         if (!File.Exists(filePath))
         {
             return null;
@@ -103,13 +109,15 @@ public sealed class BlobArtifactStore : IArtifactStore
         string documentId,
         int sliceIndex,
         byte[] pdfBytes,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool isTranslated = false)
     {
         var containerName = LocalFileArtifactStore.SanitizeContainerName(tenantId);
         var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
         await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
 
-        var blobName = $"{documentId}/slices/slice-{sliceIndex + 1}.pdf";
+        var suffix = isTranslated ? "-translated" : string.Empty;
+        var blobName = $"{documentId}/slices/slice-{sliceIndex + 1}{suffix}.pdf";
         var blobClient = containerClient.GetBlobClient(blobName);
 
         using var ms = new MemoryStream(pdfBytes);
@@ -122,11 +130,13 @@ public sealed class BlobArtifactStore : IArtifactStore
         string tenantId,
         string documentId,
         int sliceIndex,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool isTranslated = false)
     {
         var containerName = LocalFileArtifactStore.SanitizeContainerName(tenantId);
         var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
-        var blobName = $"{documentId}/slices/slice-{sliceIndex + 1}.pdf";
+        var suffix = isTranslated ? "-translated" : string.Empty;
+        var blobName = $"{documentId}/slices/slice-{sliceIndex + 1}{suffix}.pdf";
         var blobClient = containerClient.GetBlobClient(blobName);
 
         if (!await blobClient.ExistsAsync(cancellationToken).ConfigureAwait(false))

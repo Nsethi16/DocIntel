@@ -100,26 +100,32 @@ public static class HarnessEndpoints
             return Results.Ok(jobs.Select(FormatJobResponse));
         });
 
-        // Stream or download a split PDF slice through the API (works with private Blob Storage via Managed Identity)
+        // Stream or download a split PDF slice (or its translated PDF document when ?translated=true)
         group.MapGet("/tenants/{tenantId}/jobs/{jobId}/slices/{sliceIndex:int}/pdf", async (
             string tenantId,
             string jobId,
             int sliceIndex,
+            bool? translated,
             IJobStore jobStore,
             IArtifactStore? artifactStore,
             CancellationToken ct) =>
         {
+            var wantTranslated = translated == true;
             byte[]? pdfBytes = null;
             if (artifactStore is not null)
             {
-                pdfBytes = await artifactStore.GetSlicePdfAsync(tenantId, jobId, sliceIndex, ct);
+                pdfBytes = await artifactStore.GetSlicePdfAsync(tenantId, jobId, sliceIndex, ct, isTranslated: wantTranslated);
+                if (pdfBytes is null && wantTranslated)
+                {
+                    pdfBytes = await artifactStore.GetSlicePdfAsync(tenantId, jobId, sliceIndex, ct, isTranslated: false);
+                }
             }
 
             if (pdfBytes is null)
             {
                 var job = await jobStore.GetJobAsync(jobId, ct);
                 var seg = job?.Segments.FirstOrDefault(s => s.SegmentIndex == sliceIndex);
-                pdfBytes = seg?.SplitPdfBytes;
+                pdfBytes = wantTranslated ? (seg?.TranslatedPdfBytes ?? seg?.SplitPdfBytes) : seg?.SplitPdfBytes;
             }
 
             if (pdfBytes is null || pdfBytes.Length == 0)
@@ -393,7 +399,10 @@ public static class HarnessEndpoints
         s.Markdown,
         s.SplitPdfBlobUri,
         s.SplitPdfSizeBytes,
-        splitPdfBase64 = s.SplitPdfBytes is not null ? Convert.ToBase64String(s.SplitPdfBytes) : null
+        s.TranslatedPdfBlobUri,
+        s.TranslatedPdfSizeBytes,
+        splitPdfBase64 = s.SplitPdfBytes is not null ? Convert.ToBase64String(s.SplitPdfBytes) : null,
+        translatedPdfBase64 = s.TranslatedPdfBytes is not null ? Convert.ToBase64String(s.TranslatedPdfBytes) : null
     };
 
     private static string SynthesizeLocalAnswer(string question, IReadOnlyList<DocumentJob> jobs)

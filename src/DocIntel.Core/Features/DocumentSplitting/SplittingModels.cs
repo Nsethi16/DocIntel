@@ -142,6 +142,15 @@ public sealed class DocumentSlice
 
     [JsonPropertyName("splitPdfSizeBytes")]
     public int SplitPdfSizeBytes { get; set; }
+
+    [JsonPropertyName("translatedPdfBlobUri")]
+    public string? TranslatedPdfBlobUri { get; set; }
+
+    [JsonIgnore]
+    public byte[]? TranslatedPdfBytes { get; set; }
+
+    [JsonPropertyName("translatedPdfSizeBytes")]
+    public int TranslatedPdfSizeBytes { get; set; }
 }
 
 /// <summary>

@@ -89,7 +89,7 @@ public sealed class DocumentSplittingWorkflow
         var detectExecutor = new DetectSliceBoundariesExecutor();
         var slicePdfExecutor = new WritePdfSlicesExecutor(_pdfSlicer, _artifactStore);
         var identifyExecutor = new IdentifyDocumentsExecutor(_modelCatalog);
-        var translateExecutor = new TranslateDocumentsExecutor(_translationService, _azureOptions.ResolveEffectiveTranslatorEndpoint());
+        var translateExecutor = new TranslateDocumentsExecutor(_translationService, _azureOptions.ResolveEffectiveTranslatorEndpoint(), _artifactStore);
         var insightExecutor = new GenerateDocumentInsightsExecutor(_modelCatalog);
         var entityExecutor = new ExtractEntitiesExecutor(_modelCatalog);
         var dataExtractionExecutor = new ExtractDocumentDataExecutor(_modelCatalog);

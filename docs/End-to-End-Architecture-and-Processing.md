@@ -170,12 +170,13 @@ sequenceDiagram
 
 ---
 
-### Step 5: `TranslateDocumentsExecutor` (Conditional Translation & Glossary Protection)
-- **What it does**: Translates any slice whose detected language differs from `harness.DocumentTranslation.TargetLanguage` (for example, Spanish `es` $\rightarrow$ English `en`).
+### Step 5: `TranslateDocumentsExecutor` (PDF Document Translation via `SingleDocumentTranslationClient`)
+- **What it does**: Translates any PDF slice (`slice.SplitPdfBytes`, `application/pdf`) whose detected language differs from `harness.DocumentTranslation.TargetLanguage` (for example, Spanish `es` $\rightarrow$ English `en`) into a **translated PDF document (`slice.TranslatedPdfBytes`)** while preserving the original PDF layout, tables, and formatting.
 - **How it works**:
-  - Inspects each slice's `DetectedLanguage`. If it already matches `TargetLanguage`, translation is skipped for that slice (`WasTranslated = false`).
-  - If translation is required, protects every term in `harness.DocumentTranslation.DoNotTranslateTerms` (e.g., `MBSA`, `Azure`, `Contoso`, SKU codes) and invokes `IDocumentTranslationService` (`AzureDocumentTranslationService` backed by the Microsoft Foundry `AIServices` endpoint, with automatic local dictionary fallback).
-  - Stores the translated text in `segment.TranslatedText` so all downstream executors (Insights, Entities, Structured Data) operate on the translated text.
+  - Uses **Azure AI Document Translation** (`Azure.AI.Translation.Document.SingleDocumentTranslationClient` for synchronous PDF-in $\rightarrow$ PDF-out translation and `DocumentTranslationClient` for batch Blob-to-Blob translation)—**not** raw text translation.
+  - Builds a `MultipartFormFileData` containing `slice.SplitPdfBytes` (`application/pdf`) and dynamically generates a TSV glossary (`donottranslate.tsv`, `text/tab-separated-values`) from `harness.DocumentTranslation.DoNotTranslateTerms` (e.g., `MBSA\tMBSA`, `Azure\tAzure`, `Contoso\tContoso`).
+  - Invokes `SingleDocumentTranslationClient.DocumentTranslateAsync(targetLanguage, translateContent, sourceLanguage: detectedLang)` to receive the translated PDF binary (`TranslatedPdfBytes`), saves it to the tenant's Blob container (`{jobId}/slices/slice-{i}-translated.pdf`), and extracts `TranslatedText` from the translated PDF via `PdfPig` so downstream executors (Insights, Entities, Structured Data) operate on the translated document.
+  - In the UI (`View Document`), users can toggle directly between the **Translated PDF** and the **Original PDF**.
 
 ---
 
