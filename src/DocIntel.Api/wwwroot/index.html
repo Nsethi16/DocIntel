@@ -1056,11 +1056,30 @@
       width: 235px;
       background: #fbfbfc;
       border-right: 1px solid var(--line);
-      padding: 14px 10px;
+      padding: 12px 10px;
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
       overflow-y: auto;
+      overflow-x: hidden;
+      transition: width 0.18s cubic-bezier(0.22, 1, 0.36, 1), padding 0.18s ease, opacity 0.14s ease;
+    }
+
+    .ask-inner-sidebar.collapsed {
+      width: 0;
+      padding: 0;
+      border-right: 0;
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    .ask-main-topbar {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 20px 0 20px;
+      flex-shrink: 0;
     }
 
     .ask-new-chat-pill {
@@ -1160,11 +1179,11 @@
       min-width: 0;
       height: 100%;
       background: #ffffff;
-      padding: 24px 36px;
+      padding: 0 36px 24px 36px;
       display: flex;
       flex-direction: column;
       align-items: center;
-      justify-content: center;
+      justify-content: space-between;
       overflow-y: auto;
     }
 
@@ -1431,7 +1450,16 @@
     let askAiLoading = false;
     let tenantChats = [];
     let activeChatId = null;
+    let askInnerSidebarCollapsed = false;
     let jobPollTimer = null;
+
+    function toggleAskInnerSidebar() {
+      askInnerSidebarCollapsed = !askInnerSidebarCollapsed;
+      const el = document.getElementById('askInnerSidebar');
+      const expandBtn = document.getElementById('btnExpandAskSidebar');
+      if (el) el.classList.toggle('collapsed', askInnerSidebarCollapsed);
+      if (expandBtn) expandBtn.style.display = askInnerSidebarCollapsed ? 'inline-flex' : 'none';
+    }
 
     function getChatsStorageKey() {
       return `docintel_chats_${currentTenant ? currentTenant.tenantId : 'default'}`;
@@ -1590,6 +1618,9 @@
       const isCollapsed = pane.classList.toggle('collapsed');
       if (expandBtn) {
         expandBtn.style.display = isCollapsed ? 'inline-flex' : 'none';
+      }
+      if (workspaceMode === 'ask') {
+        renderSelectedDocument();
       }
     }
 
@@ -3237,6 +3268,7 @@
       const chat = getActiveChat();
       const messages = chat?.messages || [];
       const isEmptyChat = messages.length === 0 && !askAiLoading;
+      const isDocDrawerCollapsed = document.getElementById('docListPane')?.classList.contains('collapsed');
 
       const chatListHtml = tenantChats.map(c => {
         const isSelected = c.id === activeChatId;
@@ -3249,7 +3281,17 @@
       }).join('');
 
       const leftChatRailHtml = `
-        <aside class="ask-inner-sidebar">
+        <aside class="ask-inner-sidebar ${askInnerSidebarCollapsed ? 'collapsed' : ''}" id="askInnerSidebar">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding:0 2px;">
+            <span style="font-size:12.5px;font-weight:600;color:var(--text-secondary);">Ask AI</span>
+            <button type="button" class="icon-toggle-btn" title="Hide chats panel" onclick="toggleAskInnerSidebar()">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
+                <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
+              </svg>
+            </button>
+          </div>
+
           <button type="button" class="ask-new-chat-pill" onclick="startNewAskAiChat()">
             <svg viewBox="0 0 20 20" fill="currentColor">
               <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
@@ -3264,10 +3306,38 @@
         </aside>
       `;
 
+      const topBarHtml = `
+        <div class="ask-main-topbar">
+          <div style="display:flex;align-items:center;gap:8px;">
+            ${isDocDrawerCollapsed ? `
+              <button type="button" class="ghost-action-btn" title="Show Documents drawer" onclick="toggleDocListPane()">
+                <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
+                  <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
+                </svg>
+                <span>Documents Panel</span>
+              </button>
+            ` : ''}
+            <button type="button" class="icon-toggle-btn" id="btnExpandAskSidebar" style="display:${askInnerSidebarCollapsed ? 'inline-flex' : 'none'};" title="Show chats panel" onclick="toggleAskInnerSidebar()">
+              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
+                <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
+              </svg>
+            </button>
+          </div>
+
+          <div style="display:flex;align-items:center;gap:6px;">
+            <button type="button" class="ghost-action-btn" onclick="setWorkspaceMode('documents')">Documents</button>
+            <button type="button" class="ghost-action-btn" onclick="setWorkspaceMode('graph')">Document Graph</button>
+          </div>
+        </div>
+      `;
+
       if (isEmptyChat) {
         body.innerHTML = `
           ${leftChatRailHtml}
           <div class="ask-main-pane">
+            ${topBarHtml}
             <div class="ask-minimal-stage">
               <h2 class="ask-minimal-heading">Hi, I can help you explore and answer questions across your documents</h2>
 
@@ -3281,6 +3351,7 @@
                 </button>
               </div>
             </div>
+            <div></div>
           </div>
         `;
         return;
@@ -3314,7 +3385,8 @@
       body.innerHTML = `
         ${leftChatRailHtml}
         <div class="ask-main-pane" style="justify-content:flex-start;">
-          <div class="ask-minimal-stage" style="justify-content:space-between;min-height:100%;margin:0 auto;">
+          ${topBarHtml}
+          <div class="ask-minimal-stage" style="justify-content:space-between;min-height:calc(100% - 48px);margin:0 auto;">
             <div style="width:100%;display:flex;flex-direction:column;gap:18px;padding-bottom:28px;">
               ${threadHtml}
               ${askAiLoading ? `<div style="color:var(--text-secondary);font-size:13.5px;">Thinking across your documents...</div>` : ''}
