@@ -851,7 +851,7 @@
       flex: 1;
       min-height: 0;
       display: grid;
-      grid-template-columns: 1fr 320px;
+      grid-template-columns: 1fr 350px;
       gap: 14px;
     }
 
@@ -861,18 +861,69 @@
       }
     }
 
-    .graph-canvas-card {
+    .graph-info-strip {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    @media (max-width: 1100px) {
+      .graph-info-strip {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+
+    .graph-info-card {
       background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-width: 0;
+    }
+
+    .graph-info-label {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .graph-info-value {
+      font-size: 14.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .graph-info-sub {
+      font-size: 11.5px;
+      color: var(--text-secondary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .graph-canvas-card {
+      background: #fbfbfc;
       border: 1px solid var(--line);
       border-radius: 12px;
       position: relative;
-      overflow-y: auto;
-      overflow-x: hidden;
+      overflow: hidden;
       display: flex;
       flex-direction: column;
-      min-height: 440px;
-      background-image: radial-gradient(#e3e1ec 1px, transparent 1px);
-      background-size: 20px 20px;
+      min-height: 420px;
     }
 
     .graph-svg {
@@ -2088,10 +2139,10 @@
 
     function getEntityCategoryColor(cat) {
       const c = String(cat || '').toUpperCase();
-      if (c.includes('IDENTIFIER')) return { bg: '#eef0ff', border: '#4b72fe', text: '#2842b5', dot: '#4b72fe' };
-      if (c.includes('PARTY') || c.includes('CUSTOMER')) return { bg: '#ecfdf5', border: '#0d9488', text: '#0f766e', dot: '#0d9488' };
-      if (c.includes('FINANCIAL')) return { bg: '#fffbeb', border: '#d97706', text: '#b45309', dot: '#d97706' };
-      return { bg: '#f5f3ff', border: '#7c3aed', text: '#6d28d9', dot: '#7c3aed' };
+      if (c.includes('IDENTIFIER')) return { bg: '#f2f4ff', border: '#c5cffc', text: '#3b4fc4', dot: '#5d74ec' };
+      if (c.includes('PARTY') || c.includes('CUSTOMER')) return { bg: '#effaf7', border: '#bce3dc', text: '#246b60', dot: '#388e80' };
+      if (c.includes('FINANCIAL')) return { bg: '#fdf8f0', border: '#ebd4b5', text: '#8f5b22', dot: '#c2853c' };
+      return { bg: '#f6f4fc', border: '#d8d0f2', text: '#5c48a8', dot: '#8470cf' };
     }
 
     function renderDocumentGraphTab(body) {
@@ -2134,6 +2185,8 @@
               </div>
             </div>
           </div>
+
+          <div class="graph-info-strip" id="graphInfoStripContainer"></div>
 
           <div class="graph-workbench" id="graphWorkbenchContainer"></div>
         </div>
@@ -2185,71 +2238,186 @@
       docNodes.forEach(d => nodeById.set(d.id, d));
       entityNodes.forEach(e => nodeById.set(e.id, e));
 
-      let inspectorHtml = '';
       const focusedNode = graphFocusedNodeId ? nodeById.get(graphFocusedNodeId) : null;
 
+      // Determine the subset of jobs represented by the current selection (focused node or filtered graph)
+      let activeDocIdsSet = new Set(docNodes.map(d => d.jobId));
       if (focusedNode && focusedNode.type === 'entity') {
+        activeDocIdsSet = new Set(focusedNode.connectedDocs.map(d => d.jobId));
+      } else if (focusedNode && focusedNode.type === 'doc') {
+        activeDocIdsSet = new Set([focusedNode.jobId]);
+      }
+
+      const activeJobs = tenantJobs.filter(j => activeDocIdsSet.has(j.jobId));
+      const totalPagesInSelection = activeJobs.reduce((acc, j) => acc + (j.totalPages || 0), 0);
+      const totalSlicesInSelection = activeJobs.reduce((acc, j) => acc + ((j.segments || []).length), 0);
+
+      const selectionEntities = activeJobs.flatMap(j => (j.segments || []).flatMap(s => s.extractedEntities || []));
+      const customerSet = [...new Set(selectionEntities.filter(e => e.name === 'Customer Name').map(e => e.value))];
+      const mbsaSet = [...new Set(selectionEntities.filter(e => e.name === 'MBA/MBSA Number').map(e => e.value))];
+      const currencySet = [...new Set(selectionEntities.filter(e => e.name === 'Billing Currency').map(e => e.value))];
+
+      let dealValueSum = 0;
+      const seenDealJobs = new Set();
+      activeJobs.forEach(j => {
+        if (seenDealJobs.has(j.jobId)) return;
+        const dvEnt = (j.segments || []).flatMap(s => s.extractedEntities || []).find(e => e.name === 'Total Deal Value');
+        if (dvEnt && dvEnt.value) {
+          const parsed = parseFloat(String(dvEnt.value).replace(/[^0-9.]/g, ''));
+          if (!isNaN(parsed)) {
+            dealValueSum += parsed;
+            seenDealJobs.add(j.jobId);
+          }
+        }
+      });
+
+      const infoStrip = document.getElementById('graphInfoStripContainer');
+      if (infoStrip) {
+        const focusTitle = focusedNode
+          ? (focusedNode.type === 'entity' ? `${focusedNode.entityValue}` : focusedNode.docName)
+          : (graphSelectedEntityValuePair !== 'ALL'
+              ? graphSelectedEntityValuePair.split('||')[1]
+              : (graphSelectedEntityNames.size > 0 ? [...graphSelectedEntityNames].join(', ') : 'All Tenant Documents'));
+        const focusSub = focusedNode
+          ? (focusedNode.type === 'entity' ? `Entity Hub · ${focusedNode.entityName}` : `Selected Document · ${focusedNode.pageRange}`)
+          : `${edges.length} entity connection${edges.length === 1 ? '' : 's'} active`;
+
+        infoStrip.innerHTML = `
+          <div class="graph-info-card">
+            <span class="graph-info-label">Active Selection</span>
+            <span class="graph-info-value" title="${escapeHtml(focusTitle)}">${escapeHtml(focusTitle)}</span>
+            <span class="graph-info-sub">${escapeHtml(focusSub)}</span>
+          </div>
+          <div class="graph-info-card">
+            <span class="graph-info-label">Document Coverage</span>
+            <span class="graph-info-value">${activeJobs.length} Document${activeJobs.length === 1 ? '' : 's'}</span>
+            <span class="graph-info-sub">${totalPagesInSelection} pages · ${totalSlicesInSelection} identified slices</span>
+          </div>
+          <div class="graph-info-card">
+            <span class="graph-info-label">Counterparties &amp; Agreements</span>
+            <span class="graph-info-value" title="${escapeHtml(customerSet.join(', '))}">${customerSet.length > 0 ? escapeHtml(customerSet.slice(0, 2).join(', ') + (customerSet.length > 2 ? ` +${customerSet.length - 2}` : '')) : '—'}</span>
+            <span class="graph-info-sub">${mbsaSet.length} MBA/MBSA agreement${mbsaSet.length === 1 ? '' : 's'} (${escapeHtml(mbsaSet.slice(0, 2).join(', ') || 'None')})</span>
+          </div>
+          <div class="graph-info-card">
+            <span class="graph-info-label">Commercial Exposure</span>
+            <span class="graph-info-value">${dealValueSum > 0 ? '$' + dealValueSum.toLocaleString('en-US', { maximumFractionDigits: 0 }) : `${entityNodes.length} Entity Hubs`}</span>
+            <span class="graph-info-sub">${currencySet.length > 0 ? `Currencies: ${escapeHtml(currencySet.join(' · '))}` : 'Across matched agreements'}</span>
+          </div>
+        `;
+      }
+
+      let inspectorHtml = '';
+
+      if (focusedNode && focusedNode.type === 'entity') {
+        // Compute co-occurring entities across the documents connected to this entity hub
+        const coEntitiesMap = new Map();
+        focusedNode.connectedDocs.forEach(d => {
+          const jobObj = tenantJobs.find(j => j.jobId === d.jobId);
+          if (!jobObj) return;
+          (jobObj.segments || []).forEach(s => {
+            (s.extractedEntities || []).forEach(ent => {
+              const pk = `${ent.name}||${ent.value}`;
+              if (pk === focusedNode.pairKey || ent.name === 'Document Heading') return;
+              if (!coEntitiesMap.has(pk)) {
+                coEntitiesMap.set(pk, { pairKey: pk, name: ent.name, value: ent.value, count: 0 });
+              }
+              coEntitiesMap.get(pk).count++;
+            });
+          });
+        });
+        const coEntities = [...coEntitiesMap.values()].sort((a, b) => b.count - a.count).slice(0, 5);
+
         inspectorHtml = `
           <div style="display:flex;align-items:center;justify-content:space-between;">
-            <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Entity Hub Selected</span>
-            <button type="button" class="text-link-btn" onclick="focusGraphNode(null)">Clear Focus</button>
+            <span style="font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Entity Hub Dossier</span>
+            <button type="button" class="text-link-btn" onclick="focusGraphNode(null)">Clear</button>
           </div>
-          <div>
-            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(focusedNode.entityName)}</div>
-            <div style="font-size:16px;font-weight:600;color:var(--text-primary);margin-top:2px;">${escapeHtml(focusedNode.entityValue)}</div>
+          <div style="padding:10px 12px;border-radius:9px;background:var(--bg);border:1px solid var(--line);">
+            <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(focusedNode.entityName)}</div>
+            <div style="font-size:15.5px;font-weight:600;color:var(--text-primary);margin-top:2px;">${escapeHtml(focusedNode.entityValue)}</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Shared across <strong>${focusedNode.connectedDocs.length}</strong> document${focusedNode.connectedDocs.length === 1 ? '' : 's'} in this tenant.</div>
           </div>
-          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;margin-top:4px;">
+
+          ${coEntities.length > 0 ? `
+            <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;margin-top:2px;">
+              Co-Occurring Entities (${coEntities.length})
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:5px;">
+              ${coEntities.map(ce => `
+                <button type="button" class="text-link-btn" style="font-size:10.5px;" onclick="focusGraphNode('ent:${escapeHtml(ce.pairKey)}')" title="${escapeHtml(ce.name)}: ${escapeHtml(ce.value)}">
+                  ${escapeHtml(ce.name)}: ${escapeHtml(ce.value)}
+                </button>
+              `).join('')}
+            </div>
+          ` : ''}
+
+          <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;margin-top:2px;">
             Connected Documents (${focusedNode.connectedDocs.length})
           </div>
-          ${focusedNode.connectedDocs.map(d => `
-            <div class="graph-inspector-item" onclick="jumpFromGraphToSlice('${escapeHtml(d.jobId)}', -1)">
-              <div style="font-weight:600;font-size:13.5px;color:var(--text-primary);">${escapeHtml(d.docName)}</div>
-              <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(d.pageRange)}</div>
-              <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-top:2px;">Open Document ↗</div>
-            </div>
-          `).join('')}
+          ${focusedNode.connectedDocs.map(d => {
+            const jobObj = tenantJobs.find(j => j.jobId === d.jobId);
+            const firstInsight = jobObj && jobObj.segments && jobObj.segments[0] ? cleanInsightText(jobObj.segments[0].insightSummary) : '';
+            return `
+              <div class="graph-inspector-item" onclick="jumpFromGraphToSlice('${escapeHtml(d.jobId)}', -1)">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                  <div style="font-weight:600;font-size:13px;color:var(--text-primary);">${escapeHtml(d.docName)}</div>
+                  <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);">Open ↗</span>
+                </div>
+                <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);">${escapeHtml(d.pageRange)}${d.docTypesSummary ? ' · ' + escapeHtml(d.docTypesSummary) : ''}</div>
+                ${firstInsight ? `<div style="font-size:11.5px;color:var(--text-secondary);margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(firstInsight)}</div>` : ''}
+              </div>
+            `;
+          }).join('')}
         `;
       } else if (focusedNode && focusedNode.type === 'doc') {
         const connectedEntities = focusedNode.entityIds.map(id => nodeById.get(id)).filter(Boolean);
+        const jobObj = tenantJobs.find(j => j.jobId === focusedNode.jobId);
+        const firstInsight = jobObj && jobObj.segments && jobObj.segments[0] ? cleanInsightText(jobObj.segments[0].insightSummary) : '';
+
         inspectorHtml = `
           <div style="display:flex;align-items:center;justify-content:space-between;">
-            <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Document Selected</span>
-            <button type="button" class="text-link-btn" onclick="focusGraphNode(null)">Clear Focus</button>
+            <span style="font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Document Dossier</span>
+            <button type="button" class="text-link-btn" onclick="focusGraphNode(null)">Clear</button>
           </div>
-          <div>
-            <div style="font-size:16px;font-weight:600;color:var(--text-primary);">${escapeHtml(focusedNode.docName)}</div>
-            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);margin-top:2px;">${escapeHtml(focusedNode.pageRange)}</div>
+          <div style="padding:10px 12px;border-radius:9px;background:var(--bg);border:1px solid var(--line);display:flex;flex-direction:column;gap:6px;">
+            <div style="font-size:15px;font-weight:600;color:var(--text-primary);">${escapeHtml(focusedNode.docName)}</div>
+            <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);">${escapeHtml(focusedNode.pageRange)}</div>
+            ${firstInsight ? `<div style="font-size:12px;color:var(--text-body);line-height:1.45;">${escapeHtml(firstInsight)}</div>` : ''}
+            <div style="display:flex;gap:6px;margin-top:2px;">
+              <button type="button" class="text-link-btn" onclick="jumpFromGraphToSlice('${escapeHtml(focusedNode.jobId)}', -1)">Open Document ↗</button>
+            </div>
           </div>
-          <button type="button" class="text-link-btn" style="width:fit-content;" onclick="jumpFromGraphToSlice('${escapeHtml(focusedNode.jobId)}', -1)">Open Document ↗</button>
-          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;margin-top:4px;">
-            Connected Entities (${connectedEntities.length})
+          <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;margin-top:2px;">
+            Extracted Entities (${connectedEntities.length})
           </div>
           ${connectedEntities.map(e => `
-            <div class="graph-inspector-item" onclick="onGraphEntityValueFilterChanged(${JSON.stringify(e.pairKey).replace(/"/g, '&quot;')})">
-              <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(e.entityName)}</div>
-              <div style="font-weight:600;font-size:13.5px;color:var(--text-primary);">${escapeHtml(e.entityValue)}</div>
-              <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--accent);">Filter graph to this entity →</div>
+            <div class="graph-inspector-item" onclick="focusGraphNode('${escapeHtml(e.id)}')">
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(e.entityName)}</span>
+                <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent-ink);">${e.connectedDocs.length} doc${e.connectedDocs.length === 1 ? '' : 's'}</span>
+              </div>
+              <div style="font-weight:600;font-size:13px;color:var(--text-primary);">${escapeHtml(e.entityValue)}</div>
             </div>
           `).join('')}
         `;
       } else {
         inspectorHtml = `
           <div>
-            <div style="font-size:14.5px;font-weight:600;color:var(--text-primary);">Obsidian Force Graph</div>
-            <div style="font-size:12.5px;color:var(--text-secondary);margin-top:3px;">
-              <strong>${docNodes.length}</strong> document${docNodes.length === 1 ? '' : 's'} &amp; <strong>${entityNodes.length}</strong> entity hubs (<strong>${edges.length}</strong> links). Hover or drag any node to explore constellations.
+            <div style="font-size:14px;font-weight:600;color:var(--text-primary);">Shared Entity Constellations</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
+              Select any entity hub or document node on the canvas to inspect connected agreements, counterparties, and commercial terms.
             </div>
           </div>
-          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;margin-top:4px;">
-            Top Entity Hubs (${entityNodes.length})
+          <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;margin-top:2px;">
+            Key Entity Hubs (${entityNodes.length})
           </div>
           ${entityNodes.map(e => `
             <div class="graph-inspector-item" onclick="focusGraphNode('${escapeHtml(e.id)}')">
               <div style="display:flex;align-items:center;justify-content:space-between;">
-                <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(e.entityName)}</span>
-                <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--accent-ink);">${e.connectedDocs.length} doc${e.connectedDocs.length === 1 ? '' : 's'}</span>
+                <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(e.entityName)}</span>
+                <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent-ink);">${e.connectedDocs.length} doc${e.connectedDocs.length === 1 ? '' : 's'}</span>
               </div>
-              <div style="font-weight:600;font-size:13.5px;color:var(--text-primary);">${escapeHtml(e.entityValue)}</div>
+              <div style="font-weight:600;font-size:13px;color:var(--text-primary);">${escapeHtml(e.entityValue)}</div>
             </div>
           `).join('')}
         `;
@@ -2323,7 +2491,7 @@
           label: e.entityValue,
           subLabel: e.entityName,
           degree,
-          radius: Math.min(20, 6.5 + Math.sqrt(degree) * 3.4),
+          radius: Math.min(13.5, 4.8 + Math.sqrt(degree) * 2.2),
           color: colors.dot,
           bgColor: colors.bg,
           x: saved ? saved.x : cx + Math.cos(angle) * ringR + ((i % 3) - 1) * 18,
@@ -2347,8 +2515,8 @@
           label: d.docName,
           subLabel: d.pageRange,
           degree,
-          radius: d.isCurrentJob ? 8.5 : 6.8,
-          color: d.isCurrentJob ? '#4b72fe' : '#16161d',
+          radius: d.isCurrentJob ? 5.6 : 4.4,
+          color: d.isCurrentJob ? '#4b72fe' : '#64697d',
           bgColor: '#ffffff',
           x: saved ? saved.x : cx + Math.cos(angle) * outerR,
           y: saved ? saved.y : cy + Math.sin(angle) * outerR,
@@ -2492,32 +2660,32 @@
           ctx.moveTo(ed.source.x, ed.source.y);
           ctx.lineTo(ed.target.x, ed.target.y);
           if (isHigh) {
-            ctx.strokeStyle = 'rgba(75, 114, 254, 0.85)';
-            ctx.lineWidth = 1.9 / Math.sqrt(graphZoom);
+            ctx.strokeStyle = 'rgba(75, 114, 254, 0.65)';
+            ctx.lineWidth = 1.35 / Math.sqrt(graphZoom);
           } else if (activeAnchorId) {
-            ctx.strokeStyle = 'rgba(200, 198, 216, 0.14)';
-            ctx.lineWidth = 1.0 / Math.sqrt(graphZoom);
+            ctx.strokeStyle = 'rgba(200, 202, 218, 0.11)';
+            ctx.lineWidth = 0.75 / Math.sqrt(graphZoom);
           } else {
-            ctx.strokeStyle = 'rgba(185, 184, 204, 0.48)';
-            ctx.lineWidth = 1.15 / Math.sqrt(graphZoom);
+            ctx.strokeStyle = 'rgba(182, 185, 204, 0.32)';
+            ctx.lineWidth = 0.85 / Math.sqrt(graphZoom);
           }
           ctx.stroke();
         }
 
-        // Draw nodes & semantic-zoom labels
+        // Draw nodes & subtle semantic-zoom labels
         for (let i = 0; i < simNodes.length; i++) {
           const n = simNodes[i];
           const isDimmed = activeAnchorId && !neighborSet.has(n.id);
           const isFocusedOrHovered = n.id === activeAnchorId;
 
           ctx.save();
-          ctx.globalAlpha = isDimmed ? 0.16 : 1.0;
+          ctx.globalAlpha = isDimmed ? 0.14 : 0.92;
 
           // Subtle halo on entity hubs or active nodes
-          if (n.type === 'entity' && n.degree >= 2 || isFocusedOrHovered) {
+          if (isFocusedOrHovered || (n.type === 'entity' && n.degree >= 3)) {
             ctx.beginPath();
-            ctx.arc(n.x, n.y, n.radius + (isFocusedOrHovered ? 5 : 3), 0, Math.PI * 2);
-            ctx.fillStyle = isFocusedOrHovered ? 'rgba(75, 114, 254, 0.22)' : 'rgba(75, 114, 254, 0.09)';
+            ctx.arc(n.x, n.y, n.radius + (isFocusedOrHovered ? 4 : 2.5), 0, Math.PI * 2);
+            ctx.fillStyle = isFocusedOrHovered ? 'rgba(75, 114, 254, 0.16)' : 'rgba(93, 116, 236, 0.06)';
             ctx.fill();
           }
 
@@ -2525,32 +2693,32 @@
           ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
           ctx.fillStyle = n.color;
           ctx.fill();
-          ctx.lineWidth = isFocusedOrHovered ? 2.2 : 1.4;
+          ctx.lineWidth = isFocusedOrHovered ? 1.8 : 1.0;
           ctx.strokeStyle = '#ffffff';
           ctx.stroke();
 
-          // Obsidian LOD Label Rule: show labels for hubs (degree >= 2), active neighborhood, or when zoomed in
+          // Subtle Obsidian LOD Label Rule: at rest only label shared hubs (degree >= 3); reveal neighbor labels on hover/focus or zoom
           const showLabel = isFocusedOrHovered ||
             (activeAnchorId && neighborSet.has(n.id)) ||
-            (n.type === 'entity' && n.degree >= 2) ||
-            graphZoom >= 1.05 ||
-            simNodes.length <= 42;
+            (n.type === 'entity' && n.degree >= 3) ||
+            graphZoom >= 1.25 ||
+            simNodes.length <= 20;
 
           if (showLabel) {
-            const fontSize = Math.max(9.5, Math.min(12.5, (n.type === 'entity' ? 11.5 : 10.5) / Math.pow(graphZoom, 0.25)));
-            ctx.font = `${isFocusedOrHovered || (n.type === 'entity' && n.degree >= 3) ? '600' : '500'} ${fontSize}px "Overused Grotesk", sans-serif`;
+            const fontSize = Math.max(9.5, Math.min(11.5, (n.type === 'entity' ? 11 : 10) / Math.pow(graphZoom, 0.25)));
+            ctx.font = `${isFocusedOrHovered ? '600' : '500'} ${fontSize}px "Overused Grotesk", sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
             const text = n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label;
-            const labelY = n.y + n.radius + 4;
+            const labelY = n.y + n.radius + 3.5;
 
             if (isFocusedOrHovered) {
-              const tw = ctx.measureText(text).width + 10;
-              ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
-              ctx.fillRect(n.x - tw / 2, labelY - 2, tw, fontSize + 5);
+              const tw = ctx.measureText(text).width + 8;
+              ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+              ctx.fillRect(n.x - tw / 2, labelY - 1.5, tw, fontSize + 4);
             }
 
-            ctx.fillStyle = n.type === 'entity' ? '#16161d' : '#454859';
+            ctx.fillStyle = isFocusedOrHovered ? '#16161d' : (n.type === 'entity' ? '#454859' : '#6c7086');
             ctx.fillText(text, n.x, labelY);
           }
 
