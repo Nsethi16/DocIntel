@@ -459,27 +459,26 @@
     }
 
     .meridian-tabs {
-      display: inline-flex;
+      display: flex;
       align-items: center;
-      gap: 2px;
+      gap: 4px;
       flex-wrap: nowrap;
       min-width: 0;
-      background: #ffffff;
-      border: 1px solid var(--line);
-      border-radius: 9px;
-      padding: 2.5px;
-      box-shadow: 0 1px 2px rgba(22, 22, 29, 0.04);
+      background: transparent;
+      border: none;
+      padding: 0;
+      box-shadow: none;
     }
 
     .meridian-tab {
-      border: 1px solid transparent;
+      border: none;
       background: transparent;
       color: var(--text-secondary);
       font-family: var(--font-sans);
       font-size: 13px;
       font-weight: 500;
-      padding: 5.5px 12px;
-      border-radius: 6.5px;
+      padding: 6px 12px;
+      border-radius: 8px;
       cursor: pointer;
       white-space: nowrap;
       transition: all 0.14s ease;
@@ -490,14 +489,15 @@
 
     .meridian-tab:hover {
       color: var(--text-primary);
-      background: var(--surface-soft);
+      background: rgba(255, 255, 255, 0.55);
     }
 
     .meridian-tab.active {
-      background: var(--accent-soft);
-      border-color: var(--accent-border);
-      color: var(--accent-ink);
+      background: #ffffff;
+      border: none;
+      color: var(--text-primary);
       font-weight: 600;
+      box-shadow: 0 1px 3px rgba(22, 22, 29, 0.06);
     }
 
     .tab-count {
@@ -505,15 +505,11 @@
       font-size: 11px;
       font-weight: 500;
       font-variant-numeric: tabular-nums;
-      background: var(--surface-soft);
-      color: var(--text-secondary);
-      padding: 1px 5px;
-      border-radius: 4px;
+      color: var(--text-muted);
     }
 
     .meridian-tab.active .tab-count {
-      background: #dfe4ff;
-      color: var(--accent-ink);
+      color: var(--text-secondary);
     }
 
     .meridian-slice-select {
