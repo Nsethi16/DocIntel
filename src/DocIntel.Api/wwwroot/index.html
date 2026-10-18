@@ -557,6 +557,47 @@
       display: block;
     }
 
+    .pdf-side-by-side {
+      flex: 1;
+      min-height: 0;
+      width: 100%;
+      height: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      background: var(--line);
+      gap: 1px;
+    }
+
+    .pdf-pane {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      height: 100%;
+      background: #ffffff;
+    }
+
+    .pdf-pane-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 14px;
+      background: var(--header-surface);
+      border-bottom: 1px solid var(--line);
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      flex-shrink: 0;
+    }
+
+    .pdf-pane-bar strong {
+      color: var(--text-primary);
+      font-weight: 600;
+    }
+
     .content-column {
       width: 100%;
       max-width: 100%;
@@ -1162,30 +1203,15 @@
 
       if (docResultTab === 'document' && segs.length > 0) {
         const focusedSeg = (selectedSliceIndex >= 0 ? segs.find(s => s.segmentIndex === selectedSliceIndex) : segs[0]) || segs[0];
-        const useTranslatedPdf = Boolean(focusedSeg.wasTranslated && !window.__viewOriginalPdf);
-        const pdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf${useTranslatedPdf ? '?translated=true' : ''}`;
-
-        if (focusedSeg.wasTranslated) {
-          const togglePdfBtn = document.createElement('button');
-          togglePdfBtn.type = 'button';
-          togglePdfBtn.className = 'ghost-action-btn';
-          togglePdfBtn.textContent = useTranslatedPdf
-            ? `Translated PDF (${(focusedSeg.targetLanguage || 'en').toUpperCase()})`
-            : `Original PDF (${(focusedSeg.detectedLanguage || 'es').toUpperCase()})`;
-          togglePdfBtn.title = 'Switch between Translated PDF Document and Original PDF Document';
-          togglePdfBtn.onclick = () => {
-            window.__viewOriginalPdf = !window.__viewOriginalPdf;
-            renderSelectedDocument();
-          };
-          sliceRow.appendChild(togglePdfBtn);
+        const origPdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf`;
+        if (!focusedSeg.wasTranslated) {
+          const openLink = document.createElement('a');
+          openLink.href = origPdfUrl;
+          openLink.target = '_blank';
+          openLink.className = 'ghost-action-btn';
+          openLink.textContent = 'Open PDF ↗';
+          sliceRow.appendChild(openLink);
         }
-
-        const openLink = document.createElement('a');
-        openLink.href = pdfUrl;
-        openLink.target = '_blank';
-        openLink.className = 'ghost-action-btn';
-        openLink.textContent = 'Open PDF ↗';
-        sliceRow.appendChild(openLink);
       }
 
       if (job.status === 'Queued' || job.status === 'Running') {
@@ -1210,20 +1236,50 @@
         ? segs
         : segs.filter(s => s.segmentIndex === selectedSliceIndex);
 
-      // 1. View Document Tab — Full-bleed PDF only (serves translated PDF when slice was translated)
+      // 1. View Document Tab — Side-by-Side (Original PDF + Translated PDF) when translated, or single full-bleed PDF
       if (docResultTab === 'document') {
         if (segs.length === 0) {
           body.innerHTML = `<div class="content-column">No PDF available.</div>`;
           return;
         }
         const focusedSeg = (selectedSliceIndex >= 0 ? segs.find(s => s.segmentIndex === selectedSliceIndex) : segs[0]) || segs[0];
-        const useTranslatedPdf = Boolean(focusedSeg.wasTranslated && !window.__viewOriginalPdf);
-        const pdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf${useTranslatedPdf ? '?translated=true' : ''}`;
-        const existingIframe = body.querySelector('iframe.pdf-full-frame');
-        if (existingIframe && existingIframe.getAttribute('src') === pdfUrl) {
+        const origPdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf`;
+        const transPdfUrl = `${origPdfUrl}?translated=true`;
+
+        if (focusedSeg.wasTranslated) {
+          const splitKey = `${job.jobId}:${focusedSeg.segmentIndex}:side-by-side`;
+          const existingSplit = body.querySelector('.pdf-side-by-side');
+          if (existingSplit && existingSplit.dataset.splitKey === splitKey) {
+            return;
+          }
+          const srcLang = (focusedSeg.detectedLanguage || 'es').toUpperCase();
+          const tgtLang = (focusedSeg.targetLanguage || 'en').toUpperCase();
+          body.innerHTML = `
+            <div class="pdf-side-by-side" data-split-key="${escapeHtml(splitKey)}">
+              <div class="pdf-pane">
+                <div class="pdf-pane-bar">
+                  <span><strong>Original Document (${escapeHtml(srcLang)})</strong> · Pages ${focusedSeg.startPage}–${focusedSeg.endPage}</span>
+                  <a href="${origPdfUrl}" target="_blank" class="text-link-btn">Open ↗</a>
+                </div>
+                <iframe class="pdf-full-frame" src="${origPdfUrl}" title="Original PDF Preview"></iframe>
+              </div>
+              <div class="pdf-pane">
+                <div class="pdf-pane-bar">
+                  <span><strong>Translated Document (${escapeHtml(tgtLang)})</strong> · Azure Document Translation</span>
+                  <a href="${transPdfUrl}" target="_blank" class="text-link-btn">Open ↗</a>
+                </div>
+                <iframe class="pdf-full-frame" src="${transPdfUrl}" title="Translated PDF Preview"></iframe>
+              </div>
+            </div>
+          `;
           return;
         }
-        body.innerHTML = `<iframe class="pdf-full-frame" src="${pdfUrl}" title="PDF Preview"></iframe>`;
+
+        const existingIframe = body.querySelector('iframe.pdf-full-frame:not(.pdf-side-by-side iframe)');
+        if (existingIframe && existingIframe.getAttribute('src') === origPdfUrl && !body.querySelector('.pdf-side-by-side')) {
+          return;
+        }
+        body.innerHTML = `<iframe class="pdf-full-frame" src="${origPdfUrl}" title="PDF Preview"></iframe>`;
         return;
       }
 

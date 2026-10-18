@@ -115,17 +115,34 @@ public static class HarnessEndpoints
             if (artifactStore is not null)
             {
                 pdfBytes = await artifactStore.GetSlicePdfAsync(tenantId, jobId, sliceIndex, ct, isTranslated: wantTranslated);
-                if (pdfBytes is null && wantTranslated)
-                {
-                    pdfBytes = await artifactStore.GetSlicePdfAsync(tenantId, jobId, sliceIndex, ct, isTranslated: false);
-                }
             }
 
             if (pdfBytes is null)
             {
                 var job = await jobStore.GetJobAsync(jobId, ct);
                 var seg = job?.Segments.FirstOrDefault(s => s.SegmentIndex == sliceIndex);
-                pdfBytes = wantTranslated ? (seg?.TranslatedPdfBytes ?? seg?.SplitPdfBytes) : seg?.SplitPdfBytes;
+                if (wantTranslated)
+                {
+                    if (seg?.TranslatedPdfBytes is { Length: > 0 })
+                    {
+                        pdfBytes = seg.TranslatedPdfBytes;
+                    }
+                    else if (!string.IsNullOrWhiteSpace(seg?.TranslatedText))
+                    {
+                        var footer = seg.Footers.FirstOrDefault() ?? $"Translated-{(seg.TargetLanguage ?? "EN").ToUpperInvariant()}";
+                        pdfBytes = PdfPigLayoutExtractor.CreateSamplePdf([(seg.TranslatedText, footer)]);
+                    }
+                }
+
+                if (pdfBytes is null)
+                {
+                    if (artifactStore is not null && wantTranslated)
+                    {
+                        pdfBytes = await artifactStore.GetSlicePdfAsync(tenantId, jobId, sliceIndex, ct, isTranslated: false);
+                    }
+
+                    pdfBytes ??= seg?.SplitPdfBytes;
+                }
             }
 
             if (pdfBytes is null || pdfBytes.Length == 0)
@@ -343,11 +360,11 @@ public static class HarnessEndpoints
 
         var sampleBytes = PdfPigLayoutExtractor.CreateSamplePdf(
         [
+            ("Formulario de Firma del Programa\nNúmero de MBA/MBSA: U5389226323\nNúmero de contrato: 69943885\nNombre de la entidad: Contoso Legal\nCuando Microsoft haya formalizado debidamente el formulario de firma, el Cliente recibirá una copia de confirmación.", "X20-12661-01-SigForm-ES"),
             ("Master Business Service Agreement\nThis Master Agreement governs all enterprise purchases.\nSection 1: Definitions and Scope.", "Form-MBSA-v1"),
             ("Master Business Service Agreement\nSection 2: Confidentiality and Liability Limits.\nSigned by Authorized Representative.", "Form-MBSA-v1"),
             ("Enterprise Enrollment\nEnrollment under the Master Business Service Agreement.\nIncludes 2,500 Enterprise Seats.", "Form-EA-v2"),
-            ("Amendment ID M130\nCustom Pricing and Volume Discount Schedule.\nApplies to Enterprise Enrollment.", "VLAmendments,M130"),
-            ("Partner Cloud Addendum\nSpecial Terms for Multi-Cloud Hybrid Workloads.\nEffective Date: October 2026.", "Addendum-Cloud-99")
+            ("Amendment ID M130\nCustom Pricing and Volume Discount Schedule.\nApplies to Enterprise Enrollment.", "VLAmendments,M130")
         ]);
 
         return ("Enterprise-Contract-Packet-Sample.pdf", sampleBytes);
