@@ -1003,50 +1003,104 @@
       background: var(--accent-soft);
     }
 
-    /* Copilot-Style Left Rail Navigation (Matches Screenshot) */
-    .rail-nav-list {
-      display: flex;
-      flex-direction: column;
-      gap: 2px;
-      margin-bottom: 6px;
+    /* Tenant-Level View Switcher (Documents vs Cross-Document Graph vs Ask AI) */
+    .workspace-mode-switcher {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 3px;
+      background: #e9e8f0;
+      padding: 3px;
+      border-radius: 8px;
+      margin-bottom: 10px;
     }
 
-    .rail-nav-item {
-      width: 100%;
+    .workspace-mode-btn {
       border: none;
       background: transparent;
-      color: #242429;
+      color: var(--text-secondary);
+      font-family: var(--font-sans);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 5.5px 6px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: all 0.14s ease;
+      white-space: nowrap;
+    }
+
+    .workspace-mode-btn:hover {
+      color: var(--text-primary);
+    }
+
+    .workspace-mode-btn.active {
+      background: #ffffff;
+      color: var(--text-primary);
+      font-weight: 600;
+      box-shadow: 0 1px 2px rgba(22, 22, 29, 0.08);
+    }
+
+    /* Self-Contained Copilot Ask AI Layout WITHIN Ask AI View (Matches Screenshot) */
+    .workspace-body[data-tab="ask"] {
+      background: #ffffff;
+      padding: 0;
+      display: flex;
+      flex-direction: row;
+      overflow: hidden;
+    }
+
+    .ask-inner-sidebar {
+      width: 235px;
+      background: #fbfbfc;
+      border-right: 1px solid var(--line);
+      padding: 14px 10px;
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      overflow-y: auto;
+    }
+
+    .ask-new-chat-pill {
+      width: 100%;
+      border: none;
+      background: #ededf2;
+      color: #1f1f24;
       font-family: var(--font-sans);
       font-size: 13.5px;
-      font-weight: 450;
-      padding: 8px 11px;
+      font-weight: 500;
+      padding: 8px 12px;
       border-radius: 999px;
       cursor: pointer;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 9px;
       text-align: left;
       transition: background 0.12s ease;
     }
 
-    .rail-nav-item:hover {
-      background: #ededf2;
+    .ask-new-chat-pill:hover {
+      background: #e2e2ea;
     }
 
-    .rail-nav-item.active-pill {
-      background: #e8e8ee;
-      font-weight: 500;
-    }
-
-    .rail-nav-item svg {
+    .ask-new-chat-pill svg {
       width: 16px;
       height: 16px;
       flex-shrink: 0;
-      color: #2c2d35;
+      color: #242429;
+    }
+
+    .ask-chats-section-label {
+      font-family: var(--font-sans);
+      font-size: 12px;
+      color: #6e7180;
+      padding: 18px 10px 6px 10px;
     }
 
     .chat-history-item {
-      padding: 7px 11px;
+      padding: 7px 10px;
       border-radius: 8px;
       cursor: pointer;
       display: flex;
@@ -1101,10 +1155,12 @@
       color: #16161d;
     }
 
-    /* Minimalist Centered Ask AI Experience (Matches Screenshot) */
-    .workspace-body[data-tab="ask"] {
+    .ask-main-pane {
+      flex: 1;
+      min-width: 0;
+      height: 100%;
       background: #ffffff;
-      padding: 24px 32px;
+      padding: 24px 36px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -1270,29 +1326,10 @@
         </button>
       </div>
 
-      <div class="rail-nav-list" role="navigation" aria-label="Workspace navigation">
-        <button type="button" class="rail-nav-item" id="btnModeAsk" onclick="startNewAskAiChatAndOpen()">
-          <svg viewBox="0 0 20 20" fill="currentColor">
-            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
-          </svg>
-          <span>New chat</span>
-        </button>
-        <button type="button" class="rail-nav-item active-pill" id="btnModeDocuments" onclick="setWorkspaceMode('documents')">
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M5.5 3h6l4 4v9.5A1.5 1.5 0 0114 18H5.5A1.5 1.5 0 014 16.5v-12A1.5 1.5 0 015.5 3z" />
-            <path stroke-linecap="round" stroke-linejoin="round" d="M7 10h6M7 13.5h4" />
-          </svg>
-          <span>Documents</span>
-        </button>
-        <button type="button" class="rail-nav-item" id="btnModeGraph" onclick="setWorkspaceMode('graph')">
-          <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
-            <circle cx="5" cy="10" r="2.2" />
-            <circle cx="15" cy="5.5" r="2.2" />
-            <circle cx="15" cy="14.5" r="2.2" />
-            <path d="M7 9l6-2.5M7 11l6 2.5" stroke-linecap="round" />
-          </svg>
-          <span>Document Graph</span>
-        </button>
+      <div class="workspace-mode-switcher" role="tablist" aria-label="Workspace mode">
+        <button type="button" class="workspace-mode-btn active" id="btnModeDocuments" onclick="setWorkspaceMode('documents')">Documents</button>
+        <button type="button" class="workspace-mode-btn" id="btnModeGraph" onclick="setWorkspaceMode('graph')">Graph</button>
+        <button type="button" class="workspace-mode-btn" id="btnModeAsk" onclick="setWorkspaceMode('ask')">✦ Ask AI</button>
       </div>
 
       <div class="search-box" id="docSearchBoxWrap">
@@ -1505,19 +1542,11 @@
       const btnDocs = document.getElementById('btnModeDocuments');
       const btnGraph = document.getElementById('btnModeGraph');
       const btnAsk = document.getElementById('btnModeAsk');
-      const searchBoxWrap = document.getElementById('docSearchBoxWrap');
-      const uploadLbl = document.getElementById('drawerUploadLabel');
 
-      if (btnDocs) btnDocs.classList.toggle('active-pill', mode === 'documents');
-      if (btnGraph) btnGraph.classList.toggle('active-pill', mode === 'graph');
-      if (btnAsk) btnAsk.classList.toggle('active-pill', mode === 'ask');
+      if (btnDocs) btnDocs.classList.toggle('active', mode === 'documents');
+      if (btnGraph) btnGraph.classList.toggle('active', mode === 'graph');
+      if (btnAsk) btnAsk.classList.toggle('active', mode === 'ask');
 
-      if (searchBoxWrap) {
-        searchBoxWrap.style.display = mode === 'ask' ? 'none' : 'flex';
-      }
-      if (uploadLbl) {
-        uploadLbl.style.display = mode === 'ask' ? 'none' : 'inline-flex';
-      }
       if (mode === 'ask') {
         loadTenantChats();
       }
@@ -1667,36 +1696,6 @@
       const container = document.getElementById('docItemsList');
       const rawQuery = (document.getElementById('docSearchInput').value || '').trim();
       const query = rawQuery.toLowerCase();
-
-      // When in Ask AI mode, the left drawer shows the clean Copilot-style Chats list
-      if (workspaceMode === 'ask') {
-        loadTenantChats();
-        document.getElementById('docListCountLabel').textContent = 'Chats';
-        document.getElementById('docListCountLabel').style.textTransform = 'none';
-        document.getElementById('docListCountLabel').style.fontFamily = 'var(--font-sans)';
-        document.getElementById('docListCountLabel').style.fontSize = '12px';
-        document.getElementById('docListCountLabel').style.letterSpacing = '0';
-        container.innerHTML = '';
-
-        tenantChats.forEach(chat => {
-          const isSelected = chat.id === activeChatId;
-          const row = document.createElement('div');
-          row.className = 'chat-history-item' + (isSelected ? ' selected' : '');
-          row.title = chat.title || 'New chat';
-          row.onclick = () => selectAskAiChat(chat.id);
-
-          row.innerHTML = `
-            <span class="chat-history-title">${escapeHtml(chat.title || 'New chat')}</span>
-            <button type="button" class="chat-delete-btn" title="Delete chat" onclick="deleteAskAiChat('${escapeHtml(chat.id)}', event)">✕</button>
-          `;
-          container.appendChild(row);
-        });
-        return;
-      }
-
-      document.getElementById('docListCountLabel').style.textTransform = 'uppercase';
-      document.getElementById('docListCountLabel').style.fontFamily = 'var(--font-mono)';
-      document.getElementById('docListCountLabel').style.fontSize = '10.5px';
 
       const filtered = tenantJobs.filter(j => {
         if (!query) return true;
@@ -3234,23 +3233,53 @@
     }
 
     function renderCrossDocumentAskTab(body) {
+      loadTenantChats();
       const chat = getActiveChat();
       const messages = chat?.messages || [];
       const isEmptyChat = messages.length === 0 && !askAiLoading;
 
+      const chatListHtml = tenantChats.map(c => {
+        const isSelected = c.id === activeChatId;
+        return `
+          <div class="chat-history-item ${isSelected ? 'selected' : ''}" title="${escapeHtml(c.title || 'New chat')}" onclick="selectAskAiChat('${escapeHtml(c.id)}')">
+            <span class="chat-history-title">${escapeHtml(c.title || 'New chat')}</span>
+            <button type="button" class="chat-delete-btn" title="Delete chat" onclick="deleteAskAiChat('${escapeHtml(c.id)}', event)">✕</button>
+          </div>
+        `;
+      }).join('');
+
+      const leftChatRailHtml = `
+        <aside class="ask-inner-sidebar">
+          <button type="button" class="ask-new-chat-pill" onclick="startNewAskAiChat()">
+            <svg viewBox="0 0 20 20" fill="currentColor">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
+            </svg>
+            <span>New chat</span>
+          </button>
+
+          <div class="ask-chats-section-label">Chats</div>
+          <div style="display:flex;flex-direction:column;gap:2px;">
+            ${chatListHtml}
+          </div>
+        </aside>
+      `;
+
       if (isEmptyChat) {
         body.innerHTML = `
-          <div class="ask-minimal-stage">
-            <h2 class="ask-minimal-heading">Hi, I can help you explore and answer questions across your documents</h2>
+          ${leftChatRailHtml}
+          <div class="ask-main-pane">
+            <div class="ask-minimal-stage">
+              <h2 class="ask-minimal-heading">Hi, I can help you explore and answer questions across your documents</h2>
 
-            <div class="ask-pill-bar">
-              <button type="button" class="ask-pill-plus" title="New chat" onclick="startNewAskAiChat()">+</button>
-              <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Message Copilot" onkeydown="if(event.key==='Enter') runCrossDocumentAskAi(this.value)" />
-              <button type="button" class="ask-pill-send" title="Send message" onclick="runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value)">
-                <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                  <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
-                </svg>
-              </button>
+              <div class="ask-pill-bar">
+                <button type="button" class="ask-pill-plus" title="New chat" onclick="startNewAskAiChat()">+</button>
+                <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Message Copilot" onkeydown="if(event.key==='Enter') runCrossDocumentAskAi(this.value)" />
+                <button type="button" class="ask-pill-send" title="Send message" onclick="runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value)">
+                  <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
             </div>
           </div>
         `;
@@ -3283,20 +3312,23 @@
       }).join('');
 
       body.innerHTML = `
-        <div class="ask-minimal-stage" style="justify-content:space-between;min-height:100%;margin:0 auto;">
-          <div style="width:100%;display:flex;flex-direction:column;gap:18px;padding-bottom:28px;">
-            ${threadHtml}
-            ${askAiLoading ? `<div style="color:var(--text-secondary);font-size:13.5px;">Thinking across your documents...</div>` : ''}
-          </div>
+        ${leftChatRailHtml}
+        <div class="ask-main-pane" style="justify-content:flex-start;">
+          <div class="ask-minimal-stage" style="justify-content:space-between;min-height:100%;margin:0 auto;">
+            <div style="width:100%;display:flex;flex-direction:column;gap:18px;padding-bottom:28px;">
+              ${threadHtml}
+              ${askAiLoading ? `<div style="color:var(--text-secondary);font-size:13.5px;">Thinking across your documents...</div>` : ''}
+            </div>
 
-          <div class="ask-pill-bar" style="position:sticky;bottom:8px;">
-            <button type="button" class="ask-pill-plus" title="New chat" onclick="startNewAskAiChat()">+</button>
-            <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Message Copilot" onkeydown="if(event.key==='Enter') runCrossDocumentAskAi(this.value)" />
-            <button type="button" class="ask-pill-send" title="Send message" onclick="runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value)">
-              <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
-              </svg>
-            </button>
+            <div class="ask-pill-bar" style="position:sticky;bottom:8px;">
+              <button type="button" class="ask-pill-plus" title="New chat" onclick="startNewAskAiChat()">+</button>
+              <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Message Copilot" onkeydown="if(event.key==='Enter') runCrossDocumentAskAi(this.value)" />
+              <button type="button" class="ask-pill-send" title="Send message" onclick="runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value)">
+                <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </div>
           </div>
         </div>
       `;
