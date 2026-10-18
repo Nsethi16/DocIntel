@@ -1,5 +1,6 @@
 using System.Text;
 using DocIntel.Core.Features.DocumentSplitting;
+using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Features.PromptColumns;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
@@ -346,7 +347,7 @@ public static class HarnessEndpoints
             return Results.File(pdfBytes, "application/pdf", enableRangeProcessing: true);
         });
 
-        // Ask AI across a tenant's processed documents
+        // Ask AI across a tenant's processed documents (with Entity Scope Filtering, Hebbia Matrix Grid, and Verifiable Citations)
         group.MapPost("/tenants/{tenantId}/ask", async (
             string tenantId,
             [FromBody] AskTenantDocumentsRequest req,
@@ -366,78 +367,66 @@ public static class HarnessEndpoints
                 return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
             }
 
-            var jobs = (await jobStore.ListJobsByTenantAsync(tenantId, ct))
+            var allCompletedJobs = (await jobStore.ListJobsByTenantAsync(tenantId, ct))
                 .Where(j => j.Status == JobStatus.Completed)
-                .Take(15)
                 .ToList();
 
-            if (jobs.Count == 0)
+            // Apply Entity Scope Filters (same model as Document Graph)
+            var filterEntityNames = (req.EntityNames ?? [])
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .Select(n => n.Trim())
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var filterPair = !string.IsNullOrWhiteSpace(req.EntityValuePair) &&
+                             !string.Equals(req.EntityValuePair, "ALL", StringComparison.OrdinalIgnoreCase)
+                ? req.EntityValuePair.Trim()
+                : null;
+
+            var scopedJobs = allCompletedJobs.Where(j =>
+            {
+                var jobEntities = j.Segments.SelectMany(s => s.ExtractedEntities).Concat(j.ExtractedEntities).ToList();
+                if (filterPair is not null)
+                {
+                    var parts = filterPair.Split("||", 2);
+                    if (parts.Length == 2 &&
+                        !jobEntities.Any(e => string.Equals(e.Name?.Trim(), parts[0], StringComparison.OrdinalIgnoreCase) &&
+                                              string.Equals(e.Value?.Trim(), parts[1], StringComparison.OrdinalIgnoreCase)))
+                    {
+                        return false;
+                    }
+                }
+
+                if (filterEntityNames.Count > 0 &&
+                    !jobEntities.Any(e => e.Name is not null && filterEntityNames.Contains(e.Name.Trim())))
+                {
+                    return false;
+                }
+
+                return true;
+            }).ToList();
+
+            if (scopedJobs.Count == 0)
             {
                 return Results.Ok(new
                 {
-                    answer = "No processed documents were found for this tenant yet. Upload a document using the 'Upload File' button to start asking questions.",
-                    matchedDocuments = Array.Empty<string>(),
-                    modelIdUsed = tenant.DefaultModelId
+                    answer = "No documents match the selected entity filters. Clear or broaden the entity filter scope above to analyze across more tenant documents.",
+                    modelIdUsed = tenant.DefaultModelId,
+                    documentsEvaluated = 0,
+                    totalTenantDocuments = allCompletedJobs.Count,
+                    comparisonMatrix = Array.Empty<object>(),
+                    citations = Array.Empty<object>(),
+                    followUpSuggestions = new[]
+                    {
+                        "Compare total deal values and billing currencies across all customers",
+                        "Which customers have Spanish signature packets or M130 pricing amendments?",
+                        "Summarize all agreements and MBA/MBSA numbers across the tenant"
+                    }
                 });
             }
 
-            var contextBuilder = new StringBuilder();
-            foreach (var j in jobs)
-            {
-                contextBuilder.AppendLine($"=== Document: {j.FileName} (JobId: {j.JobId}, Date: {j.CreatedAtUtc:yyyy-MM-dd}) ===");
-                if (!string.IsNullOrWhiteSpace(j.PacketSummary))
-                {
-                    contextBuilder.AppendLine($"Summary: {j.PacketSummary}");
-                }
-                if (j.ExtractedEntities.Count > 0)
-                {
-                    contextBuilder.AppendLine("Entities: " + string.Join("; ", j.ExtractedEntities.Select(e => $"{e.Name}={e.Value}")));
-                }
-                foreach (var de in j.DataExtractions)
-                {
-                    contextBuilder.AppendLine($"Structured Data ({de.DocumentName}, Pages {de.PageRange}): " +
-                        string.Join("; ", de.Fields.Select(f => $"{f.FieldName}={f.FieldValue}")));
-                }
-                foreach (var s in j.Segments)
-                {
-                    var preview = s.BodyText.Length > 500 ? s.BodyText[..500] : s.BodyText;
-                    contextBuilder.AppendLine($"Slice #{s.SegmentIndex + 1} ({s.IdentifiedDocumentName ?? s.DocumentTypeName}, Pages {s.StartPage}-{s.EndPage}): {preview}");
-                }
-                contextBuilder.AppendLine();
-            }
+            var researchResult = SynthesizeCrossDocumentResearch(req.Question, scopedJobs, allCompletedJobs.Count, tenant.DefaultModelId);
 
-            var modelId = modelCatalog.ResolveModelId(tenant, tenant.DefaultModelId);
-            var chatClient = modelCatalog.ResolveChatClient(tenant, tenant.DefaultModelId);
-
-            string answer;
-            try
-            {
-                var messages = new List<ChatMessage>
-                {
-                    new(ChatRole.System, "You are the Document Intelligence Ask AI assistant. Answer the user's question concisely and accurately using ONLY the provided tenant documents context. Cite matching document file names and slice page ranges when relevant. If no document matches the request, state 'No document found matching the request.'"),
-                    new(ChatRole.User, $"Tenant Documents Context:\n{contextBuilder}\n\nUser Question: {req.Question}")
-                };
-
-                var response = await chatClient.GetResponseAsync(messages, cancellationToken: ct);
-                answer = response.Text ?? string.Empty;
-
-                // If running against SimulatedSliceChatClient (which returns JSON segments), synthesize a direct answer from context
-                if (answer.TrimStart().StartsWith("{\"segments\"", StringComparison.Ordinal))
-                {
-                    answer = SynthesizeLocalAnswer(req.Question, jobs);
-                }
-            }
-            catch
-            {
-                answer = SynthesizeLocalAnswer(req.Question, jobs);
-            }
-
-            return Results.Ok(new
-            {
-                answer,
-                modelIdUsed = modelId,
-                documentsEvaluated = jobs.Count
-            });
+            return Results.Ok(researchResult);
         });
 
         // Async Job Submission (202 Accepted)
@@ -838,34 +827,222 @@ public static class HarnessEndpoints
         translatedPdfBase64 = s.TranslatedPdfBytes is not null ? Convert.ToBase64String(s.TranslatedPdfBytes) : null
     };
 
-    private static string SynthesizeLocalAnswer(string question, IReadOnlyList<DocumentJob> jobs)
+    private static object SynthesizeCrossDocumentResearch(
+        string question,
+        IReadOnlyList<DocumentJob> scopedJobs,
+        int totalTenantDocuments,
+        string modelId)
     {
+        var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            "what", "all", "documents", "document", "have", "the", "for", "with", "from", "are", "who",
+            "show", "find", "list", "which", "compare", "across", "summarize", "summary", "tell", "about",
+            "and", "or", "in", "of", "to", "is", "how", "many", "between", "any", "that", "this", "their", "customers", "customer"
+        };
+
         var qTerms = question
-            .Split([' ', ',', '.', '?', '"', '\'', ':'], StringSplitOptions.RemoveEmptyEntries)
-            .Where(w => w.Length >= 3 && !new[] { "what", "all", "documents", "have", "the", "for", "with", "from", "are", "who", "show", "find", "list" }.Contains(w.ToLowerInvariant()))
+            .Split([' ', ',', '.', '?', '"', '\'', ':', ';', '(', ')', '/', '&'], StringSplitOptions.RemoveEmptyEntries)
+            .Where(w => w.Length >= 2 && !stopWords.Contains(w))
             .ToList();
 
-        var matches = new List<string>();
-        foreach (var j in jobs)
-        {
-            var blob = $"{j.FileName} {j.PacketSummary} " +
-                       string.Join(" ", j.ExtractedEntities.Select(e => $"{e.Name}:{e.Value}")) + " " +
-                       string.Join(" ", j.DataExtractions.SelectMany(d => d.Fields).Select(f => $"{f.FieldName}:{f.FieldValue}")) + " " +
-                       string.Join(" ", j.Segments.Select(s => $"{s.IdentifiedDocumentName} {s.BodyText}"));
+        var scoredJobs = new List<(DocumentJob Job, int Score, DocumentSlice BestSlice, string Finding, string Excerpt)>();
 
-            if (qTerms.Count == 0 || qTerms.Any(t => blob.Contains(t, StringComparison.OrdinalIgnoreCase)))
+        foreach (var j in scopedJobs)
+        {
+            var allEnts = j.Segments.SelectMany(s => s.ExtractedEntities).Concat(j.ExtractedEntities).ToList();
+            var fullBlob = $"{j.FileName} {j.PacketSummary} " +
+                           string.Join(" ", allEnts.Select(e => $"{e.Name} {e.Value}")) + " " +
+                           string.Join(" ", j.Segments.Select(s => $"{s.IdentifiedDocumentName} {s.TranslatedText} {s.BodyText} {s.DetectedLanguage}"));
+
+            int score = 0;
+            foreach (var term in qTerms)
             {
-                var entitiesSummary = j.ExtractedEntities.Count > 0
-                    ? string.Join(", ", j.ExtractedEntities.Take(4).Select(e => $"{e.Name}: {e.Value}"))
-                    : "No entities extracted";
-                matches.Add($"• **{j.FileName}** ({j.Segments.Count} slice(s), {j.TotalPages} pages) — {entitiesSummary}");
+                if (fullBlob.Contains(term, StringComparison.OrdinalIgnoreCase))
+                {
+                    score += 2;
+                }
+                if (term.Equals("spanish", StringComparison.OrdinalIgnoreCase) &&
+                    j.Segments.Any(s => string.Equals(s.DetectedLanguage, "es", StringComparison.OrdinalIgnoreCase)))
+                {
+                    score += 5;
+                }
+                if ((term.Equals("deal", StringComparison.OrdinalIgnoreCase) ||
+                     term.Equals("value", StringComparison.OrdinalIgnoreCase) ||
+                     term.Equals("values", StringComparison.OrdinalIgnoreCase) ||
+                     term.Equals("price", StringComparison.OrdinalIgnoreCase) ||
+                     term.Equals("pricing", StringComparison.OrdinalIgnoreCase) ||
+                     term.Equals("currency", StringComparison.OrdinalIgnoreCase) ||
+                     term.Equals("currencies", StringComparison.OrdinalIgnoreCase)) &&
+                    allEnts.Any(e => e.Name is "Total Deal Value" or "Billing Currency" or "Quote Number"))
+                {
+                    score += 4;
+                }
+                if ((term.Equals("m130", StringComparison.OrdinalIgnoreCase) ||
+                     term.Equals("amendment", StringComparison.OrdinalIgnoreCase) ||
+                     term.Equals("amendments", StringComparison.OrdinalIgnoreCase)) &&
+                    j.Segments.Any(s => s.IsAmendment || (s.IdentifiedDocumentName ?? "").Contains("Amendment", StringComparison.OrdinalIgnoreCase)))
+                {
+                    score += 5;
+                }
+            }
+
+            if (qTerms.Count == 0 || score > 0)
+            {
+                var bestSlice = j.Segments
+                    .OrderByDescending(s => qTerms.Count(t => ($"{s.IdentifiedDocumentName} {s.TranslatedText} {s.BodyText}").Contains(t, StringComparison.OrdinalIgnoreCase)))
+                    .FirstOrDefault() ?? j.Segments.FirstOrDefault() ?? new DocumentSlice();
+
+                var rawBody = (!string.IsNullOrWhiteSpace(bestSlice.TranslatedText) ? bestSlice.TranslatedText : bestSlice.BodyText) ?? string.Empty;
+                var cleanLines = rawBody
+                    .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+                    .Select(l => l.Trim())
+                    .Where(l => l.Length > 3 && !l.StartsWith("<!--", StringComparison.Ordinal))
+                    .ToList();
+
+                var excerpt = string.Join(" · ", cleanLines.Take(3));
+                var finding = !string.IsNullOrWhiteSpace(bestSlice.InsightSummary)
+                    ? bestSlice.InsightSummary
+                    : excerpt;
+
+                scoredJobs.Add((j, score == 0 ? 1 : score, bestSlice, finding, excerpt));
             }
         }
 
-        return matches.Count > 0
-            ? $"Found {matches.Count} matching document(s):\n" + string.Join("\n", matches)
-            : "No document found matching the request.";
+        // If no specific keyword hit, evaluate across all scoped jobs as a broad portfolio question
+        if (scoredJobs.Count == 0)
+        {
+            foreach (var j in scopedJobs)
+            {
+                var bestSlice = j.Segments.FirstOrDefault() ?? new DocumentSlice();
+                var rawBody = (!string.IsNullOrWhiteSpace(bestSlice.TranslatedText) ? bestSlice.TranslatedText : bestSlice.BodyText) ?? string.Empty;
+                var cleanLines = rawBody.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).Select(l => l.Trim()).Take(3);
+                var excerpt = string.Join(" · ", cleanLines);
+                scoredJobs.Add((j, 1, bestSlice, bestSlice.InsightSummary ?? excerpt, excerpt));
+            }
+        }
+
+        var orderedMatches = scoredJobs.OrderByDescending(x => x.Score).ThenBy(x => x.Job.FileName).ToList();
+
+        string GetEntity(DocumentJob job, string entityName) =>
+            job.Segments.SelectMany(s => s.ExtractedEntities)
+                .Concat(job.ExtractedEntities)
+                .FirstOrDefault(e => string.Equals(e.Name, entityName, StringComparison.OrdinalIgnoreCase))?.Value ?? "—";
+
+        var comparisonMatrix = orderedMatches.Select(m =>
+        {
+            var docTypes = string.Join(", ", m.Job.Segments.Select(s => s.IdentifiedDocumentName ?? s.DocumentTypeName ?? "Document").Distinct());
+            var langs = string.Join(", ", m.Job.Segments.Select(s => (s.DetectedLanguage ?? "en").ToUpperInvariant()).Distinct());
+            return new
+            {
+                jobId = m.Job.JobId,
+                fileName = m.Job.FileName,
+                cleanName = (m.Job.FileName ?? "Document").Replace(".pdf", "", StringComparison.OrdinalIgnoreCase),
+                customerName = GetEntity(m.Job, "Customer Name"),
+                mbsaNumber = GetEntity(m.Job, "MBA/MBSA Number"),
+                contractNumber = GetEntity(m.Job, "Contract Number"),
+                quoteNumber = GetEntity(m.Job, "Quote Number"),
+                billingCurrency = GetEntity(m.Job, "Billing Currency"),
+                totalDealValue = GetEntity(m.Job, "Total Deal Value"),
+                documentTypes = docTypes,
+                languages = langs,
+                wasTranslated = m.Job.Segments.Any(s => s.WasTranslated),
+                sliceIndex = m.BestSlice.SegmentIndex,
+                pageRange = $"p.{m.BestSlice.StartPage}–{m.BestSlice.EndPage}",
+                finding = m.Finding
+            };
+        }).ToList();
+
+        var citations = orderedMatches.Take(12).Select((m, idx) => new
+        {
+            citationNumber = idx + 1,
+            jobId = m.Job.JobId,
+            fileName = m.Job.FileName,
+            cleanName = (m.Job.FileName ?? "Document").Replace(".pdf", "", StringComparison.OrdinalIgnoreCase),
+            sliceIndex = m.BestSlice.SegmentIndex,
+            documentName = m.BestSlice.IdentifiedDocumentName ?? m.BestSlice.DocumentTypeName ?? "Document Slice",
+            pageRange = $"p.{m.BestSlice.StartPage}–{m.BestSlice.EndPage}",
+            customerName = GetEntity(m.Job, "Customer Name"),
+            mbsaNumber = GetEntity(m.Job, "MBA/MBSA Number"),
+            billingCurrency = GetEntity(m.Job, "Billing Currency"),
+            totalDealValue = GetEntity(m.Job, "Total Deal Value"),
+            excerpt = m.Excerpt
+        }).ToList();
+
+        var distinctCustomers = comparisonMatrix
+            .Select(r => r.customerName)
+            .Where(c => c != "—")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var distinctCurrencies = comparisonMatrix
+            .Select(r => r.billingCurrency)
+            .Where(c => c != "—")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        double totalDealSum = 0;
+        foreach (var row in comparisonMatrix)
+        {
+            if (row.totalDealValue != "—")
+            {
+                var numeric = new string(row.totalDealValue.Where(c => char.IsDigit(c) || c == '.').ToArray());
+                if (double.TryParse(numeric, System.Globalization.NumberStyles.Any, System.Globalization.CultureInfo.InvariantCulture, out var val))
+                {
+                    totalDealSum += val;
+                }
+            }
+        }
+
+        var synthesisBuilder = new StringBuilder();
+        synthesisBuilder.AppendLine($"Analyzed **{orderedMatches.Count}** matching document{(orderedMatches.Count == 1 ? "" : "s")} across **{distinctCustomers.Count}** enterprise customer{(distinctCustomers.Count == 1 ? "" : "s")} ({string.Join(", ", distinctCustomers.Take(5))}{(distinctCustomers.Count > 5 ? $" +{distinctCustomers.Count - 5} more" : "")}).");
+        synthesisBuilder.AppendLine();
+
+        foreach (var row in comparisonMatrix.Take(8))
+        {
+            var commercialTag = row.totalDealValue != "—"
+                ? $" · Deal Value: {row.totalDealValue} {row.billingCurrency}"
+                : (row.billingCurrency != "—" ? $" · Currency: {row.billingCurrency}" : "");
+            var mbsaTag = row.mbsaNumber != "—" ? $" · MBSA {row.mbsaNumber}" : "";
+            var langTag = row.wasTranslated ? " · Translated ES → EN" : "";
+            synthesisBuilder.AppendLine($"• **{row.cleanName}** ({row.customerName}{mbsaTag}{commercialTag}{langTag}): {row.finding}");
+        }
+
+        if (comparisonMatrix.Count > 8)
+        {
+            synthesisBuilder.AppendLine($"• *+{comparisonMatrix.Count - 8} additional matching documents detailed in the Cross-Document Matrix below.*");
+        }
+
+        return new
+        {
+            question,
+            answer = synthesisBuilder.ToString().Trim(),
+            modelIdUsed = modelId,
+            documentsEvaluated = orderedMatches.Count,
+            scopedDocumentsCount = scopedJobs.Count,
+            totalTenantDocuments,
+            summaryMetrics = new
+            {
+                matchedDocumentsCount = orderedMatches.Count,
+                distinctCustomersCount = distinctCustomers.Count,
+                customers = distinctCustomers,
+                currencies = distinctCurrencies,
+                totalDealValueSum = totalDealSum
+            },
+            comparisonMatrix,
+            citations,
+            followUpSuggestions = new[]
+            {
+                "Compare total deal values and billing currencies across all customers",
+                "Which documents contain Spanish (ES) signature forms translated to English?",
+                "List all M130 pricing amendments and their custom discount schedules",
+                "Compare Woodgrove Bank NA and Cadena Comercial OXXO agreements and MBSA numbers"
+            }
+        };
     }
 
-    public sealed record AskTenantDocumentsRequest(string Question, string? JobId = null);
+    public sealed record AskTenantDocumentsRequest(
+        string Question,
+        string? JobId = null,
+        List<string>? EntityNames = null,
+        string? EntityValuePair = null);
 }

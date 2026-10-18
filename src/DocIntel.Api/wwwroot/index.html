@@ -1003,11 +1003,11 @@
       background: var(--accent-soft);
     }
 
-    /* Tenant-Level View Switcher (Documents vs Cross-Document Graph) */
+    /* Tenant-Level View Switcher (Documents vs Cross-Document Graph vs Ask AI) */
     .workspace-mode-switcher {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 4px;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 3px;
       background: #e9e8f0;
       padding: 3px;
       border-radius: 8px;
@@ -1019,16 +1019,17 @@
       background: transparent;
       color: var(--text-secondary);
       font-family: var(--font-sans);
-      font-size: 12.5px;
+      font-size: 12px;
       font-weight: 500;
-      padding: 5.5px 8px;
+      padding: 5.5px 6px;
       border-radius: 6px;
       cursor: pointer;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 5px;
+      gap: 4px;
       transition: all 0.14s ease;
+      white-space: nowrap;
     }
 
     .workspace-mode-btn:hover {
@@ -1040,6 +1041,89 @@
       color: var(--text-primary);
       font-weight: 600;
       box-shadow: 0 1px 2px rgba(22, 22, 29, 0.08);
+    }
+
+    /* Cross-Document Interactive Ask AI Workspace (Hebbia Matrix + Harvey + GraphRAG) */
+    .workspace-body[data-tab="ask"] {
+      padding: 18px 28px 28px 28px;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .ask-prompt-card {
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .ask-input-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .ask-main-input {
+      flex: 1;
+      border: 1px solid var(--line);
+      background: var(--bg);
+      border-radius: 9px;
+      padding: 10px 14px;
+      font-family: var(--font-sans);
+      font-size: 14px;
+      color: var(--text-primary);
+      outline: none;
+      transition: border-color 0.14s ease, background 0.14s ease;
+    }
+
+    .ask-main-input:focus {
+      border-color: var(--accent);
+      background: #ffffff;
+    }
+
+    .ask-submit-btn {
+      background: var(--text-primary);
+      color: #ffffff;
+      border: none;
+      border-radius: 9px;
+      padding: 10px 18px;
+      font-family: var(--font-sans);
+      font-size: 13.5px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.14s ease;
+    }
+
+    .ask-submit-btn:hover {
+      background: #2b2d3c;
+    }
+
+    .ask-results-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) 340px;
+      gap: 14px;
+      align-items: start;
+    }
+
+    @media (max-width: 1080px) {
+      .ask-results-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .ask-synthesis-card {
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 18px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
     }
 
     .toast {
@@ -1076,7 +1160,8 @@
 
       <div class="workspace-mode-switcher" role="tablist" aria-label="Workspace mode">
         <button type="button" class="workspace-mode-btn active" id="btnModeDocuments" onclick="setWorkspaceMode('documents')">Documents</button>
-        <button type="button" class="workspace-mode-btn" id="btnModeGraph" onclick="setWorkspaceMode('graph')">Document Graph</button>
+        <button type="button" class="workspace-mode-btn" id="btnModeGraph" onclick="setWorkspaceMode('graph')">Graph</button>
+        <button type="button" class="workspace-mode-btn" id="btnModeAsk" onclick="setWorkspaceMode('ask')">✦ Ask AI</button>
       </div>
 
       <div class="search-box">
@@ -1132,6 +1217,7 @@
         <div class="meridian-actions">
           <div id="sliceSelectorRow" style="display:flex;align-items:center;gap:6px;"></div>
           <button type="button" class="ghost-action-btn" id="btnHeaderToggleGraph" onclick="setWorkspaceMode(workspaceMode === 'graph' ? 'documents' : 'graph')" title="Toggle Cross-Document Entity Graph">Document Graph</button>
+          <button type="button" class="ghost-action-btn" id="btnHeaderToggleAsk" onclick="setWorkspaceMode(workspaceMode === 'ask' ? 'documents' : 'ask')" title="Ask AI across all tenant documents">✦ Ask AI</button>
           <button type="button" class="ghost-action-btn" id="btnHeaderExportJson" onclick="exportSelectedJobJson()" title="Download extracted JSON">Export</button>
         </div>
       </div>
@@ -1175,20 +1261,32 @@
     let graphSimEdges = [];
     let graphSimAnimFrame = null;
     let graphCustomNodePositions = {};
+    let askAiQuestionInput = 'Compare total deal values, billing currencies, and MBA/MBSA numbers across all customers';
+    let askAiLastResult = null;
+    let askAiLoading = false;
     let jobPollTimer = null;
 
     function setWorkspaceMode(mode) {
       workspaceMode = mode;
       const btnDocs = document.getElementById('btnModeDocuments');
       const btnGraph = document.getElementById('btnModeGraph');
+      const btnAsk = document.getElementById('btnModeAsk');
       const btnHeaderGraph = document.getElementById('btnHeaderToggleGraph');
+      const btnHeaderAsk = document.getElementById('btnHeaderToggleAsk');
       if (btnDocs) btnDocs.classList.toggle('active', mode === 'documents');
       if (btnGraph) btnGraph.classList.toggle('active', mode === 'graph');
+      if (btnAsk) btnAsk.classList.toggle('active', mode === 'ask');
       if (btnHeaderGraph) {
         btnHeaderGraph.textContent = mode === 'graph' ? '← Back to Document' : 'Document Graph';
       }
+      if (btnHeaderAsk) {
+        btnHeaderAsk.textContent = mode === 'ask' ? '← Back to Document' : '✦ Ask AI';
+      }
       renderDocumentList();
       renderSelectedDocument();
+      if (mode === 'ask' && !askAiLastResult && !askAiLoading) {
+        runCrossDocumentAskAi(askAiQuestionInput);
+      }
     }
 
     function getMonogram(name) {
@@ -1364,7 +1462,7 @@
         row.onclick = () => {
           selectedJobId = job.jobId;
           selectedSliceIndex = -1;
-          if (workspaceMode === 'graph') {
+          if (workspaceMode !== 'documents') {
             setWorkspaceMode('documents');
             return;
           }
@@ -1444,12 +1542,20 @@
         }
       }
       graphFocusedNodeId = null;
+      if (workspaceMode === 'ask') {
+        runCrossDocumentAskAi(askAiQuestionInput);
+        return;
+      }
       renderSelectedDocument();
     }
 
     function onGraphEntityValueFilterChanged(val) {
       graphSelectedEntityValuePair = val || 'ALL';
       graphFocusedNodeId = null;
+      if (workspaceMode === 'ask') {
+        runCrossDocumentAskAi(askAiQuestionInput);
+        return;
+      }
       renderSelectedDocument();
     }
 
@@ -1470,10 +1576,15 @@
       graphSelectedEntityValuePair = 'ALL';
       graphEntitySearchQuery = '';
       graphFocusedNodeId = null;
+      graphDepthMode = 'GLOBAL';
       graphZoom = 1;
       graphPanX = 0;
       graphPanY = 0;
       graphCustomNodePositions = {};
+      if (workspaceMode === 'ask') {
+        runCrossDocumentAskAi(askAiQuestionInput);
+        return;
+      }
       renderSelectedDocument();
     }
 
@@ -1500,12 +1611,16 @@
       workspaceMode = 'documents';
       const btnDocs = document.getElementById('btnModeDocuments');
       const btnGraph = document.getElementById('btnModeGraph');
+      const btnAsk = document.getElementById('btnModeAsk');
       const btnHeaderGraph = document.getElementById('btnHeaderToggleGraph');
+      const btnHeaderAsk = document.getElementById('btnHeaderToggleAsk');
       if (btnDocs) btnDocs.classList.add('active');
       if (btnGraph) btnGraph.classList.remove('active');
+      if (btnAsk) btnAsk.classList.remove('active');
       if (btnHeaderGraph) btnHeaderGraph.textContent = 'Document Graph';
+      if (btnHeaderAsk) btnHeaderAsk.textContent = '✦ Ask AI';
       renderDocumentList();
-      setDocResultTab('document');
+      setDocResultTab(sliceIdx === -1 ? 'insights' : 'document');
     }
 
     async function reevaluateSelectedJobPrompts() {
@@ -1561,6 +1676,18 @@
         document.getElementById('selectedDocTitle').textContent = currentTenant ? `${currentTenant.displayName} — Document Graph` : 'Document Graph';
         document.getElementById('selectedDocMetaText').textContent = `${completedCount} document${completedCount === 1 ? '' : 's'}`;
         renderDocumentGraphTab(body);
+        return;
+      }
+
+      if (workspaceMode === 'ask') {
+        body.dataset.tab = 'ask';
+        if (navRow) navRow.style.display = 'none';
+        if (exportBtn) exportBtn.style.display = 'none';
+        sliceRow.innerHTML = '';
+        const completedCount = tenantJobs.filter(j => j.status === 'Completed').length;
+        document.getElementById('selectedDocTitle').textContent = currentTenant ? `${currentTenant.displayName} — Ask AI Across Documents` : 'Ask AI Across Documents';
+        document.getElementById('selectedDocMetaText').textContent = `${completedCount} document${completedCount === 1 ? '' : 's'}`;
+        renderCrossDocumentAskTab(body);
         return;
       }
 
@@ -2791,6 +2918,224 @@
       };
 
       drawFrame();
+    }
+
+    async function runCrossDocumentAskAi(customQuestion) {
+      if (!currentTenant) return;
+      const inputEl = document.getElementById('askAiMainInputEl');
+      const q = (customQuestion != null ? customQuestion : (inputEl ? inputEl.value : askAiQuestionInput)).trim();
+      if (!q) return;
+
+      askAiQuestionInput = q;
+      askAiLoading = true;
+      renderSelectedDocument();
+
+      try {
+        const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            question: q,
+            entityNames: [...graphSelectedEntityNames],
+            entityValuePair: graphSelectedEntityValuePair
+          })
+        });
+        if (resp.ok) {
+          askAiLastResult = await resp.json();
+        }
+      } finally {
+        askAiLoading = false;
+        renderSelectedDocument();
+      }
+    }
+
+    function formatMarkdownBold(text) {
+      return escapeHtml(text || '')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    }
+
+    function renderCrossDocumentAskTab(body) {
+      const data = computeFilteredGraphData();
+      const hasActiveFilters = graphSelectedEntityNames.size > 0 || graphSelectedEntityValuePair !== 'ALL';
+
+      const starterQuestions = [
+        'Compare total deal values, billing currencies, and MBA/MBSA numbers across all customers',
+        'Which documents contain Spanish (ES) signature forms translated to English?',
+        'List all M130 pricing amendments and their custom discount schedules',
+        'Compare Woodgrove Bank NA and Cadena Comercial OXXO agreements and MBSA numbers'
+      ];
+
+      const res = askAiLastResult;
+      const metrics = res?.summaryMetrics || {};
+      const matrix = res?.comparisonMatrix || [];
+      const citations = res?.citations || [];
+
+      const infoStripHtml = res ? `
+        <div class="graph-info-strip">
+          <div class="graph-info-card">
+            <span class="graph-info-label">Documents Analyzed</span>
+            <span class="graph-info-value">${res.documentsEvaluated || 0} of ${res.scopedDocumentsCount || data.docNodes.length} Scoped</span>
+            <span class="graph-info-sub">${res.totalTenantDocuments || tenantJobs.length} total tenant documents</span>
+          </div>
+          <div class="graph-info-card">
+            <span class="graph-info-label">Matched Counterparties</span>
+            <span class="graph-info-value" title="${escapeHtml((metrics.customers || []).join(', '))}">${(metrics.customers || []).length > 0 ? escapeHtml(metrics.customers.slice(0, 2).join(', ') + (metrics.customers.length > 2 ? ` +${metrics.customers.length - 2}` : '')) : '—'}</span>
+            <span class="graph-info-sub">${metrics.distinctCustomersCount || 0} enterprise customer${metrics.distinctCustomersCount === 1 ? '' : 's'}</span>
+          </div>
+          <div class="graph-info-card">
+            <span class="graph-info-label">Matched Deal Exposure</span>
+            <span class="graph-info-value">${metrics.totalDealValueSum > 0 ? '$' + metrics.totalDealValueSum.toLocaleString('en-US', { maximumFractionDigits: 0 }) : `${matrix.length} Documents`}</span>
+            <span class="graph-info-sub">${(metrics.currencies || []).length > 0 ? `Currencies: ${escapeHtml(metrics.currencies.join(' · '))}` : 'Commercial terms analyzed'}</span>
+          </div>
+          <div class="graph-info-card">
+            <span class="graph-info-label">Verifiable Citations</span>
+            <span class="graph-info-value">${citations.length} Source Slice${citations.length === 1 ? '' : 's'}</span>
+            <span class="graph-info-sub">Model: ${escapeHtml(res.modelIdUsed || 'gpt-5-mini')}</span>
+          </div>
+        </div>
+      ` : '';
+
+      const resultsHtml = askAiLoading ? `
+        <div class="ask-synthesis-card" style="padding:36px 24px;text-align:center;color:var(--text-secondary);">
+          Synthesizing complex answer &amp; building cross-document matrix across <strong>${data.docNodes.length}</strong> scoped document${data.docNodes.length === 1 ? '' : 's'}...
+        </div>
+      ` : (res ? `
+        <div class="ask-results-grid">
+          <div style="display:flex;flex-direction:column;gap:14px;min-width:0;">
+            <!-- Executive Synthesis Card -->
+            <div class="ask-synthesis-card">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;border-bottom:1px solid var(--line);padding-bottom:10px;">
+                <div>
+                  <span style="font-family:var(--font-mono);font-size:10.5px;font-weight:600;text-transform:uppercase;color:var(--accent-ink);">✦ Cross-Document Synthesis</span>
+                  <div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-top:2px;">${escapeHtml(res.question || askAiQuestionInput)}</div>
+                </div>
+                <button type="button" class="text-link-btn" onclick="copyTextValue(${JSON.stringify(String(res.answer || '')).replace(/"/g, '&quot;')})">Copy Answer</button>
+              </div>
+              <div class="insight-prose" style="margin:0;">${formatMarkdownBold(res.answer)}</div>
+            </div>
+
+            <!-- Hebbia-Style Cross-Document Comparison Matrix -->
+            <div class="ask-synthesis-card">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;">
+                <div>
+                  <span style="font-family:var(--font-mono);font-size:10.5px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);">Cross-Document Matrix (${matrix.length} Documents)</span>
+                  <div style="font-size:13.5px;font-weight:600;color:var(--text-primary);">Per-Document Extracted Entities &amp; Findings</div>
+                </div>
+              </div>
+              <div style="overflow-x:auto;">
+                <table class="clean-table">
+                  <thead>
+                    <tr>
+                      <th>Document</th>
+                      <th>Customer</th>
+                      <th>MBA/MBSA &amp; Contract</th>
+                      <th>Deal Value</th>
+                      <th>Document Finding</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${matrix.map(r => `
+                      <tr>
+                        <td>
+                          <div style="font-weight:600;color:var(--text-primary);">${escapeHtml(r.cleanName)}</div>
+                          <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);">${escapeHtml(r.documentTypes)} (${escapeHtml(r.pageRange)})</div>
+                        </td>
+                        <td style="font-weight:500;">${escapeHtml(r.customerName)}</td>
+                        <td style="font-family:var(--font-mono);font-size:11.5px;color:var(--text-secondary);">
+                          ${r.mbsaNumber !== '—' ? `MBSA: ${escapeHtml(r.mbsaNumber)}` : ''}
+                          ${r.contractNumber !== '—' ? `<br/>Contract: ${escapeHtml(r.contractNumber)}` : (r.mbsaNumber === '—' ? '—' : '')}
+                        </td>
+                        <td style="font-family:var(--font-mono);font-size:12px;font-weight:600;color:var(--text-primary);">
+                          ${r.totalDealValue !== '—' ? `${escapeHtml(r.totalDealValue)} ${escapeHtml(r.billingCurrency !== '—' ? r.billingCurrency : '')}` : escapeHtml(r.billingCurrency)}
+                        </td>
+                        <td style="font-size:12.5px;color:var(--text-body);max-width:340px;">${escapeHtml(r.finding)}</td>
+                        <td style="text-align:right;white-space:nowrap;">
+                          <button type="button" class="text-link-btn" onclick="jumpFromGraphToSlice('${escapeHtml(r.jobId)}', ${r.sliceIndex})">Open ↗</button>
+                        </td>
+                      </tr>
+                    `).join('')}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          <!-- Right Column: Verifiable Citations & Evidence Cards -->
+          <aside class="graph-inspector-card" style="max-height:760px;">
+            <div>
+              <div style="font-size:14px;font-weight:600;color:var(--text-primary);">Verifiable Evidence Cards (${citations.length})</div>
+              <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
+                Click any citation card to open the source document and verify the underlying clause or PDF slice.
+              </div>
+            </div>
+            ${citations.map(c => `
+              <div class="graph-inspector-item" onclick="jumpFromGraphToSlice('${escapeHtml(c.jobId)}', ${c.sliceIndex})">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                  <span style="font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--accent-ink);">[${c.citationNumber}] ${escapeHtml(c.documentName)} (${escapeHtml(c.pageRange)})</span>
+                  <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);">PDF ↗</span>
+                </div>
+                <div style="font-weight:600;font-size:13px;color:var(--text-primary);">${escapeHtml(c.cleanName)}</div>
+                <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);">
+                  ${escapeHtml(c.customerName)}${c.mbsaNumber !== '—' ? ` · MBSA ${escapeHtml(c.mbsaNumber)}` : ''}${c.totalDealValue !== '—' ? ` · ${escapeHtml(c.totalDealValue)} ${escapeHtml(c.billingCurrency)}` : ''}
+                </div>
+                <div style="font-size:11.5px;color:var(--text-secondary);margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">"${escapeHtml(c.excerpt)}"</div>
+              </div>
+            `).join('')}
+          </aside>
+        </div>
+      ` : '');
+
+      body.innerHTML = `
+        <div class="graph-shell" style="height:auto;">
+          <!-- Entity Scope Filter Bar (Shared with Document Graph) -->
+          <div class="graph-filter-bar">
+            <div class="graph-filter-top">
+              <div class="filter-pill-bar" style="margin-bottom:0;">
+                <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);margin-right:4px;">Scope by Entity:</span>
+                <button type="button" class="filter-pill-btn ${graphSelectedEntityNames.size === 0 ? 'active' : ''}" onclick="toggleGraphEntityNameFilter('ALL')">
+                  All Entities
+                </button>
+                ${data.allEntityNames.map(en => `
+                  <button type="button" class="filter-pill-btn ${graphSelectedEntityNames.has(en.name) ? 'active' : ''}" onclick="toggleGraphEntityNameFilter(${JSON.stringify(en.name).replace(/"/g, '&quot;')})">
+                    ${escapeHtml(en.name)} <span style="opacity:0.65;font-family:var(--font-mono);font-size:11px;">${en.count}</span>
+                  </button>
+                `).join('')}
+              </div>
+
+              <div class="graph-controls-group">
+                <select class="graph-select" onchange="onGraphEntityValueFilterChanged(this.value)" title="Scope Ask AI to a specific Entity Name & Value">
+                  <option value="ALL">All Entity Values (${data.allEntityValuePairs.length})</option>
+                  ${data.allEntityValuePairs.map(p => `
+                    <option value="${escapeHtml(p.pairKey)}" ${graphSelectedEntityValuePair === p.pairKey ? 'selected' : ''}>
+                      ${escapeHtml(p.name)}: ${escapeHtml(p.value)} (${p.count})
+                    </option>
+                  `).join('')}
+                </select>
+                ${hasActiveFilters ? `<button type="button" class="ghost-action-btn" onclick="resetGraphFilters()">✕ Clear Scope</button>` : ''}
+              </div>
+            </div>
+          </div>
+
+          <!-- Interactive Ask AI Prompt Input & Curated Complex Questions -->
+          <div class="ask-prompt-card">
+            <div class="ask-input-row">
+              <input type="text" class="ask-main-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Ask a complex question across all scoped documents..." onkeydown="if(event.key==='Enter') runCrossDocumentAskAi(this.value)" />
+              <button type="button" class="ask-submit-btn" onclick="runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value)">✦ Ask Across Documents</button>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+              <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);text-transform:uppercase;">Try:</span>
+              ${starterQuestions.map(sq => `
+                <button type="button" class="text-link-btn" style="font-family:var(--font-sans);font-size:12px;" onclick="runCrossDocumentAskAi(${JSON.stringify(sq).replace(/"/g, '&quot;')})">${escapeHtml(sq)}</button>
+              `).join('')}
+            </div>
+          </div>
+
+          ${infoStripHtml}
+          ${resultsHtml}
+        </div>
+      `;
     }
 
     init();
