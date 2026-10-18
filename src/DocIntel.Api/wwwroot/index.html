@@ -1229,6 +1229,7 @@
 
     <div class="drawer-subbar">
       <span id="docListCountLabel">0 documents</span>
+      <button type="button" class="ghost-action-btn" id="btnDrawerNewChat" style="display:none;" onclick="startNewAskAiChat()" title="Start a new chat">+ New chat</button>
     </div>
 
     <div class="doc-items-scroll" id="docItemsList"></div>
@@ -1270,6 +1271,7 @@
 
         <div class="meridian-actions">
           <div id="sliceSelectorRow" style="display:flex;align-items:center;gap:6px;"></div>
+          <button type="button" class="ghost-action-btn" id="btnHeaderNewChat" style="display:none;" onclick="startNewAskAiChat()" title="Start a new chat">+ New chat</button>
           <button type="button" class="ghost-action-btn" id="btnHeaderToggleGraph" onclick="setWorkspaceMode(workspaceMode === 'graph' ? 'documents' : 'graph')" title="Toggle Cross-Document Entity Graph">Document Graph</button>
           <button type="button" class="ghost-action-btn" id="btnHeaderToggleAsk" onclick="setWorkspaceMode(workspaceMode === 'ask' ? 'documents' : 'ask')" title="Ask AI across all tenant documents">✦ Ask AI</button>
           <button type="button" class="ghost-action-btn" id="btnHeaderExportJson" onclick="exportSelectedJobJson()" title="Download extracted JSON">Export</button>
@@ -1316,9 +1318,104 @@
     let graphSimAnimFrame = null;
     let graphCustomNodePositions = {};
     let askAiQuestionInput = '';
-    let askAiLastResult = null;
     let askAiLoading = false;
+    let tenantChats = [];
+    let activeChatId = null;
     let jobPollTimer = null;
+
+    function getChatsStorageKey() {
+      return `docintel_chats_${currentTenant ? currentTenant.tenantId : 'default'}`;
+    }
+
+    function loadTenantChats() {
+      try {
+        const raw = localStorage.getItem(getChatsStorageKey());
+        tenantChats = raw ? JSON.parse(raw) : [];
+      } catch {
+        tenantChats = [];
+      }
+      if (!Array.isArray(tenantChats)) tenantChats = [];
+      if (tenantChats.length === 0) {
+        const initialChat = {
+          id: 'chat-' + Date.now(),
+          title: 'New chat',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messages: []
+        };
+        tenantChats.push(initialChat);
+        activeChatId = initialChat.id;
+        saveTenantChats();
+      } else if (!activeChatId || !tenantChats.some(c => c.id === activeChatId)) {
+        activeChatId = tenantChats[0].id;
+      }
+    }
+
+    function saveTenantChats() {
+      try {
+        localStorage.setItem(getChatsStorageKey(), JSON.stringify(tenantChats));
+      } catch {}
+    }
+
+    function getActiveChat() {
+      if (!activeChatId || !tenantChats.some(c => c.id === activeChatId)) {
+        loadTenantChats();
+      }
+      return tenantChats.find(c => c.id === activeChatId) || tenantChats[0];
+    }
+
+    function startNewAskAiChat() {
+      loadTenantChats();
+      // Reuse existing empty chat if the top chat has 0 messages
+      const existingEmpty = tenantChats.find(c => (c.messages || []).length === 0);
+      if (existingEmpty) {
+        activeChatId = existingEmpty.id;
+      } else {
+        const newChat = {
+          id: 'chat-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+          title: 'New chat',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messages: []
+        };
+        tenantChats.unshift(newChat);
+        activeChatId = newChat.id;
+        saveTenantChats();
+      }
+      askAiQuestionInput = '';
+      renderDocumentList();
+      renderSelectedDocument();
+      const inp = document.getElementById('askAiMainInputEl');
+      if (inp) inp.focus();
+    }
+
+    function selectAskAiChat(chatId) {
+      activeChatId = chatId;
+      askAiQuestionInput = '';
+      renderDocumentList();
+      renderSelectedDocument();
+    }
+
+    function deleteAskAiChat(chatId, evt) {
+      if (evt) evt.stopPropagation();
+      tenantChats = tenantChats.filter(c => c.id !== chatId);
+      if (tenantChats.length === 0) {
+        const fresh = {
+          id: 'chat-' + Date.now(),
+          title: 'New chat',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messages: []
+        };
+        tenantChats.push(fresh);
+        activeChatId = fresh.id;
+      } else if (activeChatId === chatId) {
+        activeChatId = tenantChats[0].id;
+      }
+      saveTenantChats();
+      renderDocumentList();
+      renderSelectedDocument();
+    }
 
     function setWorkspaceMode(mode) {
       workspaceMode = mode;
@@ -1327,6 +1424,10 @@
       const btnAsk = document.getElementById('btnModeAsk');
       const btnHeaderGraph = document.getElementById('btnHeaderToggleGraph');
       const btnHeaderAsk = document.getElementById('btnHeaderToggleAsk');
+      const btnDrawerNewChat = document.getElementById('btnDrawerNewChat');
+      const btnHeaderNewChat = document.getElementById('btnHeaderNewChat');
+      const searchInp = document.getElementById('docSearchInput');
+
       if (btnDocs) btnDocs.classList.toggle('active', mode === 'documents');
       if (btnGraph) btnGraph.classList.toggle('active', mode === 'graph');
       if (btnAsk) btnAsk.classList.toggle('active', mode === 'ask');
@@ -1335,6 +1436,18 @@
       }
       if (btnHeaderAsk) {
         btnHeaderAsk.textContent = mode === 'ask' ? '← Back to Document' : '✦ Ask AI';
+      }
+      if (btnDrawerNewChat) {
+        btnDrawerNewChat.style.display = mode === 'ask' ? 'inline-flex' : 'none';
+      }
+      if (btnHeaderNewChat) {
+        btnHeaderNewChat.style.display = mode === 'ask' ? 'inline-flex' : 'none';
+      }
+      if (searchInp) {
+        searchInp.placeholder = mode === 'ask' ? 'Search chats...' : 'Search name or content...';
+      }
+      if (mode === 'ask') {
+        loadTenantChats();
       }
       renderDocumentList();
       renderSelectedDocument();
@@ -1403,6 +1516,8 @@
       currentTenant = tenants.find(t => t.tenantId === tenantId) || tenants[0] || null;
       selectedJobId = null;
       selectedSliceIndex = -1;
+      activeChatId = null;
+      loadTenantChats();
       renderTenantSelect();
       await loadTenantJobs();
     }
@@ -1480,6 +1595,41 @@
       const container = document.getElementById('docItemsList');
       const rawQuery = (document.getElementById('docSearchInput').value || '').trim();
       const query = rawQuery.toLowerCase();
+
+      // When in Ask AI mode, the left drawer manages Chats (with New chat, Select chat, and Delete chat)
+      if (workspaceMode === 'ask') {
+        loadTenantChats();
+        const filteredChats = tenantChats.filter(c => {
+          if (!query) return true;
+          const hay = `${c.title || ''} ${(c.messages || []).map(m => m.text || '').join(' ')}`.toLowerCase();
+          return hay.includes(query);
+        });
+
+        document.getElementById('docListCountLabel').textContent = `${filteredChats.length} chat${filteredChats.length === 1 ? '' : 's'}`;
+        container.innerHTML = '';
+
+        filteredChats.forEach(chat => {
+          const isSelected = chat.id === activeChatId;
+          const dt = chat.updatedAt ? new Date(chat.updatedAt) : new Date();
+          const dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+          const msgCount = (chat.messages || []).filter(m => m.role === 'user').length;
+
+          const row = document.createElement('div');
+          row.className = 'doc-row' + (isSelected ? ' selected' : '');
+          row.title = chat.title || 'New chat';
+          row.onclick = () => selectAskAiChat(chat.id);
+
+          row.innerHTML = `
+            <div class="doc-row-main">
+              <div class="doc-row-name">${escapeHtml(chat.title || 'New chat')}</div>
+              <div class="doc-row-meta">${escapeHtml(dateStr)} · ${msgCount} question${msgCount === 1 ? '' : 's'}</div>
+            </div>
+            <button type="button" class="icon-toggle-btn" style="width:22px;height:22px;font-size:12px;" title="Delete chat" onclick="deleteAskAiChat('${escapeHtml(chat.id)}', event)">✕</button>
+          `;
+          container.appendChild(row);
+        });
+        return;
+      }
 
       const filtered = tenantJobs.filter(j => {
         if (!query) return true;
@@ -1735,8 +1885,11 @@
         if (navRow) navRow.style.display = 'none';
         if (exportBtn) exportBtn.style.display = 'none';
         sliceRow.innerHTML = '';
+        const activeChat = getActiveChat();
         const completedCount = tenantJobs.filter(j => j.status === 'Completed').length;
-        document.getElementById('selectedDocTitle').textContent = currentTenant ? `${currentTenant.displayName} — Ask AI Across Documents` : 'Ask AI Across Documents';
+        document.getElementById('selectedDocTitle').textContent = (activeChat && activeChat.title && activeChat.title !== 'New chat')
+          ? activeChat.title
+          : 'Ask AI';
         document.getElementById('selectedDocMetaText').textContent = `${completedCount} document${completedCount === 1 ? '' : 's'}`;
         renderCrossDocumentAskTab(body);
         return;
@@ -2972,13 +3125,27 @@
     }
 
     async function runCrossDocumentAskAi(customQuestion) {
-      if (!currentTenant) return;
+      if (!currentTenant || askAiLoading) return;
       const inputEl = document.getElementById('askAiMainInputEl');
       const q = (customQuestion != null ? customQuestion : (inputEl ? inputEl.value : askAiQuestionInput)).trim();
       if (!q) return;
 
-      askAiQuestionInput = q;
+      const chat = getActiveChat();
+      if (!chat.messages) chat.messages = [];
+      if (chat.messages.length === 0 || chat.title === 'New chat') {
+        chat.title = q.length > 42 ? q.slice(0, 41) + '…' : q;
+      }
+      chat.messages.push({
+        role: 'user',
+        text: q,
+        timestamp: new Date().toISOString()
+      });
+      chat.updatedAt = new Date().toISOString();
+      saveTenantChats();
+
+      askAiQuestionInput = '';
       askAiLoading = true;
+      renderDocumentList();
       renderSelectedDocument();
 
       try {
@@ -2987,15 +3154,24 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             question: q,
-            entityNames: [...graphSelectedEntityNames],
-            entityValuePair: graphSelectedEntityValuePair
+            entityNames: [],
+            entityValuePair: 'ALL'
           })
         });
         if (resp.ok) {
-          askAiLastResult = await resp.json();
+          const data = await resp.json();
+          chat.messages.push({
+            role: 'assistant',
+            text: data.answer || 'No matching answer found.',
+            citations: (data.citations || []).slice(0, 6),
+            timestamp: new Date().toISOString()
+          });
+          chat.updatedAt = new Date().toISOString();
+          saveTenantChats();
         }
       } finally {
         askAiLoading = false;
+        renderDocumentList();
         renderSelectedDocument();
       }
     }
@@ -3007,65 +3183,70 @@
     }
 
     function renderCrossDocumentAskTab(body) {
-      const res = askAiLastResult;
-      const citations = (res?.citations || []).slice(0, 6);
+      const chat = getActiveChat();
+      const messages = chat?.messages || [];
+      const isEmptyChat = messages.length === 0 && !askAiLoading;
 
-      const answerHtml = askAiLoading ? `
-        <div class="ask-minimal-answer" style="color:var(--text-secondary);font-size:13.5px;text-align:center;">
-          Thinking across your documents...
-        </div>
-      ` : (res ? `
-        <div class="ask-minimal-answer">
-          <div style="font-size:13px;font-weight:600;color:var(--text-secondary);">${escapeHtml(res.question || askAiQuestionInput)}</div>
-          <div class="insight-prose" style="margin:0;font-size:14px;line-height:1.65;">${formatMarkdownBold(res.answer)}</div>
-          ${citations.length > 0 ? `
-            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:4px;">
-              ${citations.map(c => `
-                <button type="button" class="text-link-btn" onclick="jumpFromGraphToSlice('${escapeHtml(c.jobId)}', ${c.sliceIndex})">
-                  ${escapeHtml(c.cleanName)} (${escapeHtml(c.pageRange)}) ↗
-                </button>
-              `).join('')}
+      if (isEmptyChat) {
+        body.innerHTML = `
+          <div class="ask-minimal-stage">
+            <h2 class="ask-minimal-heading">Hi, I can help you explore and answer questions across your documents</h2>
+
+            <div class="ask-pill-bar">
+              <button type="button" class="ask-pill-plus" title="New chat" onclick="startNewAskAiChat()">+</button>
+              <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Message Copilot" onkeydown="if(event.key==='Enter') runCrossDocumentAskAi(this.value)" />
+              <button type="button" class="ask-pill-send" title="Send message" onclick="runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value)">
+                <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
             </div>
-          ` : ''}
-        </div>
-      ` : '');
+          </div>
+        `;
+        return;
+      }
+
+      const threadHtml = messages.map(m => {
+        if (m.role === 'user') {
+          return `
+            <div style="align-self:flex-end;background:#f3f3f8;color:var(--text-primary);padding:10px 16px;border-radius:18px;font-size:14px;font-weight:500;max-width:82%;">
+              ${escapeHtml(m.text)}
+            </div>
+          `;
+        }
+        const cites = m.citations || [];
+        return `
+          <div style="align-self:stretch;display:flex;flex-direction:column;gap:10px;padding:4px 0 12px 0;border-bottom:1px solid var(--line);">
+            <div class="insight-prose" style="margin:0;font-size:14px;line-height:1.65;">${formatMarkdownBold(m.text)}</div>
+            ${cites.length > 0 ? `
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                ${cites.map(c => `
+                  <button type="button" class="text-link-btn" onclick="jumpFromGraphToSlice('${escapeHtml(c.jobId)}', ${c.sliceIndex})">
+                    ${escapeHtml(c.cleanName)} (${escapeHtml(c.pageRange)}) ↗
+                  </button>
+                `).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
 
       body.innerHTML = `
-        <div class="ask-minimal-stage">
-          <h2 class="ask-minimal-heading">Hi, I can help you explore and answer questions across your documents</h2>
+        <div class="ask-minimal-stage" style="justify-content:space-between;min-height:100%;margin:0 auto;">
+          <div style="width:100%;display:flex;flex-direction:column;gap:18px;padding-bottom:28px;">
+            ${threadHtml}
+            ${askAiLoading ? `<div style="color:var(--text-secondary);font-size:13.5px;">Thinking across your documents...</div>` : ''}
+          </div>
 
-          <div class="ask-pill-bar">
-            <button type="button" class="ask-pill-plus" title="New question" onclick="askAiQuestionInput=''; askAiLastResult=null; renderSelectedDocument();">+</button>
+          <div class="ask-pill-bar" style="position:sticky;bottom:8px;">
+            <button type="button" class="ask-pill-plus" title="New chat" onclick="startNewAskAiChat()">+</button>
             <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Message Copilot" onkeydown="if(event.key==='Enter') runCrossDocumentAskAi(this.value)" />
-            <button type="button" class="ask-pill-send" title="Ask" onclick="runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value)">
+            <button type="button" class="ask-pill-send" title="Send message" onclick="runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value)">
               <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                 <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
               </svg>
             </button>
           </div>
-
-          <div class="ask-chips-row">
-            <button type="button" class="ask-suggestion-chip" onclick="runCrossDocumentAskAi('Compare total deal values and billing currencies across all customers')">
-              <svg width="13" height="13" viewBox="0 0 16 16">
-                <rect x="1" y="1" width="6.2" height="6.2" fill="#f25022" />
-                <rect x="8.8" y="1" width="6.2" height="6.2" fill="#7fba00" />
-                <rect x="1" y="8.8" width="6.2" height="6.2" fill="#00a4ef" />
-                <rect x="8.8" y="8.8" width="6.2" height="6.2" fill="#ffb900" />
-              </svg>
-              <span>Suggested</span>
-            </button>
-            <button type="button" class="ask-suggestion-chip" onclick="runCrossDocumentAskAi('Summarize key insights and MBA/MBSA agreements across documents')">
-              <span>File Insights</span>
-            </button>
-            <button type="button" class="ask-suggestion-chip" onclick="runCrossDocumentAskAi('Which documents contain Spanish signature forms translated to English?')">
-              <span>Spanish Contracts</span>
-            </button>
-            <button type="button" class="ask-suggestion-chip" onclick="runCrossDocumentAskAi('List all M130 pricing amendments and discount schedules')">
-              <span>M130 Amendments</span>
-            </button>
-          </div>
-
-          ${answerHtml}
         </div>
       `;
     }
