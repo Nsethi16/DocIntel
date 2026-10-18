@@ -4,23 +4,27 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Agent Harness Admin Studio — DocIntel</title>
+  <link rel="preconnect" href="https://fonts.cdnfonts.com" />
+  <link href="https://fonts.cdnfonts.com/css/overused-grotesk" rel="stylesheet" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --bg: #ffffff;
-      --rail-bg: #f9f9f8;
-      --border: #e8e7e2;
-      --card-border: #e4e3dd;
-      --text-primary: #18191b;
-      --text-secondary: #686b70;
-      --text-muted: #94979c;
-      --pill-active: #ededeb;
-      --pill-hover: #f3f2ee;
-      --accent-coral: #f28b7d;
-      --accent-sand: #f4f1ea;
-      --switch-on: #18191b;
+      --bg: #fafafc;
+      --rail-bg: #f6f6f8;
+      --border: #e3e1ec;
+      --card-border: #e1e1e9;
+      --text-primary: #16161d;
+      --text-secondary: #5d6074;
+      --text-muted: #8f92a6;
+      --pill-active: #eef0ff;
+      --pill-hover: #f0f0f5;
+      --accent-coral: #4b72fe;
+      --accent-sand: #eef0ff;
+      --switch-on: #3d56e0;
+      --font-sans: "Overused Grotesk", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
 
     * {
@@ -29,9 +33,8 @@
 
     body {
       margin: 0;
-      font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      font-size: 13.5px;
-      font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+      font-family: var(--font-sans);
+      font-size: 14px;
       background: var(--bg);
       color: var(--text-primary);
       height: 100vh;
@@ -327,16 +330,19 @@
     }
 
     .editorial-heading {
-      font-family: Georgia, "Times New Roman", serif;
-      font-size: 28px;
-      font-weight: 400;
+      font-family: var(--font-sans);
+      font-size: 25px;
+      font-weight: 600;
       color: var(--text-primary);
       margin: 0 0 4px 0;
-      letter-spacing: -0.3px;
+      letter-spacing: -0.025em;
     }
 
     .tenant-meta-line {
-      font-size: 12.5px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
       color: var(--text-secondary);
       display: flex;
       align-items: center;
@@ -344,11 +350,13 @@
     }
 
     .version-chip {
-      font-size: 11.5px;
-      color: var(--text-secondary);
-      background: #f5f5f5;
-      padding: 2px 9px;
-      border-radius: 999px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #3945a8;
+      background: #eef0ff;
+      border: 1px solid #b5bcf3;
+      padding: 2px 8px;
+      border-radius: 5px;
       white-space: nowrap;
     }
 

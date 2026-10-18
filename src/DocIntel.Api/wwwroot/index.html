@@ -4,28 +4,35 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DocIntel — Document Intelligence</title>
+  <link rel="preconnect" href="https://fonts.cdnfonts.com" />
+  <link href="https://fonts.cdnfonts.com/css/overused-grotesk" rel="stylesheet" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <style>
     :root {
-      --header-surface: #f5f5f3;
-      --drawer-surface: #f9f9f8;
+      --header-surface: #f6f6f8;
+      --drawer-surface: #f6f6f8;
       --canvas-bg: #ffffff;
-      --line: #e8e7e2;
-      --line-subtle: #f1f0ec;
-      --text-primary: #18191b;
-      --text-body: #2c2e31;
-      --text-secondary: #686b70;
-      --text-muted: #94979c;
-      --monogram-bg: #2f3438;
-      --accent: #c25138;
-      --status-ok: #289867;
-      --status-run: #2563eb;
-      --status-err: #d14343;
-      --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-      --font-serif: "Newsreader", Georgia, serif;
-      --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+      --surface-soft: #f0f0f5;
+      --line: #e3e1ec;
+      --line-subtle: #ebe9f2;
+      --text-primary: #16161d;
+      --text-body: #2c2e3c;
+      --text-secondary: #5d6074;
+      --text-muted: #8f92a6;
+      --monogram-bg: #16161d;
+      --accent: #3d56e0;
+      --accent-mid: #4b72fe;
+      --accent-soft: #eef0ff;
+      --accent-border: #b5bcf3;
+      --accent-ink: #3945a8;
+      --status-ok: #138fa6;
+      --status-run: #4b72fe;
+      --status-err: #c43d4b;
+      --font-sans: "Overused Grotesk", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      --font-serif: "Overused Grotesk", system-ui, -apple-system, sans-serif;
+      --font-mono: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     }
 
     * {
@@ -35,8 +42,8 @@
     body {
       margin: 0;
       font-family: var(--font-sans);
-      font-size: 13.5px;
-      font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+      font-size: 14px;
+      line-height: 1.5;
       background: var(--canvas-bg);
       color: var(--text-primary);
       height: 100vh;
@@ -97,13 +104,27 @@
       border-radius: 6px;
       background: var(--monogram-bg);
       color: #ffffff;
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-size: 11.5px;
+      font-family: var(--font-mono);
+      font-weight: 600;
+      font-size: 10.5px;
+      letter-spacing: 0.04em;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .tenant-mini-monogram::after,
+    .meridian-monogram::after {
+      content: "";
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      height: 2.5px;
+      background: linear-gradient(90deg, #37d7fa 0%, #4b72fe 40%, #ff8df2 75%, #ff8705 100%);
     }
 
     .tenant-select {
@@ -183,31 +204,37 @@
       align-items: center;
       justify-content: space-between;
       padding: 10px 14px 4px 14px;
-      font-size: 11.5px;
-      color: var(--text-muted);
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-secondary);
     }
 
     .ghost-action-btn {
-      border: 1px solid #e2e0d8;
+      border: 1px solid var(--line);
       background: #ffffff;
-      color: var(--text-secondary);
-      border-radius: 6px;
-      padding: 3px 9px;
-      font-size: 11.5px;
+      color: var(--text-primary);
+      border-radius: 7px;
+      padding: 4px 10px;
+      font-family: var(--font-mono);
+      font-size: 11px;
       font-weight: 500;
+      letter-spacing: 0.02em;
       cursor: pointer;
-      font-family: inherit;
-      transition: all 0.12s ease;
+      transition: all 0.14s ease;
       text-decoration: none;
       display: inline-flex;
       align-items: center;
       gap: 5px;
+      box-shadow: 0 1px 2px rgba(22, 22, 29, 0.04);
     }
 
     .ghost-action-btn:hover {
-      color: var(--text-primary);
-      border-color: #c7c5bc;
-      background: #fcfcfa;
+      border-color: var(--accent-border);
+      background: var(--accent-soft);
+      color: var(--accent-ink);
     }
 
     .doc-items-scroll {
@@ -231,12 +258,12 @@
     }
 
     .doc-row:hover {
-      background: #f0efe9;
+      background: var(--surface-soft);
     }
 
     .doc-row.selected {
       background: #ffffff;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05), 0 0 0 1px rgba(0, 0, 0, 0.04);
+      box-shadow: 0 1px 3px rgba(22, 22, 29, 0.05), 0 0 0 1px var(--line);
     }
 
     .doc-row-main {
@@ -245,8 +272,9 @@
     }
 
     .doc-row-name {
-      font-size: 13px;
+      font-size: 13.5px;
       font-weight: 500;
+      letter-spacing: -0.005em;
       color: var(--text-primary);
       white-space: nowrap;
       overflow: hidden;
@@ -256,10 +284,12 @@
 
     .doc-row.selected .doc-row-name {
       font-weight: 600;
+      color: var(--accent-ink);
     }
 
     .doc-row-meta {
-      font-size: 11.5px;
+      font-family: var(--font-mono);
+      font-size: 11px;
       color: var(--text-secondary);
       white-space: nowrap;
       overflow: hidden;
@@ -368,26 +398,27 @@
       border-radius: 8px;
       background: var(--monogram-bg);
       color: #ffffff;
-      font-family: var(--font-serif);
-      font-style: italic;
-      font-size: 14px;
-      font-weight: 400;
-      letter-spacing: 0.02em;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
       display: inline-flex;
       align-items: center;
       justify-content: center;
       flex-shrink: 0;
       align-self: center;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+      position: relative;
+      overflow: hidden;
+      box-shadow: 0 1px 3px rgba(22, 22, 29, 0.12);
     }
 
     .meridian-title {
-      font-family: var(--font-serif);
+      font-family: var(--font-sans);
       font-size: 21px;
-      font-weight: 400;
+      font-weight: 600;
       color: var(--text-primary);
       margin: 0;
-      letter-spacing: -0.015em;
+      letter-spacing: -0.025em;
       line-height: 1.2;
       white-space: nowrap;
       overflow: hidden;
@@ -399,7 +430,8 @@
       display: inline-flex;
       align-items: center;
       gap: 5px;
-      font-size: 12px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
       color: var(--text-secondary);
       white-space: nowrap;
       flex-shrink: 0;
@@ -427,46 +459,61 @@
     }
 
     .meridian-tabs {
-      display: flex;
+      display: inline-flex;
       align-items: center;
       gap: 2px;
       flex-wrap: nowrap;
       min-width: 0;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 2.5px;
+      box-shadow: 0 1px 2px rgba(22, 22, 29, 0.04);
     }
 
     .meridian-tab {
-      border: none;
+      border: 1px solid transparent;
       background: transparent;
       color: var(--text-secondary);
       font-family: var(--font-sans);
       font-size: 13px;
       font-weight: 500;
-      padding: 6px 11px;
-      border-radius: 8px;
+      padding: 5.5px 12px;
+      border-radius: 6.5px;
       cursor: pointer;
       white-space: nowrap;
-      transition: all 0.12s ease;
+      transition: all 0.14s ease;
       display: inline-flex;
       align-items: center;
-      gap: 5px;
+      gap: 6px;
     }
 
     .meridian-tab:hover {
       color: var(--text-primary);
-      background: rgba(255, 255, 255, 0.5);
+      background: var(--surface-soft);
     }
 
     .meridian-tab.active {
-      background: #ffffff;
-      color: var(--text-primary);
+      background: var(--accent-soft);
+      border-color: var(--accent-border);
+      color: var(--accent-ink);
       font-weight: 600;
-      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 0 0 1px rgba(0, 0, 0, 0.03);
     }
 
     .tab-count {
-      font-size: 11.5px;
+      font-family: var(--font-mono);
+      font-size: 11px;
       font-weight: 500;
-      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      background: var(--surface-soft);
+      color: var(--text-secondary);
+      padding: 1px 5px;
+      border-radius: 4px;
+    }
+
+    .meridian-tab.active .tab-count {
+      background: #dfe4ff;
+      color: var(--accent-ink);
     }
 
     .meridian-slice-select {
@@ -527,10 +574,14 @@
     }
 
     .packet-summary-line {
-      margin: 0 0 26px 0;
-      padding-bottom: 14px;
+      margin: 0 0 24px 0;
+      padding-bottom: 12px;
       border-bottom: 1px solid var(--line);
-      font-size: 13px;
+      font-family: var(--font-mono);
+      font-size: 11.5px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
       color: var(--text-secondary);
       display: flex;
       align-items: center;
@@ -540,14 +591,18 @@
     }
 
     .slice-section {
-      padding: 0 0 28px 0;
-      margin: 0 0 28px 0;
-      border-bottom: 1px solid var(--line);
+      padding: 18px 20px;
+      margin: 0;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #ffffff;
+      box-shadow: 0 1px 3px rgba(22, 22, 29, 0.04);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
 
-    .slice-section:last-child {
-      border-bottom: none;
-      margin-bottom: 0;
+    .slice-section:hover {
+      border-color: #c9c5dc;
+      box-shadow: 0 4px 18px rgba(22, 22, 29, 0.06);
     }
 
     .slice-section-head {
@@ -560,7 +615,7 @@
 
     .slice-section-title {
       font-family: var(--font-sans);
-      font-size: 15px;
+      font-size: 16.5px;
       font-weight: 600;
       letter-spacing: -0.01em;
       color: var(--text-primary);
@@ -568,76 +623,79 @@
     }
 
     .slice-section-sub {
-      font-size: 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
       color: var(--text-secondary);
-      margin-top: 3px;
+      margin-top: 4px;
     }
 
     .text-link-btn {
-      background: none;
-      border: none;
-      padding: 0;
-      font-family: inherit;
-      font-size: 12px;
+      background: var(--header-surface);
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-family: var(--font-mono);
+      font-size: 11px;
       font-weight: 500;
-      color: var(--text-secondary);
+      color: var(--accent);
       cursor: pointer;
       white-space: nowrap;
-      transition: color 0.12s ease;
+      text-decoration: none;
+      transition: all 0.14s ease;
     }
 
     .text-link-btn:hover {
-      color: var(--text-primary);
-      text-decoration: underline;
+      background: var(--accent-soft);
+      border-color: var(--accent-border);
+      color: var(--accent-ink);
     }
 
     .insight-prose {
-      font-size: 13.5px;
-      line-height: 1.65;
+      font-size: 14px;
+      line-height: 1.62;
       color: var(--text-body);
       max-width: 100%;
       margin: 0 0 12px 0;
       white-space: pre-wrap;
     }
 
-    /* Filter pills in Project Meridian style */
+    /* Filter pills in ExtractBench Pro .xp-chip style */
     .filter-pill-bar {
       display: flex;
       align-items: center;
       gap: 6px;
       margin-bottom: 18px;
-      padding: 4px;
-      background: var(--header-surface);
-      border-radius: 10px;
-      width: fit-content;
       flex-wrap: wrap;
     }
 
     .filter-pill-btn {
-      border: none;
-      background: transparent;
-      color: var(--text-secondary);
-      font-family: inherit;
-      font-size: 12.5px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 13px;
       font-weight: 500;
       padding: 5px 12px;
       border-radius: 7px;
       cursor: pointer;
-      transition: all 0.12s ease;
+      transition: all 0.14s ease;
     }
 
     .filter-pill-btn:hover {
-      color: var(--text-primary);
+      border-color: #c9c5dc;
     }
 
     .filter-pill-btn.active {
-      background: #ffffff;
-      color: var(--text-primary);
+      background: var(--accent-soft);
+      border-color: var(--accent-border);
+      color: var(--accent-ink);
       font-weight: 600;
-      box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
     }
 
-    /* Clean Tables */
+    /* Clean Tables with IBM Plex Mono headers */
     .clean-table {
       width: 100%;
       border-collapse: collapse;
@@ -653,14 +711,17 @@
     }
 
     .clean-table th {
-      font-size: 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
       font-weight: 500;
-      color: var(--text-secondary);
-      border-bottom: 1px solid #dcdad3;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--text-muted);
+      border-bottom: 1px solid var(--line);
     }
 
     .clean-table tbody tr:hover td {
-      background: #fbfbf9;
+      background: var(--header-surface);
     }
 
     .kv-grid {
@@ -671,7 +732,11 @@
     }
 
     .kv-item dt {
-      font-size: 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
       color: var(--text-secondary);
       margin-bottom: 4px;
     }
