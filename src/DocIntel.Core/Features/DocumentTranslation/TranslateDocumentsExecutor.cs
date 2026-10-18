@@ -126,7 +126,7 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
                         translateContent = new DocumentTranslateContent(docFile);
                     }
 
-                    var response = await singleDocClient.DocumentTranslateAsync(
+                    var response = await singleDocClient.TranslateAsync(
                         targetLanguage,
                         translateContent,
                         sourceLanguage: detectedLang,
@@ -135,7 +135,10 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
                     var translatedPdfBytes = response.Value.ToArray();
                     if (translatedPdfBytes.Length > 0)
                     {
-                        var extractedPages = _pdfExtractor.ExtractPages(translatedPdfBytes);
+                        var extractedPages = await _pdfExtractor.ExtractPagesAsync(
+                            translatedPdfBytes,
+                            new SplittingConfig(),
+                            cancellationToken).ConfigureAwait(false);
                         var extractedTranslatedText = string.Join("\n\n", extractedPages.Select(p => p.BodyText));
                         return new DocumentSliceTranslationResult(
                             detectedLang,
