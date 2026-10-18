@@ -2573,42 +2573,23 @@
 
     function renderDocumentGraphTab(body) {
       const data = computeFilteredGraphData();
-      const hasActiveFilters = graphSelectedEntityNames.size > 0 || graphSelectedEntityValuePair !== 'ALL' || (graphEntitySearchQuery || '').trim().length > 0 || graphDepthMode !== 'GLOBAL';
 
       body.innerHTML = `
         <div class="graph-shell">
-          <div class="graph-filter-bar">
-            <div class="graph-filter-top">
-              <div class="filter-pill-bar" style="margin-bottom:0;">
-                <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);margin-right:4px;">Entity Filter:</span>
-                <button type="button" class="filter-pill-btn ${graphSelectedEntityNames.size === 0 ? 'active' : ''}" onclick="toggleGraphEntityNameFilter('ALL')">
-                  All Entities
-                </button>
-                ${data.allEntityNames.map(en => `
-                  <button type="button" class="filter-pill-btn ${graphSelectedEntityNames.has(en.name) ? 'active' : ''}" onclick="toggleGraphEntityNameFilter(${JSON.stringify(en.name).replace(/"/g, '&quot;')})">
-                    ${escapeHtml(en.name)} <span style="opacity:0.65;font-family:var(--font-mono);font-size:11px;">${en.count}</span>
+          <div class="graph-filter-bar" style="padding:10px 14px;">
+            <div class="filter-pill-bar" style="margin-bottom:0;align-items:center;">
+              <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);margin-right:4px;">Entities:</span>
+              <button type="button" class="filter-pill-btn ${graphSelectedEntityNames.size === 0 ? 'active' : ''}" onclick="toggleGraphEntityNameFilter('ALL')">
+                All Entities
+              </button>
+              ${data.allEntityNames.map(en => {
+                const isSelected = graphSelectedEntityNames.has(en.name);
+                return `
+                  <button type="button" class="filter-pill-btn ${isSelected ? 'active' : ''}" onclick="toggleGraphEntityNameFilter(${JSON.stringify(en.name).replace(/"/g, '&quot;')})">
+                    ${isSelected ? '✓ ' : ''}${escapeHtml(en.name)} <span style="opacity:0.65;font-family:var(--font-mono);font-size:11px;">${en.count}</span>
                   </button>
-                `).join('')}
-              </div>
-
-              <div class="graph-controls-group">
-                <div style="display:inline-flex;background:#efeff5;padding:2px;border-radius:7px;" title="Obsidian Global vs Local Neighborhood Depth">
-                  <button type="button" class="filter-pill-btn ${graphDepthMode === 'GLOBAL' ? 'active' : ''}" style="border:none;padding:4px 9px;font-size:11.5px;" onclick="setGraphDepthMode('GLOBAL')">Global</button>
-                  <button type="button" class="filter-pill-btn ${graphDepthMode === 'HOP1' ? 'active' : ''}" style="border:none;padding:4px 9px;font-size:11.5px;" onclick="setGraphDepthMode('HOP1')">1-Hop Local</button>
-                  <button type="button" class="filter-pill-btn ${graphDepthMode === 'HOP2' ? 'active' : ''}" style="border:none;padding:4px 9px;font-size:11.5px;" onclick="setGraphDepthMode('HOP2')">2-Hop Local</button>
-                </div>
-
-                <select class="graph-select" id="graphEntityValueSelect" onchange="onGraphEntityValueFilterChanged(this.value)" title="Filter graph by a specific Entity Name & Value">
-                  <option value="ALL">All Entity Values (${data.allEntityValuePairs.length})</option>
-                  ${data.allEntityValuePairs.map(p => `
-                    <option value="${escapeHtml(p.pairKey)}" ${graphSelectedEntityValuePair === p.pairKey ? 'selected' : ''}>
-                      ${escapeHtml(p.name)}: ${escapeHtml(p.value)} (${p.count})
-                    </option>
-                  `).join('')}
-                </select>
-                <input type="text" class="graph-input" id="graphEntitySearchInput" placeholder="Search nodes..." value="${escapeHtml(graphEntitySearchQuery)}" oninput="onGraphSearchInputChanged(this.value)" style="width:175px;" />
-                ${hasActiveFilters ? `<button type="button" class="ghost-action-btn" onclick="resetGraphFilters()">✕ Reset</button>` : ''}
-              </div>
+                `;
+              }).join('')}
             </div>
           </div>
 
