@@ -59,6 +59,29 @@ public sealed record DocumentDataExtractionResult(
     [property: JsonPropertyName("pageRange")] string PageRange,
     [property: JsonPropertyName("fields")] IReadOnlyList<ExtractedFieldValue> Fields,
     [property: JsonPropertyName("tables")] IReadOnlyList<ExtractedTableValue> Tables);
+
+/// <summary>
+/// Result of evaluating an admin-defined Prompt Column against a PDF slice/document (processed as PDF file/base64).
+/// </summary>
+public sealed record PromptColumnResult(
+    [property: JsonPropertyName("columnId")] string ColumnId,
+    [property: JsonPropertyName("columnName")] string ColumnName,
+    [property: JsonPropertyName("promptInstructions")] string PromptInstructions,
+    [property: JsonPropertyName("filterSummary")] string FilterSummary,
+    [property: JsonPropertyName("filterMatched")] bool FilterMatched,
+    [property: JsonPropertyName("matchedEntities")] IReadOnlyList<string> MatchedEntities,
+    [property: JsonPropertyName("status")] string Status,
+    [property: JsonPropertyName("resultText")] string ResultText,
+    [property: JsonPropertyName("processedAsFileBase64")] bool ProcessedAsFileBase64,
+    [property: JsonPropertyName("fileName")] string FileName,
+    [property: JsonPropertyName("fileSizeBytes")] int FileSizeBytes,
+    [property: JsonPropertyName("base64Preview")] string Base64Preview,
+    [property: JsonPropertyName("modelIdUsed")] string? ModelIdUsed,
+    [property: JsonPropertyName("segmentIndex")] int SegmentIndex,
+    [property: JsonPropertyName("documentName")] string DocumentName,
+    [property: JsonPropertyName("pageRange")] string PageRange,
+    [property: JsonPropertyName("evaluatedAtUtc")] DateTimeOffset EvaluatedAtUtc);
+
 public sealed record ExtractedEntity(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("value")] string Value,
@@ -128,6 +151,9 @@ public sealed class DocumentSlice
     [JsonPropertyName("dataExtraction")]
     public DocumentDataExtractionResult? DataExtraction { get; set; }
 
+    [JsonPropertyName("promptColumnResults")]
+    public List<PromptColumnResult> PromptColumnResults { get; set; } = [];
+
     [JsonPropertyName("markdown")]
     public string Markdown { get; set; } = string.Empty;
 
@@ -193,6 +219,8 @@ public sealed class SplittingState
     public List<ExtractedEntity> ExtractedEntities { get; set; } = [];
 
     public List<DocumentDataExtractionResult> DataExtractions { get; set; } = [];
+
+    public List<PromptColumnResult> PromptColumnResults { get; set; } = [];
 
     public List<WorkflowStepTrace> ExecutionTrace { get; set; } = [];
 }

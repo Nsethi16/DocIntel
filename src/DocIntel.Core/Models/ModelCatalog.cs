@@ -409,6 +409,11 @@ public sealed class SimulatedSliceChatClient : IChatClient
             return Task.FromResult(SimulateDataExtraction(systemPrompt, userText));
         }
 
+        if (systemPrompt.Contains("[TASK:PROMPT_COLUMN]", StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult(SimulatePromptColumn(systemPrompt, userText));
+        }
+
         var catalog = new List<(string Name, string Hint)>();
         foreach (Match m in CatalogLineRegex.Matches(systemPrompt))
         {
@@ -602,24 +607,24 @@ public sealed class SimulatedSliceChatClient : IChatClient
             }
         }
 
-        TryMatch(@"(?:MBA/MBSA(?:\s+Number)?|MBSA)\s+([A-Z0-9\-]+)", "MBA/MBSA Number", "Identifier");
-        TryMatch(@"(?:contrato|Contract(?:\s+Number)?|Agreement(?:\s+Number)?)\s+([A-Z][0-9]{5,})", "Contract Number", "Identifier");
+        TryMatch(@"(?:MBA/MBSA(?:\s+Number)?|MBSA)(?::\s*|\s+)(?=[A-Z0-9\-]*\d)([A-Z0-9\-]{5,})", "MBA/MBSA Number", "Identifier");
+        TryMatch(@"(?:N[uú]mero\s+de\s+contrato|Contract\s+Number|Agreement\s+Number|contrato|Contract|Agreement)(?::\s*|\s+)(?=[A-Z0-9\-]*\d)([A-Z0-9\-]{5,})", "Contract Number", "Identifier");
         TryMatch(@"Quote\s+Number:\s*([0-9\.]+)", "Quote Number", "Identifier");
         TryMatch(@"Billing\s+currency:\s*([A-Z]{3})", "Billing Currency", "Financial");
-        TryMatch(@"Total\s+deal\s+value\s+([0-9,\.]+)", "Total Deal Value", "Financial");
+        TryMatch(@"Total\s+deal\s+value(?::\s*|\s+)([0-9,\.]+)", "Total Deal Value", "Financial");
         TryMatch(@"Tenant\s+ID:\s*([^\r\n\{]+)", "Tenant ID", "Customer");
+        TryMatch(@"(?:Entity\s+Name|Nombre\s+de\s+la\s+entidad|Customer\s+Name):\s*([^\r\n]+)", "Customer Name", "Party");
 
-        if (userText.Contains("Cadena Comercial OXXO", StringComparison.OrdinalIgnoreCase))
+        if (!entities.Any(e => ((dynamic)e).name == "Customer Name") &&
+            userText.Contains("Cadena Comercial OXXO", StringComparison.OrdinalIgnoreCase))
         {
             entities.Add(new { name = "Customer Name", value = "Cadena Comercial OXXO SA de CV", category = "Party", confidence = 0.99 });
         }
-        else
+
+        var firstLine = userText.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim();
+        if (!string.IsNullOrWhiteSpace(firstLine))
         {
-            var firstLine = userText.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries).FirstOrDefault()?.Trim();
-            if (!string.IsNullOrWhiteSpace(firstLine))
-            {
-                entities.Add(new { name = "Document Heading", value = firstLine, category = "Metadata", confidence = 0.92 });
-            }
+            entities.Add(new { name = "Document Heading", value = firstLine, category = "Metadata", confidence = 0.92 });
         }
 
         var json = JsonSerializer.Serialize(new { entities });
@@ -672,19 +677,64 @@ public sealed class SimulatedSliceChatClient : IChatClient
         };
     }
 
+    private ChatResponse SimulatePromptColumn(string systemPrompt, string userText)
+    {
+        var lines = systemPrompt.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries);
+        var colName = lines.FirstOrDefault(l => l.StartsWith("COLUMN_NAME|", StringComparison.Ordinal))?.Split('|', 2).ElementAtOrDefault(1) ?? "Custom Prompt";
+        var promptTemplate = lines.FirstOrDefault(l => l.StartsWith("PROMPT_TEMPLATE|", StringComparison.Ordinal))?.Split('|', 2).ElementAtOrDefault(1) ?? string.Empty;
+
+        var bodyLines = userText
+            .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
+            .Where(l => !l.StartsWith("[PDF_FILE_ATTACHMENT:", StringComparison.Ordinal) &&
+                        !l.StartsWith("[DOCUMENT_METADATA:", StringComparison.Ordinal) &&
+                        !l.StartsWith("Document Content:", StringComparison.Ordinal))
+            .Select(l => l.Trim())
+            .Where(l => l.Length > 2)
+            .ToList();
+
+        var preview = string.Join(" — ", bodyLines.Take(3));
+        var lower = (colName + " " + promptTemplate).ToLowerInvariant();
+
+        string result;
+        if (lower.Contains("language") || lower.Contains("classify"))
+        {
+            result = userText.Contains("Formulario", StringComparison.OrdinalIgnoreCase)
+                ? "Detected Spanish (ES) source document translated to English (EN). Formal enterprise signature instrument."
+                : "Detected English (EN) commercial agreement document.";
+        }
+        else if (lower.Contains("highlight") || lower.Contains("pricing") || lower.Contains("amendment"))
+        {
+            result = "Key Highlights: " + (bodyLines.Count > 0 ? string.Join(" • ", bodyLines.Take(3)) : preview);
+        }
+        else if (lower.Contains("contract") || lower.Contains("verify") || lower.Contains("signature"))
+        {
+            result = $"Verification Complete: Confirmed document clauses and identifiers ({preview}).";
+        }
+        else
+        {
+            result = $"Summary ({colName}): {preview}";
+        }
+
+        var json = JsonSerializer.Serialize(new { result });
+        return new ChatResponse(new ChatMessage(ChatRole.Assistant, json))
+        {
+            ModelId = _modelId
+        };
+    }
+
     private static string ResolveFieldFromText(string fieldName, string instruction, string text)
     {
         var key = (fieldName + " " + instruction).ToLowerInvariant();
 
         if (key.Contains("mba") || key.Contains("mbsa"))
         {
-            var m = Regex.Match(text, @"(?:MBA/MBSA(?:\s+Number)?|MBSA)\s+([A-Z0-9\-]+)", RegexOptions.IgnoreCase);
+            var m = Regex.Match(text, @"(?:MBA/MBSA(?:\s+Number)?|MBSA)(?::\s*|\s+)(?=[A-Z0-9\-]*\d)([A-Z0-9\-]{5,})", RegexOptions.IgnoreCase);
             if (m.Success) return m.Groups[1].Value.Trim();
         }
 
         if (key.Contains("contract") || key.Contains("contrato") || key.Contains("agreement"))
         {
-            var m = Regex.Match(text, @"(?:contrato|Contract(?:\s+Number)?|Agreement(?:\s+Number)?)\s+([A-Z][0-9]{5,})", RegexOptions.IgnoreCase);
+            var m = Regex.Match(text, @"(?:N[uú]mero\s+de\s+contrato|Contract\s+Number|Agreement\s+Number|contrato|Contract|Agreement)(?::\s*|\s+)(?=[A-Z0-9\-]*\d)([A-Z0-9\-]{5,})", RegexOptions.IgnoreCase);
             if (m.Success) return m.Groups[1].Value.Trim();
         }
 
@@ -708,6 +758,8 @@ public sealed class SimulatedSliceChatClient : IChatClient
 
         if (key.Contains("customer") || key.Contains("entity") || key.Contains("cliente") || key.Contains("entidad"))
         {
+            var m = Regex.Match(text, @"(?:Entity\s+Name|Nombre\s+de\s+la\s+entidad|Customer\s+Name):\s*([^\r\n]+)", RegexOptions.IgnoreCase);
+            if (m.Success) return m.Groups[1].Value.Trim();
             if (text.Contains("Cadena Comercial OXXO", StringComparison.OrdinalIgnoreCase))
             {
                 return "Cadena Comercial OXXO SA de CV";

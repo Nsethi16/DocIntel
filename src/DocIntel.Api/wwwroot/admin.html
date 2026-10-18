@@ -588,6 +588,218 @@
       gap: 8px;
     }
 
+    /* Prompt Configuration Studio (Matches Screenshot + Entity Filter Builder) */
+    .prompt-studio-grid {
+      display: grid;
+      grid-template-columns: minmax(420px, 1.05fr) minmax(380px, 0.95fr);
+      gap: 18px;
+      margin-top: 10px;
+      margin-bottom: 32px;
+      align-items: start;
+    }
+
+    @media (max-width: 1024px) {
+      .prompt-studio-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .prompt-studio-card {
+      background: #ffffff;
+      border: 1px solid var(--card-border);
+      border-radius: 16px;
+      padding: 20px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.02);
+    }
+
+    .prompt-card-title-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .prompt-card-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .prompt-card-sub {
+      font-size: 12.5px;
+      color: var(--text-secondary);
+      margin: 2px 0 0 0;
+    }
+
+    .prompt-field-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .prompt-field-label {
+      font-size: 12.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+    }
+
+    .quick-templates-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 7px;
+    }
+
+    .template-chip-btn {
+      border: 1px solid var(--card-border);
+      background: #fafafc;
+      color: var(--text-primary);
+      border-radius: 8px;
+      padding: 6px 11px;
+      font-size: 12px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.12s ease;
+    }
+
+    .template-chip-btn:hover {
+      background: var(--pill-active);
+      border-color: #b5bcf3;
+      color: #2f45c5;
+    }
+
+    .entity-filter-box {
+      border: 1px solid var(--card-border);
+      background: #f8f9fc;
+      border-radius: 12px;
+      padding: 12px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .entity-filter-rule-row {
+      display: grid;
+      grid-template-columns: 1.2fr 125px 1fr auto;
+      gap: 7px;
+      align-items: center;
+    }
+
+    .prompt-actions-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding-top: 4px;
+    }
+
+    .btn-save-prompt {
+      flex: 1;
+      background: #2563eb;
+      color: #ffffff;
+      border: none;
+      border-radius: 9px;
+      padding: 9px 16px;
+      font-size: 13px;
+      font-weight: 600;
+      font-family: inherit;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
+      transition: background 0.15s ease;
+    }
+
+    .btn-save-prompt:hover {
+      background: #1d4ed8;
+    }
+
+    .btn-clear-prompt {
+      background: #ffffff;
+      color: var(--text-primary);
+      border: 1px solid var(--card-border);
+      border-radius: 9px;
+      padding: 9px 16px;
+      font-size: 13px;
+      font-weight: 500;
+      font-family: inherit;
+      cursor: pointer;
+    }
+
+    .btn-clear-prompt:hover {
+      background: var(--pill-hover);
+    }
+
+    .saved-prompts-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 520px;
+      overflow-y: auto;
+    }
+
+    .saved-prompt-item {
+      border: 1px solid var(--card-border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      background: #fcfcfd;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+      transition: border-color 0.12s ease;
+    }
+
+    .saved-prompt-item:hover {
+      border-color: #b5bcf3;
+    }
+
+    .saved-prompt-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .saved-prompt-name {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .prompt-filter-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      background: #eef0ff;
+      color: #3444b5;
+      border: 1px solid #d5dafc;
+      width: fit-content;
+    }
+
+    .saved-prompt-instr {
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
     .sub-section-header {
       display: flex;
       align-items: center;
@@ -2066,6 +2278,105 @@
           </div>
         </div>
       </div>
+
+      <!-- Prompt Configuration Studio (Admin Prompt Columns + Entity Filter Builder) -->
+      <div class="section-bar" id="promptsSection" style="margin-top: 26px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <span class="section-bar-title">Prompt Configuration</span>
+          <span class="version-chip">PDF File / Base64 Execution</span>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="section-bar-meta">Enable Prompt Columns</span>
+          <label class="switch" title="Toggle Prompt Columns Evaluation">
+            <input type="checkbox" id="promptColumnsFeatureToggle" checked onchange="onHarnessChanged()" />
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="prompt-studio-grid">
+        <!-- Left Card: Create / Edit Prompt Column -->
+        <div class="prompt-studio-card">
+          <div>
+            <h3 class="prompt-card-title">
+              <span style="color:#2563eb;font-size:18px;line-height:1;">＋</span>
+              <span id="promptFormHeading">Create New Prompt Column</span>
+            </h3>
+            <p class="prompt-card-sub">Define a custom prompt column for document analysis. Matching documents are processed behind the scenes as PDF file / base64.</p>
+          </div>
+
+          <input type="hidden" id="editingPromptColumnId" value="" />
+
+          <div class="prompt-field-group">
+            <label class="prompt-field-label" for="promptColumnNameInput">Column Name</label>
+            <input type="text" class="clean-input" id="promptColumnNameInput" placeholder="e.g., Summary, Sentiment, Key Points, Compliance Check" />
+          </div>
+
+          <div class="prompt-field-group">
+            <span class="prompt-field-label">Quick Templates</span>
+            <div class="quick-templates-row">
+              <button type="button" class="template-chip-btn" onclick="applyQuickPromptTemplate('summary')">✦ Summarize Document</button>
+              <button type="button" class="template-chip-btn" onclick="applyQuickPromptTemplate('highlights')">✦ Extract Highlights</button>
+              <button type="button" class="template-chip-btn" onclick="applyQuickPromptTemplate('language')">✦ Classify Language</button>
+              <button type="button" class="template-chip-btn" onclick="applyQuickPromptTemplate('contract')">✦ Verify Contract &amp; Signatures</button>
+            </div>
+          </div>
+
+          <div class="prompt-field-group">
+            <div style="display:flex;align-items:center;justify-content:space-between;">
+              <label class="prompt-field-label" for="promptInstructionsInput">Prompt Instructions</label>
+              <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">Supports {{Document.Content}} &amp; PDF/Base64</span>
+            </div>
+            <textarea class="clean-textarea" id="promptInstructionsInput" rows="4" placeholder="Summarize the contents of {{Document.Content}} in a clear and concise manner. Focus on key points, main arguments, and important conclusions."></textarea>
+          </div>
+
+          <!-- Entity Filter Builder -->
+          <div class="entity-filter-box">
+            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+              <div>
+                <div class="prompt-field-label">Entity Filter (Which Documents to Process)</div>
+                <div style="font-size:11.5px;color:var(--text-secondary);">Filter on extracted Entities to choose which documents/slices run this prompt column</div>
+              </div>
+              <select class="clean-select" id="promptFilterModeSelect" onchange="onPromptFilterModeChanged()">
+                <option value="All">All Documents (No Filter)</option>
+                <option value="Or">Match Any Condition (OR)</option>
+                <option value="And">Match All Conditions (AND)</option>
+              </select>
+            </div>
+
+            <div id="promptFilterRulesContainer" style="display:none;flex-direction:column;gap:8px;">
+              <datalist id="existingEntitiesDatalist"></datalist>
+              <div id="promptFilterRulesList" style="display:flex;flex-direction:column;gap:7px;"></div>
+              <div>
+                <button type="button" class="btn-mini" onclick="addPromptEntityFilterRow()">+ Add entity condition</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="prompt-actions-row">
+            <button type="button" class="btn-save-prompt" onclick="savePromptColumnFromForm()">
+              <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 10.5l4 4L16 6.5" />
+              </svg>
+              <span id="btnSavePromptLabel">Save Prompt</span>
+            </button>
+            <button type="button" class="btn-clear-prompt" onclick="clearPromptColumnForm()">✕ Clear</button>
+          </div>
+        </div>
+
+        <!-- Right Card: Saved Prompts -->
+        <div class="prompt-studio-card">
+          <div class="prompt-card-title-row">
+            <div>
+              <h3 class="prompt-card-title">Saved Prompts</h3>
+              <p class="prompt-card-sub" id="savedPromptsCountSub">0 prompts configured</p>
+            </div>
+            <a href="/" class="btn-mini" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;">View Results in UI ↗</a>
+          </div>
+
+          <div class="saved-prompts-list" id="savedPromptsList"></div>
+        </div>
+      </div>
     </div>
   </main>
 
@@ -2147,6 +2458,18 @@
     const expandedCards = new Set();
     let workingDataExtractionProfiles = [];
     let activeExtractionDocName = '';
+    let workingPromptColumns = [];
+    let knownEntityNames = [
+      'Contract Number',
+      'MBA/MBSA Number',
+      'Customer Name',
+      'Quote Number',
+      'Billing Currency',
+      'Total Deal Value',
+      'Tenant ID',
+      'Document Heading',
+      'Document Name'
+    ];
 
     function toggleFeatureDrawer(key) {
       if (expandedCards.has(key)) {
@@ -2392,6 +2715,16 @@
         }
       };
 
+      // 7. PromptColumns
+      const promptColsToggle = document.getElementById('promptColumnsFeatureToggle');
+      updated.capabilities.PromptColumns = {
+        enabled: promptColsToggle ? promptColsToggle.checked : true,
+        modelIdOverride: languageModel,
+        promptColumns: {
+          columns: JSON.parse(JSON.stringify(workingPromptColumns))
+        }
+      };
+
       return updated;
     }
 
@@ -2402,11 +2735,13 @@
       const insightOn = document.getElementById('insightFeatureToggle').checked;
       const entityOn = document.getElementById('entityFeatureToggle').checked;
       const dataExtOn = document.getElementById('dataExtractionFeatureToggle').checked;
+      const promptColsToggle = document.getElementById('promptColumnsFeatureToggle');
+      const promptColsOn = promptColsToggle ? promptColsToggle.checked : true;
 
       renderExpandedState();
 
-      const enabledCount = [splitOn, idOn, transOn, insightOn, entityOn, dataExtOn].filter(Boolean).length;
-      document.getElementById('featureStatusCount').textContent = `${enabledCount} of 6 enabled`;
+      const enabledCount = [splitOn, idOn, transOn, insightOn, entityOn, dataExtOn, promptColsOn].filter(Boolean).length;
+      document.getElementById('featureStatusCount').textContent = `${enabledCount} of 7 enabled`;
     }
 
     function updateDirtyState() {
@@ -2506,6 +2841,16 @@
       const definedDocNames = (idCfg.rules || []).map(r => r.documentName).filter(Boolean);
       renderDataExtractionDocDropdown(definedDocNames);
 
+      // 7. Prompt Columns
+      const pcCap = caps.PromptColumns || { enabled: true, promptColumns: { columns: [] } };
+      const pcCfg = pcCap.promptColumns || { columns: [] };
+      const pcToggle = document.getElementById('promptColumnsFeatureToggle');
+      if (pcToggle) pcToggle.checked = pcCap.enabled !== false;
+      workingPromptColumns = JSON.parse(JSON.stringify(pcCfg.columns || []));
+      refreshKnownEntitiesFromTenant();
+      renderSavedPromptsList();
+      clearPromptColumnForm();
+
       updateDrawersAndCount();
       const initialPayload = buildPayloadFromUi();
       savedSnapshotJson = initialPayload
@@ -2526,6 +2871,251 @@
     function cancelTenantChanges() {
       renderMainCanvas();
       showToast('Reverted unsaved changes');
+    }
+
+    async function refreshKnownEntitiesFromTenant() {
+      const defaults = [
+        'Contract Number',
+        'MBA/MBSA Number',
+        'Customer Name',
+        'Quote Number',
+        'Billing Currency',
+        'Total Deal Value',
+        'Tenant ID',
+        'Document Heading',
+        'Document Name'
+      ];
+      const promptVal = (document.getElementById('entityPromptInput')?.value || '')
+        .replace(/^Extract\s+/i, '')
+        .replace(/\.$/, '');
+      const parsedFromPrompt = promptVal
+        .split(/,|and\s+/i)
+        .map(s => s.trim())
+        .filter(s => s.length >= 2 && s.length <= 40);
+
+      const combined = new Set([...defaults, ...parsedFromPrompt]);
+
+      if (currentTenant) {
+        try {
+          const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/jobs`);
+          if (resp.ok) {
+            const jobs = await resp.json();
+            (jobs || []).forEach(j => {
+              (j.extractedEntities || []).forEach(e => {
+                if (e && e.name) combined.add(e.name);
+              });
+            });
+          }
+        } catch {}
+      }
+
+      knownEntityNames = [...combined];
+      const dl = document.getElementById('existingEntitiesDatalist');
+      if (dl) {
+        dl.innerHTML = knownEntityNames.map(n => `<option value="${escapeHtml(n)}"></option>`).join('');
+      }
+    }
+
+    function applyQuickPromptTemplate(kind) {
+      const nameInput = document.getElementById('promptColumnNameInput');
+      const instrInput = document.getElementById('promptInstructionsInput');
+      const filterSelect = document.getElementById('promptFilterModeSelect');
+      const rulesList = document.getElementById('promptFilterRulesList');
+
+      if (kind === 'summary') {
+        nameInput.value = 'Summarize Document';
+        instrInput.value = 'Summarize the contents of {{Document.Content}} in a clear and concise manner. Focus on key points, main arguments, and important conclusions.';
+        filterSelect.value = 'All';
+        rulesList.innerHTML = '';
+        onPromptFilterModeChanged();
+      } else if (kind === 'highlights') {
+        nameInput.value = 'Extract Highlights';
+        instrInput.value = 'Extract the most important commercial, financial, and operational highlights from {{Document.Content}} as concise bullet points.';
+        filterSelect.value = 'All';
+        rulesList.innerHTML = '';
+        onPromptFilterModeChanged();
+      } else if (kind === 'language') {
+        nameInput.value = 'Classify Language';
+        instrInput.value = 'Identify the primary source language and tone of {{Document.Content}}, noting any bilingual or translated clauses.';
+        filterSelect.value = 'All';
+        rulesList.innerHTML = '';
+        onPromptFilterModeChanged();
+      } else if (kind === 'contract') {
+        nameInput.value = 'Contract & Signature Verification';
+        instrInput.value = 'Verify contract identifiers, MBA/MBSA reference numbers, legal customer entity names, and formalization clauses in {{Document.Content}}.';
+        filterSelect.value = 'Or';
+        rulesList.innerHTML = '';
+        onPromptFilterModeChanged();
+        addPromptEntityFilterRow('Contract Number', 'Exists', '');
+        addPromptEntityFilterRow('MBA/MBSA Number', 'Exists', '');
+      }
+    }
+
+    function onPromptFilterModeChanged() {
+      const mode = document.getElementById('promptFilterModeSelect').value;
+      const container = document.getElementById('promptFilterRulesContainer');
+      const rulesList = document.getElementById('promptFilterRulesList');
+      if (mode === 'All') {
+        container.style.display = 'none';
+      } else {
+        container.style.display = 'flex';
+        if (rulesList.children.length === 0) {
+          addPromptEntityFilterRow('Contract Number', 'Exists', '');
+        }
+      }
+    }
+
+    function addPromptEntityFilterRow(entityName = 'Contract Number', operator = 'Exists', expectedValue = '') {
+      const rulesList = document.getElementById('promptFilterRulesList');
+      const row = document.createElement('div');
+      row.className = 'entity-filter-rule-row';
+      const showVal = operator !== 'Exists';
+      row.innerHTML = `
+        <input type="text" list="existingEntitiesDatalist" class="clean-input" data-filter="entityName" placeholder="Select or type Entity Name" value="${escapeHtml(entityName)}" />
+        <select class="clean-select" data-filter="operator" onchange="this.nextElementSibling.style.visibility = (this.value === 'Exists' ? 'hidden' : 'visible')">
+          <option value="Exists" ${operator === 'Exists' ? 'selected' : ''}>Exists</option>
+          <option value="Contains" ${operator === 'Contains' ? 'selected' : ''}>Contains</option>
+          <option value="Equals" ${operator === 'Equals' ? 'selected' : ''}>Equals</option>
+          <option value="StartsWith" ${operator === 'StartsWith' ? 'selected' : ''}>Starts With</option>
+          <option value="NotEquals" ${operator === 'NotEquals' ? 'selected' : ''}>Not Equals</option>
+        </select>
+        <input type="text" class="clean-input" data-filter="expectedValue" placeholder="Expected value..." value="${escapeHtml(expectedValue || '')}" style="visibility:${showVal ? 'visible' : 'hidden'}" />
+        <button type="button" class="btn-mini" title="Remove filter condition" onclick="this.closest('.entity-filter-rule-row').remove()">✕</button>
+      `;
+      rulesList.appendChild(row);
+    }
+
+    function clearPromptColumnForm() {
+      document.getElementById('editingPromptColumnId').value = '';
+      document.getElementById('promptFormHeading').textContent = 'Create New Prompt Column';
+      document.getElementById('btnSavePromptLabel').textContent = 'Save Prompt';
+      document.getElementById('promptColumnNameInput').value = '';
+      document.getElementById('promptInstructionsInput').value = 'Summarize the contents of {{Document.Content}} in a clear and concise manner. Focus on key points, main arguments, and important conclusions.';
+      document.getElementById('promptFilterModeSelect').value = 'All';
+      document.getElementById('promptFilterRulesList').innerHTML = '';
+      onPromptFilterModeChanged();
+    }
+
+    function formatPromptFilterBadgeText(col) {
+      const mode = col.filterMode || 'All';
+      const rules = col.entityFilters || [];
+      if (mode === 'All' || rules.length === 0) {
+        return 'Filter: All Documents';
+      }
+      const joiner = mode === 'Or' ? ' OR ' : ' AND ';
+      const desc = rules.map(r => r.operator === 'Exists' ? `${r.entityName} Exists` : `${r.entityName} ${r.operator} "${r.expectedValue || ''}"`).join(joiner);
+      return `Entity Filter: ${desc}`;
+    }
+
+    function renderSavedPromptsList() {
+      const list = document.getElementById('savedPromptsList');
+      const countSub = document.getElementById('savedPromptsCountSub');
+      if (!list) return;
+
+      countSub.textContent = `${workingPromptColumns.length} prompt${workingPromptColumns.length === 1 ? '' : 's'} configured`;
+      list.innerHTML = '';
+
+      if (workingPromptColumns.length === 0) {
+        list.innerHTML = `
+          <div style="padding:36px 18px;text-align:center;color:var(--text-secondary);font-size:12.5px;">
+            No saved prompts yet.<br/>Create your first prompt column on the left to start analyzing documents as PDF/Base64.
+          </div>
+        `;
+        return;
+      }
+
+      workingPromptColumns.forEach((col, idx) => {
+        const card = document.createElement('div');
+        card.className = 'saved-prompt-item';
+        const filterText = formatPromptFilterBadgeText(col);
+        card.innerHTML = `
+          <div class="saved-prompt-top">
+            <div class="saved-prompt-name">
+              <span>✦ ${escapeHtml(col.columnName)}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;">
+              <button type="button" class="btn-mini" onclick="editPromptColumn(${idx})">Edit</button>
+              <button type="button" class="btn-mini" onclick="deletePromptColumn(${idx})">✕</button>
+            </div>
+          </div>
+          <div class="prompt-filter-badge">${escapeHtml(filterText)}</div>
+          <div class="saved-prompt-instr">${escapeHtml(col.promptInstructions)}</div>
+        `;
+        list.appendChild(card);
+      });
+    }
+
+    function editPromptColumn(idx) {
+      const col = workingPromptColumns[idx];
+      if (!col) return;
+      document.getElementById('editingPromptColumnId').value = col.columnId || `col-${idx}`;
+      document.getElementById('promptFormHeading').textContent = `Edit Prompt Column: ${col.columnName}`;
+      document.getElementById('btnSavePromptLabel').textContent = 'Update Prompt';
+      document.getElementById('promptColumnNameInput').value = col.columnName || '';
+      document.getElementById('promptInstructionsInput').value = col.promptInstructions || '';
+      document.getElementById('promptFilterModeSelect').value = col.filterMode || 'All';
+      const rulesList = document.getElementById('promptFilterRulesList');
+      rulesList.innerHTML = '';
+      (col.entityFilters || []).forEach(r => addPromptEntityFilterRow(r.entityName || '', r.operator || 'Exists', r.expectedValue || ''));
+      onPromptFilterModeChanged();
+    }
+
+    async function deletePromptColumn(idx) {
+      workingPromptColumns.splice(idx, 1);
+      renderSavedPromptsList();
+      onHarnessChanged();
+      await saveTenantHarness();
+    }
+
+    async function savePromptColumnFromForm() {
+      const name = document.getElementById('promptColumnNameInput').value.trim();
+      const instructions = document.getElementById('promptInstructionsInput').value.trim();
+      if (!name || !instructions) {
+        showToast('Please enter both Column Name and Prompt Instructions');
+        return;
+      }
+
+      const filterMode = document.getElementById('promptFilterModeSelect').value || 'All';
+      const entityFilters = [];
+      if (filterMode !== 'All') {
+        document.querySelectorAll('#promptFilterRulesList .entity-filter-rule-row').forEach(r => {
+          const eName = r.querySelector('[data-filter="entityName"]').value.trim();
+          const op = r.querySelector('[data-filter="operator"]').value;
+          const val = r.querySelector('[data-filter="expectedValue"]').value.trim();
+          if (eName) {
+            entityFilters.push({ entityName: eName, operator: op, expectedValue: op === 'Exists' ? null : val });
+          }
+        });
+      }
+
+      const editingId = document.getElementById('editingPromptColumnId').value;
+      if (editingId) {
+        const existingIdx = workingPromptColumns.findIndex(c => c.columnId === editingId);
+        if (existingIdx >= 0) {
+          workingPromptColumns[existingIdx] = {
+            columnId: editingId,
+            columnName: name,
+            promptInstructions: instructions,
+            filterMode,
+            entityFilters,
+            isActive: true
+          };
+        }
+      } else {
+        workingPromptColumns.push({
+          columnId: 'col-' + Math.random().toString(36).substring(2, 8),
+          columnName: name,
+          promptInstructions: instructions,
+          filterMode,
+          entityFilters,
+          isActive: true
+        });
+      }
+
+      renderSavedPromptsList();
+      clearPromptColumnForm();
+      onHarnessChanged();
+      await saveTenantHarness();
     }
 
     async function saveTenantHarness() {

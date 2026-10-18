@@ -1,5 +1,6 @@
 using System.Text;
 using DocIntel.Core.Features.DocumentSplitting;
+using DocIntel.Core.Features.PromptColumns;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Models;
@@ -60,6 +61,11 @@ public static class HarnessEndpoints
                     {
                         name = FeatureHarness.DataExtractionKey,
                         description = "Extract structured key-value fields and tables with columns at the defined document level."
+                    },
+                    new
+                    {
+                        name = FeatureHarness.PromptColumnsKey,
+                        description = "Define custom prompt columns with entity filters and process matching documents as PDF/Base64."
                     }
                 }
             });
@@ -83,21 +89,79 @@ public static class HarnessEndpoints
             string tenantId,
             [FromBody] TenantHarness updated,
             IHarnessStore store,
+            IJobStore jobStore,
+            IModelCatalog modelCatalog,
+            IArtifactStore? artifactStore,
             CancellationToken ct) =>
         {
             updated.TenantId = tenantId;
+            TenantHarness.EnsureDefaultCapabilities(updated);
             var saved = await store.UpsertTenantAsync(updated, ct);
+
+            // Re-evaluate prompt columns on the tenant's recent completed jobs so new/updated prompts appear immediately
+            var jobs = await jobStore.ListJobsByTenantAsync(tenantId, ct);
+            foreach (var job in jobs.Where(j => j.Status == JobStatus.Completed).Take(10))
+            {
+                await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, saved, modelCatalog, artifactStore, ct);
+                await jobStore.UpsertJobAsync(job, ct);
+            }
+
             return TypedResults.Ok(saved);
         });
 
         // List all jobs for a tenant (newest first)
         group.MapGet("/tenants/{tenantId}/jobs", async (
             string tenantId,
+            IHarnessStore harnessStore,
             IJobStore jobStore,
+            IModelCatalog modelCatalog,
+            IArtifactStore? artifactStore,
             CancellationToken ct) =>
         {
             var jobs = await jobStore.ListJobsByTenantAsync(tenantId, ct);
+            var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
+
+            if (tenant is not null &&
+                tenant.Capabilities.TryGetValue(FeatureHarness.PromptColumnsKey, out var pcCap) &&
+                pcCap.Enabled &&
+                (pcCap.PromptColumns?.Columns.Count ?? 0) > 0)
+            {
+                foreach (var job in jobs.Where(j => j.Status == JobStatus.Completed && j.PromptColumnResults.Count == 0).Take(10))
+                {
+                    await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, tenant, modelCatalog, artifactStore, ct);
+                    await jobStore.UpsertJobAsync(job, ct);
+                }
+            }
+
             return Results.Ok(jobs.Select(FormatJobResponse));
+        });
+
+        // Explicitly evaluate or re-evaluate Prompt Columns on a specific job
+        group.MapPost("/tenants/{tenantId}/jobs/{jobId}/evaluate-prompts", async (
+            string tenantId,
+            string jobId,
+            IHarnessStore harnessStore,
+            IJobStore jobStore,
+            IModelCatalog modelCatalog,
+            IArtifactStore? artifactStore,
+            CancellationToken ct) =>
+        {
+            var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
+            if (tenant is null)
+            {
+                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+            }
+
+            var job = await jobStore.GetJobAsync(jobId, ct);
+            if (job is null)
+            {
+                return Results.NotFound(new { error = $"Job '{jobId}' not found." });
+            }
+
+            await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, tenant, modelCatalog, artifactStore, ct);
+            await jobStore.UpsertJobAsync(job, ct);
+
+            return Results.Ok(FormatJobResponse(job));
         });
 
         // Stream or download a split PDF slice (or its translated PDF document when ?translated=true)
@@ -339,6 +403,7 @@ public static class HarnessEndpoints
                 packetSummary = completed.PacketSummary,
                 extractedEntities = completed.ExtractedEntities,
                 dataExtractions = completed.DataExtractions,
+                promptColumnResults = completed.PromptColumnResults,
                 executionTrace = completed.ExecutionTrace,
                 pages = completed.Pages,
                 segments = completed.Slices.Select(FormatSlice)
@@ -385,6 +450,7 @@ public static class HarnessEndpoints
         job.PacketSummary,
         job.ExtractedEntities,
         job.DataExtractions,
+        job.PromptColumnResults,
         job.CreatedAtUtc,
         job.CompletedAtUtc,
         job.ExecutionTrace,
@@ -412,6 +478,7 @@ public static class HarnessEndpoints
         s.InsightSummary,
         s.ExtractedEntities,
         s.DataExtraction,
+        s.PromptColumnResults,
         s.BodyText,
         s.Markdown,
         s.SplitPdfBlobUri,

@@ -4,6 +4,7 @@ using DocIntel.Core.Features.DocumentIdentification;
 using DocIntel.Core.Features.DocumentInsight;
 using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Features.EntityExtraction;
+using DocIntel.Core.Features.PromptColumns;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Models;
 using DocIntel.Core.Storage;
@@ -70,7 +71,8 @@ public sealed class DocumentSplittingWorkflow
             (state.Tenant.Capabilities.TryGetValue(FeatureHarness.DocumentTranslationKey, out var trCap) && trCap.Enabled) ||
             (state.Tenant.Capabilities.TryGetValue(FeatureHarness.DocumentInsightKey, out var inCap) && inCap.Enabled) ||
             (state.Tenant.Capabilities.TryGetValue(FeatureHarness.EntityExtractionKey, out var exCap) && exCap.Enabled) ||
-            (state.Tenant.Capabilities.TryGetValue(FeatureHarness.DataExtractionKey, out var deCap) && deCap.Enabled);
+            (state.Tenant.Capabilities.TryGetValue(FeatureHarness.DataExtractionKey, out var deCap) && deCap.Enabled) ||
+            (state.Tenant.Capabilities.TryGetValue(FeatureHarness.PromptColumnsKey, out var pcCap) && pcCap.Enabled);
 
         if (!splitEnabled && !anyDownstreamEnabled)
         {
@@ -93,6 +95,7 @@ public sealed class DocumentSplittingWorkflow
         var insightExecutor = new GenerateDocumentInsightsExecutor(_modelCatalog);
         var entityExecutor = new ExtractEntitiesExecutor(_modelCatalog);
         var dataExtractionExecutor = new ExtractDocumentDataExecutor(_modelCatalog);
+        var promptColumnsExecutor = new EvaluatePromptColumnsExecutor(_modelCatalog, _artifactStore);
 
         var workflow = new WorkflowBuilder(extractExecutor)
             .AddEdge(extractExecutor, detectExecutor)
@@ -102,7 +105,8 @@ public sealed class DocumentSplittingWorkflow
             .AddEdge(translateExecutor, insightExecutor)
             .AddEdge(insightExecutor, entityExecutor)
             .AddEdge(entityExecutor, dataExtractionExecutor)
-            .WithOutputFrom(dataExtractionExecutor)
+            .AddEdge(dataExtractionExecutor, promptColumnsExecutor)
+            .WithOutputFrom(promptColumnsExecutor)
             .Build();
 
         SplittingState current = state;

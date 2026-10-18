@@ -216,7 +216,12 @@ public sealed class CosmosHarnessStore : IHarnessStore
                 tenantId,
                 new PartitionKey(tenantId),
                 cancellationToken: cancellationToken).ConfigureAwait(false);
-            return response.Resource;
+            var resource = response.Resource;
+            if (resource is not null)
+            {
+                TenantHarness.EnsureDefaultCapabilities(resource);
+            }
+            return resource;
         }
         catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {
@@ -235,7 +240,11 @@ public sealed class CosmosHarnessStore : IHarnessStore
         while (iterator.HasMoreResults)
         {
             var page = await iterator.ReadNextAsync(cancellationToken).ConfigureAwait(false);
-            results.AddRange(page);
+            foreach (var item in page)
+            {
+                TenantHarness.EnsureDefaultCapabilities(item);
+                results.Add(item);
+            }
         }
 
         return results.OrderBy(t => t.DisplayName, StringComparer.OrdinalIgnoreCase).ToList();

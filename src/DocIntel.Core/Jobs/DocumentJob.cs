@@ -57,6 +57,8 @@ public sealed class DocumentJob
 
     public List<DocumentDataExtractionResult> DataExtractions { get; set; } = [];
 
+    public List<PromptColumnResult> PromptColumnResults { get; set; } = [];
+
     public List<WorkflowStepTrace> ExecutionTrace { get; set; } = [];
 
     public List<DocumentSlice> Segments { get; set; } = [];

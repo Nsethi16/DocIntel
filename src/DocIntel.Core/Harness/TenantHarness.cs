@@ -172,6 +172,50 @@ public sealed class DataExtractionConfig
 }
 
 /// <summary>
+/// Defines a single entity filter condition that determines whether a Prompt Column should run on a document/slice.
+/// </summary>
+public sealed class PromptEntityFilterRule
+{
+    public required string EntityName { get; set; }
+
+    /// <summary>
+    /// Comparison operator: Exists, Equals, Contains, StartsWith, NotEquals.
+    /// </summary>
+    public string Operator { get; set; } = "Exists";
+
+    public string? ExpectedValue { get; set; }
+}
+
+/// <summary>
+/// Admin-defined custom Prompt Column that processes matching documents/slices as PDF file/base64.
+/// </summary>
+public sealed class PromptColumnDefinition
+{
+    public string ColumnId { get; set; } = Guid.NewGuid().ToString("N")[..8];
+
+    public required string ColumnName { get; set; }
+
+    public required string PromptInstructions { get; set; }
+
+    /// <summary>
+    /// Filter evaluation mode: "All" (run on all documents/slices), "And" (all rules must match), or "Or" (any rule matches).
+    /// </summary>
+    public string FilterMode { get; set; } = "All";
+
+    public List<PromptEntityFilterRule> EntityFilters { get; set; } = [];
+
+    public bool IsActive { get; set; } = true;
+}
+
+/// <summary>
+/// Configuration for the 'Prompt Columns' capability in the Agent Harness.
+/// </summary>
+public sealed class PromptColumnsConfig
+{
+    public List<PromptColumnDefinition> Columns { get; set; } = [];
+}
+
+/// <summary>
 /// Per-feature harness configuration within a tenant profile.
 /// </summary>
 public sealed class FeatureHarness
@@ -182,6 +226,7 @@ public sealed class FeatureHarness
     public const string DocumentInsightKey = "DocumentInsight";
     public const string EntityExtractionKey = "EntityExtraction";
     public const string DataExtractionKey = "DataExtraction";
+    public const string PromptColumnsKey = "PromptColumns";
 
     public bool Enabled { get; set; } = true;
 
@@ -200,6 +245,8 @@ public sealed class FeatureHarness
     public EntityExtractionConfig? EntityExtraction { get; set; }
 
     public DataExtractionConfig? DataExtraction { get; set; }
+
+    public PromptColumnsConfig? PromptColumns { get; set; }
 }
 
 /// <summary>
@@ -389,10 +436,88 @@ public sealed class TenantHarness
                         }
                     ]
                 }
+            },
+            [FeatureHarness.PromptColumnsKey] = new FeatureHarness
+            {
+                Enabled = true,
+                ModelIdOverride = "gpt-5-mini",
+                PromptColumns = new PromptColumnsConfig
+                {
+                    Columns =
+                    [
+                        new PromptColumnDefinition
+                        {
+                            ColumnId = "col-summary",
+                            ColumnName = "Summarize Document",
+                            PromptInstructions = "Summarize the contents of {{Document.Content}} in a clear and concise manner. Focus on key points, main arguments, and important conclusions.",
+                            FilterMode = "All",
+                            EntityFilters = []
+                        },
+                        new PromptColumnDefinition
+                        {
+                            ColumnId = "col-contract-check",
+                            ColumnName = "Contract & Signature Verification",
+                            PromptInstructions = "Verify contract identifiers, MBA/MBSA reference numbers, legal customer entity names, and formalization clauses in {{Document.Content}}.",
+                            FilterMode = "Or",
+                            EntityFilters =
+                            [
+                                new PromptEntityFilterRule
+                                {
+                                    EntityName = "Contract Number",
+                                    Operator = "Exists"
+                                },
+                                new PromptEntityFilterRule
+                                {
+                                    EntityName = "MBA/MBSA Number",
+                                    Operator = "Exists"
+                                }
+                            ]
+                        },
+                        new PromptColumnDefinition
+                        {
+                            ColumnId = "col-pricing-highlights",
+                            ColumnName = "Amendment & Pricing Highlights",
+                            PromptInstructions = "Extract the most important financial highlights, billing currency, volume discount terms, or amendment clauses from {{Document.Content}}.",
+                            FilterMode = "Or",
+                            EntityFilters =
+                            [
+                                new PromptEntityFilterRule
+                                {
+                                    EntityName = "Billing Currency",
+                                    Operator = "Exists"
+                                },
+                                new PromptEntityFilterRule
+                                {
+                                    EntityName = "Document Heading",
+                                    Operator = "Contains",
+                                    ExpectedValue = "Amendment"
+                                }
+                            ]
+                        }
+                    ]
+                }
             }
         };
 
     public DateTimeOffset UpdatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
+
+    public static void EnsureDefaultCapabilities(TenantHarness tenant)
+    {
+        ArgumentNullException.ThrowIfNull(tenant);
+        var templateCapabilities = new TenantHarness { TenantId = "template", DisplayName = "Template" }.Capabilities;
+        foreach (var (key, defaultCap) in templateCapabilities)
+        {
+            if (!tenant.Capabilities.TryGetValue(key, out var existingCap) || existingCap is null)
+            {
+                tenant.Capabilities[key] = defaultCap;
+            }
+            else if (string.Equals(key, FeatureHarness.PromptColumnsKey, StringComparison.OrdinalIgnoreCase) &&
+                     existingCap.PromptColumns is null)
+            {
+                existingCap.PromptColumns = defaultCap.PromptColumns;
+            }
+        }
+    }
 }
 
 /// <summary>
@@ -523,13 +648,7 @@ public sealed class FileHarnessStore : IHarnessStore
                     tenant.AllowedModels.Insert(2, "phi-4");
                 }
 
-                foreach (var (key, defaultCap) in templateCapabilities)
-                {
-                    if (!tenant.Capabilities.ContainsKey(key))
-                    {
-                        tenant.Capabilities[key] = defaultCap;
-                    }
-                }
+                TenantHarness.EnsureDefaultCapabilities(tenant);
 
                 if (string.IsNullOrWhiteSpace(tenant.DecisionModelId))
                 {

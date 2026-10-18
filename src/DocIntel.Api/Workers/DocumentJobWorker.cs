@@ -74,6 +74,7 @@ public sealed class DocumentJobWorker : BackgroundService
                 job.PacketSummary = completedState.PacketSummary;
                 job.ExtractedEntities = completedState.ExtractedEntities;
                 job.DataExtractions = completedState.DataExtractions;
+                job.PromptColumnResults = completedState.PromptColumnResults;
                 job.ExecutionTrace = completedState.ExecutionTrace;
                 job.Segments = completedState.Slices;
                 job.Status = JobStatus.Completed;

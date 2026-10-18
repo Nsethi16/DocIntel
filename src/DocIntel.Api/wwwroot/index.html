@@ -883,6 +883,7 @@
           <button type="button" class="meridian-tab" data-tab="document" onclick="setDocResultTab('document')">View Document</button>
           <button type="button" class="meridian-tab" data-tab="entities" onclick="setDocResultTab('entities')">Entities</button>
           <button type="button" class="meridian-tab" data-tab="structured" onclick="setDocResultTab('structured')">Structured Data</button>
+          <button type="button" class="meridian-tab" data-tab="prompts" onclick="setDocResultTab('prompts')">Prompt Columns</button>
           <button type="button" class="meridian-tab" data-tab="metadata" onclick="setDocResultTab('metadata')">Metadata</button>
         </nav>
       </div>
@@ -899,8 +900,9 @@
     let tenantJobs = [];
     let selectedJobId = null;
     let selectedSliceIndex = -1; // -1 = All Slices
-    let docResultTab = 'insights'; // 'insights' | 'document' | 'entities' | 'structured' | 'metadata'
+    let docResultTab = 'insights'; // 'insights' | 'document' | 'entities' | 'structured' | 'prompts' | 'metadata'
     let selectedEntityCategory = 'ALL';
+    let selectedPromptFilterView = 'ALL'; // 'ALL' | 'MATCHED' | 'SKIPPED'
     let jobPollTimer = null;
 
     function getMonogram(name) {
@@ -1108,6 +1110,29 @@
       renderSelectedDocument();
     }
 
+    function setPromptFilterView(mode) {
+      selectedPromptFilterView = mode;
+      renderSelectedDocument();
+    }
+
+    async function reevaluateSelectedJobPrompts() {
+      const job = tenantJobs.find(j => j.jobId === selectedJobId);
+      if (!job || !currentTenant) return;
+      showToast('Evaluating Prompt Columns on PDF/Base64...');
+      const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/evaluate-prompts`, {
+        method: 'POST'
+      });
+      if (resp.ok) {
+        const updatedJob = await resp.json();
+        const idx = tenantJobs.findIndex(j => j.jobId === updatedJob.jobId);
+        if (idx >= 0) tenantJobs[idx] = updatedJob;
+        renderSelectedDocument();
+        showToast('Prompt Columns updated');
+      } else {
+        showToast('Failed to evaluate prompts');
+      }
+    }
+
     function copyTextValue(val) {
       if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(String(val || ''));
@@ -1159,6 +1184,9 @@
         if (!de) return acc;
         return acc + ((de.fields || []).length) + ((de.tables || []).length);
       }, 0);
+      const allPromptResults = segs.flatMap(s => s.promptColumnResults || []);
+      const matchedPromptsCount = (allPromptResults.length > 0 ? allPromptResults : (job.promptColumnResults || []))
+        .filter(r => r.filterMatched).length;
 
       // Update clean floating pill tab labels
       document.querySelectorAll('#insightsTabBar .meridian-tab').forEach(btn => {
@@ -1167,6 +1195,7 @@
         else if (t === 'document') btn.innerHTML = `View Document`;
         else if (t === 'entities') btn.innerHTML = `Entities${totalEntitiesCount > 0 ? ` <span class="tab-count">${totalEntitiesCount}</span>` : ''}`;
         else if (t === 'structured') btn.innerHTML = `Structured Data${totalStructuredCount > 0 ? ` <span class="tab-count">${totalStructuredCount}</span>` : ''}`;
+        else if (t === 'prompts') btn.innerHTML = `Prompt Columns${matchedPromptsCount > 0 ? ` <span class="tab-count">${matchedPromptsCount}</span>` : ''}`;
         else if (t === 'metadata') btn.innerHTML = `Metadata`;
       });
 
@@ -1451,7 +1480,117 @@
         return;
       }
 
-      // 5. Metadata Tab — Clean Provenance Table + Collapsible Engineering Trace
+      // 5. Prompt Columns Tab — Entity-Filtered PDF/Base64 Prompt Evaluation Results
+      if (docResultTab === 'prompts') {
+        const slicePromptGroups = activeSegs.map(s => {
+          const sliceResults = (s.promptColumnResults && s.promptColumnResults.length > 0)
+            ? s.promptColumnResults
+            : (job.promptColumnResults || []).filter(r => r.segmentIndex === s.segmentIndex);
+          return { slice: s, results: sliceResults };
+        });
+
+        const flatResults = slicePromptGroups.flatMap(g => g.results);
+        const totalMatched = flatResults.filter(r => r.filterMatched).length;
+        const totalSkipped = flatResults.length - totalMatched;
+
+        const topBarHtml = `
+          <div class="packet-summary-line">
+            <span>${totalMatched} prompt evaluation${totalMatched === 1 ? '' : 's'} matched entity filters · ${totalSkipped} skipped by entity filter · Processed as PDF File / Base64</span>
+            <div style="display:flex;align-items:center;gap:8px;">
+              <button type="button" class="text-link-btn" onclick="reevaluateSelectedJobPrompts()">↻ Re-evaluate Prompts</button>
+              <a href="/admin.html#promptsSection" class="text-link-btn">Configure Prompt Columns ↗</a>
+            </div>
+          </div>
+          <div class="filter-pill-bar">
+            <button type="button" class="filter-pill-btn ${selectedPromptFilterView === 'ALL' ? 'active' : ''}" onclick="setPromptFilterView('ALL')">All (${flatResults.length})</button>
+            <button type="button" class="filter-pill-btn ${selectedPromptFilterView === 'MATCHED' ? 'active' : ''}" onclick="setPromptFilterView('MATCHED')">Matched &amp; Evaluated (${totalMatched})</button>
+            <button type="button" class="filter-pill-btn ${selectedPromptFilterView === 'SKIPPED' ? 'active' : ''}" onclick="setPromptFilterView('SKIPPED')">Skipped by Entity Filter (${totalSkipped})</button>
+          </div>
+        `;
+
+        if (flatResults.length === 0) {
+          body.innerHTML = `
+            <div class="content-column">
+              ${topBarHtml}
+              <div style="padding:28px 0;color:var(--text-secondary);font-size:14px;">
+                No Prompt Columns have been evaluated on this document yet. Click <strong>↻ Re-evaluate Prompts</strong> above or configure Prompt Columns in <a href="/admin.html#promptsSection" style="color:var(--accent);">Admin Studio ↗</a>.
+              </div>
+            </div>
+          `;
+          return;
+        }
+
+        const sliceCardsHtml = slicePromptGroups.map(({ slice, results }) => {
+          const filtered = results.filter(r => {
+            if (selectedPromptFilterView === 'MATCHED') return r.filterMatched;
+            if (selectedPromptFilterView === 'SKIPPED') return !r.filterMatched;
+            return true;
+          });
+          if (filtered.length === 0) return '';
+
+          const docName = slice.identifiedDocumentName || slice.documentTypeName || `Slice ${slice.segmentIndex + 1}`;
+          const rowsHtml = filtered.map(r => {
+            const badgeStyle = r.filterMatched
+              ? 'background:#ecfdf3;color:#15803d;border:1px solid #bbf7d0;'
+              : 'background:#f4f4f7;color:#64687a;border:1px solid #e1e1eb;';
+            const badgeLabel = r.filterMatched
+              ? '✓ Matched Filter · PDF/Base64 Evaluated'
+              : '⊘ Skipped by Entity Filter';
+            const matchedEntsText = (r.matchedEntities && r.matchedEntities.length > 0)
+              ? r.matchedEntities.join(' · ')
+              : 'No entity condition required';
+
+            return `
+              <div style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-top:12px;background:${r.filterMatched ? '#ffffff' : '#fafafc'};">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
+                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+                    <strong style="font-size:14.5px;color:var(--text-primary);">✦ ${escapeHtml(r.columnName)}</strong>
+                    <span style="font-family:var(--font-mono);font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:6px;${badgeStyle}">${badgeLabel}</span>
+                  </div>
+                  <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">
+                    ${r.processedAsFileBase64 ? `PDF/Base64 (${(r.fileSizeBytes || 0).toLocaleString()} B) · ${escapeHtml(r.modelIdUsed || 'gpt-5-mini')}` : 'Not sent to LLM'}
+                  </div>
+                </div>
+
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">
+                  <span style="background:var(--accent-soft);color:var(--accent-ink);border:1px solid var(--accent-border);padding:2px 7px;border-radius:5px;">Filter: ${escapeHtml(r.filterSummary || 'All Documents')}</span>
+                  ${r.filterMatched && r.matchedEntities && r.matchedEntities.length > 0
+                    ? `<span style="color:#15803d;">Matched Entities: ${escapeHtml(matchedEntsText)}</span>`
+                    : ''}
+                </div>
+
+                <div class="insight-prose" style="margin-bottom:8px;${r.filterMatched ? '' : 'color:var(--text-muted);font-style:italic;'}">${escapeHtml(r.resultText || '')}</div>
+
+                <details>
+                  <summary style="cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);user-select:none;">Prompt Instructions &amp; Base64 File Payload (${escapeHtml(r.fileName || 'slice.pdf')})</summary>
+                  <div style="margin-top:8px;padding:10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:8px;font-family:var(--font-mono);font-size:11.5px;color:var(--text-body);display:flex;flex-direction:column;gap:6px;">
+                    <div><strong>Prompt Template:</strong> ${escapeHtml(r.promptInstructions || '')}</div>
+                    <div><strong>File / Base64 Header:</strong> data:application/pdf;base64,${escapeHtml(r.base64Preview || '')}</div>
+                  </div>
+                </details>
+              </div>
+            `;
+          }).join('');
+
+          return `
+            <article class="slice-section">
+              <div class="slice-section-head">
+                <div>
+                  <h3 class="slice-section-title">${escapeHtml(docName)}</h3>
+                  <div class="slice-section-sub">Slice ${slice.segmentIndex + 1} · Pages ${slice.startPage}–${slice.endPage} · ${(slice.extractedEntities || []).length} extracted entities</div>
+                </div>
+                <button type="button" class="text-link-btn" onclick="jumpToSlicePdf(${slice.segmentIndex})">View PDF ↗</button>
+              </div>
+              ${rowsHtml}
+            </article>
+          `;
+        }).filter(Boolean).join('');
+
+        body.innerHTML = `<div class="content-column">${topBarHtml}<div class="slices-wide-grid">${sliceCardsHtml}</div></div>`;
+        return;
+      }
+
+      // 6. Metadata Tab — Clean Provenance Table + Collapsible Engineering Trace
       if (docResultTab === 'metadata') {
         const trace = job.executionTrace || [];
         body.innerHTML = `

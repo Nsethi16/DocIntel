@@ -166,7 +166,7 @@ public sealed class DocumentSplitAndGroupTests
 
         // Assert
         Assert.Null(completed.ModelIdUsed);
-        Assert.Equal(8, completed.ExecutionTrace.Count);
+        Assert.Equal(9, completed.ExecutionTrace.Count);
         Assert.Equal(2, completed.Slices.Count);
 
         Assert.Equal("Master Business Service Agreement", completed.Slices[0].DocumentTypeName);
@@ -337,6 +337,99 @@ public sealed class DocumentSplitAndGroupTests
         Assert.Contains(completed.Slices[1].ExtractedEntities, e => e.Name == "Quote Number" && e.Value == "3037534.004");
         Assert.NotEmpty(completed.ExtractedEntities);
         Assert.False(string.IsNullOrWhiteSpace(completed.PacketSummary));
+    }
+
+    [Fact]
+    public async Task DocumentSplittingWorkflow_Evaluates_PromptColumns_With_Entity_Filters_And_Pdf_Base64()
+    {
+        // Arrange
+        var tenant = new TenantHarness
+        {
+            TenantId = "contoso-prompts",
+            DisplayName = "Contoso Prompt Studio",
+            DefaultModelId = "phi-4"
+        };
+
+        tenant.Capabilities[FeatureHarness.PromptColumnsKey] = new FeatureHarness
+        {
+            Enabled = true,
+            ModelIdOverride = "phi-4",
+            PromptColumns = new PromptColumnsConfig
+            {
+                Columns =
+                [
+                    new PromptColumnDefinition
+                    {
+                        ColumnId = "col-all",
+                        ColumnName = "Summarize Document",
+                        PromptInstructions = "Summarize the contents of {{Document.Content}}.",
+                        FilterMode = "All",
+                        EntityFilters = []
+                    },
+                    new PromptColumnDefinition
+                    {
+                        ColumnId = "col-mbsa-only",
+                        ColumnName = "MBSA Verification",
+                        PromptInstructions = "Verify MBA/MBSA clauses in {{Document.Content}}.",
+                        FilterMode = "And",
+                        EntityFilters =
+                        [
+                            new PromptEntityFilterRule
+                            {
+                                EntityName = "MBA/MBSA Number",
+                                Operator = "Exists"
+                            }
+                        ]
+                    }
+                ]
+            }
+        };
+
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDocIntelCore();
+
+        using var provider = services.BuildServiceProvider();
+        var workflow = provider.GetRequiredService<DocumentSplittingWorkflow>();
+
+        var pdfBytes = PdfPigLayoutExtractor.CreateSamplePdf(
+        [
+            ("Formulario de Firma del Programa\nNúmero de MBA/MBSA U4565450\nCliente Cadena Comercial OXXO SA de CV", "DocumentX20-12883"),
+            ("Customer Price Sheet\nQuote Number: 3037534.004\nTotal deal value 282,600.00", "MSQuote-999")
+        ]);
+
+        var state = new SplittingState
+        {
+            Tenant = tenant,
+            FileName = "prompts-test.pdf",
+            SourcePdfBytes = pdfBytes
+        };
+
+        // Act
+        var completed = await workflow.ExecuteAsync(state);
+
+        // Assert
+        Assert.Equal(2, completed.Slices.Count);
+        Assert.Equal(4, completed.PromptColumnResults.Count);
+
+        // Slice 0 has MBA/MBSA Number -> BOTH prompt columns match and are processed as PDF/Base64
+        var slice0All = completed.Slices[0].PromptColumnResults.Single(r => r.ColumnId == "col-all");
+        var slice0Mbsa = completed.Slices[0].PromptColumnResults.Single(r => r.ColumnId == "col-mbsa-only");
+        Assert.True(slice0All.FilterMatched);
+        Assert.True(slice0All.ProcessedAsFileBase64);
+        Assert.StartsWith("JVBERi0", slice0All.Base64Preview);
+        Assert.True(slice0Mbsa.FilterMatched);
+        Assert.True(slice0Mbsa.ProcessedAsFileBase64);
+        Assert.Contains(slice0Mbsa.MatchedEntities, m => m.Contains("MBA/MBSA Number = U4565450"));
+
+        // Slice 1 does NOT have MBA/MBSA Number -> "col-all" matches, "col-mbsa-only" is SkippedByFilter
+        var slice1All = completed.Slices[1].PromptColumnResults.Single(r => r.ColumnId == "col-all");
+        var slice1Mbsa = completed.Slices[1].PromptColumnResults.Single(r => r.ColumnId == "col-mbsa-only");
+        Assert.True(slice1All.FilterMatched);
+        Assert.True(slice1All.ProcessedAsFileBase64);
+        Assert.False(slice1Mbsa.FilterMatched);
+        Assert.Equal("SkippedByFilter", slice1Mbsa.Status);
+        Assert.False(slice1Mbsa.ProcessedAsFileBase64);
     }
 
     [Fact]
