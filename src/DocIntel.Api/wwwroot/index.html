@@ -1515,7 +1515,7 @@
         return;
       }
 
-      // 5. Individual Prompt Column Tab (`prompt:<columnId>`) — Dedicated Tab per Matched Prompt Column
+      // 5. Individual Prompt Column Tab (`prompt:<columnId>`) — Clean Outcome Only
       if (docResultTab.startsWith('prompt:')) {
         const targetColumnId = docResultTab.substring('prompt:'.length);
         const matchingSliceEntries = activeSegs.map(s => {
@@ -1526,59 +1526,29 @@
           return colResult ? { slice: s, result: colResult } : null;
         }).filter(Boolean);
 
-        const firstResult = matchingSliceEntries[0]?.result;
-        const colName = firstResult ? firstResult.columnName : targetColumnId;
-        const filterSummary = firstResult ? (firstResult.filterSummary || 'All Documents') : 'All Documents';
-
-        const topBarHtml = `
-          <div class="packet-summary-line">
-            <span><strong>✦ ${escapeHtml(colName)}</strong> · Filter: ${escapeHtml(filterSummary)} · Matched ${matchingSliceEntries.length} of ${activeSegs.length} slice${activeSegs.length === 1 ? '' : 's'} · Processed as PDF File / Base64</span>
-            <div style="display:flex;align-items:center;gap:8px;">
-              <button type="button" class="text-link-btn" onclick="reevaluateSelectedJobPrompts()">↻ Re-evaluate</button>
-              <a href="/admin.html#promptsSection" class="text-link-btn">Configure Prompts ↗</a>
-            </div>
-          </div>
-        `;
-
         const sliceCardsHtml = matchingSliceEntries.map(({ slice, result }) => {
           const docName = slice.identifiedDocumentName || slice.documentTypeName || `Slice ${slice.segmentIndex + 1}`;
-          const matchedEntsText = (result.matchedEntities && result.matchedEntities.length > 0)
-            ? result.matchedEntities.join(' · ')
-            : 'All Documents';
+          const cleanedOutcome = String(result.resultText || '')
+            .replace(/^Summary\s*\([^)]*\):\s*/i, '')
+            .replace(/^(?:Summarize the contents of|Extract the most important[^'\n]*from|Verify contract identifiers[^'\n]*in)\s+/i, '')
+            .replace(/\s*in a clear and concise manner\.?\s*Focus on key points, main arguments, and important conclusions\.?/gi, '')
+            .replace(/\s*as concise bullet points\.?/gi, '')
+            .trim();
 
           return `
             <article class="slice-section">
               <div class="slice-section-head">
                 <div>
                   <h3 class="slice-section-title">${escapeHtml(docName)}</h3>
-                  <div class="slice-section-sub">Slice ${slice.segmentIndex + 1} · Pages ${slice.startPage}–${slice.endPage} · PDF/Base64 (${(result.fileSizeBytes || 0).toLocaleString()} B) · ${escapeHtml(result.modelIdUsed || 'gpt-5-mini')}</div>
-                </div>
-                <div style="display:flex;align-items:center;gap:8px;">
-                  <button type="button" class="text-link-btn" onclick="copyTextValue(${JSON.stringify(String(result.resultText || '')).replace(/"/g, '&quot;')})">Copy</button>
-                  <button type="button" class="text-link-btn" onclick="jumpToSlicePdf(${slice.segmentIndex})">Pages ${slice.startPage}–${slice.endPage} ↗</button>
+                  <div class="slice-section-sub">Pages ${slice.startPage}–${slice.endPage}</div>
                 </div>
               </div>
-
-              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">
-                <span style="background:#ecfdf3;color:#15803d;border:1px solid #bbf7d0;padding:2px 8px;border-radius:6px;font-weight:600;">✓ Processed as PDF/Base64</span>
-                <span style="background:var(--accent-soft);color:var(--accent-ink);border:1px solid var(--accent-border);padding:2px 7px;border-radius:5px;">Matched: ${escapeHtml(matchedEntsText)}</span>
-              </div>
-
-              <p class="insight-prose">${escapeHtml(result.resultText || '')}</p>
-
-              <details>
-                <summary style="cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);user-select:none;">Prompt Instructions &amp; PDF Base64 Payload (${escapeHtml(result.fileName || 'slice.pdf')})</summary>
-                <div style="margin-top:8px;padding:10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:8px;font-family:var(--font-mono);font-size:11.5px;color:var(--text-body);display:flex;flex-direction:column;gap:6px;">
-                  <div><strong>Prompt Instructions:</strong> ${escapeHtml(result.promptInstructions || '')}</div>
-                  <div><strong>Entity Filter:</strong> ${escapeHtml(result.filterSummary || 'All Documents')}</div>
-                  <div><strong>File / Base64 Envelope:</strong> data:application/pdf;base64,${escapeHtml(result.base64Preview || '')}</div>
-                </div>
-              </details>
+              <p class="insight-prose">${escapeHtml(cleanedOutcome)}</p>
             </article>
           `;
         }).join('');
 
-        body.innerHTML = `<div class="content-column">${topBarHtml}<div class="slices-wide-grid">${sliceCardsHtml}</div></div>`;
+        body.innerHTML = `<div class="content-column"><div class="slices-wide-grid">${sliceCardsHtml}</div></div>`;
         return;
       }
 

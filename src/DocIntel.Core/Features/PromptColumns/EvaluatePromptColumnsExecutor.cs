@@ -400,8 +400,9 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
 
         var userEnvelope =
             $"[PDF_FILE_ATTACHMENT: name={fileName}; mime=application/pdf; bytes={pdfBytes.Length}; base64_length={pdfBase64.Length}; base64_prefix={base64Snippet}]\n" +
-            $"[DOCUMENT_METADATA: documentName={docName}; pages={slice.StartPage}-{slice.EndPage}; extractedEntities={entitiesContext}]\n\n" +
-            resolvedInstructions;
+            $"[DOCUMENT_METADATA: documentName={docName}; pages={slice.StartPage}-{slice.EndPage}; extractedEntities={entitiesContext}]\n" +
+            $"Prompt Instructions:\n{resolvedInstructions}\n\n" +
+            $"[DOCUMENT_CONTENT_START]\n{textContent}";
 
         var options = new ChatOptions
         {

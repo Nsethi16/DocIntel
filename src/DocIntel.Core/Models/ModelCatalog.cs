@@ -683,7 +683,14 @@ public sealed class SimulatedSliceChatClient : IChatClient
         var colName = lines.FirstOrDefault(l => l.StartsWith("COLUMN_NAME|", StringComparison.Ordinal))?.Split('|', 2).ElementAtOrDefault(1) ?? "Custom Prompt";
         var promptTemplate = lines.FirstOrDefault(l => l.StartsWith("PROMPT_TEMPLATE|", StringComparison.Ordinal))?.Split('|', 2).ElementAtOrDefault(1) ?? string.Empty;
 
-        var bodyLines = userText
+        var rawDocContent = userText;
+        var docMarkerIdx = userText.IndexOf("[DOCUMENT_CONTENT_START]", StringComparison.Ordinal);
+        if (docMarkerIdx >= 0)
+        {
+            rawDocContent = userText[(docMarkerIdx + "[DOCUMENT_CONTENT_START]".Length)..];
+        }
+
+        var bodyLines = rawDocContent
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Where(l => !l.StartsWith("[PDF_FILE_ATTACHMENT:", StringComparison.Ordinal) &&
                         !l.StartsWith("[DOCUMENT_METADATA:", StringComparison.Ordinal) &&
@@ -698,21 +705,23 @@ public sealed class SimulatedSliceChatClient : IChatClient
         string result;
         if (lower.Contains("language") || lower.Contains("classify"))
         {
-            result = userText.Contains("Formulario", StringComparison.OrdinalIgnoreCase)
-                ? "Detected Spanish (ES) source document translated to English (EN). Formal enterprise signature instrument."
-                : "Detected English (EN) commercial agreement document.";
+            result = rawDocContent.Contains("Formulario", StringComparison.OrdinalIgnoreCase)
+                ? "Spanish (ES) source document translated to English (EN)."
+                : "English (EN) commercial agreement document.";
         }
         else if (lower.Contains("highlight") || lower.Contains("pricing") || lower.Contains("amendment"))
         {
-            result = "Key Highlights: " + (bodyLines.Count > 0 ? string.Join(" • ", bodyLines.Take(3)) : preview);
+            result = bodyLines.Count > 0
+                ? string.Join("\n", bodyLines.Take(4).Select(l => $"• {l}"))
+                : preview;
         }
         else if (lower.Contains("contract") || lower.Contains("verify") || lower.Contains("signature"))
         {
-            result = $"Verification Complete: Confirmed document clauses and identifiers ({preview}).";
+            result = $"Confirmed contract identifiers and formalization clauses: {preview}.";
         }
         else
         {
-            result = $"Summary ({colName}): {preview}";
+            result = $"{preview}.";
         }
 
         var json = JsonSerializer.Serialize(new { result });
