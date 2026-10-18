@@ -847,6 +847,161 @@
       background: #ffffff;
     }
 
+    /* Unified Multi-Select Entity & Value Combobox */
+    .entity-multiselect-wrap {
+      position: relative;
+      width: 100%;
+    }
+
+    .entity-multiselect-box {
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 6px 10px;
+      min-height: 42px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      cursor: pointer;
+      transition: border-color 0.14s ease, box-shadow 0.14s ease;
+    }
+
+    .entity-multiselect-box:hover,
+    .entity-multiselect-box.open {
+      border-color: var(--accent-border);
+      box-shadow: 0 2px 10px rgba(75, 114, 254, 0.07);
+    }
+
+    .entity-tags-flow {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px;
+      flex: 1;
+      min-width: 0;
+    }
+
+    .entity-selected-tag {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--accent-soft);
+      color: var(--accent-ink);
+      border: 1px solid var(--accent-border);
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-family: var(--font-sans);
+      font-size: 12.5px;
+      font-weight: 500;
+    }
+
+    .entity-selected-tag button {
+      border: none;
+      background: transparent;
+      color: var(--accent-ink);
+      cursor: pointer;
+      padding: 0;
+      font-size: 12px;
+      line-height: 1;
+      opacity: 0.7;
+    }
+
+    .entity-selected-tag button:hover {
+      opacity: 1;
+    }
+
+    .entity-multiselect-popover {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      right: 0;
+      max-height: 360px;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+      z-index: 120;
+      display: none;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .entity-multiselect-popover.open {
+      display: flex;
+    }
+
+    .entity-popover-search {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line);
+      background: #fafafc;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .entity-popover-search input {
+      flex: 1;
+      border: 1px solid var(--line);
+      border-radius: 7px;
+      padding: 6px 10px;
+      font-family: var(--font-sans);
+      font-size: 12.5px;
+      outline: none;
+    }
+
+    .entity-popover-list {
+      overflow-y: auto;
+      padding: 8px 12px 12px 12px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+      gap: 12px;
+    }
+
+    .entity-group-col {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .entity-group-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 4px 6px;
+      border-radius: 6px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      color: var(--text-primary);
+      background: #f5f5fa;
+      cursor: pointer;
+    }
+
+    .entity-value-option {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 5px 8px;
+      border-radius: 6px;
+      font-size: 12.5px;
+      color: var(--text-body);
+      cursor: pointer;
+      transition: background 0.1s ease;
+    }
+
+    .entity-value-option:hover {
+      background: #f2f3f9;
+    }
+
+    .entity-value-option.checked {
+      background: var(--accent-soft);
+      color: var(--accent-ink);
+      font-weight: 600;
+    }
+
     .graph-workbench {
       flex: 1;
       min-height: 0;
@@ -1437,7 +1592,10 @@
     let selectedEntityCategory = 'ALL';
     let selectedPromptFilterView = 'ALL'; // 'ALL' | 'MATCHED' | 'SKIPPED'
     let graphSelectedEntityNames = new Set(); // empty = All entity names
-    let graphSelectedEntityValuePair = 'ALL'; // 'ALL' or 'EntityName||EntityValue'
+    let graphSelectedEntityValues = new Set(); // Set of 'EntityName||EntityValue' pairs (multi-select!)
+    let graphSelectedEntityValuePair = 'ALL';
+    let graphEntityDropdownOpen = false;
+    let graphEntityDropdownSearch = '';
     let graphEntitySearchQuery = '';
     let graphFocusedNodeId = null;
     let graphHoveredNodeId = null;
@@ -1843,9 +2001,11 @@
       renderSelectedDocument();
     }
 
-    function toggleGraphEntityNameFilter(entityName) {
+    function toggleGraphEntityNameFilter(entityName, evt) {
+      if (evt) evt.stopPropagation();
       if (entityName === 'ALL') {
         graphSelectedEntityNames.clear();
+        graphSelectedEntityValues.clear();
       } else {
         if (graphSelectedEntityNames.has(entityName)) {
           graphSelectedEntityNames.delete(entityName);
@@ -1854,20 +2014,60 @@
         }
       }
       graphFocusedNodeId = null;
-      if (workspaceMode === 'ask') {
-        runCrossDocumentAskAi(askAiQuestionInput);
-        return;
-      }
       renderSelectedDocument();
     }
 
-    function onGraphEntityValueFilterChanged(val) {
-      graphSelectedEntityValuePair = val || 'ALL';
-      graphFocusedNodeId = null;
-      if (workspaceMode === 'ask') {
-        runCrossDocumentAskAi(askAiQuestionInput);
-        return;
+    function toggleGraphEntityValueSelection(pairKey, evt) {
+      if (evt) evt.stopPropagation();
+      if (graphSelectedEntityValues.has(pairKey)) {
+        graphSelectedEntityValues.delete(pairKey);
+      } else {
+        graphSelectedEntityValues.add(pairKey);
       }
+      graphFocusedNodeId = null;
+      renderSelectedDocument();
+    }
+
+    function toggleEntityMultiSelectDropdown(evt) {
+      if (evt) evt.stopPropagation();
+      graphEntityDropdownOpen = !graphEntityDropdownOpen;
+      const pop = document.getElementById('entityMultiSelectPopover');
+      const box = document.getElementById('entityMultiSelectBox');
+      if (pop) pop.classList.toggle('open', graphEntityDropdownOpen);
+      if (box) box.classList.toggle('open', graphEntityDropdownOpen);
+      if (graphEntityDropdownOpen) {
+        const inp = document.getElementById('entityPopoverSearchInput');
+        if (inp) inp.focus();
+      }
+    }
+
+    function filterEntityPopoverOptions(query) {
+      graphEntityDropdownSearch = query || '';
+      const q = graphEntityDropdownSearch.trim().toLowerCase();
+      document.querySelectorAll('#entityPopoverList .entity-group-col').forEach(col => {
+        const groupName = (col.getAttribute('data-group') || '').toLowerCase();
+        let anyVisible = false;
+        col.querySelectorAll('.entity-value-option').forEach(opt => {
+          const text = (opt.getAttribute('data-search') || '').toLowerCase();
+          const show = !q || groupName.includes(q) || text.includes(q);
+          opt.style.display = show ? 'flex' : 'none';
+          if (show) anyVisible = true;
+        });
+        col.style.display = anyVisible ? 'flex' : 'none';
+      });
+    }
+
+    function onGraphEntityValueFilterChanged(val) {
+      if (!val || val === 'ALL') {
+        graphSelectedEntityValues.clear();
+      } else {
+        if (graphSelectedEntityValues.has(val)) {
+          graphSelectedEntityValues.delete(val);
+        } else {
+          graphSelectedEntityValues.add(val);
+        }
+      }
+      graphFocusedNodeId = null;
       renderSelectedDocument();
     }
 
@@ -1883,9 +2083,12 @@
       renderSelectedDocument();
     }
 
-    function resetGraphFilters() {
+    function resetGraphFilters(evt) {
+      if (evt) evt.stopPropagation();
       graphSelectedEntityNames.clear();
+      graphSelectedEntityValues.clear();
       graphSelectedEntityValuePair = 'ALL';
+      graphEntityDropdownSearch = '';
       graphEntitySearchQuery = '';
       graphFocusedNodeId = null;
       graphDepthMode = 'GLOBAL';
@@ -1893,10 +2096,6 @@
       graphPanX = 0;
       graphPanY = 0;
       graphCustomNodePositions = {};
-      if (workspaceMode === 'ask') {
-        runCrossDocumentAskAi(askAiQuestionInput);
-        return;
-      }
       renderSelectedDocument();
     }
 
@@ -2495,14 +2694,13 @@
             const eVal = e.value.trim();
             const pairKey = `${eName}||${eVal}`;
 
-            if (graphSelectedEntityNames.size > 0 && !graphSelectedEntityNames.has(eName)) {
-              return;
-            }
-            if (graphSelectedEntityValuePair !== 'ALL' && graphSelectedEntityValuePair !== pairKey) {
-              return;
-            }
-            if (q && !`${eName} ${eVal} ${cleanFileName} ${docTypesSummary}`.toLowerCase().includes(q)) {
-              return;
+            const hasAnyFilter = graphSelectedEntityNames.size > 0 || graphSelectedEntityValues.size > 0;
+            if (hasAnyFilter) {
+              const matchedByType = graphSelectedEntityNames.has(eName);
+              const matchedByValue = graphSelectedEntityValues.has(pairKey);
+              if (!matchedByType && !matchedByValue) {
+                return;
+              }
             }
 
             const entNodeId = `ent:${pairKey}`;
@@ -2573,23 +2771,78 @@
 
     function renderDocumentGraphTab(body) {
       const data = computeFilteredGraphData();
+      const totalSelected = graphSelectedEntityNames.size + graphSelectedEntityValues.size;
+
+      // Group all available entity values by Entity Name for the single multi-select picker
+      const groupedByType = new Map();
+      data.allEntityValuePairs.forEach(p => {
+        if (!groupedByType.has(p.name)) groupedByType.set(p.name, []);
+        groupedByType.get(p.name).push(p);
+      });
+
+      const selectedTagsHtml = [
+        ...[...graphSelectedEntityNames].map(name => `
+          <span class="entity-selected-tag" onclick="event.stopPropagation()">
+            <span>All ${escapeHtml(name)}</span>
+            <button type="button" title="Remove" onclick="toggleGraphEntityNameFilter(${JSON.stringify(name).replace(/"/g, '&quot;')}, event)">✕</button>
+          </span>
+        `),
+        ...[...graphSelectedEntityValues].map(pk => {
+          const [eName, eVal] = pk.split('||');
+          return `
+            <span class="entity-selected-tag" onclick="event.stopPropagation()">
+              <span><strong>${escapeHtml(eName)}:</strong> ${escapeHtml(eVal)}</span>
+              <button type="button" title="Remove" onclick="toggleGraphEntityValueSelection(${JSON.stringify(pk).replace(/"/g, '&quot;')}, event)">✕</button>
+            </span>
+          `;
+        })
+      ].join('');
+
+      const groupsHtml = [...groupedByType.entries()].map(([groupName, items]) => {
+        const isTypeSelected = graphSelectedEntityNames.has(groupName);
+        return `
+          <div class="entity-group-col" data-group="${escapeHtml(groupName)}">
+            <div class="entity-group-header" onclick="toggleGraphEntityNameFilter(${JSON.stringify(groupName).replace(/"/g, '&quot;')}, event)">
+              <span>${isTypeSelected ? '☑' : '☐'} ${escapeHtml(groupName)}</span>
+              <span style="opacity:0.65;">${items.length}</span>
+            </div>
+            ${items.map(item => {
+              const isValChecked = isTypeSelected || graphSelectedEntityValues.has(item.pairKey);
+              return `
+                <div class="entity-value-option ${isValChecked ? 'checked' : ''}" data-search="${escapeHtml(item.value)}" onclick="toggleGraphEntityValueSelection(${JSON.stringify(item.pairKey).replace(/"/g, '&quot;')}, event)">
+                  <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${isValChecked ? '✓ ' : ''}${escapeHtml(item.value)}</span>
+                  <span style="font-family:var(--font-mono);font-size:10.5px;opacity:0.65;flex-shrink:0;">${item.count} doc${item.count === 1 ? '' : 's'}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }).join('');
 
       body.innerHTML = `
-        <div class="graph-shell">
-          <div class="graph-filter-bar" style="padding:10px 14px;">
-            <div class="filter-pill-bar" style="margin-bottom:0;align-items:center;">
-              <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);margin-right:4px;">Entities:</span>
-              <button type="button" class="filter-pill-btn ${graphSelectedEntityNames.size === 0 ? 'active' : ''}" onclick="toggleGraphEntityNameFilter('ALL')">
-                All Entities
-              </button>
-              ${data.allEntityNames.map(en => {
-                const isSelected = graphSelectedEntityNames.has(en.name);
-                return `
-                  <button type="button" class="filter-pill-btn ${isSelected ? 'active' : ''}" onclick="toggleGraphEntityNameFilter(${JSON.stringify(en.name).replace(/"/g, '&quot;')})">
-                    ${isSelected ? '✓ ' : ''}${escapeHtml(en.name)} <span style="opacity:0.65;font-family:var(--font-mono);font-size:11px;">${en.count}</span>
-                  </button>
-                `;
-              }).join('')}
+        <div class="graph-shell" onclick="if(graphEntityDropdownOpen){ graphEntityDropdownOpen=false; document.getElementById('entityMultiSelectPopover')?.classList.remove('open'); document.getElementById('entityMultiSelectBox')?.classList.remove('open'); }">
+          <div class="entity-multiselect-wrap" onclick="event.stopPropagation()">
+            <div class="entity-multiselect-box ${graphEntityDropdownOpen ? 'open' : ''}" id="entityMultiSelectBox" onclick="toggleEntityMultiSelectDropdown(event)">
+              <div class="entity-tags-flow">
+                <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);margin-right:4px;">Entities:</span>
+                ${totalSelected === 0
+                  ? `<span style="color:var(--text-secondary);font-size:13px;">All Entities (${data.allEntityValuePairs.length} values across ${data.allEntityNames.length} types) — click to select one or multiple entities</span>`
+                  : selectedTagsHtml}
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                ${totalSelected > 0 ? `<button type="button" class="ghost-action-btn" onclick="resetGraphFilters(event)">Clear (${totalSelected})</button>` : ''}
+                <span style="font-size:12px;color:var(--text-secondary);padding:0 4px;">▾</span>
+              </div>
+            </div>
+
+            <div class="entity-multiselect-popover ${graphEntityDropdownOpen ? 'open' : ''}" id="entityMultiSelectPopover">
+              <div class="entity-popover-search">
+                <input type="text" id="entityPopoverSearchInput" placeholder="Filter entity types or values (e.g. Woodgrove, OXXO, USD, U4565450)..." value="${escapeHtml(graphEntityDropdownSearch)}" oninput="filterEntityPopoverOptions(this.value)" />
+                ${totalSelected > 0 ? `<button type="button" class="ghost-action-btn" onclick="resetGraphFilters(event)">Select All</button>` : ''}
+              </div>
+              <div class="entity-popover-list" id="entityPopoverList">
+                ${groupsHtml}
+              </div>
             </div>
           </div>
 
@@ -2599,6 +2852,9 @@
         </div>
       `;
 
+      if (graphEntityDropdownSearch) {
+        filterEntityPopoverOptions(graphEntityDropdownSearch);
+      }
       renderDocumentGraphCanvasOnly();
     }
 
@@ -2680,11 +2936,13 @@
 
       const infoStrip = document.getElementById('graphInfoStripContainer');
       if (infoStrip) {
+        const selectedValLabels = [
+          ...[...graphSelectedEntityNames].map(n => `All ${n}`),
+          ...[...graphSelectedEntityValues].map(pk => pk.split('||')[1])
+        ];
         const focusTitle = focusedNode
           ? (focusedNode.type === 'entity' ? `${focusedNode.entityValue}` : focusedNode.docName)
-          : (graphSelectedEntityValuePair !== 'ALL'
-              ? graphSelectedEntityValuePair.split('||')[1]
-              : (graphSelectedEntityNames.size > 0 ? [...graphSelectedEntityNames].join(', ') : 'All Tenant Documents'));
+          : (selectedValLabels.length > 0 ? selectedValLabels.join(', ') : 'All Tenant Documents');
         const focusSub = focusedNode
           ? (focusedNode.type === 'entity' ? `Entity Hub · ${focusedNode.entityName}` : `Selected Document · ${focusedNode.pageRange}`)
           : `${edges.length} entity connection${edges.length === 1 ? '' : 's'} active`;
