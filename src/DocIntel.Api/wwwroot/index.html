@@ -786,6 +786,171 @@
       word-break: break-word;
     }
 
+    /* Document Graph by Entities View */
+    .workspace-body[data-tab="graph"] {
+      padding: 18px 28px 24px 28px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .graph-shell {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      height: 100%;
+      min-height: 0;
+    }
+
+    .graph-filter-bar {
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 12px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      flex-shrink: 0;
+    }
+
+    .graph-filter-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .graph-controls-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .graph-input,
+    .graph-select {
+      border: 1px solid var(--line);
+      background: var(--bg);
+      color: var(--text-primary);
+      font-family: var(--font-sans);
+      font-size: 12.5px;
+      font-weight: 500;
+      padding: 6px 10px;
+      border-radius: 7px;
+      outline: none;
+    }
+
+    .graph-input:focus,
+    .graph-select:focus {
+      border-color: var(--accent);
+      background: #ffffff;
+    }
+
+    .graph-workbench {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 14px;
+    }
+
+    @media (max-width: 1024px) {
+      .graph-workbench {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    .graph-canvas-card {
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      min-height: 440px;
+      background-image: radial-gradient(#e3e1ec 1px, transparent 1px);
+      background-size: 20px 20px;
+    }
+
+    .graph-svg {
+      width: 100%;
+      height: 100%;
+      flex: 1;
+      cursor: grab;
+      user-select: none;
+    }
+
+    .graph-svg:active {
+      cursor: grabbing;
+    }
+
+    .graph-floating-hud {
+      position: absolute;
+      bottom: 12px;
+      left: 14px;
+      right: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      pointer-events: none;
+    }
+
+    .graph-legend,
+    .graph-zoom-bar {
+      background: rgba(255, 255, 255, 0.94);
+      backdrop-filter: blur(6px);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 10px;
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      pointer-events: auto;
+      box-shadow: 0 2px 8px rgba(22, 22, 29, 0.05);
+    }
+
+    .legend-dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      margin-right: 5px;
+    }
+
+    .graph-inspector-card {
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+      min-height: 0;
+    }
+
+    .graph-inspector-item {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 10px 12px;
+      background: var(--bg);
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      cursor: pointer;
+      transition: all 0.12s ease;
+    }
+
+    .graph-inspector-item:hover {
+      border-color: var(--accent-border);
+      background: var(--accent-soft);
+    }
+
     .toast {
       position: fixed;
       bottom: 20px;
@@ -896,9 +1061,18 @@
     let tenantJobs = [];
     let selectedJobId = null;
     let selectedSliceIndex = -1; // -1 = All Slices
-    let docResultTab = 'insights'; // 'insights' | 'document' | 'entities' | 'structured' | 'prompts' | 'metadata'
+    let docResultTab = 'insights'; // 'insights' | 'document' | 'entities' | 'graph' | 'structured' | 'metadata' | 'prompt:<id>'
     let selectedEntityCategory = 'ALL';
     let selectedPromptFilterView = 'ALL'; // 'ALL' | 'MATCHED' | 'SKIPPED'
+    let graphScope = 'ALL_DOCS'; // 'ALL_DOCS' | 'CURRENT_DOC'
+    let graphSelectedEntityNames = new Set(); // empty = All entity names
+    let graphSelectedEntityValuePair = 'ALL'; // 'ALL' or 'EntityName||EntityValue'
+    let graphEntitySearchQuery = '';
+    let graphFocusedNodeId = null;
+    let graphZoom = 1;
+    let graphPanX = 0;
+    let graphPanY = 0;
+    let graphCustomNodePositions = {};
     let jobPollTimer = null;
 
     function getMonogram(name) {
@@ -1139,6 +1313,74 @@
       renderSelectedDocument();
     }
 
+    function toggleGraphEntityNameFilter(entityName) {
+      if (entityName === 'ALL') {
+        graphSelectedEntityNames.clear();
+      } else {
+        if (graphSelectedEntityNames.has(entityName)) {
+          graphSelectedEntityNames.delete(entityName);
+        } else {
+          graphSelectedEntityNames.add(entityName);
+        }
+      }
+      graphFocusedNodeId = null;
+      renderSelectedDocument();
+    }
+
+    function onGraphEntityValueFilterChanged(val) {
+      graphSelectedEntityValuePair = val || 'ALL';
+      graphFocusedNodeId = null;
+      renderSelectedDocument();
+    }
+
+    function onGraphSearchInputChanged(val) {
+      graphEntitySearchQuery = val || '';
+      renderDocumentGraphCanvasOnly();
+    }
+
+    function setGraphScope(scope) {
+      graphScope = scope;
+      graphFocusedNodeId = null;
+      graphCustomNodePositions = {};
+      renderSelectedDocument();
+    }
+
+    function resetGraphFilters() {
+      graphSelectedEntityNames.clear();
+      graphSelectedEntityValuePair = 'ALL';
+      graphEntitySearchQuery = '';
+      graphFocusedNodeId = null;
+      graphZoom = 1;
+      graphPanX = 0;
+      graphPanY = 0;
+      graphCustomNodePositions = {};
+      renderSelectedDocument();
+    }
+
+    function zoomGraphBy(delta) {
+      if (delta === 0) {
+        graphZoom = 1;
+        graphPanX = 0;
+        graphPanY = 0;
+        graphCustomNodePositions = {};
+      } else {
+        graphZoom = Math.min(2.4, Math.max(0.55, +(graphZoom + delta).toFixed(2)));
+      }
+      renderDocumentGraphCanvasOnly();
+    }
+
+    function focusGraphNode(nodeId) {
+      graphFocusedNodeId = (graphFocusedNodeId === nodeId) ? null : nodeId;
+      renderDocumentGraphCanvasOnly();
+    }
+
+    function jumpFromGraphToSlice(jobId, sliceIdx) {
+      selectedJobId = jobId;
+      selectedSliceIndex = sliceIdx;
+      renderDocumentList();
+      setDocResultTab('document');
+    }
+
     async function reevaluateSelectedJobPrompts() {
       const job = tenantJobs.find(j => j.jobId === selectedJobId);
       if (!job || !currentTenant) return;
@@ -1245,6 +1487,7 @@
         { id: 'insights', label: 'Insights' },
         { id: 'document', label: 'View Document' },
         { id: 'entities', label: `Entities${totalEntitiesCount > 0 ? ` <span class="tab-count">${totalEntitiesCount}</span>` : ''}` },
+        { id: 'graph', label: 'Document Graph' },
         { id: 'structured', label: `Structured Data${totalStructuredCount > 0 ? ` <span class="tab-count">${totalStructuredCount}</span>` : ''}` },
         { id: 'metadata', label: 'Metadata' }
       ].map(t => `
@@ -1476,6 +1719,12 @@
         return;
       }
 
+      // 3b. Document Graph by Entities Tab — Interactive Entity-Filtered Knowledge Graph
+      if (docResultTab === 'graph') {
+        renderDocumentGraphTab(body, job);
+        return;
+      }
+
       // 4. Structured Data Tab — Clean Definition List + Tables
       if (docResultTab === 'structured') {
         const slicesWithData = activeSegs.filter(s => s.dataExtraction && ((s.dataExtraction.fields && s.dataExtraction.fields.length > 0) || (s.dataExtraction.tables && s.dataExtraction.tables.length > 0)));
@@ -1630,6 +1879,433 @@
           </div>
         `;
       }
+    }
+
+    function computeFilteredGraphData() {
+      const completedJobs = (graphScope === 'CURRENT_DOC' && selectedJobId)
+        ? tenantJobs.filter(j => j.jobId === selectedJobId)
+        : tenantJobs.filter(j => j.status === 'Completed');
+
+      const allEntityNamesMap = new Map();
+      const allEntityValuePairsMap = new Map();
+
+      completedJobs.forEach(j => {
+        const segs = (j.jobId === selectedJobId && selectedSliceIndex !== -1)
+          ? (j.segments || []).filter(s => s.segmentIndex === selectedSliceIndex)
+          : (j.segments || []);
+        segs.forEach(s => {
+          (s.extractedEntities || []).forEach(e => {
+            if (!e || !e.name || !e.value) return;
+            const eName = e.name.trim();
+            const eVal = e.value.trim();
+            allEntityNamesMap.set(eName, (allEntityNamesMap.get(eName) || 0) + 1);
+            const pairKey = `${eName}||${eVal}`;
+            if (!allEntityValuePairsMap.has(pairKey)) {
+              allEntityValuePairsMap.set(pairKey, { name: eName, value: eVal, category: e.category || 'Entity', count: 0 });
+            }
+            allEntityValuePairsMap.get(pairKey).count++;
+          });
+        });
+      });
+
+      const docNodes = [];
+      const entityNodesMap = new Map();
+      const edges = [];
+      const q = (graphEntitySearchQuery || '').trim().toLowerCase();
+
+      completedJobs.forEach(j => {
+        const segs = (j.jobId === selectedJobId && selectedSliceIndex !== -1)
+          ? (j.segments || []).filter(s => s.segmentIndex === selectedSliceIndex)
+          : (j.segments || []);
+
+        segs.forEach(s => {
+          const docNodeId = `doc:${j.jobId}:${s.segmentIndex}`;
+          const docLabel = s.identifiedDocumentName || s.documentTypeName || `Slice ${s.segmentIndex + 1}`;
+          const matchingEntitiesForSlice = [];
+
+          (s.extractedEntities || []).forEach(e => {
+            if (!e || !e.name || !e.value) return;
+            const eName = e.name.trim();
+            const eVal = e.value.trim();
+            const pairKey = `${eName}||${eVal}`;
+
+            if (graphSelectedEntityNames.size > 0 && !graphSelectedEntityNames.has(eName)) {
+              return;
+            }
+            if (graphSelectedEntityValuePair !== 'ALL' && graphSelectedEntityValuePair !== pairKey) {
+              return;
+            }
+            if (q && !`${eName} ${eVal} ${docLabel} ${j.fileName}`.toLowerCase().includes(q)) {
+              return;
+            }
+
+            const entNodeId = `ent:${pairKey}`;
+            if (!entityNodesMap.has(entNodeId)) {
+              entityNodesMap.set(entNodeId, {
+                id: entNodeId,
+                type: 'entity',
+                pairKey,
+                entityName: eName,
+                entityValue: eVal,
+                category: (e.category || 'Entity').toUpperCase(),
+                connectedDocs: []
+              });
+            }
+
+            matchingEntitiesForSlice.push(entNodeId);
+          });
+
+          const uniqEntIds = [...new Set(matchingEntitiesForSlice)];
+          if (uniqEntIds.length > 0) {
+            const docNode = {
+              id: docNodeId,
+              type: 'doc',
+              jobId: j.jobId,
+              fileName: (j.fileName || 'Document').replace(/\.pdf$/i, ''),
+              sliceIndex: s.segmentIndex,
+              docName: docLabel,
+              pageRange: `p.${s.startPage}–${s.endPage}`,
+              entityIds: uniqEntIds,
+              isCurrentJob: j.jobId === selectedJobId
+            };
+            docNodes.push(docNode);
+
+            uniqEntIds.forEach(entNodeId => {
+              edges.push({ source: docNodeId, target: entNodeId });
+              const entNode = entityNodesMap.get(entNodeId);
+              if (entNode) {
+                entNode.connectedDocs.push(docNode);
+              }
+            });
+          }
+        });
+      });
+
+      return {
+        allEntityNames: [...allEntityNamesMap.entries()].map(([name, count]) => ({ name, count })),
+        allEntityValuePairs: [...allEntityValuePairsMap.entries()].map(([pairKey, info]) => ({ pairKey, ...info })),
+        docNodes,
+        entityNodes: [...entityNodesMap.values()],
+        edges
+      };
+    }
+
+    function getEntityCategoryColor(cat) {
+      const c = String(cat || '').toUpperCase();
+      if (c.includes('IDENTIFIER')) return { bg: '#eef0ff', border: '#4b72fe', text: '#2842b5', dot: '#4b72fe' };
+      if (c.includes('PARTY') || c.includes('CUSTOMER')) return { bg: '#ecfdf5', border: '#0d9488', text: '#0f766e', dot: '#0d9488' };
+      if (c.includes('FINANCIAL')) return { bg: '#fffbeb', border: '#d97706', text: '#b45309', dot: '#d97706' };
+      return { bg: '#f5f3ff', border: '#7c3aed', text: '#6d28d9', dot: '#7c3aed' };
+    }
+
+    function renderDocumentGraphTab(body) {
+      const data = computeFilteredGraphData();
+      const hasActiveFilters = graphSelectedEntityNames.size > 0 || graphSelectedEntityValuePair !== 'ALL' || (graphEntitySearchQuery || '').trim().length > 0;
+
+      body.innerHTML = `
+        <div class="graph-shell">
+          <div class="graph-filter-bar">
+            <div class="graph-filter-top">
+              <div class="graph-controls-group">
+                <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);">Scope:</span>
+                <button type="button" class="filter-pill-btn ${graphScope === 'ALL_DOCS' ? 'active' : ''}" onclick="setGraphScope('ALL_DOCS')">All Tenant Documents</button>
+                <button type="button" class="filter-pill-btn ${graphScope === 'CURRENT_DOC' ? 'active' : ''}" onclick="setGraphScope('CURRENT_DOC')">Current Document</button>
+              </div>
+
+              <div class="graph-controls-group">
+                <select class="graph-select" id="graphEntityValueSelect" onchange="onGraphEntityValueFilterChanged(this.value)" title="Filter graph by a specific Entity Name & Value">
+                  <option value="ALL">All Entity Values (${data.allEntityValuePairs.length})</option>
+                  ${data.allEntityValuePairs.map(p => `
+                    <option value="${escapeHtml(p.pairKey)}" ${graphSelectedEntityValuePair === p.pairKey ? 'selected' : ''}>
+                      ${escapeHtml(p.name)}: ${escapeHtml(p.value)} (${p.count})
+                    </option>
+                  `).join('')}
+                </select>
+                <input type="text" class="graph-input" id="graphEntitySearchInput" placeholder="Filter by entity or document..." value="${escapeHtml(graphEntitySearchQuery)}" oninput="onGraphSearchInputChanged(this.value)" style="width:210px;" />
+                ${hasActiveFilters ? `<button type="button" class="ghost-action-btn" onclick="resetGraphFilters()">✕ Clear Filters</button>` : ''}
+              </div>
+            </div>
+
+            <div class="filter-pill-bar" style="margin-bottom:0;">
+              <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);margin-right:4px;">Entity Filter:</span>
+              <button type="button" class="filter-pill-btn ${graphSelectedEntityNames.size === 0 ? 'active' : ''}" onclick="toggleGraphEntityNameFilter('ALL')">
+                All Entities
+              </button>
+              ${data.allEntityNames.map(en => `
+                <button type="button" class="filter-pill-btn ${graphSelectedEntityNames.has(en.name) ? 'active' : ''}" onclick="toggleGraphEntityNameFilter(${JSON.stringify(en.name).replace(/"/g, '&quot;')})">
+                  ${escapeHtml(en.name)} <span style="opacity:0.65;font-family:var(--font-mono);font-size:11px;">${en.count}</span>
+                </button>
+              `).join('')}
+            </div>
+          </div>
+
+          <div class="graph-workbench" id="graphWorkbenchContainer"></div>
+        </div>
+      `;
+
+      renderDocumentGraphCanvasOnly();
+    }
+
+    function renderDocumentGraphCanvasOnly() {
+      const container = document.getElementById('graphWorkbenchContainer');
+      if (!container) return;
+
+      const data = computeFilteredGraphData();
+      const { docNodes, entityNodes, edges } = data;
+
+      const width = 920;
+      const height = Math.max(500, Math.max(docNodes.length * 95, entityNodes.length * 76) + 80);
+
+      // Compute clean deterministic bipartite / radial coordinates with drag overrides
+      const nodeById = new Map();
+      const docX = 215;
+      const entX = 685;
+
+      docNodes.forEach((d, idx) => {
+        const defaultY = ((idx + 1) / (docNodes.length + 1)) * height;
+        const pos = graphCustomNodePositions[d.id] || { x: docX, y: defaultY };
+        d.x = pos.x;
+        d.y = pos.y;
+        nodeById.set(d.id, d);
+      });
+
+      entityNodes.forEach((e, idx) => {
+        const defaultY = ((idx + 1) / (entityNodes.length + 1)) * height;
+        const pos = graphCustomNodePositions[e.id] || { x: entX, y: defaultY };
+        e.x = pos.x;
+        e.y = pos.y;
+        nodeById.set(e.id, e);
+      });
+
+      const activeNeighborIds = new Set();
+      if (graphFocusedNodeId && nodeById.has(graphFocusedNodeId)) {
+        activeNeighborIds.add(graphFocusedNodeId);
+        edges.forEach(ed => {
+          if (ed.source === graphFocusedNodeId) activeNeighborIds.add(ed.target);
+          if (ed.target === graphFocusedNodeId) activeNeighborIds.add(ed.source);
+        });
+      }
+
+      const edgesSvg = edges.map(ed => {
+        const src = nodeById.get(ed.source);
+        const tgt = nodeById.get(ed.target);
+        if (!src || !tgt) return '';
+        const x1 = src.x + 125;
+        const y1 = src.y;
+        const x2 = tgt.x - 130;
+        const y2 = tgt.y;
+        const midX = (x1 + x2) / 2;
+        const isHighlighted = !graphFocusedNodeId || (ed.source === graphFocusedNodeId || ed.target === graphFocusedNodeId);
+        const strokeColor = isHighlighted ? '#4b72fe' : '#dcd9e8';
+        const strokeWidth = isHighlighted && graphFocusedNodeId ? '2.4' : '1.6';
+        const opacity = isHighlighted ? '0.88' : '0.25';
+        return `<path d="M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${opacity}" />`;
+      }).join('');
+
+      const docNodesSvg = docNodes.map(d => {
+        const dimmed = graphFocusedNodeId && !activeNeighborIds.has(d.id);
+        const isFocused = graphFocusedNodeId === d.id;
+        const borderCol = isFocused ? '#4b72fe' : (d.isCurrentJob ? '#16161d' : '#c9c5dc');
+        const strokeW = isFocused ? '2.4' : '1.5';
+        const titleShort = d.docName.length > 26 ? d.docName.slice(0, 25) + '…' : d.docName;
+        const subShort = `${d.fileName.slice(0, 18)} · Slice ${d.sliceIndex + 1} (${d.pageRange})`;
+
+        return `
+          <g class="graph-node" data-node-id="${escapeHtml(d.id)}" transform="translate(${d.x}, ${d.y})" style="opacity:${dimmed ? '0.28' : '1'};cursor:pointer;" onclick="focusGraphNode('${escapeHtml(d.id)}')">
+            <rect x="-125" y="-28" width="250" height="56" rx="10" fill="#ffffff" stroke="${borderCol}" stroke-width="${strokeW}" />
+            <rect x="-125" y="-28" width="6" height="56" rx="3" fill="${isFocused ? '#4b72fe' : '#16161d'}" />
+            <text x="-106" y="-5" font-family="Overused Grotesk, sans-serif" font-size="13" font-weight="600" fill="#16161d">${escapeHtml(titleShort)}</text>
+            <text x="-106" y="14" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="#5d6074">${escapeHtml(subShort)}</text>
+            <circle cx="105" cy="0" r="11" fill="#eef0ff" stroke="#b9c3ff" stroke-width="1" />
+            <text x="105" y="3.5" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10.5" font-weight="600" fill="#2842b5">${d.entityIds.length}</text>
+          </g>
+        `;
+      }).join('');
+
+      const entityNodesSvg = entityNodes.map(e => {
+        const dimmed = graphFocusedNodeId && !activeNeighborIds.has(e.id);
+        const isFocused = graphFocusedNodeId === e.id;
+        const colors = getEntityCategoryColor(e.category);
+        const valShort = e.entityValue.length > 26 ? e.entityValue.slice(0, 25) + '…' : e.entityValue;
+        const nameUpper = e.entityName.toUpperCase();
+
+        return `
+          <g class="graph-node" data-node-id="${escapeHtml(e.id)}" transform="translate(${e.x}, ${e.y})" style="opacity:${dimmed ? '0.28' : '1'};cursor:pointer;" onclick="focusGraphNode('${escapeHtml(e.id)}')">
+            <rect x="-130" y="-26" width="260" height="52" rx="26" fill="${colors.bg}" stroke="${colors.border}" stroke-width="${isFocused ? '2.6' : '1.5'}" />
+            <circle cx="-104" cy="0" r="10" fill="${colors.dot}" />
+            <text x="-104" y="3.5" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" font-weight="600" fill="#ffffff">${e.connectedDocs.length}</text>
+            <text x="-84" y="-4" font-family="IBM Plex Mono, monospace" font-size="10" font-weight="600" letter-spacing="0.04em" fill="${colors.text}">${escapeHtml(nameUpper)}</text>
+            <text x="-84" y="13" font-family="Overused Grotesk, sans-serif" font-size="13" font-weight="600" fill="#16161d">${escapeHtml(valShort)}</text>
+          </g>
+        `;
+      }).join('');
+
+      let inspectorHtml = '';
+      const focusedNode = graphFocusedNodeId ? nodeById.get(graphFocusedNodeId) : null;
+
+      if (focusedNode && focusedNode.type === 'entity') {
+        inspectorHtml = `
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Entity Node Selected</span>
+            <button type="button" class="text-link-btn" onclick="focusGraphNode(null)">Show All</button>
+          </div>
+          <div>
+            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(focusedNode.entityName)}</div>
+            <div style="font-size:16px;font-weight:600;color:var(--text-primary);margin-top:2px;">${escapeHtml(focusedNode.entityValue)}</div>
+          </div>
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;margin-top:4px;">
+            Connected Documents (${focusedNode.connectedDocs.length})
+          </div>
+          ${focusedNode.connectedDocs.map(d => `
+            <div class="graph-inspector-item" onclick="jumpFromGraphToSlice('${escapeHtml(d.jobId)}', ${d.sliceIndex})">
+              <div style="font-weight:600;font-size:13.5px;color:var(--text-primary);">${escapeHtml(d.docName)}</div>
+              <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(d.fileName)} · Slice ${d.sliceIndex + 1} (${escapeHtml(d.pageRange)})</div>
+              <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-top:2px;">Open Document PDF ↗</div>
+            </div>
+          `).join('')}
+        `;
+      } else if (focusedNode && focusedNode.type === 'doc') {
+        const connectedEntities = focusedNode.entityIds.map(id => nodeById.get(id)).filter(Boolean);
+        inspectorHtml = `
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Document Slice Selected</span>
+            <button type="button" class="text-link-btn" onclick="focusGraphNode(null)">Show All</button>
+          </div>
+          <div>
+            <div style="font-size:16px;font-weight:600;color:var(--text-primary);">${escapeHtml(focusedNode.docName)}</div>
+            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);margin-top:2px;">${escapeHtml(focusedNode.fileName)} · Slice ${focusedNode.sliceIndex + 1} (${escapeHtml(focusedNode.pageRange)})</div>
+          </div>
+          <button type="button" class="text-link-btn" style="width:fit-content;" onclick="jumpFromGraphToSlice('${escapeHtml(focusedNode.jobId)}', ${focusedNode.sliceIndex})">Open PDF Viewer ↗</button>
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;margin-top:4px;">
+            Extracted Entities (${connectedEntities.length})
+          </div>
+          ${connectedEntities.map(e => `
+            <div class="graph-inspector-item" onclick="onGraphEntityValueFilterChanged(${JSON.stringify(e.pairKey).replace(/"/g, '&quot;')})">
+              <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(e.entityName)}</div>
+              <div style="font-weight:600;font-size:13.5px;color:var(--text-primary);">${escapeHtml(e.entityValue)}</div>
+              <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--accent);">Filter graph to this entity →</div>
+            </div>
+          `).join('')}
+        `;
+      } else {
+        inspectorHtml = `
+          <div>
+            <div style="font-size:14.5px;font-weight:600;color:var(--text-primary);">Entity Knowledge Graph</div>
+            <div style="font-size:12.5px;color:var(--text-secondary);margin-top:3px;">
+              Showing <strong>${docNodes.length}</strong> document slice${docNodes.length === 1 ? '' : 's'} connected across <strong>${entityNodes.length}</strong> filtered entit${entityNodes.length === 1 ? 'y' : 'ies'}. Click any node to inspect connections or filter by entity above.
+            </div>
+          </div>
+          <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;margin-top:4px;">
+            Active Entities (${entityNodes.length})
+          </div>
+          ${entityNodes.map(e => `
+            <div class="graph-inspector-item" onclick="focusGraphNode('${escapeHtml(e.id)}')">
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(e.entityName)}</span>
+                <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--accent-ink);">${e.connectedDocs.length} doc${e.connectedDocs.length === 1 ? '' : 's'}</span>
+              </div>
+              <div style="font-weight:600;font-size:13.5px;color:var(--text-primary);">${escapeHtml(e.entityValue)}</div>
+            </div>
+          `).join('')}
+        `;
+      }
+
+      container.innerHTML = `
+        <div class="graph-canvas-card">
+          ${docNodes.length === 0 ? `
+            <div style="margin:auto;text-align:center;color:var(--text-secondary);padding:32px;">
+              No documents or entities match the current entity filters.<br/><br/>
+              <button type="button" class="ghost-action-btn" onclick="resetGraphFilters()">Reset Entity Filters</button>
+            </div>
+          ` : `
+            <svg class="graph-svg" id="entityGraphSvg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">
+              <g id="entityGraphViewport" transform="translate(${graphPanX}, ${graphPanY}) scale(${graphZoom})">
+                <text x="${docX}" y="28" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.08em" fill="#8f92a6">DOCUMENTS / SLICES (${docNodes.length})</text>
+                <text x="${entX}" y="28" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.08em" fill="#8f92a6">EXTRACTED ENTITIES (${entityNodes.length})</text>
+                ${edgesSvg}
+                ${docNodesSvg}
+                ${entityNodesSvg}
+              </g>
+            </svg>
+          `}
+
+          <div class="graph-floating-hud">
+            <div class="graph-legend">
+              <span><i class="legend-dot" style="background:#16161d;"></i>Document Slice</span>
+              <span><i class="legend-dot" style="background:#4b72fe;"></i>Identifier</span>
+              <span><i class="legend-dot" style="background:#0d9488;"></i>Party / Customer</span>
+              <span><i class="legend-dot" style="background:#d97706;"></i>Financial</span>
+              <span><i class="legend-dot" style="background:#7c3aed;"></i>Metadata</span>
+            </div>
+            <div class="graph-zoom-bar">
+              <button type="button" class="text-link-btn" onclick="zoomGraphBy(-0.15)">−</button>
+              <span>${Math.round(graphZoom * 100)}%</span>
+              <button type="button" class="text-link-btn" onclick="zoomGraphBy(0.15)">+</button>
+              <button type="button" class="text-link-btn" onclick="zoomGraphBy(0)">Reset</button>
+            </div>
+          </div>
+        </div>
+
+        <aside class="graph-inspector-card">
+          ${inspectorHtml}
+        </aside>
+      `;
+
+      attachGraphSvgInteractivity();
+    }
+
+    function attachGraphSvgInteractivity() {
+      const svg = document.getElementById('entityGraphSvg');
+      if (!svg) return;
+
+      let draggingNodeId = null;
+      let isPanning = false;
+      let startClientX = 0;
+      let startClientY = 0;
+
+      svg.onmousedown = (e) => {
+        const nodeEl = e.target.closest('.graph-node');
+        startClientX = e.clientX;
+        startClientY = e.clientY;
+        if (nodeEl) {
+          draggingNodeId = nodeEl.getAttribute('data-node-id');
+        } else {
+          isPanning = true;
+        }
+      };
+
+      window.onmousemove = (e) => {
+        if (!draggingNodeId && !isPanning) return;
+        const dx = (e.clientX - startClientX) / graphZoom;
+        const dy = (e.clientY - startClientY) / graphZoom;
+        startClientX = e.clientX;
+        startClientY = e.clientY;
+
+        if (draggingNodeId) {
+          const nodeEl = svg.querySelector(`.graph-node[data-node-id="${CSS.escape(draggingNodeId)}"]`);
+          if (nodeEl) {
+            const match = /translate\(([-\d.]+),\s*([-\d.]+)\)/.exec(nodeEl.getAttribute('transform') || '');
+            if (match) {
+              const nx = parseFloat(match[1]) + dx;
+              const ny = parseFloat(match[2]) + dy;
+              graphCustomNodePositions[draggingNodeId] = { x: nx, y: ny };
+              renderDocumentGraphCanvasOnly();
+            }
+          }
+        } else if (isPanning) {
+          graphPanX += dx * graphZoom;
+          graphPanY += dy * graphZoom;
+          const vp = document.getElementById('entityGraphViewport');
+          if (vp) {
+            vp.setAttribute('transform', `translate(${graphPanX}, ${graphPanY}) scale(${graphZoom})`);
+          }
+        }
+      };
+
+      window.onmouseup = () => {
+        draggingNodeId = null;
+        isPanning = false;
+      };
     }
 
     init();
