@@ -361,6 +361,75 @@ public static class HarnessEndpoints
             return Results.Ok(FormatJobResponse(job));
         });
 
+        // Seed 26 realistic example documents across customers, languages, and document types
+        group.MapPost("/tenants/{tenantId}/seed-examples", async (
+            string tenantId,
+            IHarnessStore harnessStore,
+            IJobStore jobStore,
+            DocumentSplittingWorkflow workflow,
+            CancellationToken ct) =>
+        {
+            var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
+            if (tenant is null)
+            {
+                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+            }
+
+            var examples = CreateExampleDocumentCorpus();
+            var existingJobs = await jobStore.ListJobsByTenantAsync(tenantId, ct);
+            var existingNames = existingJobs.Select(j => j.FileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            var seededIds = new List<string>();
+            foreach (var (fileName, pages) in examples)
+            {
+                if (existingNames.Contains(fileName))
+                {
+                    continue;
+                }
+
+                var pdfBytes = PdfPigLayoutExtractor.CreateSamplePdf(pages);
+                var jobId = Guid.NewGuid().ToString("N");
+                var state = new SplittingState
+                {
+                    DocumentId = jobId,
+                    Tenant = tenant,
+                    FileName = fileName,
+                    SourcePdfBytes = pdfBytes
+                };
+
+                var completed = await workflow.ExecuteAsync(state, cancellationToken: ct);
+                var job = new DocumentJob
+                {
+                    JobId = jobId,
+                    TenantId = tenant.TenantId,
+                    TenantDisplayName = tenant.DisplayName,
+                    AppliedHarnessVersion = tenant.HarnessVersion,
+                    FileName = fileName,
+                    Status = JobStatus.Completed,
+                    TotalPages = completed.Pages.Count,
+                    StrategyUsed = completed.StrategyUsed,
+                    ModelIdUsed = completed.ModelIdUsed,
+                    PacketSummary = completed.PacketSummary,
+                    ExtractedEntities = completed.ExtractedEntities,
+                    DataExtractions = completed.DataExtractions,
+                    PromptColumnResults = completed.PromptColumnResults,
+                    ExecutionTrace = completed.ExecutionTrace,
+                    Segments = completed.Slices,
+                    CompletedAtUtc = DateTimeOffset.UtcNow
+                };
+
+                await jobStore.UpsertJobAsync(job, ct);
+                seededIds.Add(jobId);
+            }
+
+            return Results.Ok(new
+            {
+                tenantId = tenant.TenantId,
+                seededCount = seededIds.Count,
+                totalDocuments = existingNames.Count + seededIds.Count
+            });
+        });
+
         // Inline / Sync Execution
         group.MapPost("/tenants/{tenantId}/run-split", async (
             string tenantId,
@@ -431,6 +500,143 @@ public static class HarnessEndpoints
 
         return ("Enterprise-Contract-Packet-Sample.pdf", sampleBytes);
     }
+
+    private static IReadOnlyList<(string FileName, (string Body, string Footer)[] Pages)> CreateExampleDocumentCorpus() =>
+    [
+        // === Customer 1: Contoso Legal (MBA/MBSA U5389226323, Contract 69943885, USD) ===
+        ("Contoso-Enterprise-Contract-Packet-2026.pdf",
+        [
+            ("Formulario de Firma del Programa\nNúmero de MBA/MBSA: U5389226323\nNúmero de contrato: 69943885\nNombre de la entidad: Contoso Legal\nCuando Microsoft haya formalizado debidamente el formulario de firma, el Cliente recibirá una copia de confirmación.", "X20-12661-01-SigForm-ES"),
+            ("Master Business Service Agreement\nCustomer Name: Contoso Legal\nMBA/MBSA Number: U5389226323\nThis Master Agreement governs all enterprise purchases.\nSection 1: Definitions and Scope.", "Form-MBSA-v1"),
+            ("Master Business Service Agreement\nSection 2: Confidentiality and Liability Limits.\nSigned by Authorized Representative for Contoso Legal.", "Form-MBSA-v1"),
+            ("Enterprise Enrollment\nCustomer Name: Contoso Legal\nContract Number: 69943885\nEnrollment under the Master Business Service Agreement.\nIncludes 2,500 Enterprise Seats.", "Form-EA-v2"),
+            ("Amendment ID M130\nCustomer Name: Contoso Legal\nCustom Pricing and Volume Discount Schedule.\nApplies to Enterprise Enrollment 69943885.", "VLAmendments,M130")
+        ]),
+        ("Contoso-Cloud-Price-Sheet-Q1.pdf",
+        [
+            ("Customer Price Sheet\nCustomer Name: Contoso Legal\nMBA/MBSA Number: U5389226323\nQuote Number: 3037534.001\nBilling currency: USD\nTotal deal value 410,000.00\nSection 1 Tenant ID: FOOD SERVICE - 6137346 282,600.00\nEP2-04960 124.50", "MSQuote-Contoso-Q1"),
+            ("Customer Price Sheet\nCustomer Name: Contoso Legal\nQuote Number: 3037534.001\nBilling currency: USD\nFuture Pricing Schedule and Multi-Year Commitment.\nAAA-11820 88.00", "MSQuote-Contoso-Q1")
+        ]),
+        ("Contoso-Security-Addendum-M130.pdf",
+        [
+            ("Amendment ID M130\nCustomer Name: Contoso Legal\nBilling currency: USD\nData Protection and Zero Trust Security Rider.\nSpecial discount schedule for Microsoft Sentinel.", "VLAmendments,M130-Contoso")
+        ]),
+        ("Contoso-EA-Renewal-2026.pdf",
+        [
+            ("Enterprise Enrollment\nCustomer Name: Contoso Legal\nMBA/MBSA Number: U5389226323\nContract Number: 69943885\nBilling currency: USD\nThree-year renewal covering 4,200 M365 E5 seats.", "Form-EA-Renewal")
+        ]),
+
+        // === Customer 2: Cadena Comercial OXXO SA de CV (MBA/MBSA U4565450, Contract 78451290, MXN & USD) ===
+        ("OXXO-Paquete-Firma-Programa-ES.pdf",
+        [
+            ("Formulario de Firma del Programa\nNúmero de MBA/MBSA: U4565450\nNúmero de contrato: 78451290\nNombre de la entidad: Cadena Comercial OXXO SA de CV\nCuando Microsoft haya formalizado debidamente el formulario de firma, el Cliente recibirá una copia de confirmación.", "DocumentX20-12883"),
+            ("Enterprise Enrollment\nCustomer Name: Cadena Comercial OXXO SA de CV\nMBA/MBSA Number: U4565450\nContract Number: 78451290\nRetail store point-of-sale and cloud workload enrollment.", "Form-EA-OXXO")
+        ]),
+        ("OXXO-Retail-Price-Sheet-2026.pdf",
+        [
+            ("Customer Price Sheet\nCustomer Name: Cadena Comercial OXXO SA de CV\nMBA/MBSA Number: U4565450\nQuote Number: 3037534.004\nBilling currency: USD\nTotal deal value 282,600.00\nSection 1 Tenant ID: FOOD SERVICE - 6137346 282,600.00\nEP2-04960 95.00", "MSQuote-OXXO-2026")
+        ]),
+        ("OXXO-Master-Agreement-MBSA.pdf",
+        [
+            ("Master Business Service Agreement\nCustomer Name: Cadena Comercial OXXO SA de CV\nMBA/MBSA Number: U4565450\nGoverning Latin America retail operations and subsidiary entities.", "Form-MBSA-OXXO"),
+            ("Master Business Service Agreement\nCustomer Name: Cadena Comercial OXXO SA de CV\nSection 2: Cross-border invoicing and compliance obligations.", "Form-MBSA-OXXO")
+        ]),
+        ("OXXO-Pricing-Amendment-M130.pdf",
+        [
+            ("Amendment ID M130\nCustomer Name: Cadena Comercial OXXO SA de CV\nBilling currency: MXN\nTotal deal value 5,450,000.00\nVolume expansion discount for 18,000 store locations.", "VLAmendments,M130-OXXO")
+        ]),
+
+        // === Customer 3: Woodgrove Bank NA (MBA/MBSA U8821904, Contract 55109234, USD & EUR) ===
+        ("Woodgrove-Bank-Global-MBSA-Packet.pdf",
+        [
+            ("Program Signature Form\nCustomer Name: Woodgrove Bank NA\nMBA/MBSA Number: U8821904\nContract Number: 55109234\nGlobal financial services master signature instrument.", "ProgramSignForm-WG"),
+            ("Master Business Service Agreement\nCustomer Name: Woodgrove Bank NA\nMBA/MBSA Number: U8821904\nFinancial regulatory compliance, audit rights, and DORA schedule.", "Form-MBSA-WG"),
+            ("Enterprise Enrollment\nCustomer Name: Woodgrove Bank NA\nContract Number: 55109234\nBilling currency: USD\nCore banking cloud infrastructure and Copilot seat deployment.", "Form-EA-WG")
+        ]),
+        ("Woodgrove-Bank-Price-Sheet-USD.pdf",
+        [
+            ("Customer Price Sheet\nCustomer Name: Woodgrove Bank NA\nMBA/MBSA Number: U8821904\nQuote Number: 4091120.002\nBilling currency: USD\nTotal deal value 1,850,000.00\nTenant ID: WOODGROVE-FIN-99201\nEP2-04960 140.00", "MSQuote-WG-USD")
+        ]),
+        ("Woodgrove-Euro-Branch-Price-Sheet.pdf",
+        [
+            ("Customer Price Sheet\nCustomer Name: Woodgrove Bank NA\nQuote Number: 4091120.009\nBilling currency: EUR\nTotal deal value 920,000.00\nTenant ID: WOODGROVE-FIN-99201\nFrankfurt and Dublin banking operations.", "MSQuote-WG-EUR")
+        ]),
+        ("Woodgrove-Regulatory-Amendment-M130.pdf",
+        [
+            ("Amendment ID M130\nCustomer Name: Woodgrove Bank NA\nContract Number: 55109234\nBilling currency: USD\nCustom SLA and sovereign key management addendum.", "VLAmendments,M130-WG")
+        ]),
+
+        // === Customer 4: Northwind Traders Ltd (MBA/MBSA U7710342, Contract 44019822, GBP & USD) ===
+        ("Northwind-SupplyChain-Bundle.pdf",
+        [
+            ("Program Signature Form\nCustomer Name: Northwind Traders Ltd\nMBA/MBSA Number: U7710342\nContract Number: 44019822\nExecuted by Chief Procurement Officer in London.", "ProgramSignForm-NW"),
+            ("Enterprise Enrollment\nCustomer Name: Northwind Traders Ltd\nMBA/MBSA Number: U7710342\nContract Number: 44019822\nBilling currency: GBP\nGlobal logistics and Dynamics 365 Supply Chain workload.", "Form-EA-NW"),
+            ("Customer Price Sheet\nCustomer Name: Northwind Traders Ltd\nQuote Number: 5188201.001\nBilling currency: GBP\nTotal deal value 640,000.00\nTenant ID: NORTHWIND-UK-4410\nEP2-04960 110.00", "MSQuote-NW-GBP")
+        ]),
+        ("Northwind-Master-Agreement-MBSA.pdf",
+        [
+            ("Master Business Service Agreement\nCustomer Name: Northwind Traders Ltd\nMBA/MBSA Number: U7710342\nUnited Kingdom and European Union commercial terms.", "Form-MBSA-NW")
+        ]),
+        ("Northwind-Logistics-Amendment-M130.pdf",
+        [
+            ("Amendment ID M130\nCustomer Name: Northwind Traders Ltd\nBilling currency: GBP\nSeasonal warehouse seat bursting and Azure IoT Hub discount.", "VLAmendments,M130-NW")
+        ]),
+        ("Northwind-US-Subsidiary-Price-Sheet.pdf",
+        [
+            ("Customer Price Sheet\nCustomer Name: Northwind Traders Ltd\nMBA/MBSA Number: U7710342\nQuote Number: 5188201.005\nBilling currency: USD\nTotal deal value 315,000.00\nTenant ID: NORTHWIND-UK-4410", "MSQuote-NW-USD")
+        ]),
+
+        // === Customer 5: Fabrikam Industrial Group (MBA/MBSA U9104451, Contract 88301145, EUR & USD) ===
+        ("Fabrikam-Manufacturing-Packet-2026.pdf",
+        [
+            ("Formulario de Firma del Programa\nNúmero de MBA/MBSA: U9104451\nNúmero de contrato: 88301145\nNombre de la entidad: Fabrikam Industrial Group\nCuando Microsoft haya formalizado debidamente el formulario de firma, el Cliente recibirá una copia de confirmación.", "DocumentX20-12883-FAB"),
+            ("Master Business Service Agreement\nCustomer Name: Fabrikam Industrial Group\nMBA/MBSA Number: U9104451\nIndustrial robotics and smart factory cloud terms.", "Form-MBSA-FAB"),
+            ("Customer Price Sheet\nCustomer Name: Fabrikam Industrial Group\nMBA/MBSA Number: U9104451\nQuote Number: 6200491.003\nBilling currency: EUR\nTotal deal value 1,240,000.00\nTenant ID: FABRIKAM-MFG-7721", "MSQuote-FAB-EUR")
+        ]),
+        ("Fabrikam-Enterprise-Enrollment-EU.pdf",
+        [
+            ("Enterprise Enrollment\nCustomer Name: Fabrikam Industrial Group\nMBA/MBSA Number: U9104451\nContract Number: 88301145\nBilling currency: EUR\nCovers 9,500 engineering and factory floor workstations.", "Form-EA-FAB")
+        ]),
+        ("Fabrikam-AI-Foundry-Amendment.pdf",
+        [
+            ("Amendment ID M130\nCustomer Name: Fabrikam Industrial Group\nContract Number: 88301145\nBilling currency: USD\nTotal deal value 490,000.00\nAzure AI Foundry provisioned throughput reservation.", "VLAmendments,M130-FAB")
+        ]),
+
+        // === Customer 6: AdventureWorks Cycles (MBA/MBSA U3309812, Contract 31094480, CAD & USD) ===
+        ("AdventureWorks-Full-Agreement-Bundle.pdf",
+        [
+            ("Program Signature Form\nCustomer Name: AdventureWorks Cycles\nMBA/MBSA Number: U3309812\nContract Number: 31094480\nNorth American retail and e-commerce signature packet.", "ProgramSignForm-AW"),
+            ("Enterprise Enrollment\nCustomer Name: AdventureWorks Cycles\nContract Number: 31094480\nBilling currency: CAD\nOmnichannel commerce and customer analytics platform.", "Form-EA-AW")
+        ]),
+        ("AdventureWorks-Price-Sheet-CAD.pdf",
+        [
+            ("Customer Price Sheet\nCustomer Name: AdventureWorks Cycles\nMBA/MBSA Number: U3309812\nQuote Number: 7741029.001\nBilling currency: CAD\nTotal deal value 530,000.00\nTenant ID: ADVWORKS-CA-3301", "MSQuote-AW-CAD")
+        ]),
+        ("AdventureWorks-Holiday-Scale-Amendment.pdf",
+        [
+            ("Amendment ID M130\nCustomer Name: AdventureWorks Cycles\nBilling currency: USD\nTotal deal value 175,000.00\nPeak season e-commerce capacity amendment.", "VLAmendments,M130-AW")
+        ]),
+
+        // === Customer 7: Tailwind Aerospace (MBA/MBSA U6190238, Contract 92014477, USD) ===
+        ("Tailwind-Aerospace-Defense-Packet.pdf",
+        [
+            ("Program Signature Form\nCustomer Name: Tailwind Aerospace\nMBA/MBSA Number: U6190238\nContract Number: 92014477\nAerospace engineering and simulation cloud program.", "ProgramSignForm-TW"),
+            ("Master Business Service Agreement\nCustomer Name: Tailwind Aerospace\nMBA/MBSA Number: U6190238\nExport control and high-performance computing terms.", "Form-MBSA-TW"),
+            ("Customer Price Sheet\nCustomer Name: Tailwind Aerospace\nMBA/MBSA Number: U6190238\nQuote Number: 8890124.007\nBilling currency: USD\nTotal deal value 2,400,000.00\nTenant ID: TAILWIND-AERO-880", "MSQuote-TW-USD")
+        ]),
+        ("Tailwind-Aerospace-Enrollment.pdf",
+        [
+            ("Enterprise Enrollment\nCustomer Name: Tailwind Aerospace\nMBA/MBSA Number: U6190238\nContract Number: 92014477\nBilling currency: USD\nIncludes digital twin simulation cluster licensing.", "Form-EA-TW")
+        ]),
+        ("Tailwind-HPC-Pricing-Amendment-M130.pdf",
+        [
+            ("Amendment ID M130\nCustomer Name: Tailwind Aerospace\nContract Number: 92014477\nBilling currency: USD\nTotal deal value 680,000.00\nGPU cluster step-up discount schedule.", "VLAmendments,M130-TW")
+        ]),
+        ("Iberia-Regional-Signature-Packet-ES.pdf",
+        [
+            ("Formulario de Firma del Programa\nNúmero de MBA/MBSA: U6190238\nNúmero de contrato: 92014477\nNombre de la entidad: Tailwind Aerospace\nCuando Microsoft haya formalizado debidamente el formulario de firma, el Cliente recibirá una copia de confirmación.", "X20-12661-01-Iberia-ES")
+        ])
+    ];
 
     private static object FormatJobResponse(DocumentJob job) => new
     {

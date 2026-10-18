@@ -866,7 +866,8 @@
       border: 1px solid var(--line);
       border-radius: 12px;
       position: relative;
-      overflow: hidden;
+      overflow-y: auto;
+      overflow-x: hidden;
       display: flex;
       flex-direction: column;
       min-height: 440px;
@@ -1974,13 +1975,17 @@
       const allEntityValuePairsMap = new Map();
 
       completedJobs.forEach(j => {
+        const seenInJob = new Set();
         (j.segments || []).forEach(s => {
           (s.extractedEntities || []).forEach(e => {
             if (!e || !e.name || !e.value) return;
             const eName = e.name.trim();
             const eVal = e.value.trim();
-            allEntityNamesMap.set(eName, (allEntityNamesMap.get(eName) || 0) + 1);
             const pairKey = `${eName}||${eVal}`;
+            if (seenInJob.has(pairKey)) return;
+            seenInJob.add(pairKey);
+
+            allEntityNamesMap.set(eName, (allEntityNamesMap.get(eName) || 0) + 1);
             if (!allEntityValuePairsMap.has(pairKey)) {
               allEntityValuePairsMap.set(pairKey, { name: eName, value: eVal, category: e.category || 'Entity', count: 0 });
             }
@@ -1995,11 +2000,13 @@
       const q = (graphEntitySearchQuery || '').trim().toLowerCase();
 
       completedJobs.forEach(j => {
-        (j.segments || []).forEach(s => {
-          const docNodeId = `doc:${j.jobId}:${s.segmentIndex}`;
-          const docLabel = s.identifiedDocumentName || s.documentTypeName || `Slice ${s.segmentIndex + 1}`;
-          const matchingEntitiesForSlice = [];
+        const docNodeId = `doc:${j.jobId}`;
+        const cleanFileName = (j.fileName || 'Document').replace(/\.pdf$/i, '');
+        const segs = j.segments || [];
+        const docTypesSummary = [...new Set(segs.map(s => s.identifiedDocumentName || s.documentTypeName).filter(Boolean))].join(', ');
+        const matchingEntitiesForDoc = [];
 
+        segs.forEach(s => {
           (s.extractedEntities || []).forEach(e => {
             if (!e || !e.name || !e.value) return;
             const eName = e.name.trim();
@@ -2012,7 +2019,7 @@
             if (graphSelectedEntityValuePair !== 'ALL' && graphSelectedEntityValuePair !== pairKey) {
               return;
             }
-            if (q && !`${eName} ${eVal} ${docLabel} ${j.fileName}`.toLowerCase().includes(q)) {
+            if (q && !`${eName} ${eVal} ${cleanFileName} ${docTypesSummary}`.toLowerCase().includes(q)) {
               return;
             }
 
@@ -2029,40 +2036,47 @@
               });
             }
 
-            matchingEntitiesForSlice.push(entNodeId);
+            matchingEntitiesForDoc.push(entNodeId);
           });
-
-          const uniqEntIds = [...new Set(matchingEntitiesForSlice)];
-          if (uniqEntIds.length > 0) {
-            const docNode = {
-              id: docNodeId,
-              type: 'doc',
-              jobId: j.jobId,
-              fileName: (j.fileName || 'Document').replace(/\.pdf$/i, ''),
-              sliceIndex: s.segmentIndex,
-              docName: docLabel,
-              pageRange: `p.${s.startPage}–${s.endPage}`,
-              entityIds: uniqEntIds,
-              isCurrentJob: j.jobId === selectedJobId
-            };
-            docNodes.push(docNode);
-
-            uniqEntIds.forEach(entNodeId => {
-              edges.push({ source: docNodeId, target: entNodeId });
-              const entNode = entityNodesMap.get(entNodeId);
-              if (entNode) {
-                entNode.connectedDocs.push(docNode);
-              }
-            });
-          }
         });
+
+        const uniqEntIds = [...new Set(matchingEntitiesForDoc)];
+        if (uniqEntIds.length > 0) {
+          const docNode = {
+            id: docNodeId,
+            type: 'doc',
+            jobId: j.jobId,
+            fileName: cleanFileName,
+            sliceIndex: 0,
+            docName: cleanFileName,
+            pageRange: `${j.totalPages || segs.length} pp · ${segs.length} slice${segs.length === 1 ? '' : 's'}`,
+            docTypesSummary,
+            entityIds: uniqEntIds,
+            isCurrentJob: j.jobId === selectedJobId
+          };
+          docNodes.push(docNode);
+
+          uniqEntIds.forEach(entNodeId => {
+            edges.push({ source: docNodeId, target: entNodeId });
+            const entNode = entityNodesMap.get(entNodeId);
+            if (entNode) {
+              entNode.connectedDocs.push(docNode);
+            }
+          });
+        }
       });
+
+      // Sort entities so shared cross-document entities appear first
+      const sortedEntities = [...entityNodesMap.values()].sort((a, b) => b.connectedDocs.length - a.connectedDocs.length);
+      const sortedPairs = [...allEntityValuePairsMap.entries()]
+        .map(([pairKey, info]) => ({ pairKey, ...info }))
+        .sort((a, b) => b.count - a.count);
 
       return {
         allEntityNames: [...allEntityNamesMap.entries()].map(([name, count]) => ({ name, count })),
-        allEntityValuePairs: [...allEntityValuePairsMap.entries()].map(([pairKey, info]) => ({ pairKey, ...info })),
+        allEntityValuePairs: sortedPairs,
         docNodes,
-        entityNodes: [...entityNodesMap.values()],
+        entityNodes: sortedEntities,
         edges
       };
     }
@@ -2179,7 +2193,8 @@
         const borderCol = isFocused ? '#4b72fe' : (d.isCurrentJob ? '#16161d' : '#c9c5dc');
         const strokeW = isFocused ? '2.4' : '1.5';
         const titleShort = d.docName.length > 26 ? d.docName.slice(0, 25) + '…' : d.docName;
-        const subShort = `${d.fileName.slice(0, 18)} · Slice ${d.sliceIndex + 1} (${d.pageRange})`;
+        const subRaw = `${d.pageRange}${d.docTypesSummary ? ' · ' + d.docTypesSummary : ''}`;
+        const subShort = subRaw.length > 32 ? subRaw.slice(0, 31) + '…' : subRaw;
 
         return `
           <g class="graph-node" data-node-id="${escapeHtml(d.id)}" transform="translate(${d.x}, ${d.y})" style="opacity:${dimmed ? '0.28' : '1'};cursor:pointer;" onclick="focusGraphNode('${escapeHtml(d.id)}')">
@@ -2228,10 +2243,10 @@
             Connected Documents (${focusedNode.connectedDocs.length})
           </div>
           ${focusedNode.connectedDocs.map(d => `
-            <div class="graph-inspector-item" onclick="jumpFromGraphToSlice('${escapeHtml(d.jobId)}', ${d.sliceIndex})">
+            <div class="graph-inspector-item" onclick="jumpFromGraphToSlice('${escapeHtml(d.jobId)}', -1)">
               <div style="font-weight:600;font-size:13.5px;color:var(--text-primary);">${escapeHtml(d.docName)}</div>
-              <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(d.fileName)} · Slice ${d.sliceIndex + 1} (${escapeHtml(d.pageRange)})</div>
-              <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-top:2px;">Open Document PDF ↗</div>
+              <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">${escapeHtml(d.pageRange)}</div>
+              <div style="font-family:var(--font-mono);font-size:11px;color:var(--accent);margin-top:2px;">Open Document ↗</div>
             </div>
           `).join('')}
         `;
@@ -2239,14 +2254,14 @@
         const connectedEntities = focusedNode.entityIds.map(id => nodeById.get(id)).filter(Boolean);
         inspectorHtml = `
           <div style="display:flex;align-items:center;justify-content:space-between;">
-            <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Document Slice Selected</span>
+            <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Document Selected</span>
             <button type="button" class="text-link-btn" onclick="focusGraphNode(null)">Show All</button>
           </div>
           <div>
             <div style="font-size:16px;font-weight:600;color:var(--text-primary);">${escapeHtml(focusedNode.docName)}</div>
-            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);margin-top:2px;">${escapeHtml(focusedNode.fileName)} · Slice ${focusedNode.sliceIndex + 1} (${escapeHtml(focusedNode.pageRange)})</div>
+            <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);margin-top:2px;">${escapeHtml(focusedNode.pageRange)}</div>
           </div>
-          <button type="button" class="text-link-btn" style="width:fit-content;" onclick="jumpFromGraphToSlice('${escapeHtml(focusedNode.jobId)}', ${focusedNode.sliceIndex})">Open PDF Viewer ↗</button>
+          <button type="button" class="text-link-btn" style="width:fit-content;" onclick="jumpFromGraphToSlice('${escapeHtml(focusedNode.jobId)}', -1)">Open Document ↗</button>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;margin-top:4px;">
             Extracted Entities (${connectedEntities.length})
           </div>
@@ -2261,9 +2276,9 @@
       } else {
         inspectorHtml = `
           <div>
-            <div style="font-size:14.5px;font-weight:600;color:var(--text-primary);">Entity Knowledge Graph</div>
+            <div style="font-size:14.5px;font-weight:600;color:var(--text-primary);">Cross-Document Entity Graph</div>
             <div style="font-size:12.5px;color:var(--text-secondary);margin-top:3px;">
-              Showing <strong>${docNodes.length}</strong> document slice${docNodes.length === 1 ? '' : 's'} connected across <strong>${entityNodes.length}</strong> filtered entit${entityNodes.length === 1 ? 'y' : 'ies'}. Click any node to inspect connections or filter by entity above.
+              Showing <strong>${docNodes.length}</strong> document${docNodes.length === 1 ? '' : 's'} connected across <strong>${entityNodes.length}</strong> filtered entit${entityNodes.length === 1 ? 'y' : 'ies'}. Click any node to inspect connections or filter by entity above.
             </div>
           </div>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;margin-top:4px;">
@@ -2289,9 +2304,9 @@
               <button type="button" class="ghost-action-btn" onclick="resetGraphFilters()">Reset Entity Filters</button>
             </div>
           ` : `
-            <svg class="graph-svg" id="entityGraphSvg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMid meet">
+            <svg class="graph-svg" id="entityGraphSvg" style="min-height:${height}px;" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMin meet">
               <g id="entityGraphViewport" transform="translate(${graphPanX}, ${graphPanY}) scale(${graphZoom})">
-                <text x="${docX}" y="28" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.08em" fill="#8f92a6">DOCUMENTS / SLICES (${docNodes.length})</text>
+                <text x="${docX}" y="28" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.08em" fill="#8f92a6">DOCUMENTS (${docNodes.length})</text>
                 <text x="${entX}" y="28" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.08em" fill="#8f92a6">EXTRACTED ENTITIES (${entityNodes.length})</text>
                 ${edgesSvg}
                 ${docNodesSvg}
