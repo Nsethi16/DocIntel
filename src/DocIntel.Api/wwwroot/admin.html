@@ -3315,7 +3315,7 @@
         container.innerHTML = `
           <div style="padding:28px 14px;text-align:center;color:var(--text-secondary);font-size:12.5px;line-height:1.5;">
             No documents processed for <strong>${escapeHtml(currentTenant ? currentTenant.displayName : 'this tenant')}</strong> yet.<br/><br/>
-            Click <strong>Upload File</strong> below or <strong>+ Sample run</strong> above to process a document.
+            Click <strong>Upload File</strong> below to process a document.
           </div>
         `;
         return;
@@ -3436,7 +3436,7 @@
         body.innerHTML = `
           <div class="result-card" style="text-align:center;padding:48px 24px;color:var(--text-secondary);">
             <div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:6px;">No document selected</div>
-            <div style="font-size:13px;">Upload a PDF using <strong>Upload File</strong> on the left or click <strong>+ Sample run</strong> to inspect results for this tenant.</div>
+            <div style="font-size:13px;">Upload a PDF using <strong>Upload File</strong> on the left to inspect results for this tenant.</div>
           </div>
         `;
         return;

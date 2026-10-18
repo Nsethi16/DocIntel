@@ -829,7 +829,6 @@
 
     <div class="drawer-subbar">
       <span id="docListCountLabel">0 documents</span>
-      <button type="button" class="ghost-action-btn" onclick="submitSampleDocumentJob()" title="Run built-in sample contract packet">+ Sample</button>
     </div>
 
     <div class="doc-items-scroll" id="docItemsList"></div>
@@ -1013,7 +1012,7 @@
       if (filtered.length === 0) {
         container.innerHTML = `
           <div style="padding:28px 12px;text-align:center;color:var(--text-secondary);font-size:12.5px;line-height:1.5;">
-            No documents found.<br/>Upload a PDF or click <strong>+ Sample</strong>.
+            No documents found.<br/>Upload a PDF below to get started.
           </div>
         `;
         return;
@@ -1070,18 +1069,6 @@
       } finally {
         lbl.textContent = 'Upload PDF';
         inputEl.value = '';
-      }
-    }
-
-    async function submitSampleDocumentJob() {
-      if (!currentTenant) return;
-      const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/jobs`, {
-        method: 'POST'
-      });
-      if (resp.ok) {
-        const accepted = await resp.json();
-        showToast('Submitted sample contract packet');
-        await loadTenantJobs(accepted.jobId);
       }
     }
 
