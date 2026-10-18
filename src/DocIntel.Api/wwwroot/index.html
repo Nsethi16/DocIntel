@@ -515,7 +515,15 @@
     }
 
     .content-column {
-      max-width: 960px;
+      width: 100%;
+      max-width: 100%;
+    }
+
+    .slices-wide-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+      gap: 20px 32px;
+      align-items: start;
     }
 
     .packet-summary-line {
@@ -587,7 +595,7 @@
       font-size: 13.5px;
       line-height: 1.65;
       color: var(--text-body);
-      max-width: 74ch;
+      max-width: 100%;
       margin: 0 0 12px 0;
       white-space: pre-wrap;
     }
@@ -1195,7 +1203,7 @@
           `;
         }).join('');
 
-        body.innerHTML = `<div class="content-column">${summaryLineHtml}${sectionsHtml}</div>`;
+        body.innerHTML = `<div class="content-column">${summaryLineHtml}<div class="slices-wide-grid">${sectionsHtml}</div></div>`;
         return;
       }
 

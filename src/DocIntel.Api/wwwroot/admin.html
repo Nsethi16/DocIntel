@@ -428,10 +428,15 @@
     }
 
     .features-grid {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
+      gap: 14px;
       width: 100%;
+      align-items: start;
+    }
+
+    .feature-tile:has(.feature-drawer.open) {
+      grid-column: 1 / -1;
     }
 
     .feature-tile {
@@ -583,9 +588,9 @@
     }
 
     .models-harness-bar {
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+      gap: 14px;
       margin-bottom: 24px;
       width: 100%;
     }
