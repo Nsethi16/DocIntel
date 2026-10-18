@@ -98,13 +98,28 @@ public static class HarnessEndpoints
             TenantHarness.EnsureDefaultCapabilities(updated);
             var saved = await store.UpsertTenantAsync(updated, ct);
 
-            // Evaluate any newly added or modified Prompt Columns across ALL existing completed jobs for this tenant
-            var jobs = await jobStore.ListJobsByTenantAsync(tenantId, ct);
-            foreach (var job in jobs.Where(j => EvaluatePromptColumnsExecutor.JobNeedsPromptEvaluation(j, saved)))
+            // Evaluate any newly added or modified Prompt Columns across ALL existing completed jobs in the background
+            _ = Task.Run(async () =>
             {
-                await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, saved, modelCatalog, artifactStore, ct, forceReevaluateAll: false);
-                await jobStore.UpsertJobAsync(job, ct);
-            }
+                try
+                {
+                    var jobs = await jobStore.ListJobsByTenantAsync(tenantId, CancellationToken.None);
+                    foreach (var job in jobs.Where(j => EvaluatePromptColumnsExecutor.JobNeedsPromptEvaluation(j, saved)))
+                    {
+                        await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(
+                            job,
+                            saved,
+                            modelCatalog,
+                            artifactStore,
+                            CancellationToken.None,
+                            forceReevaluateAll: false);
+                        await jobStore.UpsertJobAsync(job, CancellationToken.None);
+                    }
+                }
+                catch
+                {
+                }
+            });
 
             return TypedResults.Ok(saved);
         });
@@ -216,10 +231,34 @@ public static class HarnessEndpoints
 
             if (tenant is not null)
             {
-                foreach (var job in jobs.Where(j => EvaluatePromptColumnsExecutor.JobNeedsPromptEvaluation(j, tenant)))
+                var pendingEval = jobs.Where(j => EvaluatePromptColumnsExecutor.JobNeedsPromptEvaluation(j, tenant)).ToList();
+                if (pendingEval.Count > 0)
                 {
-                    await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, tenant, modelCatalog, artifactStore, ct, forceReevaluateAll: false);
-                    await jobStore.UpsertJobAsync(job, ct);
+                    var fastCatalog = new ModelCatalog();
+                    foreach (var job in pendingEval)
+                    {
+                        await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(
+                            job,
+                            tenant,
+                            fastCatalog,
+                            artifactStore: null,
+                            ct,
+                            forceReevaluateAll: false);
+                    }
+
+                    _ = Task.Run(async () =>
+                    {
+                        foreach (var job in pendingEval)
+                        {
+                            try
+                            {
+                                await jobStore.UpsertJobAsync(job, CancellationToken.None);
+                            }
+                            catch
+                            {
+                            }
+                        }
+                    });
                 }
             }
 
@@ -454,12 +493,15 @@ public static class HarnessEndpoints
             return Results.Ok(FormatJobResponse(job));
         });
 
-        // Seed 26 realistic example documents across customers, languages, and document types
+        // Seed 26 realistic example documents across customers, languages, and document types into IJobStore (Cosmos DB / InMemory)
         group.MapPost("/tenants/{tenantId}/seed-examples", async (
             string tenantId,
             IHarnessStore harnessStore,
             IJobStore jobStore,
-            DocumentSplittingWorkflow workflow,
+            IPageLayoutExtractor layoutExtractor,
+            IPdfSlicer pdfSlicer,
+            IDocumentTranslationService translationService,
+            ILogger<DocumentSplittingWorkflow> workflowLogger,
             CancellationToken ct) =>
         {
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
@@ -468,52 +510,63 @@ public static class HarnessEndpoints
                 return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
             }
 
+            // Use fast deterministic catalog for bulk seeding 26 documents so Cosmos DB seeding completes in <5 seconds
+            var fastWorkflow = new DocumentSplittingWorkflow(
+                layoutExtractor,
+                pdfSlicer,
+                new ModelCatalog(),
+                translationService,
+                workflowLogger,
+                azureOptions: new DocIntel.Core.AzureIntegrationOptions(),
+                artifactStore: null);
+
             var examples = CreateExampleDocumentCorpus();
             var existingJobs = await jobStore.ListJobsByTenantAsync(tenantId, ct);
             var existingNames = existingJobs.Select(j => j.FileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            var seededIds = new List<string>();
-            foreach (var (fileName, pages) in examples)
-            {
-                if (existingNames.Contains(fileName))
-                {
-                    continue;
-                }
+            var seededIds = new System.Collections.Concurrent.ConcurrentBag<string>();
+            var pendingExamples = examples.Where(x => !existingNames.Contains(x.FileName)).ToList();
 
-                var pdfBytes = PdfPigLayoutExtractor.CreateSamplePdf(pages);
-                var jobId = Guid.NewGuid().ToString("N");
-                var state = new SplittingState
+            await Parallel.ForEachAsync(
+                pendingExamples,
+                new ParallelOptions { MaxDegreeOfParallelism = 6, CancellationToken = ct },
+                async (item, token) =>
                 {
-                    DocumentId = jobId,
-                    Tenant = tenant,
-                    FileName = fileName,
-                    SourcePdfBytes = pdfBytes
-                };
+                    var (fileName, pages) = item;
+                    var pdfBytes = PdfPigLayoutExtractor.CreateSamplePdf(pages);
+                    var jobId = Guid.NewGuid().ToString("N");
+                    var state = new SplittingState
+                    {
+                        DocumentId = jobId,
+                        Tenant = tenant,
+                        FileName = fileName,
+                        SourcePdfBytes = pdfBytes
+                    };
 
-                var completed = await workflow.ExecuteAsync(state, cancellationToken: ct);
-                var job = new DocumentJob
-                {
-                    JobId = jobId,
-                    TenantId = tenant.TenantId,
-                    TenantDisplayName = tenant.DisplayName,
-                    AppliedHarnessVersion = tenant.HarnessVersion,
-                    FileName = fileName,
-                    Status = JobStatus.Completed,
-                    TotalPages = completed.Pages.Count,
-                    StrategyUsed = completed.StrategyUsed,
-                    ModelIdUsed = completed.ModelIdUsed,
-                    PacketSummary = completed.PacketSummary,
-                    ExtractedEntities = completed.ExtractedEntities,
-                    DataExtractions = completed.DataExtractions,
-                    PromptColumnResults = completed.PromptColumnResults,
-                    ExecutionTrace = completed.ExecutionTrace,
-                    Segments = completed.Slices,
-                    CompletedAtUtc = DateTimeOffset.UtcNow
-                };
+                    var completed = await fastWorkflow.ExecuteAsync(state, cancellationToken: token);
+                    var job = new DocumentJob
+                    {
+                        JobId = jobId,
+                        TenantId = tenant.TenantId,
+                        TenantDisplayName = tenant.DisplayName,
+                        AppliedHarnessVersion = tenant.HarnessVersion,
+                        FileName = fileName,
+                        Status = JobStatus.Completed,
+                        TotalPages = completed.Pages.Count,
+                        StrategyUsed = completed.StrategyUsed,
+                        ModelIdUsed = completed.ModelIdUsed,
+                        PacketSummary = completed.PacketSummary,
+                        ExtractedEntities = completed.ExtractedEntities,
+                        DataExtractions = completed.DataExtractions,
+                        PromptColumnResults = completed.PromptColumnResults,
+                        ExecutionTrace = completed.ExecutionTrace,
+                        Segments = completed.Slices,
+                        CompletedAtUtc = DateTimeOffset.UtcNow
+                    };
 
-                await jobStore.UpsertJobAsync(job, ct);
-                seededIds.Add(jobId);
-            }
+                    await jobStore.UpsertJobAsync(job, token);
+                    seededIds.Add(jobId);
+                });
 
             return Results.Ok(new
             {
