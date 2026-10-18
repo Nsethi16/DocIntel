@@ -1011,7 +1011,9 @@
       background: #e9e8f0;
       padding: 3px;
       border-radius: 8px;
-      margin-bottom: 10px;
+      height: 32px;
+      align-items: center;
+      margin: 0;
     }
 
     .workspace-mode-btn {
@@ -1021,7 +1023,8 @@
       font-family: var(--font-sans);
       font-size: 12px;
       font-weight: 500;
-      padding: 5.5px 6px;
+      height: 26px;
+      padding: 0 6px;
       border-radius: 6px;
       cursor: pointer;
       display: inline-flex;
@@ -1043,7 +1046,7 @@
       box-shadow: 0 1px 2px rgba(22, 22, 29, 0.08);
     }
 
-    /* Self-Contained Copilot Ask AI Layout WITHIN Ask AI View (Matches Screenshot) */
+    /* Self-Contained Copilot Ask AI Layout WITHIN Ask AI View (Aligned 1:1 with Left Panel) */
     .workspace-body[data-tab="ask"] {
       background: #ffffff;
       padding: 0;
@@ -1053,91 +1056,90 @@
     }
 
     .ask-inner-sidebar {
-      width: 235px;
-      background: #fbfbfc;
+      width: 250px;
+      background: var(--drawer-surface);
       border-right: 1px solid var(--line);
-      padding: 12px 10px;
+      padding: 0;
       display: flex;
       flex-direction: column;
       flex-shrink: 0;
-      overflow-y: auto;
-      overflow-x: hidden;
-      transition: width 0.18s cubic-bezier(0.22, 1, 0.36, 1), padding 0.18s ease, opacity 0.14s ease;
+      overflow: hidden;
+      user-select: none;
+      transition: width 0.2s cubic-bezier(0.22, 1, 0.36, 1), opacity 0.16s ease;
     }
 
     .ask-inner-sidebar.collapsed {
       width: 0;
-      padding: 0;
       border-right: 0;
       opacity: 0;
       pointer-events: none;
     }
 
-    .ask-main-topbar {
-      width: 100%;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: 12px 20px 0 20px;
-      flex-shrink: 0;
+    .ask-panel-title {
+      font-family: var(--font-sans);
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--text-primary);
+      padding: 4px 6px;
+      line-height: 20px;
     }
 
     .ask-new-chat-pill {
       width: 100%;
-      border: none;
-      background: #ededf2;
-      color: #1f1f24;
+      height: 32px;
+      border: 1px solid var(--line);
+      background: #ffffff;
+      color: var(--text-primary);
       font-family: var(--font-sans);
-      font-size: 13.5px;
-      font-weight: 500;
-      padding: 8px 12px;
-      border-radius: 999px;
+      font-size: 12.5px;
+      font-weight: 600;
+      padding: 0 11px;
+      border-radius: 8px;
       cursor: pointer;
       display: flex;
       align-items: center;
-      gap: 9px;
+      gap: 8px;
       text-align: left;
-      transition: background 0.12s ease;
+      box-shadow: 0 1px 2px rgba(22, 22, 29, 0.05);
+      transition: background 0.12s ease, border-color 0.12s ease;
     }
 
     .ask-new-chat-pill:hover {
-      background: #e2e2ea;
+      background: var(--accent-soft);
+      border-color: var(--accent-border);
+      color: var(--accent-ink);
     }
 
     .ask-new-chat-pill svg {
-      width: 16px;
-      height: 16px;
+      width: 15px;
+      height: 15px;
       flex-shrink: 0;
-      color: #242429;
-    }
-
-    .ask-chats-section-label {
-      font-family: var(--font-sans);
-      font-size: 12px;
-      color: #6e7180;
-      padding: 18px 10px 6px 10px;
+      color: currentColor;
     }
 
     .chat-history-item {
-      padding: 7px 10px;
+      padding: 9px 11px;
       border-radius: 8px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 8px;
-      font-size: 13px;
-      color: #2c2d35;
+      font-size: 13.5px;
+      font-weight: 500;
+      color: var(--text-primary);
       transition: background 0.12s ease;
     }
 
     .chat-history-item:hover {
-      background: #ededf2;
+      background: var(--surface-soft);
     }
 
     .chat-history-item.selected {
-      background: #e8e8ee;
-      font-weight: 500;
+      background: #ffffff;
+      font-weight: 600;
+      color: var(--accent-ink);
+      box-shadow: 0 1px 3px rgba(22, 22, 29, 0.05), 0 0 0 1px var(--line);
     }
 
     .chat-history-title {
@@ -1452,7 +1454,18 @@
     let tenantChats = [];
     let activeChatId = null;
     let askInnerSidebarCollapsed = false;
+    let askChatSearchQuery = '';
     let jobPollTimer = null;
+
+    function onAskChatSearchInput(val) {
+      askChatSearchQuery = val || '';
+      renderSelectedDocument();
+      const inp = document.getElementById('askChatSearchInput');
+      if (inp) {
+        inp.focus();
+        inp.setSelectionRange(inp.value.length, inp.value.length);
+      }
+    }
 
     function toggleAskInnerSidebar() {
       askInnerSidebarCollapsed = !askInnerSidebarCollapsed;
@@ -3271,7 +3284,14 @@
       const isEmptyChat = messages.length === 0 && !askAiLoading;
       const isDocDrawerCollapsed = document.getElementById('docListPane')?.classList.contains('collapsed');
 
-      const chatListHtml = tenantChats.map(c => {
+      const chatQ = (askChatSearchQuery || '').trim().toLowerCase();
+      const visibleChats = tenantChats.filter(c => {
+        if (!chatQ) return true;
+        const hay = `${c.title || ''} ${(c.messages || []).map(m => m.text || '').join(' ')}`.toLowerCase();
+        return hay.includes(chatQ);
+      });
+
+      const chatListHtml = visibleChats.map(c => {
         const isSelected = c.id === activeChatId;
         return `
           <div class="chat-history-item ${isSelected ? 'selected' : ''}" title="${escapeHtml(c.title || 'New chat')}" onclick="selectAskAiChat('${escapeHtml(c.id)}')">
@@ -3283,43 +3303,56 @@
 
       const leftChatRailHtml = `
         <aside class="ask-inner-sidebar ${askInnerSidebarCollapsed ? 'collapsed' : ''}" id="askInnerSidebar">
-          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;padding:0 2px;">
-            <div style="display:flex;align-items:center;gap:6px;">
-              ${isDocDrawerCollapsed ? `
-                <button type="button" class="icon-toggle-btn" title="Expand Documents panel" onclick="toggleDocListPane()">
-                  <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
-                    <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
-                    <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
-                  </svg>
-                </button>
-              ` : ''}
-              <span style="font-size:12.5px;font-weight:600;color:var(--text-secondary);">Ask AI</span>
+          <div class="drawer-top">
+            <div class="drawer-brand-row">
+              <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+                ${isDocDrawerCollapsed ? `
+                  <button type="button" class="icon-toggle-btn" title="Expand Documents panel" onclick="toggleDocListPane()">
+                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                      <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
+                      <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
+                    </svg>
+                  </button>
+                ` : ''}
+                <span class="ask-panel-title">Ask AI</span>
+              </div>
+              <button type="button" class="icon-toggle-btn" title="Collapse Ask AI panel" onclick="toggleAskInnerSidebar()">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
+                  <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
+                </svg>
+              </button>
             </div>
-            <button type="button" class="icon-toggle-btn" title="Collapse Ask AI panel" onclick="toggleAskInnerSidebar()">
-              <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
-                <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
-                <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
+
+            ${isDocDrawerCollapsed ? `
+              <div class="workspace-mode-switcher">
+                <button type="button" class="workspace-mode-btn" onclick="setWorkspaceMode('documents')">Documents</button>
+                <button type="button" class="workspace-mode-btn" onclick="setWorkspaceMode('graph')">Graph</button>
+                <button type="button" class="workspace-mode-btn active" onclick="setWorkspaceMode('ask')">✦ Ask AI</button>
+              </div>
+            ` : ''}
+
+            <button type="button" class="ask-new-chat-pill" onclick="startNewAskAiChat()">
+              <svg viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
               </svg>
+              <span>New chat</span>
             </button>
+
+            <div class="search-box">
+              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                <circle cx="8.5" cy="8.5" r="5.5" />
+                <path d="M13 13l4 4" stroke-linecap="round" />
+              </svg>
+              <input type="text" id="askChatSearchInput" placeholder="Search chats..." value="${escapeHtml(askChatSearchQuery)}" oninput="onAskChatSearchInput(this.value)" />
+            </div>
           </div>
 
-          ${isDocDrawerCollapsed ? `
-            <div class="workspace-mode-switcher" style="margin-bottom:10px;">
-              <button type="button" class="workspace-mode-btn" onclick="setWorkspaceMode('documents')">Documents</button>
-              <button type="button" class="workspace-mode-btn" onclick="setWorkspaceMode('graph')">Graph</button>
-              <button type="button" class="workspace-mode-btn active" onclick="setWorkspaceMode('ask')">✦ Ask AI</button>
-            </div>
-          ` : ''}
+          <div class="drawer-subbar">
+            <span>${visibleChats.length} chat${visibleChats.length === 1 ? '' : 's'}</span>
+          </div>
 
-          <button type="button" class="ask-new-chat-pill" onclick="startNewAskAiChat()">
-            <svg viewBox="0 0 20 20" fill="currentColor">
-              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
-            </svg>
-            <span>New chat</span>
-          </button>
-
-          <div class="ask-chats-section-label">Chats</div>
-          <div style="display:flex;flex-direction:column;gap:2px;">
+          <div class="doc-items-scroll">
             ${chatListHtml}
           </div>
         </aside>
