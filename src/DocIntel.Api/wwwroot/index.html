@@ -808,7 +808,6 @@
     <div class="drawer-top">
       <div class="drawer-brand-row">
         <div class="tenant-switcher-wrap">
-          <span class="tenant-mini-monogram" id="drawerMonogram">CL</span>
           <select class="tenant-select" id="tenantSelectDropdown" onchange="onTenantSwitched(this.value)" title="Select tenant workspace"></select>
         </div>
         <button type="button" class="icon-toggle-btn" title="Hide documents drawer" onclick="toggleDocListPane()">
@@ -861,7 +860,6 @@
               <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
             </svg>
           </button>
-          <div class="meridian-monogram" id="headerMonogram">CL</div>
           <h1 class="meridian-title" id="selectedDocTitle">Select or upload a document</h1>
           <span class="meridian-folder-meta" id="selectedDocFolderMeta">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -961,10 +959,6 @@
         if (currentTenant && currentTenant.tenantId === t.tenantId) opt.selected = true;
         sel.appendChild(opt);
       });
-
-      const mono = currentTenant ? getMonogram(currentTenant.displayName) : 'DI';
-      document.getElementById('drawerMonogram').textContent = mono;
-      document.getElementById('headerMonogram').textContent = mono;
     }
 
     async function onTenantSwitched(tenantId) {
