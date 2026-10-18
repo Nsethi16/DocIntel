@@ -951,6 +951,45 @@
       background: var(--accent-soft);
     }
 
+    /* Tenant-Level View Switcher (Documents vs Cross-Document Graph) */
+    .workspace-mode-switcher {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px;
+      background: #e9e8f0;
+      padding: 3px;
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+
+    .workspace-mode-btn {
+      border: none;
+      background: transparent;
+      color: var(--text-secondary);
+      font-family: var(--font-sans);
+      font-size: 12.5px;
+      font-weight: 500;
+      padding: 5.5px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      transition: all 0.14s ease;
+    }
+
+    .workspace-mode-btn:hover {
+      color: var(--text-primary);
+    }
+
+    .workspace-mode-btn.active {
+      background: #ffffff;
+      color: var(--text-primary);
+      font-weight: 600;
+      box-shadow: 0 1px 2px rgba(22, 22, 29, 0.08);
+    }
+
     .toast {
       position: fixed;
       bottom: 20px;
@@ -981,6 +1020,11 @@
             <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
           </svg>
         </button>
+      </div>
+
+      <div class="workspace-mode-switcher" role="tablist" aria-label="Workspace mode">
+        <button type="button" class="workspace-mode-btn active" id="btnModeDocuments" onclick="setWorkspaceMode('documents')">Documents</button>
+        <button type="button" class="workspace-mode-btn" id="btnModeGraph" onclick="setWorkspaceMode('graph')">Document Graph</button>
       </div>
 
       <div class="search-box">
@@ -1035,11 +1079,12 @@
 
         <div class="meridian-actions">
           <div id="sliceSelectorRow" style="display:flex;align-items:center;gap:6px;"></div>
-          <button type="button" class="ghost-action-btn" onclick="exportSelectedJobJson()" title="Download extracted JSON">Export</button>
+          <button type="button" class="ghost-action-btn" id="btnHeaderToggleGraph" onclick="setWorkspaceMode(workspaceMode === 'graph' ? 'documents' : 'graph')" title="Toggle Cross-Document Entity Graph">Document Graph</button>
+          <button type="button" class="ghost-action-btn" id="btnHeaderExportJson" onclick="exportSelectedJobJson()" title="Download extracted JSON">Export</button>
         </div>
       </div>
 
-      <div class="meridian-nav-row">
+      <div class="meridian-nav-row" id="meridianNavRow">
         <nav class="meridian-tabs" id="insightsTabBar" aria-label="Document views">
           <button type="button" class="meridian-tab active" data-tab="insights" onclick="setDocResultTab('insights')">Insights</button>
           <button type="button" class="meridian-tab" data-tab="document" onclick="setDocResultTab('document')">View Document</button>
@@ -1061,10 +1106,10 @@
     let tenantJobs = [];
     let selectedJobId = null;
     let selectedSliceIndex = -1; // -1 = All Slices
-    let docResultTab = 'insights'; // 'insights' | 'document' | 'entities' | 'graph' | 'structured' | 'metadata' | 'prompt:<id>'
+    let workspaceMode = 'documents'; // 'documents' | 'graph' (Cross-document tenant-level graph)
+    let docResultTab = 'insights'; // 'insights' | 'document' | 'entities' | 'structured' | 'metadata' | 'prompt:<id>'
     let selectedEntityCategory = 'ALL';
     let selectedPromptFilterView = 'ALL'; // 'ALL' | 'MATCHED' | 'SKIPPED'
-    let graphScope = 'ALL_DOCS'; // 'ALL_DOCS' | 'CURRENT_DOC'
     let graphSelectedEntityNames = new Set(); // empty = All entity names
     let graphSelectedEntityValuePair = 'ALL'; // 'ALL' or 'EntityName||EntityValue'
     let graphEntitySearchQuery = '';
@@ -1074,6 +1119,20 @@
     let graphPanY = 0;
     let graphCustomNodePositions = {};
     let jobPollTimer = null;
+
+    function setWorkspaceMode(mode) {
+      workspaceMode = mode;
+      const btnDocs = document.getElementById('btnModeDocuments');
+      const btnGraph = document.getElementById('btnModeGraph');
+      const btnHeaderGraph = document.getElementById('btnHeaderToggleGraph');
+      if (btnDocs) btnDocs.classList.toggle('active', mode === 'documents');
+      if (btnGraph) btnGraph.classList.toggle('active', mode === 'graph');
+      if (btnHeaderGraph) {
+        btnHeaderGraph.textContent = mode === 'graph' ? '← Back to Document' : 'Document Graph';
+      }
+      renderDocumentList();
+      renderSelectedDocument();
+    }
 
     function getMonogram(name) {
       return String(name || 'DI')
@@ -1248,6 +1307,10 @@
         row.onclick = () => {
           selectedJobId = job.jobId;
           selectedSliceIndex = -1;
+          if (workspaceMode === 'graph') {
+            setWorkspaceMode('documents');
+            return;
+          }
           renderDocumentList();
           renderSelectedDocument();
         };
@@ -1377,6 +1440,13 @@
     function jumpFromGraphToSlice(jobId, sliceIdx) {
       selectedJobId = jobId;
       selectedSliceIndex = sliceIdx;
+      workspaceMode = 'documents';
+      const btnDocs = document.getElementById('btnModeDocuments');
+      const btnGraph = document.getElementById('btnModeGraph');
+      const btnHeaderGraph = document.getElementById('btnHeaderToggleGraph');
+      if (btnDocs) btnDocs.classList.add('active');
+      if (btnGraph) btnGraph.classList.remove('active');
+      if (btnHeaderGraph) btnHeaderGraph.textContent = 'Document Graph';
       renderDocumentList();
       setDocResultTab('document');
     }
@@ -1422,6 +1492,23 @@
     function renderSelectedDocument() {
       const body = document.getElementById('docCenterBody');
       const sliceRow = document.getElementById('sliceSelectorRow');
+      const navRow = document.getElementById('meridianNavRow');
+      const exportBtn = document.getElementById('btnHeaderExportJson');
+
+      if (workspaceMode === 'graph') {
+        body.dataset.tab = 'graph';
+        if (navRow) navRow.style.display = 'none';
+        if (exportBtn) exportBtn.style.display = 'none';
+        sliceRow.innerHTML = '';
+        const completedCount = tenantJobs.filter(j => j.status === 'Completed').length;
+        document.getElementById('selectedDocTitle').textContent = currentTenant ? `${currentTenant.displayName} — Document Graph` : 'Document Graph';
+        document.getElementById('selectedDocMetaText').textContent = `${completedCount} document${completedCount === 1 ? '' : 's'}`;
+        renderDocumentGraphTab(body);
+        return;
+      }
+
+      if (navRow) navRow.style.display = '';
+      if (exportBtn) exportBtn.style.display = '';
       body.dataset.tab = docResultTab;
 
       const job = tenantJobs.find(j => j.jobId === selectedJobId);
@@ -1487,7 +1574,6 @@
         { id: 'insights', label: 'Insights' },
         { id: 'document', label: 'View Document' },
         { id: 'entities', label: `Entities${totalEntitiesCount > 0 ? ` <span class="tab-count">${totalEntitiesCount}</span>` : ''}` },
-        { id: 'graph', label: 'Document Graph' },
         { id: 'structured', label: `Structured Data${totalStructuredCount > 0 ? ` <span class="tab-count">${totalStructuredCount}</span>` : ''}` },
         { id: 'metadata', label: 'Metadata' }
       ].map(t => `
@@ -1882,18 +1968,13 @@
     }
 
     function computeFilteredGraphData() {
-      const completedJobs = (graphScope === 'CURRENT_DOC' && selectedJobId)
-        ? tenantJobs.filter(j => j.jobId === selectedJobId)
-        : tenantJobs.filter(j => j.status === 'Completed');
+      const completedJobs = tenantJobs.filter(j => j.status === 'Completed');
 
       const allEntityNamesMap = new Map();
       const allEntityValuePairsMap = new Map();
 
       completedJobs.forEach(j => {
-        const segs = (j.jobId === selectedJobId && selectedSliceIndex !== -1)
-          ? (j.segments || []).filter(s => s.segmentIndex === selectedSliceIndex)
-          : (j.segments || []);
-        segs.forEach(s => {
+        (j.segments || []).forEach(s => {
           (s.extractedEntities || []).forEach(e => {
             if (!e || !e.name || !e.value) return;
             const eName = e.name.trim();
@@ -1914,11 +1995,7 @@
       const q = (graphEntitySearchQuery || '').trim().toLowerCase();
 
       completedJobs.forEach(j => {
-        const segs = (j.jobId === selectedJobId && selectedSliceIndex !== -1)
-          ? (j.segments || []).filter(s => s.segmentIndex === selectedSliceIndex)
-          : (j.segments || []);
-
-        segs.forEach(s => {
+        (j.segments || []).forEach(s => {
           const docNodeId = `doc:${j.jobId}:${s.segmentIndex}`;
           const docLabel = s.identifiedDocumentName || s.documentTypeName || `Slice ${s.segmentIndex + 1}`;
           const matchingEntitiesForSlice = [];
@@ -2006,10 +2083,16 @@
         <div class="graph-shell">
           <div class="graph-filter-bar">
             <div class="graph-filter-top">
-              <div class="graph-controls-group">
-                <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);">Scope:</span>
-                <button type="button" class="filter-pill-btn ${graphScope === 'ALL_DOCS' ? 'active' : ''}" onclick="setGraphScope('ALL_DOCS')">All Tenant Documents</button>
-                <button type="button" class="filter-pill-btn ${graphScope === 'CURRENT_DOC' ? 'active' : ''}" onclick="setGraphScope('CURRENT_DOC')">Current Document</button>
+              <div class="filter-pill-bar" style="margin-bottom:0;">
+                <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);margin-right:4px;">Entity Filter:</span>
+                <button type="button" class="filter-pill-btn ${graphSelectedEntityNames.size === 0 ? 'active' : ''}" onclick="toggleGraphEntityNameFilter('ALL')">
+                  All Entities
+                </button>
+                ${data.allEntityNames.map(en => `
+                  <button type="button" class="filter-pill-btn ${graphSelectedEntityNames.has(en.name) ? 'active' : ''}" onclick="toggleGraphEntityNameFilter(${JSON.stringify(en.name).replace(/"/g, '&quot;')})">
+                    ${escapeHtml(en.name)} <span style="opacity:0.65;font-family:var(--font-mono);font-size:11px;">${en.count}</span>
+                  </button>
+                `).join('')}
               </div>
 
               <div class="graph-controls-group">
@@ -2024,18 +2107,6 @@
                 <input type="text" class="graph-input" id="graphEntitySearchInput" placeholder="Filter by entity or document..." value="${escapeHtml(graphEntitySearchQuery)}" oninput="onGraphSearchInputChanged(this.value)" style="width:210px;" />
                 ${hasActiveFilters ? `<button type="button" class="ghost-action-btn" onclick="resetGraphFilters()">✕ Clear Filters</button>` : ''}
               </div>
-            </div>
-
-            <div class="filter-pill-bar" style="margin-bottom:0;">
-              <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);margin-right:4px;">Entity Filter:</span>
-              <button type="button" class="filter-pill-btn ${graphSelectedEntityNames.size === 0 ? 'active' : ''}" onclick="toggleGraphEntityNameFilter('ALL')">
-                All Entities
-              </button>
-              ${data.allEntityNames.map(en => `
-                <button type="button" class="filter-pill-btn ${graphSelectedEntityNames.has(en.name) ? 'active' : ''}" onclick="toggleGraphEntityNameFilter(${JSON.stringify(en.name).replace(/"/g, '&quot;')})">
-                  ${escapeHtml(en.name)} <span style="opacity:0.65;font-family:var(--font-mono);font-size:11px;">${en.count}</span>
-                </button>
-              `).join('')}
             </div>
           </div>
 
