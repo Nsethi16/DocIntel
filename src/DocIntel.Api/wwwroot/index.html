@@ -883,7 +883,6 @@
           <button type="button" class="meridian-tab" data-tab="document" onclick="setDocResultTab('document')">View Document</button>
           <button type="button" class="meridian-tab" data-tab="entities" onclick="setDocResultTab('entities')">Entities</button>
           <button type="button" class="meridian-tab" data-tab="structured" onclick="setDocResultTab('structured')">Structured Data</button>
-          <button type="button" class="meridian-tab" data-tab="prompts" onclick="setDocResultTab('prompts')">Prompt Columns</button>
           <button type="button" class="meridian-tab" data-tab="metadata" onclick="setDocResultTab('metadata')">Metadata</button>
         </nav>
       </div>
@@ -1184,20 +1183,60 @@
         if (!de) return acc;
         return acc + ((de.fields || []).length) + ((de.tables || []).length);
       }, 0);
-      const allPromptResults = segs.flatMap(s => s.promptColumnResults || []);
-      const matchedPromptsCount = (allPromptResults.length > 0 ? allPromptResults : (job.promptColumnResults || []))
-        .filter(r => r.filterMatched).length;
 
-      // Update clean floating pill tab labels
-      document.querySelectorAll('#insightsTabBar .meridian-tab').forEach(btn => {
-        const t = btn.dataset.tab;
-        if (t === 'insights') btn.innerHTML = `Insights`;
-        else if (t === 'document') btn.innerHTML = `View Document`;
-        else if (t === 'entities') btn.innerHTML = `Entities${totalEntitiesCount > 0 ? ` <span class="tab-count">${totalEntitiesCount}</span>` : ''}`;
-        else if (t === 'structured') btn.innerHTML = `Structured Data${totalStructuredCount > 0 ? ` <span class="tab-count">${totalStructuredCount}</span>` : ''}`;
-        else if (t === 'prompts') btn.innerHTML = `Prompt Columns${matchedPromptsCount > 0 ? ` <span class="tab-count">${matchedPromptsCount}</span>` : ''}`;
-        else if (t === 'metadata') btn.innerHTML = `Metadata`;
+      const activeSegs = selectedSliceIndex === -1
+        ? segs
+        : segs.filter(s => s.segmentIndex === selectedSliceIndex);
+
+      // Collect distinct Prompt Columns that matched the entity filter on the active document / slice selection
+      const activePromptResults = activeSegs.flatMap(s =>
+        (s.promptColumnResults && s.promptColumnResults.length > 0)
+          ? s.promptColumnResults
+          : (job.promptColumnResults || []).filter(r => r.segmentIndex === s.segmentIndex)
+      );
+      const matchedPromptColumnsMap = new Map();
+      activePromptResults.forEach(r => {
+        if (r && r.filterMatched && r.columnId && !matchedPromptColumnsMap.has(r.columnId)) {
+          matchedPromptColumnsMap.set(r.columnId, {
+            columnId: r.columnId,
+            columnName: r.columnName || r.columnId
+          });
+        }
       });
+      const matchedPromptColumns = [...matchedPromptColumnsMap.values()];
+
+      // If current tab is a prompt column that does not apply to the newly selected slice/document, fall back to insights
+      if (docResultTab.startsWith('prompt:')) {
+        const activeColId = docResultTab.substring('prompt:'.length);
+        if (!matchedPromptColumnsMap.has(activeColId)) {
+          docResultTab = 'insights';
+          body.dataset.tab = docResultTab;
+        }
+      }
+
+      // Render core tabs + one individual tab per matched Prompt Column (e.g. ✨ Summary, ✨ Highlights)
+      const tabBar = document.getElementById('insightsTabBar');
+      const coreTabsHtml = [
+        { id: 'insights', label: 'Insights' },
+        { id: 'document', label: 'View Document' },
+        { id: 'entities', label: `Entities${totalEntitiesCount > 0 ? ` <span class="tab-count">${totalEntitiesCount}</span>` : ''}` },
+        { id: 'structured', label: `Structured Data${totalStructuredCount > 0 ? ` <span class="tab-count">${totalStructuredCount}</span>` : ''}` },
+        { id: 'metadata', label: 'Metadata' }
+      ].map(t => `
+        <button type="button" class="meridian-tab ${docResultTab === t.id ? 'active' : ''}" data-tab="${t.id}" onclick="setDocResultTab('${t.id}')">${t.label}</button>
+      `).join('');
+
+      const promptTabsHtml = matchedPromptColumns.map(col => {
+        const tabId = `prompt:${col.columnId}`;
+        const isActive = docResultTab === tabId;
+        return `
+          <button type="button" class="meridian-tab ${isActive ? 'active' : ''}" data-tab="${escapeHtml(tabId)}" onclick="setDocResultTab('${escapeHtml(tabId)}')" title="Prompt Column: ${escapeHtml(col.columnName)}">
+            <span style="color:var(--accent);margin-right:4px;">✦</span>${escapeHtml(col.columnName)}
+          </button>
+        `;
+      }).join('');
+
+      tabBar.innerHTML = coreTabsHtml + promptTabsHtml;
 
       // Single clean slice dropdown on the right of the tab bar
       sliceRow.innerHTML = '';
@@ -1260,10 +1299,6 @@
         `;
         return;
       }
-
-      const activeSegs = selectedSliceIndex === -1
-        ? segs
-        : segs.filter(s => s.segmentIndex === selectedSliceIndex);
 
       // 1. View Document Tab — Side-by-Side (Original PDF + Translated PDF) when translated, or single full-bleed PDF
       if (docResultTab === 'document') {
@@ -1480,111 +1515,68 @@
         return;
       }
 
-      // 5. Prompt Columns Tab — Entity-Filtered PDF/Base64 Prompt Evaluation Results
-      if (docResultTab === 'prompts') {
-        const slicePromptGroups = activeSegs.map(s => {
+      // 5. Individual Prompt Column Tab (`prompt:<columnId>`) — Dedicated Tab per Matched Prompt Column
+      if (docResultTab.startsWith('prompt:')) {
+        const targetColumnId = docResultTab.substring('prompt:'.length);
+        const matchingSliceEntries = activeSegs.map(s => {
           const sliceResults = (s.promptColumnResults && s.promptColumnResults.length > 0)
             ? s.promptColumnResults
             : (job.promptColumnResults || []).filter(r => r.segmentIndex === s.segmentIndex);
-          return { slice: s, results: sliceResults };
-        });
+          const colResult = sliceResults.find(r => r.columnId === targetColumnId && r.filterMatched);
+          return colResult ? { slice: s, result: colResult } : null;
+        }).filter(Boolean);
 
-        const flatResults = slicePromptGroups.flatMap(g => g.results);
-        const totalMatched = flatResults.filter(r => r.filterMatched).length;
-        const totalSkipped = flatResults.length - totalMatched;
+        const firstResult = matchingSliceEntries[0]?.result;
+        const colName = firstResult ? firstResult.columnName : targetColumnId;
+        const filterSummary = firstResult ? (firstResult.filterSummary || 'All Documents') : 'All Documents';
 
         const topBarHtml = `
           <div class="packet-summary-line">
-            <span>${totalMatched} prompt evaluation${totalMatched === 1 ? '' : 's'} matched entity filters · ${totalSkipped} skipped by entity filter · Processed as PDF File / Base64</span>
+            <span><strong>✦ ${escapeHtml(colName)}</strong> · Filter: ${escapeHtml(filterSummary)} · Matched ${matchingSliceEntries.length} of ${activeSegs.length} slice${activeSegs.length === 1 ? '' : 's'} · Processed as PDF File / Base64</span>
             <div style="display:flex;align-items:center;gap:8px;">
-              <button type="button" class="text-link-btn" onclick="reevaluateSelectedJobPrompts()">↻ Re-evaluate Prompts</button>
-              <a href="/admin.html#promptsSection" class="text-link-btn">Configure Prompt Columns ↗</a>
+              <button type="button" class="text-link-btn" onclick="reevaluateSelectedJobPrompts()">↻ Re-evaluate</button>
+              <a href="/admin.html#promptsSection" class="text-link-btn">Configure Prompts ↗</a>
             </div>
-          </div>
-          <div class="filter-pill-bar">
-            <button type="button" class="filter-pill-btn ${selectedPromptFilterView === 'ALL' ? 'active' : ''}" onclick="setPromptFilterView('ALL')">All (${flatResults.length})</button>
-            <button type="button" class="filter-pill-btn ${selectedPromptFilterView === 'MATCHED' ? 'active' : ''}" onclick="setPromptFilterView('MATCHED')">Matched &amp; Evaluated (${totalMatched})</button>
-            <button type="button" class="filter-pill-btn ${selectedPromptFilterView === 'SKIPPED' ? 'active' : ''}" onclick="setPromptFilterView('SKIPPED')">Skipped by Entity Filter (${totalSkipped})</button>
           </div>
         `;
 
-        if (flatResults.length === 0) {
-          body.innerHTML = `
-            <div class="content-column">
-              ${topBarHtml}
-              <div style="padding:28px 0;color:var(--text-secondary);font-size:14px;">
-                No Prompt Columns have been evaluated on this document yet. Click <strong>↻ Re-evaluate Prompts</strong> above or configure Prompt Columns in <a href="/admin.html#promptsSection" style="color:var(--accent);">Admin Studio ↗</a>.
-              </div>
-            </div>
-          `;
-          return;
-        }
-
-        const sliceCardsHtml = slicePromptGroups.map(({ slice, results }) => {
-          const filtered = results.filter(r => {
-            if (selectedPromptFilterView === 'MATCHED') return r.filterMatched;
-            if (selectedPromptFilterView === 'SKIPPED') return !r.filterMatched;
-            return true;
-          });
-          if (filtered.length === 0) return '';
-
+        const sliceCardsHtml = matchingSliceEntries.map(({ slice, result }) => {
           const docName = slice.identifiedDocumentName || slice.documentTypeName || `Slice ${slice.segmentIndex + 1}`;
-          const rowsHtml = filtered.map(r => {
-            const badgeStyle = r.filterMatched
-              ? 'background:#ecfdf3;color:#15803d;border:1px solid #bbf7d0;'
-              : 'background:#f4f4f7;color:#64687a;border:1px solid #e1e1eb;';
-            const badgeLabel = r.filterMatched
-              ? '✓ Matched Filter · PDF/Base64 Evaluated'
-              : '⊘ Skipped by Entity Filter';
-            const matchedEntsText = (r.matchedEntities && r.matchedEntities.length > 0)
-              ? r.matchedEntities.join(' · ')
-              : 'No entity condition required';
-
-            return `
-              <div style="border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-top:12px;background:${r.filterMatched ? '#ffffff' : '#fafafc'};">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px;">
-                  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                    <strong style="font-size:14.5px;color:var(--text-primary);">✦ ${escapeHtml(r.columnName)}</strong>
-                    <span style="font-family:var(--font-mono);font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:6px;${badgeStyle}">${badgeLabel}</span>
-                  </div>
-                  <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">
-                    ${r.processedAsFileBase64 ? `PDF/Base64 (${(r.fileSizeBytes || 0).toLocaleString()} B) · ${escapeHtml(r.modelIdUsed || 'gpt-5-mini')}` : 'Not sent to LLM'}
-                  </div>
-                </div>
-
-                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">
-                  <span style="background:var(--accent-soft);color:var(--accent-ink);border:1px solid var(--accent-border);padding:2px 7px;border-radius:5px;">Filter: ${escapeHtml(r.filterSummary || 'All Documents')}</span>
-                  ${r.filterMatched && r.matchedEntities && r.matchedEntities.length > 0
-                    ? `<span style="color:#15803d;">Matched Entities: ${escapeHtml(matchedEntsText)}</span>`
-                    : ''}
-                </div>
-
-                <div class="insight-prose" style="margin-bottom:8px;${r.filterMatched ? '' : 'color:var(--text-muted);font-style:italic;'}">${escapeHtml(r.resultText || '')}</div>
-
-                <details>
-                  <summary style="cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);user-select:none;">Prompt Instructions &amp; Base64 File Payload (${escapeHtml(r.fileName || 'slice.pdf')})</summary>
-                  <div style="margin-top:8px;padding:10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:8px;font-family:var(--font-mono);font-size:11.5px;color:var(--text-body);display:flex;flex-direction:column;gap:6px;">
-                    <div><strong>Prompt Template:</strong> ${escapeHtml(r.promptInstructions || '')}</div>
-                    <div><strong>File / Base64 Header:</strong> data:application/pdf;base64,${escapeHtml(r.base64Preview || '')}</div>
-                  </div>
-                </details>
-              </div>
-            `;
-          }).join('');
+          const matchedEntsText = (result.matchedEntities && result.matchedEntities.length > 0)
+            ? result.matchedEntities.join(' · ')
+            : 'All Documents';
 
           return `
             <article class="slice-section">
               <div class="slice-section-head">
                 <div>
                   <h3 class="slice-section-title">${escapeHtml(docName)}</h3>
-                  <div class="slice-section-sub">Slice ${slice.segmentIndex + 1} · Pages ${slice.startPage}–${slice.endPage} · ${(slice.extractedEntities || []).length} extracted entities</div>
+                  <div class="slice-section-sub">Slice ${slice.segmentIndex + 1} · Pages ${slice.startPage}–${slice.endPage} · PDF/Base64 (${(result.fileSizeBytes || 0).toLocaleString()} B) · ${escapeHtml(result.modelIdUsed || 'gpt-5-mini')}</div>
                 </div>
-                <button type="button" class="text-link-btn" onclick="jumpToSlicePdf(${slice.segmentIndex})">View PDF ↗</button>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button type="button" class="text-link-btn" onclick="copyTextValue(${JSON.stringify(String(result.resultText || '')).replace(/"/g, '&quot;')})">Copy</button>
+                  <button type="button" class="text-link-btn" onclick="jumpToSlicePdf(${slice.segmentIndex})">Pages ${slice.startPage}–${slice.endPage} ↗</button>
+                </div>
               </div>
-              ${rowsHtml}
+
+              <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">
+                <span style="background:#ecfdf3;color:#15803d;border:1px solid #bbf7d0;padding:2px 8px;border-radius:6px;font-weight:600;">✓ Processed as PDF/Base64</span>
+                <span style="background:var(--accent-soft);color:var(--accent-ink);border:1px solid var(--accent-border);padding:2px 7px;border-radius:5px;">Matched: ${escapeHtml(matchedEntsText)}</span>
+              </div>
+
+              <p class="insight-prose">${escapeHtml(result.resultText || '')}</p>
+
+              <details>
+                <summary style="cursor:pointer;font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);user-select:none;">Prompt Instructions &amp; PDF Base64 Payload (${escapeHtml(result.fileName || 'slice.pdf')})</summary>
+                <div style="margin-top:8px;padding:10px 12px;background:var(--bg);border:1px solid var(--line);border-radius:8px;font-family:var(--font-mono);font-size:11.5px;color:var(--text-body);display:flex;flex-direction:column;gap:6px;">
+                  <div><strong>Prompt Instructions:</strong> ${escapeHtml(result.promptInstructions || '')}</div>
+                  <div><strong>Entity Filter:</strong> ${escapeHtml(result.filterSummary || 'All Documents')}</div>
+                  <div><strong>File / Base64 Envelope:</strong> data:application/pdf;base64,${escapeHtml(result.base64Preview || '')}</div>
+                </div>
+              </details>
             </article>
           `;
-        }).filter(Boolean).join('');
+        }).join('');
 
         body.innerHTML = `<div class="content-column">${topBarHtml}<div class="slices-wide-grid">${sliceCardsHtml}</div></div>`;
         return;

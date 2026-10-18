@@ -2923,25 +2923,25 @@
       const rulesList = document.getElementById('promptFilterRulesList');
 
       if (kind === 'summary') {
-        nameInput.value = 'Summarize Document';
+        nameInput.value = 'Summary';
         instrInput.value = 'Summarize the contents of {{Document.Content}} in a clear and concise manner. Focus on key points, main arguments, and important conclusions.';
         filterSelect.value = 'All';
         rulesList.innerHTML = '';
         onPromptFilterModeChanged();
       } else if (kind === 'highlights') {
-        nameInput.value = 'Extract Highlights';
+        nameInput.value = 'Highlights';
         instrInput.value = 'Extract the most important commercial, financial, and operational highlights from {{Document.Content}} as concise bullet points.';
         filterSelect.value = 'All';
         rulesList.innerHTML = '';
         onPromptFilterModeChanged();
       } else if (kind === 'language') {
-        nameInput.value = 'Classify Language';
+        nameInput.value = 'Language';
         instrInput.value = 'Identify the primary source language and tone of {{Document.Content}}, noting any bilingual or translated clauses.';
         filterSelect.value = 'All';
         rulesList.innerHTML = '';
         onPromptFilterModeChanged();
       } else if (kind === 'contract') {
-        nameInput.value = 'Contract & Signature Verification';
+        nameInput.value = 'Contract Check';
         instrInput.value = 'Verify contract identifiers, MBA/MBSA reference numbers, legal customer entity names, and formalization clauses in {{Document.Content}}.';
         filterSelect.value = 'Or';
         rulesList.innerHTML = '';

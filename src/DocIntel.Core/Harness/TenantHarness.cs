@@ -448,15 +448,23 @@ public sealed class TenantHarness
                         new PromptColumnDefinition
                         {
                             ColumnId = "col-summary",
-                            ColumnName = "Summarize Document",
+                            ColumnName = "Summary",
                             PromptInstructions = "Summarize the contents of {{Document.Content}} in a clear and concise manner. Focus on key points, main arguments, and important conclusions.",
                             FilterMode = "All",
                             EntityFilters = []
                         },
                         new PromptColumnDefinition
                         {
+                            ColumnId = "col-highlights",
+                            ColumnName = "Highlights",
+                            PromptInstructions = "Extract the most important commercial, financial, and operational highlights from {{Document.Content}} as concise bullet points.",
+                            FilterMode = "All",
+                            EntityFilters = []
+                        },
+                        new PromptColumnDefinition
+                        {
                             ColumnId = "col-contract-check",
-                            ColumnName = "Contract & Signature Verification",
+                            ColumnName = "Contract Check",
                             PromptInstructions = "Verify contract identifiers, MBA/MBSA reference numbers, legal customer entity names, and formalization clauses in {{Document.Content}}.",
                             FilterMode = "Or",
                             EntityFilters =
@@ -470,27 +478,6 @@ public sealed class TenantHarness
                                 {
                                     EntityName = "MBA/MBSA Number",
                                     Operator = "Exists"
-                                }
-                            ]
-                        },
-                        new PromptColumnDefinition
-                        {
-                            ColumnId = "col-pricing-highlights",
-                            ColumnName = "Amendment & Pricing Highlights",
-                            PromptInstructions = "Extract the most important financial highlights, billing currency, volume discount terms, or amendment clauses from {{Document.Content}}.",
-                            FilterMode = "Or",
-                            EntityFilters =
-                            [
-                                new PromptEntityFilterRule
-                                {
-                                    EntityName = "Billing Currency",
-                                    Operator = "Exists"
-                                },
-                                new PromptEntityFilterRule
-                                {
-                                    EntityName = "Document Heading",
-                                    Operator = "Contains",
-                                    ExpectedValue = "Amendment"
                                 }
                             ]
                         }
@@ -511,10 +498,33 @@ public sealed class TenantHarness
             {
                 tenant.Capabilities[key] = defaultCap;
             }
-            else if (string.Equals(key, FeatureHarness.PromptColumnsKey, StringComparison.OrdinalIgnoreCase) &&
-                     existingCap.PromptColumns is null)
+            else if (string.Equals(key, FeatureHarness.PromptColumnsKey, StringComparison.OrdinalIgnoreCase))
             {
-                existingCap.PromptColumns = defaultCap.PromptColumns;
+                if (existingCap.PromptColumns is null || existingCap.PromptColumns.Columns.Count == 0)
+                {
+                    existingCap.PromptColumns = defaultCap.PromptColumns;
+                }
+                else
+                {
+                    foreach (var col in existingCap.PromptColumns.Columns)
+                    {
+                        if (col.ColumnId == "col-summary" && col.ColumnName == "Summarize Document")
+                        {
+                            col.ColumnName = "Summary";
+                        }
+                        else if (col.ColumnId == "col-pricing-highlights" && col.ColumnName == "Amendment & Pricing Highlights")
+                        {
+                            col.ColumnId = "col-highlights";
+                            col.ColumnName = "Highlights";
+                            col.FilterMode = "All";
+                            col.EntityFilters = [];
+                        }
+                        else if (col.ColumnId == "col-contract-check" && col.ColumnName == "Contract & Signature Verification")
+                        {
+                            col.ColumnName = "Contract Check";
+                        }
+                    }
+                }
             }
         }
     }
