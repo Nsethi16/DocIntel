@@ -1336,7 +1336,7 @@
   <!-- Single Collapsible Left Document Drawer -->
   <aside class="doc-drawer" id="docListPane">
     <div class="drawer-top">
-      <div class="drawer-brand-row">
+      <div class="drawer-brand-row" style="height:28px;">
         <div class="tenant-switcher-wrap">
           <select class="tenant-select" id="tenantSelectDropdown" onchange="onTenantSwitched(this.value)" title="Select tenant workspace"></select>
         </div>
@@ -3284,18 +3284,14 @@
       const isEmptyChat = messages.length === 0 && !askAiLoading;
       const isDocDrawerCollapsed = document.getElementById('docListPane')?.classList.contains('collapsed');
 
-      const chatQ = (askChatSearchQuery || '').trim().toLowerCase();
-      const visibleChats = tenantChats.filter(c => {
-        if (!chatQ) return true;
-        const hay = `${c.title || ''} ${(c.messages || []).map(m => m.text || '').join(' ')}`.toLowerCase();
-        return hay.includes(chatQ);
-      });
+      // Only list chats that have at least 1 message so "New chat" is never duplicated under Chats
+      const savedChats = tenantChats.filter(c => (c.messages || []).length > 0);
 
-      const chatListHtml = visibleChats.map(c => {
-        const isSelected = c.id === activeChatId;
+      const chatListHtml = savedChats.map(c => {
+        const isSelected = c.id === activeChatId && !isEmptyChat;
         return `
-          <div class="chat-history-item ${isSelected ? 'selected' : ''}" title="${escapeHtml(c.title || 'New chat')}" onclick="selectAskAiChat('${escapeHtml(c.id)}')">
-            <span class="chat-history-title">${escapeHtml(c.title || 'New chat')}</span>
+          <div class="chat-history-item ${isSelected ? 'selected' : ''}" title="${escapeHtml(c.title || 'Chat')}" onclick="selectAskAiChat('${escapeHtml(c.id)}')">
+            <span class="chat-history-title">${escapeHtml(c.title || 'Chat')}</span>
             <button type="button" class="chat-delete-btn" title="Delete chat" onclick="deleteAskAiChat('${escapeHtml(c.id)}', event)">✕</button>
           </div>
         `;
@@ -3303,8 +3299,8 @@
 
       const leftChatRailHtml = `
         <aside class="ask-inner-sidebar ${askInnerSidebarCollapsed ? 'collapsed' : ''}" id="askInnerSidebar">
-          <div class="drawer-top">
-            <div class="drawer-brand-row">
+          <div class="drawer-top" style="border-bottom:none;padding-bottom:6px;">
+            <div class="drawer-brand-row" style="height:28px;">
               <div style="display:flex;align-items:center;gap:6px;min-width:0;">
                 ${isDocDrawerCollapsed ? `
                   <button type="button" class="icon-toggle-btn" title="Expand Documents panel" onclick="toggleDocListPane()">
@@ -3338,18 +3334,10 @@
               </svg>
               <span>New chat</span>
             </button>
-
-            <div class="search-box">
-              <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                <circle cx="8.5" cy="8.5" r="5.5" />
-                <path d="M13 13l4 4" stroke-linecap="round" />
-              </svg>
-              <input type="text" id="askChatSearchInput" placeholder="Search chats..." value="${escapeHtml(askChatSearchQuery)}" oninput="onAskChatSearchInput(this.value)" />
-            </div>
           </div>
 
           <div class="drawer-subbar">
-            <span>${visibleChats.length} chat${visibleChats.length === 1 ? '' : 's'}</span>
+            <span>Chats</span>
           </div>
 
           <div class="doc-items-scroll">
@@ -3376,7 +3364,6 @@
               <h2 class="ask-minimal-heading">Hi, I can help you explore and answer questions across your documents</h2>
 
               <div class="ask-pill-bar">
-                <button type="button" class="ask-pill-plus" title="New chat" onclick="startNewAskAiChat()">+</button>
                 <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Message Copilot" onkeydown="if(event.key==='Enter') runCrossDocumentAskAi(this.value)" />
                 <button type="button" class="ask-pill-send" title="Send message" onclick="runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value)">
                   <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
@@ -3426,7 +3413,6 @@
             </div>
 
             <div class="ask-pill-bar" style="position:sticky;bottom:8px;">
-              <button type="button" class="ask-pill-plus" title="New chat" onclick="startNewAskAiChat()">+</button>
               <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Message Copilot" onkeydown="if(event.key==='Enter') runCrossDocumentAskAi(this.value)" />
               <button type="button" class="ask-pill-send" title="Send message" onclick="runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value)">
                 <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
