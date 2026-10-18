@@ -98,11 +98,11 @@ public static class HarnessEndpoints
             TenantHarness.EnsureDefaultCapabilities(updated);
             var saved = await store.UpsertTenantAsync(updated, ct);
 
-            // Re-evaluate prompt columns on the tenant's recent completed jobs so new/updated prompts appear immediately
+            // Evaluate any newly added or modified Prompt Columns across ALL existing completed jobs for this tenant
             var jobs = await jobStore.ListJobsByTenantAsync(tenantId, ct);
-            foreach (var job in jobs.Where(j => j.Status == JobStatus.Completed).Take(10))
+            foreach (var job in jobs.Where(j => EvaluatePromptColumnsExecutor.JobNeedsPromptEvaluation(j, saved)))
             {
-                await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, saved, modelCatalog, artifactStore, ct);
+                await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, saved, modelCatalog, artifactStore, ct, forceReevaluateAll: false);
                 await jobStore.UpsertJobAsync(job, ct);
             }
 
@@ -121,14 +121,11 @@ public static class HarnessEndpoints
             var jobs = await jobStore.ListJobsByTenantAsync(tenantId, ct);
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
 
-            if (tenant is not null &&
-                tenant.Capabilities.TryGetValue(FeatureHarness.PromptColumnsKey, out var pcCap) &&
-                pcCap.Enabled &&
-                (pcCap.PromptColumns?.Columns.Count ?? 0) > 0)
+            if (tenant is not null)
             {
-                foreach (var job in jobs.Where(j => j.Status == JobStatus.Completed && j.PromptColumnResults.Count == 0).Take(10))
+                foreach (var job in jobs.Where(j => EvaluatePromptColumnsExecutor.JobNeedsPromptEvaluation(j, tenant)))
                 {
-                    await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, tenant, modelCatalog, artifactStore, ct);
+                    await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, tenant, modelCatalog, artifactStore, ct, forceReevaluateAll: false);
                     await jobStore.UpsertJobAsync(job, ct);
                 }
             }
@@ -158,7 +155,7 @@ public static class HarnessEndpoints
                 return Results.NotFound(new { error = $"Job '{jobId}' not found." });
             }
 
-            await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, tenant, modelCatalog, artifactStore, ct);
+            await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, tenant, modelCatalog, artifactStore, ct, forceReevaluateAll: true);
             await jobStore.UpsertJobAsync(job, ct);
 
             return Results.Ok(FormatJobResponse(job));

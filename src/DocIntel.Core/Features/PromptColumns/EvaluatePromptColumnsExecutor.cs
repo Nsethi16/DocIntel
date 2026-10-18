@@ -98,14 +98,68 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
     }
 
     /// <summary>
+    /// Returns true if an existing completed <see cref="DocumentJob"/> is missing results for any active
+    /// <see cref="PromptColumnDefinition"/> in the tenant's harness or if a prompt column definition changed.
+    /// </summary>
+    public static bool JobNeedsPromptEvaluation(DocumentJob job, TenantHarness tenant)
+    {
+        if (job.Status != JobStatus.Completed || job.Segments.Count == 0)
+        {
+            return false;
+        }
+
+        TenantHarness.EnsureDefaultCapabilities(tenant);
+        if (!tenant.Capabilities.TryGetValue(FeatureHarness.PromptColumnsKey, out var feature) || !feature.Enabled)
+        {
+            return job.PromptColumnResults.Count > 0;
+        }
+
+        var activeColumns = (feature.PromptColumns?.Columns ?? [])
+            .Where(c => c.IsActive && !string.IsNullOrWhiteSpace(c.ColumnName))
+            .ToList();
+
+        if (activeColumns.Count == 0)
+        {
+            return job.PromptColumnResults.Count > 0;
+        }
+
+        foreach (var slice in job.Segments)
+        {
+            var docName = !string.IsNullOrWhiteSpace(slice.IdentifiedDocumentName)
+                ? slice.IdentifiedDocumentName!
+                : (slice.DocumentTypeName ?? $"Slice #{slice.SegmentIndex + 1}");
+
+            foreach (var col in activeColumns)
+            {
+                var (_, filterSummary, _) = EvaluateEntityFilter(col, slice, docName);
+                var existing = slice.PromptColumnResults.FirstOrDefault(r =>
+                    string.Equals(r.ColumnId, col.ColumnId, StringComparison.OrdinalIgnoreCase));
+
+                if (existing is null ||
+                    !string.Equals(existing.ColumnName, col.ColumnName, StringComparison.Ordinal) ||
+                    !string.Equals(existing.PromptInstructions, col.PromptInstructions, StringComparison.Ordinal) ||
+                    !string.Equals(existing.FilterSummary, filterSummary, StringComparison.Ordinal))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
     /// Evaluates or re-evaluates all active Prompt Columns for an existing <see cref="DocumentJob"/>.
+    /// When <paramref name="forceReevaluateAll"/> is false, unchanged prompt column results are reused
+    /// and only newly added or modified prompt columns are evaluated against matching documents.
     /// </summary>
     public static async Task<List<PromptColumnResult>> EvaluateJobPromptsAsync(
         DocumentJob job,
         TenantHarness tenant,
         IModelCatalog modelCatalog,
         IArtifactStore? artifactStore = null,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default,
+        bool forceReevaluateAll = false)
     {
         ArgumentNullException.ThrowIfNull(job);
         ArgumentNullException.ThrowIfNull(tenant);
@@ -126,7 +180,7 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
 
         var config = feature.PromptColumns ?? new PromptColumnsConfig();
         var activeColumns = config.Columns.Where(c => c.IsActive && !string.IsNullOrWhiteSpace(c.ColumnName)).ToList();
-        var modelId = modelCatalog.ResolveModelId(tenant, feature.ModelIdOverride);
+        var modelId = _ResolveSafeModelId(modelCatalog, tenant, feature.ModelIdOverride);
         var chatClient = modelCatalog.ResolveChatClient(tenant, feature.ModelIdOverride);
 
         var results = await EvaluateSlicesCoreAsync(
@@ -138,10 +192,23 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
             chatClient,
             modelId,
             artifactStore,
-            cancellationToken);
+            cancellationToken,
+            reuseUnchangedResults: !forceReevaluateAll);
 
         job.PromptColumnResults = results;
         return results;
+    }
+
+    private static string _ResolveSafeModelId(IModelCatalog modelCatalog, TenantHarness tenant, string? modelIdOverride)
+    {
+        try
+        {
+            return modelCatalog.ResolveModelId(tenant, modelIdOverride);
+        }
+        catch
+        {
+            return tenant.DefaultModelId;
+        }
     }
 
     private static async Task<List<PromptColumnResult>> EvaluateSlicesCoreAsync(
@@ -153,7 +220,8 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
         IChatClient chatClient,
         string modelId,
         IArtifactStore? artifactStore,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool reuseUnchangedResults = false)
     {
         var allResults = new List<PromptColumnResult>();
 
@@ -161,6 +229,7 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
         {
             cancellationToken.ThrowIfCancellationRequested();
 
+            var previousSliceResults = slice.PromptColumnResults?.ToList() ?? [];
             var pdfBytes = await ResolveSlicePdfBytesAsync(tenantId, documentId, slice, sourcePdfBytes, artifactStore, cancellationToken);
             var pdfBase64 = Convert.ToBase64String(pdfBytes);
             var base64Preview = pdfBase64.Length > 72
@@ -177,6 +246,23 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
             foreach (var col in activeColumns)
             {
                 var (matched, filterSummary, matchedEntities) = EvaluateEntityFilter(col, slice, docName);
+
+                if (reuseUnchangedResults)
+                {
+                    var cached = previousSliceResults.FirstOrDefault(r =>
+                        string.Equals(r.ColumnId, col.ColumnId, StringComparison.OrdinalIgnoreCase) &&
+                        string.Equals(r.ColumnName, col.ColumnName, StringComparison.Ordinal) &&
+                        string.Equals(r.PromptInstructions, col.PromptInstructions, StringComparison.Ordinal) &&
+                        string.Equals(r.FilterSummary, filterSummary, StringComparison.Ordinal) &&
+                        r.FilterMatched == matched);
+
+                    if (cached is not null)
+                    {
+                        sliceResults.Add(cached);
+                        allResults.Add(cached);
+                        continue;
+                    }
+                }
 
                 if (!matched)
                 {
