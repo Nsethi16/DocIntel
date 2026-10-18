@@ -823,7 +823,7 @@
           <circle cx="8.5" cy="8.5" r="5.5" />
           <path d="M13 13l4 4" stroke-linecap="round" />
         </svg>
-        <input type="text" id="docSearchInput" placeholder="Filter documents..." oninput="renderDocumentList()" />
+        <input type="text" id="docSearchInput" placeholder="Search name or content..." oninput="renderDocumentList()" />
       </div>
     </div>
 
@@ -996,13 +996,55 @@
       }
     }
 
+    function buildJobSearchCorpus(job) {
+      const segs = job.segments || [];
+      const markdownAndContent = segs.map(s => [
+        s.identifiedDocumentName || '',
+        s.documentTypeName || '',
+        s.markdown || '',
+        s.bodyText || '',
+        s.translatedText || '',
+        s.insightSummary || '',
+        (s.footers || []).join(' ')
+      ].join('\n')).join('\n');
+
+      const entitiesText = (job.extractedEntities || [])
+        .map(e => `${e.name || ''} ${e.value || ''}`)
+        .join(' ');
+
+      return `${job.fileName || ''}\n${job.jobId || ''}\n${job.packetSummary || ''}\n${entitiesText}\n${markdownAndContent}`;
+    }
+
+    function extractContentMatchSnippet(job, rawQuery) {
+      if (!rawQuery) return '';
+      const q = rawQuery.toLowerCase();
+      if ((job.fileName || '').toLowerCase().includes(q)) return '';
+
+      for (const s of (job.segments || [])) {
+        const md = String(s.markdown || s.bodyText || s.translatedText || '')
+          .replace(/<!--[\s\S]*?-->/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const idx = md.toLowerCase().indexOf(q);
+        if (idx >= 0) {
+          const start = Math.max(0, idx - 22);
+          const end = Math.min(md.length, idx + rawQuery.length + 34);
+          const prefix = start > 0 ? '…' : '';
+          const suffix = end < md.length ? '…' : '';
+          return `p.${s.startPage}: "${prefix}${md.slice(start, end)}${suffix}"`;
+        }
+      }
+      return '';
+    }
+
     function renderDocumentList() {
       const container = document.getElementById('docItemsList');
-      const query = (document.getElementById('docSearchInput').value || '').trim().toLowerCase();
+      const rawQuery = (document.getElementById('docSearchInput').value || '').trim();
+      const query = rawQuery.toLowerCase();
 
       const filtered = tenantJobs.filter(j => {
         if (!query) return true;
-        const hay = `${j.fileName} ${j.jobId} ${(j.segments || []).map(s => s.identifiedDocumentName || s.documentTypeName || '').join(' ')}`.toLowerCase();
+        const hay = buildJobSearchCorpus(j).toLowerCase();
         return hay.includes(query);
       });
 
@@ -1024,6 +1066,7 @@
         const dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const segs = job.segments || [];
         const dotCls = job.status === 'Completed' ? '' : (job.status === 'Failed' ? 'failed' : 'running');
+        const snippet = extractContentMatchSnippet(job, rawQuery);
 
         const row = document.createElement('div');
         row.className = 'doc-row' + (isSelected ? ' selected' : '');
@@ -1039,6 +1082,7 @@
           <div class="doc-row-main">
             <div class="doc-row-name">${escapeHtml(job.fileName)}</div>
             <div class="doc-row-meta">${escapeHtml(dateStr)} · ${job.totalPages || 0} pp${segs.length > 1 ? ` · ${segs.length} slices` : ''}</div>
+            ${snippet ? `<div style="font-size:11px;color:var(--accent-ink);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(snippet)}</div>` : ''}
           </div>
           <span class="status-dot ${dotCls}" title="${escapeHtml(job.status)}"></span>
         `;
