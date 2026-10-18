@@ -120,18 +120,38 @@ public sealed class PdfPigLayoutExtractor : IPageLayoutExtractor, IPdfSlicer
             foreach (var (body, footer) in pages)
             {
                 var page = builder.AddPage(PageSize.Letter);
-                var lines = (body ?? string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+                var rawLines = (body ?? string.Empty).Split('\n', StringSplitOptions.RemoveEmptyEntries);
                 var y = 720.0;
 
-                foreach (var line in lines)
+                foreach (var rawLine in rawLines)
                 {
-                    page.AddText(line.Trim('\r'), 11, new PdfPoint(50, y), font);
-                    y -= 18.0;
+                    var cleanLine = SanitizeStandard14Text(rawLine.Trim('\r'));
+                    if (string.IsNullOrWhiteSpace(cleanLine))
+                    {
+                        continue;
+                    }
+
+                    foreach (var chunk in WrapLine(cleanLine, 84))
+                    {
+                        if (y < 65.0)
+                        {
+                            if (!string.IsNullOrWhiteSpace(footer))
+                            {
+                                page.AddText(SanitizeStandard14Text(footer.Trim()), 9, new PdfPoint(50, 35), font);
+                            }
+
+                            page = builder.AddPage(PageSize.Letter);
+                            y = 720.0;
+                        }
+
+                        page.AddText(chunk, 10.5, new PdfPoint(50, y), font);
+                        y -= 16.0;
+                    }
                 }
 
                 if (!string.IsNullOrWhiteSpace(footer))
                 {
-                    page.AddText(footer.Trim(), 9, new PdfPoint(50, 35), font);
+                    page.AddText(SanitizeStandard14Text(footer.Trim()), 9, new PdfPoint(50, 35), font);
                 }
             }
 
@@ -139,6 +159,75 @@ public sealed class PdfPigLayoutExtractor : IPageLayoutExtractor, IPdfSlicer
         }
 
         return ms.ToArray();
+    }
+
+    private static IEnumerable<string> WrapLine(string line, int maxChars)
+    {
+        if (line.Length <= maxChars)
+        {
+            yield return line;
+            yield break;
+        }
+
+        var idx = 0;
+        while (idx < line.Length)
+        {
+            var len = Math.Min(maxChars, line.Length - idx);
+            if (idx + len < line.Length)
+            {
+                var lastSpace = line.LastIndexOf(' ', idx + len, len);
+                if (lastSpace > idx + 20)
+                {
+                    len = lastSpace - idx;
+                }
+            }
+
+            yield return line.Substring(idx, len).Trim();
+            idx += len;
+            while (idx < line.Length && line[idx] == ' ')
+            {
+                idx++;
+            }
+        }
+    }
+
+    private static string SanitizeStandard14Text(string input)
+    {
+        if (string.IsNullOrEmpty(input))
+        {
+            return string.Empty;
+        }
+
+        var normalized = input
+            .Replace('—', '-')
+            .Replace('–', '-')
+            .Replace('•', '*')
+            .Replace('“', '"')
+            .Replace('”', '"')
+            .Replace('‘', '\'')
+            .Replace('’', '\'')
+            .Normalize(NormalizationForm.FormD);
+
+        var sb = new StringBuilder(normalized.Length);
+        foreach (var ch in normalized)
+        {
+            var cat = System.Globalization.CharUnicodeInfo.GetUnicodeCategory(ch);
+            if (cat == System.Globalization.UnicodeCategory.NonSpacingMark)
+            {
+                continue;
+            }
+
+            if (ch >= 0x20 && ch <= 0x7E)
+            {
+                sb.Append(ch);
+            }
+            else if (ch == '\t')
+            {
+                sb.Append("  ");
+            }
+        }
+
+        return sb.ToString();
     }
 
     private static PageLayout ExtractSinglePage(

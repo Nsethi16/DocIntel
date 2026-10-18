@@ -46,20 +46,23 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
 {
     private static readonly string[] SpanishIndicators =
     [
-        "Formulario", "Firma", "Programa", "Número", "contrato", "Cliente",
-        "entidad", "dirección", "copia", "confirmación", "términos", "documentos"
+        "Formulario", "Firma", "Programa", "Número", "Numero", "contrato", "Cliente",
+        "entidad", "dirección", "direccion", "copia", "confirmación", "confirmacion", "términos", "terminos", "documentos"
     ];
 
     private static readonly Dictionary<string, string> LocalSpanishToEnglishPhrases = new(StringComparer.OrdinalIgnoreCase)
     {
         ["Formulario de Firma del Programa"] = "Program Signature Form",
         ["Número de MBA/MBSA"] = "MBA/MBSA Number",
+        ["Numero de MBA/MBSA"] = "MBA/MBSA Number",
         ["Número de contrato"] = "Contract Number",
+        ["Numero de contrato"] = "Contract Number",
         ["Nombre de la entidad"] = "Entity Name",
         ["Cliente"] = "Customer",
         ["campo obligatorio"] = "required field",
         ["Cuando Microsoft haya formalizado debidamente el formulario de firma"] = "When Microsoft has duly executed the signature form",
-        ["recibirá una copia de confirmación"] = "will receive a confirmation copy"
+        ["recibirá una copia de confirmación"] = "will receive a confirmation copy",
+        ["recibira una copia de confirmacion"] = "will receive a confirmation copy"
     };
 
     private readonly TokenCredential _credential;
