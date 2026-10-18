@@ -109,6 +109,99 @@ public static class HarnessEndpoints
             return TypedResults.Ok(saved);
         });
 
+        // Lightweight Server-Side Graph Projection API (scalable for 100K+ documents — returns only nodes, edges, and facets)
+        group.MapGet("/tenants/{tenantId}/graph", async (
+            string tenantId,
+            string? entityName,
+            string? entityValue,
+            string? q,
+            int? maxDocs,
+            IHarnessStore harnessStore,
+            IJobStore jobStore,
+            CancellationToken ct) =>
+        {
+            var jobs = (await jobStore.ListJobsByTenantAsync(tenantId, ct))
+                .Where(j => j.Status == JobStatus.Completed)
+                .ToList();
+
+            var cap = Math.Clamp(maxDocs ?? 5000, 10, 20000);
+            var docNodes = new List<object>();
+            var entityMap = new Dictionary<string, (string Name, string Value, string Category, int Count)>(StringComparer.OrdinalIgnoreCase);
+            var edges = new List<object>();
+
+            foreach (var j in jobs.Take(cap))
+            {
+                var docId = $"doc:{j.JobId}";
+                var cleanName = (j.FileName ?? "Document").Replace(".pdf", "", StringComparison.OrdinalIgnoreCase);
+                var seenPairs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+                foreach (var s in j.Segments)
+                {
+                    foreach (var e in s.ExtractedEntities)
+                    {
+                        if (string.IsNullOrWhiteSpace(e.Name) || string.IsNullOrWhiteSpace(e.Value)) continue;
+                        var key = $"{e.Name.Trim()}||{e.Value.Trim()}";
+                        if (!seenPairs.Add(key)) continue;
+
+                        if (!string.IsNullOrWhiteSpace(entityName) && !string.Equals(e.Name.Trim(), entityName, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (!string.IsNullOrWhiteSpace(entityValue) && !string.Equals(e.Value.Trim(), entityValue, StringComparison.OrdinalIgnoreCase))
+                            continue;
+                        if (!string.IsNullOrWhiteSpace(q) &&
+                            !cleanName.Contains(q, StringComparison.OrdinalIgnoreCase) &&
+                            !e.Name.Contains(q, StringComparison.OrdinalIgnoreCase) &&
+                            !e.Value.Contains(q, StringComparison.OrdinalIgnoreCase))
+                            continue;
+
+                        if (entityMap.TryGetValue(key, out var existing))
+                        {
+                            entityMap[key] = existing with { Count = existing.Count + 1 };
+                        }
+                        else
+                        {
+                            entityMap[key] = (e.Name.Trim(), e.Value.Trim(), e.Category ?? "Entity", 1);
+                        }
+
+                        edges.Add(new { source = docId, target = $"ent:{key}" });
+                    }
+                }
+
+                if (seenPairs.Count > 0)
+                {
+                    docNodes.Add(new
+                    {
+                        id = docId,
+                        jobId = j.JobId,
+                        label = cleanName,
+                        pages = j.TotalPages,
+                        slices = j.Segments.Count
+                    });
+                }
+            }
+
+            var entityNodes = entityMap.Select(kv => new
+            {
+                id = $"ent:{kv.Key}",
+                pairKey = kv.Key,
+                entityName = kv.Value.Name,
+                entityValue = kv.Value.Value,
+                category = kv.Value.Category,
+                degree = kv.Value.Count
+            }).OrderByDescending(e => e.degree).ToList();
+
+            return Results.Ok(new
+            {
+                tenantId,
+                totalDocumentsInTenant = jobs.Count,
+                renderedDocuments = docNodes.Count,
+                renderedEntities = entityNodes.Count,
+                renderedEdges = edges.Count,
+                docNodes,
+                entityNodes,
+                edges
+            });
+        });
+
         // List all jobs for a tenant (newest first)
         group.MapGet("/tenants/{tenantId}/jobs", async (
             string tenantId,

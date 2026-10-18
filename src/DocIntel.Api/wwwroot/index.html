@@ -1115,9 +1115,14 @@
     let graphSelectedEntityValuePair = 'ALL'; // 'ALL' or 'EntityName||EntityValue'
     let graphEntitySearchQuery = '';
     let graphFocusedNodeId = null;
+    let graphHoveredNodeId = null;
+    let graphDepthMode = 'GLOBAL'; // 'GLOBAL' | 'HOP1' | 'HOP2'
     let graphZoom = 1;
     let graphPanX = 0;
     let graphPanY = 0;
+    let graphSimNodes = [];
+    let graphSimEdges = [];
+    let graphSimAnimFrame = null;
     let graphCustomNodePositions = {};
     let jobPollTimer = null;
 
@@ -2091,7 +2096,7 @@
 
     function renderDocumentGraphTab(body) {
       const data = computeFilteredGraphData();
-      const hasActiveFilters = graphSelectedEntityNames.size > 0 || graphSelectedEntityValuePair !== 'ALL' || (graphEntitySearchQuery || '').trim().length > 0;
+      const hasActiveFilters = graphSelectedEntityNames.size > 0 || graphSelectedEntityValuePair !== 'ALL' || (graphEntitySearchQuery || '').trim().length > 0 || graphDepthMode !== 'GLOBAL';
 
       body.innerHTML = `
         <div class="graph-shell">
@@ -2110,6 +2115,12 @@
               </div>
 
               <div class="graph-controls-group">
+                <div style="display:inline-flex;background:#efeff5;padding:2px;border-radius:7px;" title="Obsidian Global vs Local Neighborhood Depth">
+                  <button type="button" class="filter-pill-btn ${graphDepthMode === 'GLOBAL' ? 'active' : ''}" style="border:none;padding:4px 9px;font-size:11.5px;" onclick="setGraphDepthMode('GLOBAL')">Global</button>
+                  <button type="button" class="filter-pill-btn ${graphDepthMode === 'HOP1' ? 'active' : ''}" style="border:none;padding:4px 9px;font-size:11.5px;" onclick="setGraphDepthMode('HOP1')">1-Hop Local</button>
+                  <button type="button" class="filter-pill-btn ${graphDepthMode === 'HOP2' ? 'active' : ''}" style="border:none;padding:4px 9px;font-size:11.5px;" onclick="setGraphDepthMode('HOP2')">2-Hop Local</button>
+                </div>
+
                 <select class="graph-select" id="graphEntityValueSelect" onchange="onGraphEntityValueFilterChanged(this.value)" title="Filter graph by a specific Entity Name & Value">
                   <option value="ALL">All Entity Values (${data.allEntityValuePairs.length})</option>
                   ${data.allEntityValuePairs.map(p => `
@@ -2118,8 +2129,8 @@
                     </option>
                   `).join('')}
                 </select>
-                <input type="text" class="graph-input" id="graphEntitySearchInput" placeholder="Filter by entity or document..." value="${escapeHtml(graphEntitySearchQuery)}" oninput="onGraphSearchInputChanged(this.value)" style="width:210px;" />
-                ${hasActiveFilters ? `<button type="button" class="ghost-action-btn" onclick="resetGraphFilters()">✕ Clear Filters</button>` : ''}
+                <input type="text" class="graph-input" id="graphEntitySearchInput" placeholder="Search nodes..." value="${escapeHtml(graphEntitySearchQuery)}" oninput="onGraphSearchInputChanged(this.value)" style="width:175px;" />
+                ${hasActiveFilters ? `<button type="button" class="ghost-action-btn" onclick="resetGraphFilters()">✕ Reset</button>` : ''}
               </div>
             </div>
           </div>
@@ -2131,100 +2142,48 @@
       renderDocumentGraphCanvasOnly();
     }
 
+    function setGraphDepthMode(mode) {
+      graphDepthMode = mode;
+      if (mode !== 'GLOBAL' && !graphFocusedNodeId && selectedJobId) {
+        graphFocusedNodeId = `doc:${selectedJobId}`;
+      }
+      renderSelectedDocument();
+    }
+
     function renderDocumentGraphCanvasOnly() {
       const container = document.getElementById('graphWorkbenchContainer');
       if (!container) return;
 
-      const data = computeFilteredGraphData();
-      const { docNodes, entityNodes, edges } = data;
-
-      const width = 920;
-      const height = Math.max(500, Math.max(docNodes.length * 95, entityNodes.length * 76) + 80);
-
-      // Compute clean deterministic bipartite / radial coordinates with drag overrides
-      const nodeById = new Map();
-      const docX = 215;
-      const entX = 685;
-
-      docNodes.forEach((d, idx) => {
-        const defaultY = ((idx + 1) / (docNodes.length + 1)) * height;
-        const pos = graphCustomNodePositions[d.id] || { x: docX, y: defaultY };
-        d.x = pos.x;
-        d.y = pos.y;
-        nodeById.set(d.id, d);
-      });
-
-      entityNodes.forEach((e, idx) => {
-        const defaultY = ((idx + 1) / (entityNodes.length + 1)) * height;
-        const pos = graphCustomNodePositions[e.id] || { x: entX, y: defaultY };
-        e.x = pos.x;
-        e.y = pos.y;
-        nodeById.set(e.id, e);
-      });
-
-      const activeNeighborIds = new Set();
-      if (graphFocusedNodeId && nodeById.has(graphFocusedNodeId)) {
-        activeNeighborIds.add(graphFocusedNodeId);
-        edges.forEach(ed => {
-          if (ed.source === graphFocusedNodeId) activeNeighborIds.add(ed.target);
-          if (ed.target === graphFocusedNodeId) activeNeighborIds.add(ed.source);
-        });
+      if (graphSimAnimFrame) {
+        cancelAnimationFrame(graphSimAnimFrame);
+        graphSimAnimFrame = null;
       }
 
-      const edgesSvg = edges.map(ed => {
-        const src = nodeById.get(ed.source);
-        const tgt = nodeById.get(ed.target);
-        if (!src || !tgt) return '';
-        const x1 = src.x + 125;
-        const y1 = src.y;
-        const x2 = tgt.x - 130;
-        const y2 = tgt.y;
-        const midX = (x1 + x2) / 2;
-        const isHighlighted = !graphFocusedNodeId || (ed.source === graphFocusedNodeId || ed.target === graphFocusedNodeId);
-        const strokeColor = isHighlighted ? '#4b72fe' : '#dcd9e8';
-        const strokeWidth = isHighlighted && graphFocusedNodeId ? '2.4' : '1.6';
-        const opacity = isHighlighted ? '0.88' : '0.25';
-        return `<path d="M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}" fill="none" stroke="${strokeColor}" stroke-width="${strokeWidth}" stroke-opacity="${opacity}" />`;
-      }).join('');
+      const rawData = computeFilteredGraphData();
+      let { docNodes, entityNodes, edges } = rawData;
 
-      const docNodesSvg = docNodes.map(d => {
-        const dimmed = graphFocusedNodeId && !activeNeighborIds.has(d.id);
-        const isFocused = graphFocusedNodeId === d.id;
-        const borderCol = isFocused ? '#4b72fe' : (d.isCurrentJob ? '#16161d' : '#c9c5dc');
-        const strokeW = isFocused ? '2.4' : '1.5';
-        const titleShort = d.docName.length > 26 ? d.docName.slice(0, 25) + '…' : d.docName;
-        const subRaw = `${d.pageRange}${d.docTypesSummary ? ' · ' + d.docTypesSummary : ''}`;
-        const subShort = subRaw.length > 32 ? subRaw.slice(0, 31) + '…' : subRaw;
+      // Apply Obsidian-style Local Graph Depth (1-Hop or 2-Hop neighborhood around focused node)
+      if (graphDepthMode !== 'GLOBAL' && graphFocusedNodeId) {
+        const allowed = new Set([graphFocusedNodeId]);
+        edges.forEach(ed => {
+          if (ed.source === graphFocusedNodeId) allowed.add(ed.target);
+          if (ed.target === graphFocusedNodeId) allowed.add(ed.source);
+        });
+        if (graphDepthMode === 'HOP2') {
+          const hop1 = new Set(allowed);
+          edges.forEach(ed => {
+            if (hop1.has(ed.source)) allowed.add(ed.target);
+            if (hop1.has(ed.target)) allowed.add(ed.source);
+          });
+        }
+        docNodes = docNodes.filter(d => allowed.has(d.id));
+        entityNodes = entityNodes.filter(e => allowed.has(e.id));
+        edges = edges.filter(ed => allowed.has(ed.source) && allowed.has(ed.target));
+      }
 
-        return `
-          <g class="graph-node" data-node-id="${escapeHtml(d.id)}" transform="translate(${d.x}, ${d.y})" style="opacity:${dimmed ? '0.28' : '1'};cursor:pointer;" onclick="focusGraphNode('${escapeHtml(d.id)}')">
-            <rect x="-125" y="-28" width="250" height="56" rx="10" fill="#ffffff" stroke="${borderCol}" stroke-width="${strokeW}" />
-            <rect x="-125" y="-28" width="6" height="56" rx="3" fill="${isFocused ? '#4b72fe' : '#16161d'}" />
-            <text x="-106" y="-5" font-family="Overused Grotesk, sans-serif" font-size="13" font-weight="600" fill="#16161d">${escapeHtml(titleShort)}</text>
-            <text x="-106" y="14" font-family="IBM Plex Mono, monospace" font-size="10.5" fill="#5d6074">${escapeHtml(subShort)}</text>
-            <circle cx="105" cy="0" r="11" fill="#eef0ff" stroke="#b9c3ff" stroke-width="1" />
-            <text x="105" y="3.5" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10.5" font-weight="600" fill="#2842b5">${d.entityIds.length}</text>
-          </g>
-        `;
-      }).join('');
-
-      const entityNodesSvg = entityNodes.map(e => {
-        const dimmed = graphFocusedNodeId && !activeNeighborIds.has(e.id);
-        const isFocused = graphFocusedNodeId === e.id;
-        const colors = getEntityCategoryColor(e.category);
-        const valShort = e.entityValue.length > 26 ? e.entityValue.slice(0, 25) + '…' : e.entityValue;
-        const nameUpper = e.entityName.toUpperCase();
-
-        return `
-          <g class="graph-node" data-node-id="${escapeHtml(e.id)}" transform="translate(${e.x}, ${e.y})" style="opacity:${dimmed ? '0.28' : '1'};cursor:pointer;" onclick="focusGraphNode('${escapeHtml(e.id)}')">
-            <rect x="-130" y="-26" width="260" height="52" rx="26" fill="${colors.bg}" stroke="${colors.border}" stroke-width="${isFocused ? '2.6' : '1.5'}" />
-            <circle cx="-104" cy="0" r="10" fill="${colors.dot}" />
-            <text x="-104" y="3.5" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="10" font-weight="600" fill="#ffffff">${e.connectedDocs.length}</text>
-            <text x="-84" y="-4" font-family="IBM Plex Mono, monospace" font-size="10" font-weight="600" letter-spacing="0.04em" fill="${colors.text}">${escapeHtml(nameUpper)}</text>
-            <text x="-84" y="13" font-family="Overused Grotesk, sans-serif" font-size="13" font-weight="600" fill="#16161d">${escapeHtml(valShort)}</text>
-          </g>
-        `;
-      }).join('');
+      const nodeById = new Map();
+      docNodes.forEach(d => nodeById.set(d.id, d));
+      entityNodes.forEach(e => nodeById.set(e.id, e));
 
       let inspectorHtml = '';
       const focusedNode = graphFocusedNodeId ? nodeById.get(graphFocusedNodeId) : null;
@@ -2232,8 +2191,8 @@
       if (focusedNode && focusedNode.type === 'entity') {
         inspectorHtml = `
           <div style="display:flex;align-items:center;justify-content:space-between;">
-            <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Entity Node Selected</span>
-            <button type="button" class="text-link-btn" onclick="focusGraphNode(null)">Show All</button>
+            <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Entity Hub Selected</span>
+            <button type="button" class="text-link-btn" onclick="focusGraphNode(null)">Clear Focus</button>
           </div>
           <div>
             <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(focusedNode.entityName)}</div>
@@ -2255,7 +2214,7 @@
         inspectorHtml = `
           <div style="display:flex;align-items:center;justify-content:space-between;">
             <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Document Selected</span>
-            <button type="button" class="text-link-btn" onclick="focusGraphNode(null)">Show All</button>
+            <button type="button" class="text-link-btn" onclick="focusGraphNode(null)">Clear Focus</button>
           </div>
           <div>
             <div style="font-size:16px;font-weight:600;color:var(--text-primary);">${escapeHtml(focusedNode.docName)}</div>
@@ -2263,7 +2222,7 @@
           </div>
           <button type="button" class="text-link-btn" style="width:fit-content;" onclick="jumpFromGraphToSlice('${escapeHtml(focusedNode.jobId)}', -1)">Open Document ↗</button>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;margin-top:4px;">
-            Extracted Entities (${connectedEntities.length})
+            Connected Entities (${connectedEntities.length})
           </div>
           ${connectedEntities.map(e => `
             <div class="graph-inspector-item" onclick="onGraphEntityValueFilterChanged(${JSON.stringify(e.pairKey).replace(/"/g, '&quot;')})">
@@ -2276,13 +2235,13 @@
       } else {
         inspectorHtml = `
           <div>
-            <div style="font-size:14.5px;font-weight:600;color:var(--text-primary);">Cross-Document Entity Graph</div>
+            <div style="font-size:14.5px;font-weight:600;color:var(--text-primary);">Obsidian Force Graph</div>
             <div style="font-size:12.5px;color:var(--text-secondary);margin-top:3px;">
-              Showing <strong>${docNodes.length}</strong> document${docNodes.length === 1 ? '' : 's'} connected across <strong>${entityNodes.length}</strong> filtered entit${entityNodes.length === 1 ? 'y' : 'ies'}. Click any node to inspect connections or filter by entity above.
+              <strong>${docNodes.length}</strong> document${docNodes.length === 1 ? '' : 's'} &amp; <strong>${entityNodes.length}</strong> entity hubs (<strong>${edges.length}</strong> links). Hover or drag any node to explore constellations.
             </div>
           </div>
           <div style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);text-transform:uppercase;margin-top:4px;">
-            Active Entities (${entityNodes.length})
+            Top Entity Hubs (${entityNodes.length})
           </div>
           ${entityNodes.map(e => `
             <div class="graph-inspector-item" onclick="focusGraphNode('${escapeHtml(e.id)}')">
@@ -2297,101 +2256,373 @@
       }
 
       container.innerHTML = `
-        <div class="graph-canvas-card">
+        <div class="graph-canvas-card" style="overflow:hidden;background-color:#fafafc;">
           ${docNodes.length === 0 ? `
             <div style="margin:auto;text-align:center;color:var(--text-secondary);padding:32px;">
               No documents or entities match the current entity filters.<br/><br/>
               <button type="button" class="ghost-action-btn" onclick="resetGraphFilters()">Reset Entity Filters</button>
             </div>
           ` : `
-            <svg class="graph-svg" id="entityGraphSvg" style="min-height:${height}px;" viewBox="0 0 ${width} ${height}" preserveAspectRatio="xMidYMin meet">
-              <g id="entityGraphViewport" transform="translate(${graphPanX}, ${graphPanY}) scale(${graphZoom})">
-                <text x="${docX}" y="28" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.08em" fill="#8f92a6">DOCUMENTS (${docNodes.length})</text>
-                <text x="${entX}" y="28" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="600" letter-spacing="0.08em" fill="#8f92a6">EXTRACTED ENTITIES (${entityNodes.length})</text>
-                ${edgesSvg}
-                ${docNodesSvg}
-                ${entityNodesSvg}
-              </g>
-            </svg>
+            <canvas id="obsidianGraphCanvas" style="width:100%;height:100%;display:block;cursor:grab;"></canvas>
           `}
 
           <div class="graph-floating-hud">
             <div class="graph-legend">
-              <span><i class="legend-dot" style="background:#16161d;"></i>Document Slice</span>
+              <span><i class="legend-dot" style="background:#16161d;"></i>Document (${docNodes.length})</span>
               <span><i class="legend-dot" style="background:#4b72fe;"></i>Identifier</span>
               <span><i class="legend-dot" style="background:#0d9488;"></i>Party / Customer</span>
               <span><i class="legend-dot" style="background:#d97706;"></i>Financial</span>
               <span><i class="legend-dot" style="background:#7c3aed;"></i>Metadata</span>
             </div>
             <div class="graph-zoom-bar">
-              <button type="button" class="text-link-btn" onclick="zoomGraphBy(-0.15)">−</button>
-              <span>${Math.round(graphZoom * 100)}%</span>
-              <button type="button" class="text-link-btn" onclick="zoomGraphBy(0.15)">+</button>
-              <button type="button" class="text-link-btn" onclick="zoomGraphBy(0)">Reset</button>
+              <button type="button" class="text-link-btn" onclick="zoomGraphBy(-0.2)">−</button>
+              <span id="graphZoomLabel">${Math.round(graphZoom * 100)}%</span>
+              <button type="button" class="text-link-btn" onclick="zoomGraphBy(0.2)">+</button>
+              <button type="button" class="text-link-btn" onclick="zoomGraphBy(0)">Re-layout</button>
             </div>
           </div>
         </div>
 
-        <aside class="graph-inspector-card">
+        <aside class="graph-inspector-card" id="graphInspectorAside">
           ${inspectorHtml}
         </aside>
       `;
 
-      attachGraphSvgInteractivity();
+      if (docNodes.length > 0) {
+        initObsidianForceCanvas(docNodes, entityNodes, edges);
+      }
     }
 
-    function attachGraphSvgInteractivity() {
-      const svg = document.getElementById('entityGraphSvg');
-      if (!svg) return;
+    function initObsidianForceCanvas(docNodes, entityNodes, edges) {
+      const canvas = document.getElementById('obsidianGraphCanvas');
+      if (!canvas) return;
+      const rect = canvas.parentElement.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const width = Math.max(640, rect.width || 880);
+      const height = Math.max(460, rect.height || 560);
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      const ctx = canvas.getContext('2d');
 
-      let draggingNodeId = null;
+      const cx = width / 2;
+      const cy = height / 2;
+
+      const simNodes = [];
+      const simNodeMap = new Map();
+
+      // Seed entity hubs in an inner ring and documents around their primary entity hub
+      entityNodes.forEach((e, i) => {
+        const angle = (2 * Math.PI * i) / Math.max(1, entityNodes.length);
+        const ringR = Math.min(width, height) * 0.24;
+        const saved = graphCustomNodePositions[e.id];
+        const degree = e.connectedDocs.length;
+        const colors = getEntityCategoryColor(e.category);
+        const node = {
+          id: e.id,
+          type: 'entity',
+          label: e.entityValue,
+          subLabel: e.entityName,
+          degree,
+          radius: Math.min(20, 6.5 + Math.sqrt(degree) * 3.4),
+          color: colors.dot,
+          bgColor: colors.bg,
+          x: saved ? saved.x : cx + Math.cos(angle) * ringR + ((i % 3) - 1) * 18,
+          y: saved ? saved.y : cy + Math.sin(angle) * ringR + ((i % 2) - 0.5) * 18,
+          vx: 0,
+          vy: 0,
+          raw: e
+        };
+        simNodes.push(node);
+        simNodeMap.set(node.id, node);
+      });
+
+      docNodes.forEach((d, i) => {
+        const angle = (2 * Math.PI * i) / Math.max(1, docNodes.length);
+        const outerR = Math.min(width, height) * 0.37;
+        const saved = graphCustomNodePositions[d.id];
+        const degree = d.entityIds.length;
+        const node = {
+          id: d.id,
+          type: 'doc',
+          label: d.docName,
+          subLabel: d.pageRange,
+          degree,
+          radius: d.isCurrentJob ? 8.5 : 6.8,
+          color: d.isCurrentJob ? '#4b72fe' : '#16161d',
+          bgColor: '#ffffff',
+          x: saved ? saved.x : cx + Math.cos(angle) * outerR,
+          y: saved ? saved.y : cy + Math.sin(angle) * outerR,
+          vx: 0,
+          vy: 0,
+          raw: d
+        };
+        simNodes.push(node);
+        simNodeMap.set(node.id, node);
+      });
+
+      const simEdges = edges
+        .map(ed => ({
+          source: simNodeMap.get(ed.source),
+          target: simNodeMap.get(ed.target)
+        }))
+        .filter(ed => ed.source && ed.target);
+
+      let alpha = 1.0;
+      let draggedNode = null;
       let isPanning = false;
-      let startClientX = 0;
-      let startClientY = 0;
+      let startMouseX = 0;
+      let startMouseY = 0;
+      let pointerMoved = false;
 
-      svg.onmousedown = (e) => {
-        const nodeEl = e.target.closest('.graph-node');
-        startClientX = e.clientX;
-        startClientY = e.clientY;
-        if (nodeEl) {
-          draggingNodeId = nodeEl.getAttribute('data-node-id');
+      function screenToWorld(sx, sy) {
+        return {
+          x: (sx - cx - graphPanX) / graphZoom + cx,
+          y: (sy - cy - graphPanY) / graphZoom + cy
+        };
+      }
+
+      function findNodeAt(sx, sy) {
+        const pt = screenToWorld(sx, sy);
+        for (let i = simNodes.length - 1; i >= 0; i--) {
+          const n = simNodes[i];
+          const hitR = (n.radius + 5) / Math.sqrt(graphZoom);
+          const dx = pt.x - n.x;
+          const dy = pt.y - n.y;
+          if (dx * dx + dy * dy <= hitR * hitR) {
+            return n;
+          }
+        }
+        return null;
+      }
+
+      function stepPhysics() {
+        if (alpha < 0.008 && !draggedNode) return;
+
+        // 1. Repulsion between nodes
+        const repulsion = 1450;
+        for (let i = 0; i < simNodes.length; i++) {
+          const a = simNodes[i];
+          for (let j = i + 1; j < simNodes.length; j++) {
+            const b = simNodes[j];
+            let dx = b.x - a.x;
+            let dy = b.y - a.y;
+            let distSq = dx * dx + dy * dy;
+            if (distSq < 9) {
+              dx = (Math.random() - 0.5) * 2;
+              dy = (Math.random() - 0.5) * 2;
+              distSq = 9;
+            }
+            if (distSq > 95000) continue; // spatial cutoff
+            const dist = Math.sqrt(distSq);
+            const force = (repulsion * alpha) / distSq;
+            const fx = (dx / dist) * force;
+            const fy = (dy / dist) * force;
+            a.vx -= fx;
+            a.vy -= fy;
+            b.vx += fx;
+            b.vy += fy;
+          }
+        }
+
+        // 2. Link spring attraction
+        const targetDist = 92;
+        const springK = 0.048 * alpha;
+        for (let i = 0; i < simEdges.length; i++) {
+          const e = simEdges[i];
+          const dx = e.target.x - e.source.x;
+          const dy = e.target.y - e.source.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const delta = (dist - targetDist) * springK;
+          const fx = (dx / dist) * delta;
+          const fy = (dy / dist) * delta;
+          e.source.vx += fx;
+          e.source.vy += fy;
+          e.target.vx -= fx;
+          e.target.vy -= fy;
+        }
+
+        // 3. Center gravity + integration
+        const centerK = 0.014 * alpha;
+        for (let i = 0; i < simNodes.length; i++) {
+          const n = simNodes[i];
+          if (n === draggedNode) {
+            n.vx = 0;
+            n.vy = 0;
+            continue;
+          }
+          n.vx += (cx - n.x) * centerK;
+          n.vy += (cy - n.y) * centerK;
+          n.vx *= 0.78;
+          n.vy *= 0.78;
+          n.x += n.vx;
+          n.y += n.vy;
+          graphCustomNodePositions[n.id] = { x: n.x, y: n.y };
+        }
+
+        alpha *= 0.965;
+      }
+
+      function drawFrame() {
+        stepPhysics();
+
+        ctx.save();
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, width, height);
+
+        ctx.translate(cx + graphPanX, cy + graphPanY);
+        ctx.scale(graphZoom, graphZoom);
+        ctx.translate(-cx, -cy);
+
+        const activeAnchorId = graphHoveredNodeId || graphFocusedNodeId;
+        const neighborSet = new Set();
+        if (activeAnchorId) {
+          neighborSet.add(activeAnchorId);
+          for (let i = 0; i < simEdges.length; i++) {
+            const ed = simEdges[i];
+            if (ed.source.id === activeAnchorId) neighborSet.add(ed.target.id);
+            if (ed.target.id === activeAnchorId) neighborSet.add(ed.source.id);
+          }
+        }
+
+        // Draw edges
+        for (let i = 0; i < simEdges.length; i++) {
+          const ed = simEdges[i];
+          const isHigh = activeAnchorId && (ed.source.id === activeAnchorId || ed.target.id === activeAnchorId);
+          ctx.beginPath();
+          ctx.moveTo(ed.source.x, ed.source.y);
+          ctx.lineTo(ed.target.x, ed.target.y);
+          if (isHigh) {
+            ctx.strokeStyle = 'rgba(75, 114, 254, 0.85)';
+            ctx.lineWidth = 1.9 / Math.sqrt(graphZoom);
+          } else if (activeAnchorId) {
+            ctx.strokeStyle = 'rgba(200, 198, 216, 0.14)';
+            ctx.lineWidth = 1.0 / Math.sqrt(graphZoom);
+          } else {
+            ctx.strokeStyle = 'rgba(185, 184, 204, 0.48)';
+            ctx.lineWidth = 1.15 / Math.sqrt(graphZoom);
+          }
+          ctx.stroke();
+        }
+
+        // Draw nodes & semantic-zoom labels
+        for (let i = 0; i < simNodes.length; i++) {
+          const n = simNodes[i];
+          const isDimmed = activeAnchorId && !neighborSet.has(n.id);
+          const isFocusedOrHovered = n.id === activeAnchorId;
+
+          ctx.save();
+          ctx.globalAlpha = isDimmed ? 0.16 : 1.0;
+
+          // Subtle halo on entity hubs or active nodes
+          if (n.type === 'entity' && n.degree >= 2 || isFocusedOrHovered) {
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, n.radius + (isFocusedOrHovered ? 5 : 3), 0, Math.PI * 2);
+            ctx.fillStyle = isFocusedOrHovered ? 'rgba(75, 114, 254, 0.22)' : 'rgba(75, 114, 254, 0.09)';
+            ctx.fill();
+          }
+
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
+          ctx.fillStyle = n.color;
+          ctx.fill();
+          ctx.lineWidth = isFocusedOrHovered ? 2.2 : 1.4;
+          ctx.strokeStyle = '#ffffff';
+          ctx.stroke();
+
+          // Obsidian LOD Label Rule: show labels for hubs (degree >= 2), active neighborhood, or when zoomed in
+          const showLabel = isFocusedOrHovered ||
+            (activeAnchorId && neighborSet.has(n.id)) ||
+            (n.type === 'entity' && n.degree >= 2) ||
+            graphZoom >= 1.05 ||
+            simNodes.length <= 42;
+
+          if (showLabel) {
+            const fontSize = Math.max(9.5, Math.min(12.5, (n.type === 'entity' ? 11.5 : 10.5) / Math.pow(graphZoom, 0.25)));
+            ctx.font = `${isFocusedOrHovered || (n.type === 'entity' && n.degree >= 3) ? '600' : '500'} ${fontSize}px "Overused Grotesk", sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            const text = n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label;
+            const labelY = n.y + n.radius + 4;
+
+            if (isFocusedOrHovered) {
+              const tw = ctx.measureText(text).width + 10;
+              ctx.fillStyle = 'rgba(255, 255, 255, 0.94)';
+              ctx.fillRect(n.x - tw / 2, labelY - 2, tw, fontSize + 5);
+            }
+
+            ctx.fillStyle = n.type === 'entity' ? '#16161d' : '#454859';
+            ctx.fillText(text, n.x, labelY);
+          }
+
+          ctx.restore();
+        }
+
+        ctx.restore();
+        graphSimAnimFrame = requestAnimationFrame(drawFrame);
+      }
+
+      canvas.onmousedown = (e) => {
+        const b = canvas.getBoundingClientRect();
+        const sx = e.clientX - b.left;
+        const sy = e.clientY - b.top;
+        startMouseX = e.clientX;
+        startMouseY = e.clientY;
+        pointerMoved = false;
+
+        const hit = findNodeAt(sx, sy);
+        if (hit) {
+          draggedNode = hit;
+          alpha = Math.max(alpha, 0.35);
+          canvas.style.cursor = 'grabbing';
         } else {
           isPanning = true;
+          canvas.style.cursor = 'grabbing';
         }
       };
 
-      window.onmousemove = (e) => {
-        if (!draggingNodeId && !isPanning) return;
-        const dx = (e.clientX - startClientX) / graphZoom;
-        const dy = (e.clientY - startClientY) / graphZoom;
-        startClientX = e.clientX;
-        startClientY = e.clientY;
+      canvas.onmousemove = (e) => {
+        const b = canvas.getBoundingClientRect();
+        const sx = e.clientX - b.left;
+        const sy = e.clientY - b.top;
+        const dx = e.clientX - startMouseX;
+        const dy = e.clientY - startMouseY;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) pointerMoved = true;
 
-        if (draggingNodeId) {
-          const nodeEl = svg.querySelector(`.graph-node[data-node-id="${CSS.escape(draggingNodeId)}"]`);
-          if (nodeEl) {
-            const match = /translate\(([-\d.]+),\s*([-\d.]+)\)/.exec(nodeEl.getAttribute('transform') || '');
-            if (match) {
-              const nx = parseFloat(match[1]) + dx;
-              const ny = parseFloat(match[2]) + dy;
-              graphCustomNodePositions[draggingNodeId] = { x: nx, y: ny };
-              renderDocumentGraphCanvasOnly();
-            }
-          }
+        if (draggedNode) {
+          const pt = screenToWorld(sx, sy);
+          draggedNode.x = pt.x;
+          draggedNode.y = pt.y;
+          graphCustomNodePositions[draggedNode.id] = { x: pt.x, y: pt.y };
+          alpha = Math.max(alpha, 0.25);
         } else if (isPanning) {
-          graphPanX += dx * graphZoom;
-          graphPanY += dy * graphZoom;
-          const vp = document.getElementById('entityGraphViewport');
-          if (vp) {
-            vp.setAttribute('transform', `translate(${graphPanX}, ${graphPanY}) scale(${graphZoom})`);
-          }
+          graphPanX += dx;
+          graphPanY += dy;
+          startMouseX = e.clientX;
+          startMouseY = e.clientY;
+        } else {
+          const hit = findNodeAt(sx, sy);
+          graphHoveredNodeId = hit ? hit.id : null;
+          canvas.style.cursor = hit ? 'pointer' : 'grab';
         }
       };
 
       window.onmouseup = () => {
-        draggingNodeId = null;
+        if (!pointerMoved && draggedNode) {
+          focusGraphNode(draggedNode.id);
+        }
+        draggedNode = null;
         isPanning = false;
       };
+
+      canvas.onwheel = (e) => {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 0.12 : -0.12;
+        graphZoom = Math.min(2.6, Math.max(0.45, +(graphZoom + delta).toFixed(2)));
+        const lbl = document.getElementById('graphZoomLabel');
+        if (lbl) lbl.textContent = `${Math.round(graphZoom * 100)}%`;
+      };
+
+      drawFrame();
     }
 
     init();
