@@ -447,7 +447,19 @@ public sealed class DocumentSplitAndGroupTests
         var harnessStore = provider.GetRequiredService<IHarnessStore>();
         var jobStore = provider.GetRequiredService<IJobStore>();
         var workflow = provider.GetRequiredService<DocumentSplittingWorkflow>();
-        var askOrchestrator = provider.GetRequiredService<AskAiOrchestrator>();
+        var askClient = new Mock<IChatClient>();
+        askClient.SetupSequence(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                "{\"cosmosSql\":\"SELECT c.jobId FROM c WHERE c.status = 'Completed'\"}")))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                "The Woodgrove agreement is supported by the source document [1].")));
+        var askCatalog = new ModelCatalog(customClients: new Dictionary<string, IChatClient>
+        {
+            ["gpt-5-mini"] = askClient.Object
+        });
+        var askOrchestrator = new AskAiOrchestrator(
+            harnessStore, jobStore, askCatalog, [], NullLogger<AskAiOrchestrator>.Instance);
 
         var tenant = await harnessStore.GetTenantAsync("contoso-legal")
                      ?? new TenantHarness { TenantId = "contoso-legal", DisplayName = "Contoso Legal" };

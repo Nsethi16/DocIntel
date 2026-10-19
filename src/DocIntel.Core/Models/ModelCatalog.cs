@@ -61,6 +61,11 @@ public interface IModelCatalog
     string ResolveModelId(TenantHarness tenant, string? modelOverride = null);
 
     IChatClient ResolveChatClient(TenantHarness tenant, string? modelOverride = null);
+
+    /// <summary>
+    /// Resolves a configured model without simulated or cross-provider fallback.
+    /// </summary>
+    IChatClient ResolveRequiredChatClient(TenantHarness tenant, string? modelOverride = null);
 }
 
 /// <summary>
@@ -156,6 +161,45 @@ public sealed class ModelCatalog : IModelCatalog
         }
 
         return new ReasoningCleanupChatClient(rawClient, new SimulatedSliceChatClient(modelId), openAiFallback);
+    }
+
+    /// <inheritdoc />
+    public IChatClient ResolveRequiredChatClient(TenantHarness tenant, string? modelOverride = null)
+    {
+        var modelId = ResolveModelId(tenant, modelOverride);
+        if (_customClients.TryGetValue(modelId, out var injectedClient))
+        {
+            if (injectedClient is SimulatedSliceChatClient)
+            {
+                throw new InvalidOperationException("Ask AI requires a configured, non-simulated model.");
+            }
+
+            return new ReasoningCleanupChatClient(injectedClient);
+        }
+
+        var descriptor = _descriptors.FirstOrDefault(d =>
+            String.Equals(d.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
+        if (descriptor is null || descriptor.Provider == ModelProvider.Simulated ||
+            !Uri.TryCreate(descriptor.Endpoint, UriKind.Absolute, out var endpoint) ||
+            (endpoint.Scheme != Uri.UriSchemeHttps && endpoint.Scheme != Uri.UriSchemeHttp))
+        {
+            throw new InvalidOperationException("Ask AI requires a configured, non-simulated model endpoint.");
+        }
+
+        IChatClient client = descriptor.Provider switch
+        {
+            ModelProvider.FoundryInference =>
+                CreateFoundryInferenceClient(endpoint.ToString(), descriptor.DeploymentName),
+            ModelProvider.AzureOpenAI => new AzureOpenAIClient(endpoint, _credential)
+                .GetChatClient(descriptor.DeploymentName).AsIChatClient(),
+            ModelProvider.OpenAICompatible => new OpenAIClient(
+                    new System.ClientModel.ApiKeyCredential("local"),
+                    new OpenAIClientOptions { Endpoint = endpoint })
+                .GetChatClient(descriptor.DeploymentName).AsIChatClient(),
+            _ => throw new InvalidOperationException("The selected model provider is not supported by Ask AI.")
+        };
+
+        return new ReasoningCleanupChatClient(client);
     }
 
     private FoundryInferenceChatClient CreateFoundryInferenceClient(string endpoint, string deploymentName)

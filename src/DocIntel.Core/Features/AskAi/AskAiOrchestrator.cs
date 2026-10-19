@@ -350,10 +350,16 @@ public sealed class AskAiOrchestrator
         var tenant = await _harnessStore.GetTenantAsync(run.TenantId, cancellationToken)
             ?? throw new InvalidOperationException($"Tenant '{run.TenantId}' not found.");
 
+        if (!tenant.IsActive ||
+            !tenant.Capabilities.TryGetValue(FeatureHarness.AskAiKey, out var askFeature) || !askFeature.Enabled)
+        {
+            throw new InvalidOperationException("Ask AI is not enabled for this tenant.");
+        }
+
         run.Status = JobStatus.Running;
-        var modelId = _modelCatalog.ResolveModelId(tenant, tenant.DefaultModelId);
+        var modelId = _modelCatalog.ResolveModelId(tenant, askFeature.ModelIdOverride);
         run.ModelIdUsed = modelId;
-        var chatClient = _modelCatalog.ResolveChatClient(tenant, tenant.DefaultModelId);
+        var chatClient = _modelCatalog.ResolveRequiredChatClient(tenant, askFeature.ModelIdOverride);
 
         // Step 1: Build Dynamic System Prompt with Tenant Schema & Prompt Column Definitions
         var stepSw = Stopwatch.StartNew();
@@ -465,37 +471,31 @@ public sealed class AskAiOrchestrator
             $"Always filter by `c.tenantId = '{tenantId}' AND c.status = 'Completed'`.\n" +
             "Return JSON with property `cosmosSql` containing the SELECT statement.";
 
-        try
+        var options = new ChatOptions
         {
-            var options = new ChatOptions
-            {
-                Instructions = sqlInstructions,
-                ResponseFormat = ChatResponseFormat.ForJsonSchema<CosmosSqlGenerationDto>(
+            Instructions = sqlInstructions,
+            ResponseFormat = ChatResponseFormat.ForJsonSchema<CosmosSqlGenerationDto>(
                     schemaName: "cosmos_sql_query",
                     schemaDescription: "Read-only Cosmos DB SQL SELECT query answering the user question")
-            };
+        };
 
-            var response = await chatClient.GetResponseAsync(
-                [new ChatMessage(ChatRole.User, $"User Question: {question}")],
-                options,
-                cancellationToken);
+        var response = await chatClient.GetResponseAsync(
+            [new ChatMessage(ChatRole.User, $"User Question: {question}")],
+            options,
+            cancellationToken);
 
-            var cleaned = ReasoningCleanupChatClient.CleanModelText(response.Text ?? string.Empty);
-            var parsed = JsonSerializer.Deserialize<CosmosSqlGenerationDto>(
-                cleaned,
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        var cleaned = ReasoningCleanupChatClient.CleanModelText(response.Text ?? string.Empty);
+        var parsed = JsonSerializer.Deserialize<CosmosSqlGenerationDto>(
+            cleaned,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
 
-            if (!string.IsNullOrWhiteSpace(parsed?.CosmosSql) &&
-                parsed.CosmosSql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
-            {
-                return parsed.CosmosSql.Trim();
-            }
-        }
-        catch
+        if (String.IsNullOrWhiteSpace(parsed?.CosmosSql) ||
+            !parsed.CosmosSql.TrimStart().StartsWith("SELECT", StringComparison.OrdinalIgnoreCase))
         {
+            throw new InvalidOperationException("The model did not return a valid document query.");
         }
 
-        return BuildDeterministicCosmosSql(tenantId, question);
+        return parsed.CosmosSql.Trim();
     }
 
     internal static string BuildDeterministicCosmosSql(string tenantId, string question)
@@ -627,33 +627,27 @@ public sealed class AskAiOrchestrator
             "Answer the user's question in clear, user-friendly language using the Cosmos DB query results and resolved citations.\n" +
             "Include inline citation markers like [1], [2] referencing the provided citation numbers. Do NOT expose raw SQL or JSON in your answer.";
 
-        try
-        {
-            var userPrompt =
+        var userPrompt =
                 $"User Question: {question}\n\n" +
                 $"Executed Cosmos SQL: {executedSql}\n" +
                 $"Matched Citations ({citations.Count}):\n{citationsContext}\n" +
                 $"Cosmos DB Rows Sample:\n{string.Join("\n", jsonRows.Take(8))}";
 
-            var resp = await chatClient.GetResponseAsync(
-                [
-                    new ChatMessage(ChatRole.System, synthInstructions),
+        var resp = await chatClient.GetResponseAsync(
+            [
+                new ChatMessage(ChatRole.System, synthInstructions),
                     new ChatMessage(ChatRole.User, userPrompt)
-                ],
-                cancellationToken: cancellationToken);
+            ],
+            cancellationToken: cancellationToken);
 
-            var text = ReasoningCleanupChatClient.CleanModelText(resp.Text ?? string.Empty);
-            if (!string.IsNullOrWhiteSpace(text) &&
-                !text.TrimStart().StartsWith("{\"segments\"", StringComparison.Ordinal))
-            {
-                return text;
-            }
-        }
-        catch
+        var text = ReasoningCleanupChatClient.CleanModelText(resp.Text ?? string.Empty);
+        if (String.IsNullOrWhiteSpace(text) ||
+            text.TrimStart().StartsWith("{\"segments\"", StringComparison.Ordinal))
         {
+            throw new InvalidOperationException("The model did not return an Ask AI answer.");
         }
 
-        return BuildDeterministicCitedNarrative(question, citations);
+        return text;
     }
 
     internal static string BuildDeterministicCitedNarrative(string question, IReadOnlyList<AskAiCitation> citations)

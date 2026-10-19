@@ -4,6 +4,14 @@ This document provides a comprehensive technical walkthrough of **what** happens
 
 ---
 
+## Ask AI execution policy
+
+Ask AI requires a configured, non-simulated model endpoint. It does not inherit the legacy
+document-processing simulator or cross-provider fallback: missing configuration, invalid model
+output, provider errors, and cancellation must not be converted into successful document answers.
+Tests inject scripted model clients; they do not require a cloud deployment. The tenant must be
+active with the `AskAi` capability enabled.
+
 ## 1. High-Level System Architecture
 
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).
