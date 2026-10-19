@@ -292,7 +292,7 @@ public static class HarnessEndpoints
                 return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
             }
 
-            var job = await jobStore.GetJobAsync(jobId, ct);
+            var job = await jobStore.GetJobAsync(jobId, ct, tenantId);
             if (job is null)
             {
                 return Results.NotFound(new { error = $"Job '{jobId}' not found." });
@@ -323,7 +323,7 @@ public static class HarnessEndpoints
 
             if (pdfBytes is null)
             {
-                var job = await jobStore.GetJobAsync(jobId, ct);
+                var job = await jobStore.GetJobAsync(jobId, ct, tenantId);
                 var seg = job?.Segments.FirstOrDefault(s => s.SegmentIndex == sliceIndex);
                 if (wantTranslated)
                 {

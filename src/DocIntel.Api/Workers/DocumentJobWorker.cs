@@ -33,14 +33,15 @@ public sealed class DocumentJobWorker : BackgroundService
     {
         await foreach (var ticket in _jobQueue.ReadAllAsync(stoppingToken))
         {
-            var job = await _jobStore.GetJobAsync(ticket.JobId, stoppingToken);
-            if (job is null)
-            {
-                continue;
-            }
-
+            DocumentJob? job = null;
             try
             {
+                job = await _jobStore.GetJobAsync(ticket.JobId, stoppingToken, ticket.TenantId);
+                if (job is null)
+                {
+                    continue;
+                }
+
                 job.Status = JobStatus.Running;
                 await _jobStore.UpsertJobAsync(job, stoppingToken);
 
@@ -85,10 +86,20 @@ public sealed class DocumentJobWorker : BackgroundService
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "Failed processing async job '{JobId}' for tenant '{TenantId}'.", ticket.JobId, ticket.TenantId);
-                job.Status = JobStatus.Failed;
-                job.ErrorMessage = ex.Message;
-                job.CompletedAtUtc = DateTimeOffset.UtcNow;
-                await _jobStore.UpsertJobAsync(job, stoppingToken);
+                if (job is not null)
+                {
+                    try
+                    {
+                        job.Status = JobStatus.Failed;
+                        job.ErrorMessage = ex.Message;
+                        job.CompletedAtUtc = DateTimeOffset.UtcNow;
+                        await _jobStore.UpsertJobAsync(job, stoppingToken);
+                    }
+                    catch (Exception persistEx)
+                    {
+                        _logger.LogWarning(persistEx, "Failed persisting error state for job '{JobId}'.", ticket.JobId);
+                    }
+                }
             }
         }
     }

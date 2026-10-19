@@ -1545,7 +1545,7 @@
         <span id="uploadBtnLabel">Upload PDF</span>
         <input type="file" id="docUploadInput" accept=".pdf" style="display:none" onchange="uploadAndRunTenantDocument(this)" />
       </label>
-      <a href="/admin.html" class="admin-switch-link" title="Open Agent Harness Admin Studio">
+      <a href="/admin.html" id="adminStudioSwitchLink" class="admin-switch-link" title="Open Agent Harness Admin Studio" onclick="this.href='/admin.html?tenant=' + encodeURIComponent(currentTenant ? currentTenant.tenantId : '')">
         <span>Agent Harness Admin</span>
         <span>↗</span>
       </a>
@@ -1842,7 +1842,8 @@
     async function init() {
       const resp = await fetch('/api/harness/tenants');
       tenants = await resp.json();
-      currentTenant = tenants[0] || null;
+      const urlTenant = new URLSearchParams(window.location.search).get('tenant');
+      currentTenant = tenants.find(t => t.tenantId === urlTenant) || tenants[0] || null;
       renderTenantSelect();
       await loadTenantJobs();
     }
@@ -3132,21 +3133,18 @@
       } else {
         inspectorHtml = `
           <div>
-            <div style="font-size:14px;font-weight:600;color:var(--text-primary);">Shared Entity Constellations</div>
+            <div style="font-size:14px;font-weight:600;color:var(--text-primary);">Matched Documents (${docNodes.length})</div>
             <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
-              Select any entity hub or document node on the canvas to inspect connected agreements, counterparties, and commercial terms.
+              Documents matching the active entity filters. Click any document to open it or click a node on the graph to inspect its dossier.
             </div>
           </div>
-          <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;margin-top:2px;">
-            Key Entity Hubs (${entityNodes.length})
-          </div>
-          ${entityNodes.map(e => `
-            <div class="graph-inspector-item" onclick="focusGraphNode('${escapeHtml(e.id)}')">
-              <div style="display:flex;align-items:center;justify-content:space-between;">
-                <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(e.entityName)}</span>
-                <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent-ink);">${e.connectedDocs.length} doc${e.connectedDocs.length === 1 ? '' : 's'}</span>
+          ${docNodes.map(d => `
+            <div class="graph-inspector-item" onclick="jumpFromGraphToSlice('${escapeHtml(d.jobId)}', -1)">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                <span style="font-weight:600;font-size:13px;color:var(--text-primary);">${escapeHtml(d.docName)}</span>
+                <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);">Open ↗</span>
               </div>
-              <div style="font-weight:600;font-size:13px;color:var(--text-primary);">${escapeHtml(e.entityValue)}</div>
+              <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);">${escapeHtml(d.pageRange)}${d.docTypesSummary ? ' · ' + escapeHtml(d.docTypesSummary) : ''}</div>
             </div>
           `).join('')}
         `;

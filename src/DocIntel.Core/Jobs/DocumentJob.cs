@@ -74,7 +74,7 @@ public interface IJobStore
 {
     Task UpsertJobAsync(DocumentJob job, CancellationToken cancellationToken = default);
 
-    Task<DocumentJob?> GetJobAsync(string jobId, CancellationToken cancellationToken = default);
+    Task<DocumentJob?> GetJobAsync(string jobId, CancellationToken cancellationToken = default, string? tenantId = null);
 
     Task<IReadOnlyList<DocumentJob>> ListJobsByTenantAsync(string tenantId, CancellationToken cancellationToken = default);
 }
@@ -97,10 +97,15 @@ public sealed class InMemoryJobStore : IJobStore
         return Task.CompletedTask;
     }
 
-    public Task<DocumentJob?> GetJobAsync(string jobId, CancellationToken cancellationToken = default)
+    public Task<DocumentJob?> GetJobAsync(string jobId, CancellationToken cancellationToken = default, string? tenantId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
         _jobs.TryGetValue(jobId, out var job);
+        if (job is not null && !string.IsNullOrWhiteSpace(tenantId) &&
+            !string.Equals(job.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+        {
+            return Task.FromResult<DocumentJob?>(null);
+        }
         return Task.FromResult(job);
     }
 

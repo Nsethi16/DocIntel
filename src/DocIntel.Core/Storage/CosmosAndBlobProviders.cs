@@ -346,9 +346,25 @@ public sealed class CosmosJobStore : IJobStore
             cancellationToken: cancellationToken).ConfigureAwait(false);
     }
 
-    public async Task<DocumentJob?> GetJobAsync(string jobId, CancellationToken cancellationToken = default)
+    public async Task<DocumentJob?> GetJobAsync(string jobId, CancellationToken cancellationToken = default, string? tenantId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
+
+        if (!string.IsNullOrWhiteSpace(tenantId))
+        {
+            try
+            {
+                var ptResponse = await _container.ReadItemAsync<DocumentJob>(
+                    jobId,
+                    new PartitionKey(tenantId),
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                return ptResponse.Resource;
+            }
+            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
+            {
+                return null;
+            }
+        }
 
         var query = new QueryDefinition("SELECT * FROM c WHERE c.id = @jobId")
             .WithParameter("@jobId", jobId);

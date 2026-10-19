@@ -1906,7 +1906,7 @@
       <span class="nav-label">Agent harness</span>
     </div>
 
-    <div class="nav-item" id="navDocumentIntel" title="Open Document Intelligence App" onclick="window.location.href='/'">
+    <div class="nav-item" id="navDocumentIntel" title="Open Document Intelligence App" onclick="window.location.href='/?tenant=' + encodeURIComponent(currentTenant ? currentTenant.tenantId : '')">
       <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
         <path stroke-linecap="round" stroke-linejoin="round" d="M5.5 3h6l4 4v9.5A1.5 1.5 0 0114 18H5.5A1.5 1.5 0 014 16.5v-12A1.5 1.5 0 015.5 3z" />
         <path stroke-linecap="round" stroke-linejoin="round" d="M7 10h6M7 13.5h4" />
@@ -2439,7 +2439,8 @@
     let currentTenant = null;
 
     async function init() {
-      await loadTenants();
+      const urlTenant = new URLSearchParams(window.location.search).get('tenant');
+      await loadTenants(urlTenant || undefined);
     }
 
     async function loadTenants(selectedId) {
