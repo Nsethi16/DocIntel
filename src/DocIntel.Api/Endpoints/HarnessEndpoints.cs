@@ -1,4 +1,5 @@
 using System.Text;
+using DocIntel.Core.Features.DocumentInsight;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Features.PromptColumns;
@@ -109,21 +110,26 @@ public static class HarnessEndpoints
             TenantHarness.EnsureDefaultCapabilities(updated);
             var saved = await store.UpsertTenantAsync(updated, ct);
 
-            // Evaluate any newly added or modified Prompt Columns across ALL existing completed jobs in the background
+            // Re-evaluate Document Insights and Prompt Columns across existing completed jobs when Admin saves harness changes
             _ = Task.Run(async () =>
             {
                 try
                 {
+                    var fastCatalog = new ModelCatalog();
                     var jobs = await jobStore.ListJobsByTenantAsync(tenantId, CancellationToken.None);
-                    foreach (var job in jobs.Where(j => EvaluatePromptColumnsExecutor.JobNeedsPromptEvaluation(j, saved)))
+                    foreach (var job in jobs.Where(j => j.Status == JobStatus.Completed))
                     {
-                        await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(
-                            job,
-                            saved,
-                            modelCatalog,
-                            artifactStore,
-                            CancellationToken.None,
-                            forceReevaluateAll: false);
+                        await GenerateDocumentInsightsExecutor.EvaluateJobInsightsAsync(job, saved, fastCatalog, CancellationToken.None);
+                        if (EvaluatePromptColumnsExecutor.JobNeedsPromptEvaluation(job, saved))
+                        {
+                            await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(
+                                job,
+                                saved,
+                                fastCatalog,
+                                artifactStore,
+                                CancellationToken.None,
+                                forceReevaluateAll: false);
+                        }
                         await jobStore.UpsertJobAsync(job, CancellationToken.None);
                     }
                 }

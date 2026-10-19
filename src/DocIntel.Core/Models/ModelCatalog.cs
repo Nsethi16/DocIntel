@@ -570,19 +570,84 @@ public sealed class SimulatedSliceChatClient : IChatClient
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
             .Select(l => l.Trim())
             .Where(l => l.Length > 3 && !l.StartsWith("<!--", StringComparison.Ordinal))
-            .Take(6)
             .ToList();
 
         var instructionLine = systemPrompt
             .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-            .LastOrDefault(l => !l.StartsWith("[TASK:", StringComparison.Ordinal))
-            ?? "Executive summary";
+            .LastOrDefault(l => !l.StartsWith("[TASK:", StringComparison.Ordinal) &&
+                                !l.StartsWith("You are an enterprise", StringComparison.OrdinalIgnoreCase))
+            ?.Trim() ?? string.Empty;
 
-        var preview = string.Join(" — ", lines.Take(3));
-        var summary = string.IsNullOrWhiteSpace(preview)
-            ? "Executive summary of document slice."
-            : $"{preview}.";
+        var docHeading = lines.FirstOrDefault() ?? "Commercial Document";
+        var customer = ResolveFieldFromText("customer", "customer entity", userText);
+        var mbsa = ResolveFieldFromText("mbsa", "mba/mbsa", userText);
+        var contract = ResolveFieldFromText("contract", "contract number", userText);
+        var quote = ResolveFieldFromText("quote", "quote number", userText);
+        var currency = ResolveFieldFromText("currency", "billing currency", userText);
+        var dealVal = ResolveFieldFromText("total", "total deal value", userText);
 
+        var insightParts = new List<string>();
+        var lowerInstr = instructionLine.ToLowerInvariant();
+
+        // 1. Core document & counterparty identity
+        if (!string.IsNullOrWhiteSpace(customer))
+        {
+            insightParts.Add($"{docHeading} executed for {customer}.");
+        }
+        else
+        {
+            insightParts.Add($"{docHeading} governing enterprise commercial obligations.");
+        }
+
+        // 2. Agreement / Quote / Contract identifiers
+        var idTokens = new List<string>();
+        if (!string.IsNullOrWhiteSpace(mbsa)) idTokens.Add($"MBA/MBSA {mbsa}");
+        if (!string.IsNullOrWhiteSpace(contract)) idTokens.Add($"Contract {contract}");
+        if (!string.IsNullOrWhiteSpace(quote)) idTokens.Add($"Quote {quote}");
+        if (idTokens.Count > 0)
+        {
+            insightParts.Add($"Key Identifiers: {string.Join(", ", idTokens)}.");
+        }
+
+        // 3. Financial & commercial terms
+        if (!string.IsNullOrWhiteSpace(dealVal))
+        {
+            var currLabel = !string.IsNullOrWhiteSpace(currency) ? $" {currency}" : " USD";
+            insightParts.Add($"Total Financial Value: {dealVal}{currLabel}.");
+        }
+        else if (!string.IsNullOrWhiteSpace(currency))
+        {
+            insightParts.Add($"Billing Currency: {currency}.");
+        }
+
+        // 4. Substantive commercial terms from body lines (excluding raw IDs already summarized)
+        var bodyClauseLines = lines.Skip(1)
+            .Where(l => !l.StartsWith("Customer Name:", StringComparison.OrdinalIgnoreCase) &&
+                        !l.StartsWith("Nombre de la entidad:", StringComparison.OrdinalIgnoreCase) &&
+                        !l.StartsWith("MBA/MBSA", StringComparison.OrdinalIgnoreCase) &&
+                        !l.StartsWith("Número de MBA", StringComparison.OrdinalIgnoreCase) &&
+                        !l.StartsWith("Contract Number:", StringComparison.OrdinalIgnoreCase) &&
+                        !l.StartsWith("Número de contrato:", StringComparison.OrdinalIgnoreCase) &&
+                        !l.StartsWith("Quote Number:", StringComparison.OrdinalIgnoreCase) &&
+                        !l.StartsWith("Billing currency:", StringComparison.OrdinalIgnoreCase) &&
+                        !l.StartsWith("Total deal value", StringComparison.OrdinalIgnoreCase))
+            .Take(2)
+            .ToList();
+
+        if (bodyClauseLines.Count > 0)
+        {
+            insightParts.Add($"Commercial Terms: {string.Join(" ", bodyClauseLines)}");
+        }
+
+        // 5. Honor any custom focus instruction configured by Admin in Admin Studio
+        var defaultInstrPrefix = "Summarize the document concisely, highlighting the customer entity";
+        if (!string.IsNullOrWhiteSpace(instructionLine) &&
+            !instructionLine.StartsWith(defaultInstrPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            insightParts.Add($"Admin Focus ({instructionLine.TrimEnd('.')}): Verified against slice clauses ({string.Join("; ", lines.Take(2))}).");
+        }
+
+        var summary = string.Join(" ", insightParts);
         var json = JsonSerializer.Serialize(new { summary });
         return new ChatResponse(new ChatMessage(ChatRole.Assistant, json))
         {

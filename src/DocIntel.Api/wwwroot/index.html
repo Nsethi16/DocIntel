@@ -2269,12 +2269,20 @@
         ? segs
         : segs.filter(s => s.segmentIndex === selectedSliceIndex);
 
+      const caps = currentTenant?.capabilities || {};
+      const insightEnabled = caps.DocumentInsight?.enabled !== false;
+      const entityEnabled = caps.EntityExtraction?.enabled !== false;
+      const dataExtEnabled = caps.DataExtraction?.enabled !== false;
+      const promptColsEnabled = caps.PromptColumns?.enabled !== false;
+
       // Collect distinct Prompt Columns that matched the entity filter on the active document / slice selection
-      const activePromptResults = activeSegs.flatMap(s =>
-        (s.promptColumnResults && s.promptColumnResults.length > 0)
-          ? s.promptColumnResults
-          : (job.promptColumnResults || []).filter(r => r.segmentIndex === s.segmentIndex)
-      );
+      const activePromptResults = promptColsEnabled
+        ? activeSegs.flatMap(s =>
+            (s.promptColumnResults && s.promptColumnResults.length > 0)
+              ? s.promptColumnResults
+              : (job.promptColumnResults || []).filter(r => r.segmentIndex === s.segmentIndex)
+          )
+        : [];
       const matchedPromptColumnsMap = new Map();
       activePromptResults.forEach(r => {
         if (r && r.filterMatched && r.columnId && !matchedPromptColumnsMap.has(r.columnId)) {
@@ -2286,24 +2294,31 @@
       });
       const matchedPromptColumns = [...matchedPromptColumnsMap.values()];
 
-      // If current tab is a prompt column that does not apply to the newly selected slice/document, fall back to insights
+      // Build visible core tabs governed by Admin Studio feature toggles
+      const coreTabsList = [
+        ...(insightEnabled ? [{ id: 'insights', label: 'Insights' }] : []),
+        { id: 'document', label: 'View Document' },
+        ...(entityEnabled ? [{ id: 'entities', label: `Entities${totalEntitiesCount > 0 ? ` <span class="tab-count">${totalEntitiesCount}</span>` : ''}` }] : []),
+        ...(dataExtEnabled ? [{ id: 'structured', label: `Structured Data${totalStructuredCount > 0 ? ` <span class="tab-count">${totalStructuredCount}</span>` : ''}` }] : []),
+        { id: 'metadata', label: 'Metadata' }
+      ];
+
+      // Ensure docResultTab is valid for the enabled tabs on this tenant/document
+      const validCoreIds = new Set(coreTabsList.map(t => t.id));
       if (docResultTab.startsWith('prompt:')) {
         const activeColId = docResultTab.substring('prompt:'.length);
-        if (!matchedPromptColumnsMap.has(activeColId)) {
-          docResultTab = 'insights';
+        if (!promptColsEnabled || !matchedPromptColumnsMap.has(activeColId)) {
+          docResultTab = coreTabsList[0].id;
           body.dataset.tab = docResultTab;
         }
+      } else if (!validCoreIds.has(docResultTab)) {
+        docResultTab = coreTabsList[0].id;
+        body.dataset.tab = docResultTab;
       }
 
       // Render core tabs + one individual tab per matched Prompt Column (e.g. ✨ Summary, ✨ Highlights)
       const tabBar = document.getElementById('insightsTabBar');
-      const coreTabsHtml = [
-        { id: 'insights', label: 'Insights' },
-        { id: 'document', label: 'View Document' },
-        { id: 'entities', label: `Entities${totalEntitiesCount > 0 ? ` <span class="tab-count">${totalEntitiesCount}</span>` : ''}` },
-        { id: 'structured', label: `Structured Data${totalStructuredCount > 0 ? ` <span class="tab-count">${totalStructuredCount}</span>` : ''}` },
-        { id: 'metadata', label: 'Metadata' }
-      ].map(t => `
+      const coreTabsHtml = coreTabsList.map(t => `
         <button type="button" class="meridian-tab ${docResultTab === t.id ? 'active' : ''}" data-tab="${t.id}" onclick="setDocResultTab('${t.id}')">${t.label}</button>
       `).join('');
 
