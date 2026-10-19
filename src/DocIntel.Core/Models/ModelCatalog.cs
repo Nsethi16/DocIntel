@@ -120,7 +120,7 @@ public sealed class ModelCatalog : IModelCatalog
 
         if (_customClients.TryGetValue(modelId, out var injectedClient))
         {
-            return new ReasoningCleanupChatClient(injectedClient);
+            return new ReasoningCleanupChatClient(injectedClient, ownsInnerClient: false);
         }
 
         var descriptor = _descriptors.FirstOrDefault(d =>
@@ -174,7 +174,7 @@ public sealed class ModelCatalog : IModelCatalog
                 throw new InvalidOperationException("Ask AI requires a configured, non-simulated model.");
             }
 
-            return new ReasoningCleanupChatClient(injectedClient);
+            return new ReasoningCleanupChatClient(injectedClient, ownsInnerClient: false);
         }
 
         var descriptor = _descriptors.FirstOrDefault(d =>
@@ -188,8 +188,9 @@ public sealed class ModelCatalog : IModelCatalog
 
         IChatClient client = descriptor.Provider switch
         {
-            ModelProvider.FoundryInference =>
-                CreateFoundryInferenceClient(endpoint.ToString(), descriptor.DeploymentName),
+            ModelProvider.FoundryInference => throw new NotSupportedException(
+                "The legacy inference adapter does not support Ask AI tool calling. " +
+                "Select a configured OpenAI-compatible tool-calling deployment."),
             ModelProvider.AzureOpenAI => new AzureOpenAIClient(endpoint, _credential)
                 .GetChatClient(descriptor.DeploymentName).AsIChatClient(),
             ModelProvider.OpenAICompatible => new OpenAIClient(
@@ -322,15 +323,18 @@ public sealed class ReasoningCleanupChatClient : DelegatingChatClient
 
     private readonly IChatClient? _simulatedFallback;
     private readonly IChatClient? _openAiFallback;
+    private readonly bool _ownsInnerClient;
 
     public ReasoningCleanupChatClient(
         IChatClient innerClient,
         IChatClient? simulatedFallback = null,
-        IChatClient? openAiFallback = null)
+        IChatClient? openAiFallback = null,
+        bool ownsInnerClient = true)
         : base(innerClient)
     {
         _simulatedFallback = simulatedFallback;
         _openAiFallback = openAiFallback;
+        _ownsInnerClient = ownsInnerClient;
     }
 
     public override async Task<ChatResponse> GetResponseAsync(
@@ -363,22 +367,23 @@ public sealed class ReasoningCleanupChatClient : DelegatingChatClient
             }
         }
 
-        var rawText = response.Text;
-        if (string.IsNullOrWhiteSpace(rawText))
+        foreach (var message in response.Messages)
         {
-            return response;
+            foreach (var content in message.Contents.OfType<TextContent>())
+            {
+                content.Text = CleanModelText(content.Text);
+            }
         }
 
-        var cleaned = CleanModelText(rawText);
-        if (string.Equals(cleaned, rawText, StringComparison.Ordinal))
-        {
-            return response;
-        }
+        return response;
+    }
 
-        return new ChatResponse(new ChatMessage(ChatRole.Assistant, cleaned))
+    protected override void Dispose(bool disposing)
+    {
+        if (_ownsInnerClient)
         {
-            ModelId = response.ModelId
-        };
+            base.Dispose(disposing);
+        }
     }
 
     public static string CleanModelText(string input)
@@ -456,20 +461,6 @@ public sealed class SimulatedSliceChatClient : IChatClient
         if (systemPrompt.Contains("[TASK:PROMPT_COLUMN]", StringComparison.OrdinalIgnoreCase))
         {
             return Task.FromResult(SimulatePromptColumn(systemPrompt, userText));
-        }
-
-        if (systemPrompt.Contains("[TASK:ASK_AI_COSMOS_SQL]", StringComparison.OrdinalIgnoreCase))
-        {
-            var q = userText.Replace("User Question:", "", StringComparison.OrdinalIgnoreCase).Trim();
-            var sql = DocIntel.Core.Features.AskAi.AskAiOrchestrator.BuildDeterministicCosmosSql("contoso-legal", q);
-            var sqlJson = JsonSerializer.Serialize(new { cosmosSql = sql });
-            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, sqlJson)) { ModelId = _modelId });
-        }
-
-        if (systemPrompt.Contains("[TASK:ASK_AI_SYNTHESIZE]", StringComparison.OrdinalIgnoreCase))
-        {
-            // Return empty so AskAiOrchestrator uses its structured citation narrative builder with [1], [2] badges
-            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, string.Empty)) { ModelId = _modelId });
         }
 
         var catalog = new List<(string Name, string Hint)>();

@@ -43,6 +43,69 @@ public sealed class AskAiTrustTests
     }
 
     [Fact]
+    public void Text_Only_Inference_Adapter_Is_Rejected_For_Tool_Calling()
+    {
+        // Arrange
+        var catalog = new ModelCatalog(
+        [
+            new(CreateTenant().DefaultModelId, "Test", "Test", ModelProvider.FoundryInference,
+                "test", "https://example.invalid")
+        ]);
+
+        // Act
+        var exception = Assert.Throws<NotSupportedException>(() =>
+            catalog.ResolveRequiredChatClient(CreateTenant()));
+
+        // Assert
+        Assert.Contains("tool calling", exception.Message);
+    }
+
+    [Fact]
+    public async Task Reasoning_Cleanup_Preserves_Function_Calls_And_Response_Metadata()
+    {
+        // Arrange
+        var call = new FunctionCallContent("call-one", "search_documents", new Dictionary<string, object?>());
+        var response = new ChatResponse(new ChatMessage(ChatRole.Assistant,
+            [new TextContent("<think>Private reasoning</think>Searching."), call]))
+        {
+            ResponseId = "response-one",
+            Usage = new UsageDetails { TotalTokenCount = 42 }
+        };
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(response);
+        using var cleanup = new ReasoningCleanupChatClient(client.Object, ownsInnerClient: false);
+
+        // Act
+        var result = await cleanup.GetResponseAsync([new ChatMessage(ChatRole.User, "Search")]);
+
+        // Assert
+        Assert.Equal("Searching.", result.Text);
+        Assert.Same(call, result.Messages[0].Contents[1]);
+        Assert.Equal("response-one", result.ResponseId);
+        Assert.Equal(42, result.Usage?.TotalTokenCount);
+    }
+
+    [Fact]
+    public void Disposing_A_Run_Client_Does_Not_Dispose_The_Injected_Shared_Client()
+    {
+        // Arrange
+        var tenant = CreateTenant();
+        var client = new Mock<IChatClient>();
+        var catalog = new ModelCatalog(customClients: new Dictionary<string, IChatClient>
+        {
+            [tenant.DefaultModelId] = client.Object
+        });
+
+        // Act
+        catalog.ResolveRequiredChatClient(tenant).Dispose();
+
+        // Assert
+        client.Verify(c => c.Dispose(), Times.Never);
+    }
+
+    [Fact]
     public async Task Provider_Failure_Is_Not_Replaced_With_Document_Lists()
     {
         // Arrange

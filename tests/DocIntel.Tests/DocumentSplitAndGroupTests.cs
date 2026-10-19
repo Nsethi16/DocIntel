@@ -451,9 +451,22 @@ public sealed class DocumentSplitAndGroupTests
         askClient.SetupSequence(c => c.GetResponseAsync(
                 It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant,
-                "{\"cosmosSql\":\"SELECT c.jobId FROM c WHERE c.status = 'Completed'\"}")))
+            [
+                new FunctionCallContent("search-1", "search_documents", new Dictionary<string, object?>
+                {
+                    ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery { SearchText = "Woodgrove" })
+                })
+            ])))
             .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant,
-                "The Woodgrove agreement is supported by the source document [1].")));
+            [
+                new FunctionCallContent("inspect-1", "inspect_document_slice", new Dictionary<string, object?>
+                {
+                    ["jobId"] = "job-wg-1", ["sliceIndex"] = 0, ["textOffset"] = 0
+                })
+            ])))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant,
+                "{\"kind\":\"DocumentAnswer\",\"answer\":\"The Woodgrove agreement is supported by the source document [1].\"," +
+                "\"evidenceIds\":[\"e1\"]}")));
         var askCatalog = new ModelCatalog(customClients: new Dictionary<string, IChatClient>
         {
             ["gpt-5-mini"] = askClient.Object

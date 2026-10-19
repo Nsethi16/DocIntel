@@ -12,6 +12,27 @@ output, provider errors, and cancellation must not be converted into successful 
 Tests inject scripted model clients; they do not require a cloud deployment. The tenant must be
 active with the `AskAi` capability enabled.
 
+The conversational loop uses `FunctionInvokingChatClient` with `search_documents` and
+`inspect_document_slice`. Search accepts a typed plan, not model-generated SQL: the server binds
+tenant, status, text, document type, and ANDed entity conditions as Cosmos parameters and queries
+only that tenant partition. Results are lightweight pages of at most 20 references; no-match and
+storage errors never expand to all documents. Slice inspection returns bounded original text,
+insights, entities, structured data, and matching prompt-column results. Tenant configuration and
+active prompt-column definitions are provided to the model as context.
+
+Evidence IDs, file names, page ranges, and links come from inspected stored slices. Final document
+answers must cite those IDs, and inline citation numbering is checked. Greetings, clarifications,
+and no-evidence responses can have no citations. This validates source identity and numbering, not
+the factual entailment of every generated sentence or OCR bounding-box accuracy. Per-run limits
+are 12 model iterations and 24 tool calls, including registered extension tools; source chunks are
+at most 3,000 characters. Providers must support native function calling and structured responses;
+the existing text-only Foundry Inference adapter is explicitly unsupported for Ask AI.
+
+Email HTML and Teams cards are formatted payloads, not delivered integrations. Request-supplied
+callback URLs are rejected until an approved destination policy exists. The current run store and
+queue remain process-local: durable scheduling, identity/resource authorization, and Microsoft 365
+delivery are separate prerequisites before production rollout.
+
 ## 1. High-Level System Architecture
 
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).
