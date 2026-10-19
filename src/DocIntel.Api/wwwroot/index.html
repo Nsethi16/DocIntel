@@ -213,14 +213,16 @@
     }
 
     .ghost-action-btn {
+      height: 28px;
       border: 1px solid var(--line);
       background: #ffffff;
       color: var(--text-primary);
       border-radius: 7px;
-      padding: 4px 10px;
+      padding: 0 10px;
       font-family: var(--font-mono);
       font-size: 11px;
       font-weight: 500;
+      line-height: 1;
       letter-spacing: 0.02em;
       cursor: pointer;
       transition: all 0.14s ease;
@@ -377,16 +379,19 @@
     }
 
     .meridian-top-row {
+      height: 30px;
+      min-height: 30px;
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 12px;
-      margin-bottom: 16px;
+      margin-bottom: 14px;
     }
 
     .meridian-identity {
+      height: 30px;
       display: flex;
-      align-items: baseline;
+      align-items: center;
       gap: 11px;
       min-width: 0;
       flex: 1;
@@ -444,6 +449,7 @@
     }
 
     .meridian-actions {
+      height: 30px;
       display: flex;
       align-items: center;
       gap: 8px;
@@ -451,6 +457,8 @@
     }
 
     .meridian-nav-row {
+      height: 32px;
+      min-height: 32px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -459,6 +467,7 @@
     }
 
     .meridian-tabs {
+      height: 32px;
       display: flex;
       align-items: center;
       gap: 4px;
@@ -471,13 +480,15 @@
     }
 
     .meridian-tab {
+      height: 32px;
       border: none;
       background: transparent;
       color: var(--text-secondary);
       font-family: var(--font-sans);
       font-size: 13px;
       font-weight: 500;
-      padding: 6px 12px;
+      line-height: 1;
+      padding: 0 12px;
       border-radius: 8px;
       cursor: pointer;
       white-space: nowrap;
@@ -513,11 +524,13 @@
     }
 
     .meridian-slice-select {
+      height: 28px;
       border: 1px solid #dfddd6;
       background: #ffffff;
       border-radius: 6px;
-      padding: 3.5px 8px;
+      padding: 0 8px;
       font-size: 11.5px;
+      line-height: 1;
       font-weight: 500;
       color: var(--text-secondary);
       font-family: inherit;
