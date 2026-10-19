@@ -1685,7 +1685,13 @@
       return `docintel_chats_${currentTenant ? currentTenant.tenantId : 'default'}`;
     }
 
-    function loadTenantChats() {
+    function loadTenantChats(forceReload = false) {
+      if (!forceReload && Array.isArray(tenantChats) && tenantChats.length > 0) {
+        if (!activeChatId || !tenantChats.some(c => c.id === activeChatId)) {
+          activeChatId = tenantChats[0].id;
+        }
+        return;
+      }
       try {
         const raw = localStorage.getItem(getChatsStorageKey());
         tenantChats = raw ? JSON.parse(raw) : [];
@@ -1762,6 +1768,15 @@
       }
       renderDocumentList();
       renderSelectedDocument();
+
+      // Auto-recover any chat whose last message is an unanswered user question
+      const chat = getActiveChat();
+      const msgs = chat?.messages || [];
+      if (!askAiLoading && msgs.length > 0 && msgs[msgs.length - 1].role === 'user') {
+        const pendingQ = msgs.pop().text;
+        saveTenantChats();
+        runCrossDocumentAskAi(pendingQ);
+      }
     }
 
     function deleteAskAiChat(chatId, evt) {
@@ -1827,6 +1842,13 @@
 
       if (mode === 'ask') {
         loadTenantChats();
+        const chat = getActiveChat();
+        const msgs = chat?.messages || [];
+        if (!askAiLoading && msgs.length > 0 && msgs[msgs.length - 1].role === 'user') {
+          const pendingQ = msgs.pop().text;
+          saveTenantChats();
+          setTimeout(() => runCrossDocumentAskAi(pendingQ), 50);
+        }
       }
       renderDocumentList();
       renderSelectedDocument();
@@ -1901,7 +1923,7 @@
       selectedJobId = null;
       selectedSliceIndex = -1;
       activeChatId = null;
-      loadTenantChats();
+      loadTenantChats(true);
       renderTenantSelect();
       await loadTenantJobs();
     }
@@ -3611,7 +3633,9 @@
       const q = (customQuestion != null ? customQuestion : (inputEl ? inputEl.value : askAiQuestionInput)).trim();
       if (!q) return;
 
+      loadTenantChats();
       const chat = getActiveChat();
+      const targetChatId = chat.id;
       if (!chat.messages) chat.messages = [];
       if (chat.messages.length === 0 || chat.title === 'New chat') {
         chat.title = q.length > 42 ? q.slice(0, 41) + '…' : q;
@@ -3630,39 +3654,63 @@
       renderSelectedDocument();
 
       try {
-        const submitResp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask/runs`, {
+        let finalData = null;
+
+        // Try direct /ask endpoint first for fast interactive web response, falling back to /ask/runs polling
+        const directResp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            question: q,
-            replyChannel: { channelType: 'Web' }
-          })
+          body: JSON.stringify({ question: q })
         });
 
-        if (submitResp.ok) {
-          const accepted = await submitResp.json();
-          let runData = null;
-          for (let attempt = 0; attempt < 40; attempt++) {
-            const pollResp = await fetch(accepted.statusUrl || `/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask/runs/${encodeURIComponent(accepted.runId)}`);
-            if (!pollResp.ok) break;
-            runData = await pollResp.json();
-            if (runData.status === 'Completed' || runData.status === 'Failed') {
-              break;
+        if (directResp.ok) {
+          finalData = await directResp.json();
+        } else {
+          const submitResp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask/runs`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              question: q,
+              replyChannel: { channelType: 'Web' }
+            })
+          });
+          if (submitResp.ok) {
+            const accepted = await submitResp.json();
+            for (let attempt = 0; attempt < 40; attempt++) {
+              const pollResp = await fetch(accepted.statusUrl || `/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask/runs/${encodeURIComponent(accepted.runId)}`);
+              if (!pollResp.ok) break;
+              const runData = await pollResp.json();
+              if (runData.status === 'Completed' || runData.status === 'Failed') {
+                finalData = runData;
+                break;
+              }
+              await new Promise(r => setTimeout(r, 350));
             }
-            await new Promise(r => setTimeout(r, 350));
           }
+        }
 
-          if (runData && runData.status === 'Completed') {
-            chat.messages.push({
-              role: 'assistant',
-              text: runData.answer || 'No matching answer found.',
-              citations: (runData.citations || []).slice(0, 8),
-              executedCosmosQueries: runData.executedCosmosQueries || [],
-              timestamp: new Date().toISOString()
-            });
-            chat.updatedAt = new Date().toISOString();
-            saveTenantChats();
-          }
+        const activeTarget = tenantChats.find(c => c.id === targetChatId) || getActiveChat();
+        if (activeTarget) {
+          activeTarget.messages.push({
+            role: 'assistant',
+            text: (finalData && finalData.answer) ? finalData.answer : 'Unable to retrieve answer for this question.',
+            citations: (finalData && finalData.citations) ? finalData.citations.slice(0, 8) : [],
+            executedCosmosQueries: (finalData && finalData.executedCosmosQueries) ? finalData.executedCosmosQueries : [],
+            timestamp: new Date().toISOString()
+          });
+          activeTarget.updatedAt = new Date().toISOString();
+          saveTenantChats();
+        }
+      } catch (err) {
+        const activeTarget = tenantChats.find(c => c.id === targetChatId) || getActiveChat();
+        if (activeTarget) {
+          activeTarget.messages.push({
+            role: 'assistant',
+            text: 'An error occurred while querying tenant documents.',
+            citations: [],
+            timestamp: new Date().toISOString()
+          });
+          saveTenantChats();
         }
       } finally {
         askAiLoading = false;
