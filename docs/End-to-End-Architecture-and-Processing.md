@@ -29,9 +29,9 @@ at most 3,000 characters. Providers must support native function calling and str
 the existing text-only Foundry Inference adapter is explicitly unsupported for Ask AI.
 
 Email HTML and Teams cards are formatted payloads, not delivered integrations. Request-supplied
-callback URLs are rejected until an approved destination policy exists. The current run store and
-queue remain process-local: durable scheduling, identity/resource authorization, and Microsoft 365
-delivery are separate prerequisites before production rollout.
+callback URLs are rejected until an approved destination policy exists. Shared cloud scheduling,
+identity/resource authorization, and Microsoft 365 delivery remain prerequisites before production
+rollout. Local persisted execution is described below; it is not a substitute for a cloud broker.
 
 The web client submits one asynchronous run and polls that run rather than retrying a failed
 synchronous request as a new execution. It stores the confirmed run ID with the chat and resumes
@@ -42,17 +42,46 @@ failure or that limit, the same confirmed run can be checked again without creat
 
 Run reads require both tenant ID and run ID and return isolated snapshots. The worker persists
 `Running` before model invocation, limits execution to `AskAi:MaxRunSeconds` (default 600, allowed
-1-3,600), and persists safe `Failed` states for provider failure, timeout, or graceful shutdown.
-Inline web/email/Teams adapters use the same execution policy. This does not make the in-memory
-queue/store durable, authorize a caller, or guarantee recovery after a process crash; a missing
-run is reported as unavailable, not silently re-created.
+1-3,600), and persists safe `Failed` states for provider failure or timeout. Inline web/email/Teams
+adapters use the same execution policy and wait if another worker owns their run.
+
+### Single-host restart recovery
+
+When a harness settings path is supplied, run snapshots default to its sibling `ask-ai-runs`
+directory. Override this using `AskAi:RunStorageDirectory` (`AskAi__RunStorageDirectory` in environment
+variables). Snapshots have a schema version, hashed tenant/run storage keys, a 2 MiB size bound, and
+atomic replacement protected by a short snapshot lock. A separate OS-owned execution lock prevents
+concurrent processes on the same host from executing the same run. Polling never waits for the
+entire model execution. Disposed owners cannot save through an old lease.
+
+The persisted run is the dispatch source of truth. The channel holds at most 100 wake-up hints;
+when full, accepting a persisted run does not discard its work. A five-second discovery loop also
+schedules unfinished snapshots without needing a surviving channel message. After an abrupt process
+exit, the OS releases ownership and a new worker can retry the same read-only question, up to three
+execution attempts. Graceful shutdown requeues that same run. Final states are not replayed.
+If extension tools are registered, interrupted runs instead require review because those tools
+may have external side effects; no exactly-once side-effect guarantee is claimed.
+
+This mode requires a service-owned directory on a filesystem supporting exclusive locks and atomic
+replacement. It covers application-process crashes, not arbitrary power-loss recovery or multiple
+independent Container Apps replica disks. Container Apps' default ephemeral filesystem is **not**
+durable storage: provision a supported persistent store/broker before cloud rollout. Without a
+configured directory or harness path, isolated library consumers/tests may still use the in-memory
+store. Local document jobs themselves remain in memory unless the existing Cosmos job store is
+configured. Missing/corrupt runs are surfaced, not replaced by fabricated answers.
 
 Regression commands from the repository root:
 
 ```powershell
 dotnet test tests\DocIntel.Tests\DocIntel.Tests.csproj -c Release
 node --test tests\DocIntel.Ui.Tests\ask-ai.test.cjs
+dotnet build src\DocIntel.Api\DocIntel.Api.csproj -c Release
+node --test tests\DocIntel.Ui.Tests\ask-ai-restart.test.cjs
 ```
+
+The restart test uses a loopback-only scripted model endpoint and isolated temporary storage. It
+kills the real API process while a run is active, starts a new process, and verifies completion
+under the original run ID. It tests recovery and provider-adapter wiring, not live model quality.
 
 ## 1. High-Level System Architecture
 

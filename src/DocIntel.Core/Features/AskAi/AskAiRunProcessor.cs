@@ -31,6 +31,8 @@ public sealed class AskAiExecutionOptions
 
     public int MaxRunSeconds { get; set; } = 600;
 
+    public string? RunStorageDirectory { get; set; }
+
     public void Validate()
     {
         if (MaxRunSeconds is < 1 or > 3_600)
@@ -54,25 +56,57 @@ public sealed class AskAiRunProcessor(
     {
         await runStore.UpsertRunAsync(run, cancellationToken);
         await ProcessAsync(new AskAiQueueTicket(run.RunId, run.TenantId), cancellationToken);
-        return await runStore.GetRunAsync(run.TenantId, run.RunId, cancellationToken)
-            ?? throw new InvalidOperationException("The Ask AI run could not be loaded after execution.");
+        using var waitToken = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        waitToken.CancelAfter(TimeSpan.FromSeconds(options.MaxRunSeconds + 10));
+        while (true)
+        {
+            var snapshot = await runStore.GetRunAsync(run.TenantId, run.RunId, waitToken.Token)
+                ?? throw new InvalidOperationException("The Ask AI run could not be loaded after execution.");
+            if (snapshot.Status is JobStatus.Completed or JobStatus.Failed)
+            {
+                return snapshot;
+            }
+            await Task.Delay(TimeSpan.FromMilliseconds(200), waitToken.Token);
+        }
     }
 
     public async Task ProcessAsync(AskAiQueueTicket ticket, CancellationToken stoppingToken = default)
     {
         ArgumentNullException.ThrowIfNull(ticket);
         options.Validate();
-        var run = await runStore.GetRunAsync(ticket.TenantId, ticket.RunId, stoppingToken);
-        if (run is null)
+        await using var lease = await runStore.TryAcquireAsync(ticket.TenantId, ticket.RunId, stoppingToken);
+        if (lease is null)
         {
-            logger.LogWarning("Ask AI ticket {RunId} has no run in its tenant.", ticket.RunId);
+            logger.LogDebug("Ask AI ticket {RunId} is absent or already owned.", ticket.RunId);
             return;
         }
-        if (run.Status != JobStatus.Queued)
+        var run = lease.Run;
+        if (run.Status is JobStatus.Completed or JobStatus.Failed)
         {
             logger.LogDebug("Skipping Ask AI ticket {RunId} in state {Status}.", ticket.RunId, run.Status);
             return;
         }
+        if ((run.Status == JobStatus.Running || run.ExecutionAttempts > 0) && !orchestrator.CanAutomaticallyReplay)
+        {
+            run.Status = JobStatus.Failed;
+            run.ErrorCode = "RecoveryRequiresReview";
+            run.ErrorMessage = "This run was interrupted with extension tools enabled. Review it before resubmitting.";
+            run.CompletedAtUtc = DateTimeOffset.UtcNow;
+            ClearAnswer(run);
+            await lease.SaveAsync(stoppingToken);
+            return;
+        }
+        if (run.ExecutionAttempts >= 3)
+        {
+            run.Status = JobStatus.Failed;
+            run.ErrorCode = "RecoveryLimitExceeded";
+            run.ErrorMessage = "This run was repeatedly interrupted. Please review it before submitting again.";
+            run.CompletedAtUtc = DateTimeOffset.UtcNow;
+            ClearAnswer(run);
+            await lease.SaveAsync(stoppingToken);
+            return;
+        }
+        run.ExecutionAttempts++;
 
         using var executionToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
         executionToken.CancelAfter(TimeSpan.FromSeconds(options.MaxRunSeconds));
@@ -80,18 +114,26 @@ public sealed class AskAiRunProcessor(
         {
             run.Status = JobStatus.Running;
             run.StartedAtUtc = DateTimeOffset.UtcNow;
-            await runStore.UpsertRunAsync(run, executionToken.Token);
+            run.ErrorCode = null;
+            run.ErrorMessage = null;
+            run.Answer = null;
+            run.Citations.Clear();
+            run.ExecutedCosmosQueries.Clear();
+            run.Steps.Clear();
+            run.DocumentsEvaluated = 0;
+            run.CompletedAtUtc = null;
+            await lease.SaveAsync(executionToken.Token);
             await orchestrator.ExecuteRunAsync(
-                run, (progress, ct) => runStore.UpsertRunAsync(progress, ct), executionToken.Token);
+                run, (_, ct) => lease.SaveAsync(ct), executionToken.Token);
             executionToken.Token.ThrowIfCancellationRequested();
-            await runStore.UpsertRunAsync(run, executionToken.Token);
+            await lease.SaveAsync(executionToken.Token);
             return;
         }
         catch (OperationCanceledException) when (executionToken.IsCancellationRequested)
         {
             run.ErrorCode = stoppingToken.IsCancellationRequested ? "Interrupted" : "TimedOut";
             run.ErrorMessage = stoppingToken.IsCancellationRequested
-                ? "Ask AI processing stopped before completion. Please submit the question again."
+                ? "Ask AI processing paused while the service restarts. The same run will be checked again."
                 : "This question exceeded the processing time limit. Try a more focused question.";
             logger.LogWarning("Ask AI run {RunId} stopped with {ErrorCode}.", run.RunId, run.ErrorCode);
         }
@@ -102,13 +144,18 @@ public sealed class AskAiRunProcessor(
             logger.LogError(exception, "Ask AI run {RunId} failed.", run.RunId);
         }
 
-        run.Status = JobStatus.Failed;
-        run.CompletedAtUtc = DateTimeOffset.UtcNow;
+        run.Status = stoppingToken.IsCancellationRequested ? JobStatus.Queued : JobStatus.Failed;
+        run.CompletedAtUtc = run.Status == JobStatus.Failed ? DateTimeOffset.UtcNow : null;
+        ClearAnswer(run);
+        using var persistenceToken = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await lease.SaveAsync(persistenceToken.Token);
+    }
+
+    private static void ClearAnswer(AskAiRun run)
+    {
         run.Answer = null;
         run.Citations.Clear();
         run.EmailHtmlBody = null;
         run.TeamsAdaptiveCardJson = null;
-        using var persistenceToken = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-        await runStore.UpsertRunAsync(run, persistenceToken.Token);
     }
 }

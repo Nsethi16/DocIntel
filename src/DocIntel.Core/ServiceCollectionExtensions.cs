@@ -164,13 +164,26 @@ public static class ServiceCollectionExtensions
 
         services.TryAddSingleton<DocumentSplittingWorkflow>();
         services.TryAddSingleton<IJobQueue, ChannelJobQueue>();
-        services.TryAddSingleton<IAskAiRunStore, InMemoryAskAiRunStore>();
         services.TryAddSingleton<IAskAiQueue, ChannelAskAiQueue>();
         services.TryAddSingleton<AskAiOrchestrator>();
         var askAiOptions = new AskAiExecutionOptions();
         configuration?.GetSection(AskAiExecutionOptions.SectionName).Bind(askAiOptions);
         askAiOptions.Validate();
         services.TryAddSingleton(askAiOptions);
+        var runDirectory = askAiOptions.RunStorageDirectory;
+        if (String.IsNullOrWhiteSpace(runDirectory) && !String.IsNullOrWhiteSpace(harnessFilePath))
+        {
+            runDirectory = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(harnessFilePath))!, "ask-ai-runs");
+        }
+        if (!String.IsNullOrWhiteSpace(runDirectory))
+        {
+            services.TryAddSingleton<IAskAiRunStore>(sp => new FileAskAiRunStore(
+                runDirectory, sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<FileAskAiRunStore>>()));
+        }
+        else
+        {
+            services.TryAddSingleton<IAskAiRunStore, InMemoryAskAiRunStore>();
+        }
         services.TryAddSingleton<AskAiRunProcessor>();
 
         return services;

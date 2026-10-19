@@ -112,20 +112,52 @@ public sealed class DocumentJobWorker : BackgroundService
 public sealed class AskAiRunWorker : BackgroundService
 {
     private readonly IAskAiQueue _askAiQueue;
+    private readonly IAskAiRunStore _runStore;
     private readonly AskAiRunProcessor _processor;
     private readonly ILogger<AskAiRunWorker> _logger;
 
     public AskAiRunWorker(
         IAskAiQueue askAiQueue,
+        IAskAiRunStore runStore,
         AskAiRunProcessor processor,
         ILogger<AskAiRunWorker> logger)
     {
         _askAiQueue = askAiQueue ?? throw new ArgumentNullException(nameof(askAiQueue));
+        _runStore = runStore ?? throw new ArgumentNullException(nameof(runStore));
         _processor = processor ?? throw new ArgumentNullException(nameof(processor));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await Task.WhenAll(ProcessQueueAsync(stoppingToken), RecoverRunsAsync(stoppingToken));
+    }
+
+    private async Task RecoverRunsAsync(CancellationToken stoppingToken)
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        do
+        {
+            try
+            {
+                var pending = await _runStore.ListUnfinishedRunsAsync(100, stoppingToken);
+                foreach (var ticket in pending)
+                {
+                    if (!_askAiQueue.TryEnqueue(ticket))
+                    {
+                        break;
+                    }
+                }
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _logger.LogError(exception, "Failed rediscovering persisted Ask AI runs.");
+            }
+        }
+        while (await timer.WaitForNextTickAsync(stoppingToken));
+    }
+
+    private async Task ProcessQueueAsync(CancellationToken stoppingToken)
     {
         await foreach (var ticket in _askAiQueue.ReadAllAsync(stoppingToken))
         {

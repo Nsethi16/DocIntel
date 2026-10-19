@@ -153,7 +153,7 @@ public sealed class AskAiRunTests
     }
 
     [Fact]
-    public async Task Host_Shutdown_Persists_An_Interrupted_State_With_A_Fresh_Token()
+    public async Task Host_Shutdown_Requeues_The_Same_Run_With_A_Fresh_Persistence_Token()
     {
         // Arrange
         var store = new InMemoryAskAiRunStore();
@@ -175,7 +175,7 @@ public sealed class AskAiRunTests
         var failed = await store.GetRunAsync(run.TenantId, run.RunId);
 
         // Assert
-        Assert.Equal(JobStatus.Failed, failed?.Status);
+        Assert.Equal(JobStatus.Queued, failed?.Status);
         Assert.Equal("Interrupted", failed?.ErrorCode);
     }
 
@@ -194,6 +194,128 @@ public sealed class AskAiRunTests
 
         // Assert
         client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Inline_Requests_Wait_When_A_Recovery_Worker_Already_Owns_The_Run()
+    {
+        // Arrange
+        var store = new Mock<IAskAiRunStore>(MockBehavior.Strict);
+        var run = CreateRun();
+        var running = CreateRun();
+        running.Status = JobStatus.Running;
+        var completed = CreateRun();
+        completed.Status = JobStatus.Completed;
+        completed.Answer = "Finished by the owner.";
+        store.Setup(s => s.UpsertRunAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        store.Setup(s => s.TryAcquireAsync(run.TenantId, run.RunId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IAskAiRunLease?)null);
+        store.SetupSequence(s => s.GetRunAsync(run.TenantId, run.RunId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(running).ReturnsAsync(completed);
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+
+        // Act
+        var result = await CreateProcessor(store.Object, client.Object).ExecuteInlineAsync(run);
+
+        // Assert
+        Assert.Equal(JobStatus.Completed, result.Status);
+        Assert.Equal("Finished by the owner.", result.Answer);
+        client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Interrupted_Read_Only_Runs_Are_Replayed_From_Their_Persisted_Question()
+    {
+        // Arrange
+        var store = new InMemoryAskAiRunStore();
+        var run = CreateRun();
+        run.Status = JobStatus.Running;
+        run.ExecutionAttempts = 1;
+        run.Steps.Add(new AskAiStepTrace("prior attempt", null, 1, "Interrupted."));
+        await store.UpsertRunAsync(run);
+        var client = GreetingClient();
+
+        // Act
+        await CreateProcessor(store, client.Object).ProcessAsync(new AskAiQueueTicket(run.RunId, run.TenantId));
+        var recovered = await store.GetRunAsync(run.TenantId, run.RunId);
+
+        // Assert
+        Assert.Equal(JobStatus.Completed, recovered?.Status);
+        Assert.Equal(2, recovered?.ExecutionAttempts);
+        Assert.Empty(recovered!.Steps);
+    }
+
+    [Fact]
+    public async Task Repeated_Crash_Recovery_Has_A_Bounded_Attempt_Count()
+    {
+        // Arrange
+        var store = new InMemoryAskAiRunStore();
+        var run = CreateRun();
+        run.Status = JobStatus.Running;
+        run.ExecutionAttempts = 3;
+        await store.UpsertRunAsync(run);
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+
+        // Act
+        await CreateProcessor(store, client.Object).ProcessAsync(new AskAiQueueTicket(run.RunId, run.TenantId));
+        var failed = await store.GetRunAsync(run.TenantId, run.RunId);
+
+        // Assert
+        Assert.Equal("RecoveryLimitExceeded", failed?.ErrorCode);
+        Assert.Equal(JobStatus.Failed, failed?.Status);
+        client.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(JobStatus.Running)]
+    [InlineData(JobStatus.Queued)]
+    public async Task Extension_Tools_Are_Not_Automatically_Replayed_After_Interruption(JobStatus status)
+    {
+        // Arrange
+        var store = new InMemoryAskAiRunStore();
+        var run = CreateRun();
+        run.Status = status;
+        run.ExecutionAttempts = 1;
+        await store.UpsertRunAsync(run);
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+        var provider = new Mock<IAskAiToolProvider>();
+
+        // Act
+        await CreateProcessor(store, client.Object, providers: [provider.Object])
+            .ProcessAsync(new AskAiQueueTicket(run.RunId, run.TenantId));
+        var failed = await store.GetRunAsync(run.TenantId, run.RunId);
+
+        // Assert
+        Assert.Equal("RecoveryRequiresReview", failed?.ErrorCode);
+        client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Concurrent_Duplicate_Tickets_Execute_Only_Once()
+    {
+        // Arrange
+        var store = new InMemoryAskAiRunStore();
+        var run = CreateRun();
+        await store.UpsertRunAsync(run);
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var result = new TaskCompletionSource<ChatResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(() => { entered.SetResult(); return result.Task; });
+        var processor = CreateProcessor(store, client.Object);
+        var ticket = new AskAiQueueTicket(run.RunId, run.TenantId);
+
+        // Act
+        var first = processor.ProcessAsync(ticket);
+        await entered.Task;
+        await processor.ProcessAsync(ticket);
+        result.SetResult(Greeting());
+        await first;
+
+        // Assert
+        client.Verify(c => c.GetResponseAsync(
+            It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
@@ -246,8 +368,18 @@ public sealed class AskAiRunTests
     private static ChatResponse Greeting() => new(new ChatMessage(ChatRole.Assistant,
         "{\"kind\":\"Conversation\",\"answer\":\"Hello!\",\"evidenceIds\":[]}"));
 
+    private static Mock<IChatClient> GreetingClient()
+    {
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(Greeting());
+        return client;
+    }
+
     private static AskAiRunProcessor CreateProcessor(
-        IAskAiRunStore store, IChatClient client, AskAiExecutionOptions? options = null)
+        IAskAiRunStore store, IChatClient client, AskAiExecutionOptions? options = null,
+        IEnumerable<IAskAiToolProvider>? providers = null)
     {
         var tenant = new TenantHarness { TenantId = "tenant-one", DisplayName = "Test" };
         var harness = new Mock<IHarnessStore>();
@@ -257,7 +389,7 @@ public sealed class AskAiRunTests
             [tenant.DefaultModelId] = client
         });
         var orchestrator = new AskAiOrchestrator(
-            harness.Object, new InMemoryJobStore(), catalog, [], NullLogger<AskAiOrchestrator>.Instance);
+            harness.Object, new InMemoryJobStore(), catalog, providers, NullLogger<AskAiOrchestrator>.Instance);
         return new AskAiRunProcessor(
             store, orchestrator, options ?? new AskAiExecutionOptions(), NullLogger<AskAiRunProcessor>.Instance);
     }

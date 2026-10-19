@@ -446,7 +446,7 @@ public static class HarnessEndpoints
             };
 
             await runStore.UpsertRunAsync(run, ct);
-            await askQueue.EnqueueAsync(new AskAiQueueTicket(runId, tenantId), ct);
+            askQueue.TryEnqueue(new AskAiQueueTicket(runId, tenantId));
 
             return Results.Accepted($"/api/harness/tenants/{tenantId}/ask/runs/{runId}", new
             {
@@ -488,6 +488,7 @@ public static class HarnessEndpoints
                 run.TeamsAdaptiveCardJson,
                 run.CreatedAtUtc,
                 run.StartedAtUtc,
+                run.ExecutionAttempts,
                 run.CompletedAtUtc
             });
         });
@@ -534,7 +535,7 @@ public static class HarnessEndpoints
 
             if (req?.Async == true)
             {
-                await askQueue.EnqueueAsync(new AskAiQueueTicket(run.RunId, tenantId), ct);
+                askQueue.TryEnqueue(new AskAiQueueTicket(run.RunId, tenantId));
                 return Results.Accepted($"/api/harness/tenants/{tenantId}/ask/runs/{run.RunId}", new
                 {
                     runId = run.RunId,
@@ -602,7 +603,7 @@ public static class HarnessEndpoints
 
             if (req.Async == true)
             {
-                await askQueue.EnqueueAsync(new AskAiQueueTicket(run.RunId, tenantId), ct);
+                askQueue.TryEnqueue(new AskAiQueueTicket(run.RunId, tenantId));
                 return Results.Accepted($"/api/harness/tenants/{tenantId}/ask/runs/{run.RunId}", new
                 {
                     runId = run.RunId,

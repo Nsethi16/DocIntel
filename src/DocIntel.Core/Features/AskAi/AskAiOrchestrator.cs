@@ -77,6 +77,9 @@ public sealed record AskAiStepTrace(
 /// </summary>
 public sealed class AskAiRun
 {
+    [JsonPropertyName("schemaVersion")]
+    public int SchemaVersion { get; init; } = 1;
+
     [JsonPropertyName("runId")]
     public required string RunId { get; init; }
 
@@ -130,6 +133,9 @@ public sealed class AskAiRun
 
     [JsonPropertyName("startedAtUtc")]
     public DateTimeOffset? StartedAtUtc { get; set; }
+
+    [JsonPropertyName("executionAttempts")]
+    public int ExecutionAttempts { get; set; }
 }
 
 /// <summary>
@@ -147,11 +153,26 @@ public interface IAskAiRunStore
     Task<AskAiRun?> GetRunAsync(string tenantId, string runId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<AskAiRun>> ListRunsByTenantAsync(string tenantId, CancellationToken cancellationToken = default);
+
+    Task<IAskAiRunLease?> TryAcquireAsync(
+        string tenantId, string runId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<AskAiQueueTicket>> ListUnfinishedRunsAsync(
+        int maxCount, CancellationToken cancellationToken = default);
+}
+
+/// <summary>Exclusive ownership of one run. Saves are fenced by the lifetime of this lease.</summary>
+public interface IAskAiRunLease : IAsyncDisposable
+{
+    AskAiRun Run { get; }
+
+    Task SaveAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class InMemoryAskAiRunStore : IAskAiRunStore
 {
     private readonly ConcurrentDictionary<(string TenantId, string RunId), string> _runs = new();
+    private readonly ConcurrentDictionary<(string TenantId, string RunId), SemaphoreSlim> _locks = new();
 
     public Task UpsertRunAsync(AskAiRun run, CancellationToken cancellationToken = default)
     {
@@ -159,7 +180,19 @@ public sealed class InMemoryAskAiRunStore : IAskAiRunStore
         ArgumentException.ThrowIfNullOrWhiteSpace(run.TenantId);
         ArgumentException.ThrowIfNullOrWhiteSpace(run.RunId);
         cancellationToken.ThrowIfCancellationRequested();
-        _runs[(run.TenantId, run.RunId)] = JsonSerializer.Serialize(run);
+        var gate = _locks.GetOrAdd((run.TenantId, run.RunId), _ => new SemaphoreSlim(1, 1));
+        if (!gate.Wait(0))
+        {
+            throw new InvalidOperationException("This run is leased; save through the owning lease.");
+        }
+        try
+        {
+            _runs[(run.TenantId, run.RunId)] = JsonSerializer.Serialize(run);
+        }
+        finally
+        {
+            gate.Release();
+        }
         return Task.CompletedTask;
     }
 
@@ -184,23 +217,86 @@ public sealed class InMemoryAskAiRunStore : IAskAiRunStore
             .ToList();
         return Task.FromResult(list);
     }
+
+    public async Task<IAskAiRunLease?> TryAcquireAsync(
+        string tenantId, string runId, CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(runId);
+        var gate = _locks.GetOrAdd((tenantId, runId), _ => new SemaphoreSlim(1, 1));
+        if (!await gate.WaitAsync(0, cancellationToken))
+        {
+            return null;
+        }
+        AskAiRun? run;
+        try
+        {
+            run = await GetRunAsync(tenantId, runId, cancellationToken);
+        }
+        catch
+        {
+            gate.Release();
+            throw;
+        }
+        if (run is null)
+        {
+            gate.Release();
+            return null;
+        }
+        return new OwnedAskAiRunLease(run, ct =>
+        {
+            ct.ThrowIfCancellationRequested();
+            _runs[(tenantId, runId)] = JsonSerializer.Serialize(run);
+            return Task.CompletedTask;
+        }, () =>
+        {
+            gate.Release();
+            return ValueTask.CompletedTask;
+        });
+    }
+
+    public Task<IReadOnlyList<AskAiQueueTicket>> ListUnfinishedRunsAsync(
+        int maxCount, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxCount, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(maxCount, 100);
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlyList<AskAiQueueTicket> tickets = _runs.Values
+            .Select(json => JsonSerializer.Deserialize<AskAiRun>(json)!)
+            .Where(run => run.Status is JobStatus.Queued or JobStatus.Running)
+            .Where(run => !_locks.TryGetValue((run.TenantId, run.RunId), out var gate) || gate.CurrentCount > 0)
+            .OrderBy(run => run.CreatedAtUtc).Take(maxCount)
+            .Select(run => new AskAiQueueTicket(run.RunId, run.TenantId)).ToList();
+        return Task.FromResult(tickets);
+    }
 }
 
 public sealed record AskAiQueueTicket(string RunId, string TenantId);
 
 public interface IAskAiQueue
 {
-    ValueTask EnqueueAsync(AskAiQueueTicket ticket, CancellationToken cancellationToken = default);
+    bool TryEnqueue(AskAiQueueTicket ticket);
 
     IAsyncEnumerable<AskAiQueueTicket> ReadAllAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class ChannelAskAiQueue : IAskAiQueue
 {
-    private readonly Channel<AskAiQueueTicket> _channel = Channel.CreateUnbounded<AskAiQueueTicket>();
+    private readonly Channel<AskAiQueueTicket> _channel = Channel.CreateBounded<AskAiQueueTicket>(100);
+    private readonly ILogger<ChannelAskAiQueue> _logger;
 
-    public ValueTask EnqueueAsync(AskAiQueueTicket ticket, CancellationToken cancellationToken = default) =>
-        _channel.Writer.WriteAsync(ticket, cancellationToken);
+    public ChannelAskAiQueue(ILogger<ChannelAskAiQueue> logger) => _logger = logger;
+
+    public bool TryEnqueue(AskAiQueueTicket ticket)
+    {
+        ArgumentNullException.ThrowIfNull(ticket);
+        if (_channel.Writer.TryWrite(ticket))
+        {
+            return true;
+        }
+        _logger.LogDebug("Ask AI dispatch hints are full; persisted run {RunId} will be rediscovered.", ticket.RunId);
+        return false;
+    }
 
     public IAsyncEnumerable<AskAiQueueTicket> ReadAllAsync(CancellationToken cancellationToken = default) =>
         _channel.Reader.ReadAllAsync(cancellationToken);
@@ -337,6 +433,8 @@ public sealed class AskAiOrchestrator
     private readonly IEnumerable<IAskAiToolProvider> _toolProviders;
     private readonly ILogger<AskAiOrchestrator> _logger;
 
+    public bool CanAutomaticallyReplay => !_toolProviders.Any();
+
     public AskAiOrchestrator(
         IHarnessStore harnessStore,
         IJobStore jobStore,
@@ -347,7 +445,7 @@ public sealed class AskAiOrchestrator
         _harnessStore = harnessStore ?? throw new ArgumentNullException(nameof(harnessStore));
         _jobStore = jobStore ?? throw new ArgumentNullException(nameof(jobStore));
         _modelCatalog = modelCatalog ?? throw new ArgumentNullException(nameof(modelCatalog));
-        _toolProviders = toolProviders ?? [];
+        _toolProviders = toolProviders?.ToArray() ?? [];
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
