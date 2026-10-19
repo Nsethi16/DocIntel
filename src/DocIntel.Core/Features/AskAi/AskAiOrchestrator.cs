@@ -44,7 +44,7 @@ public sealed class AskAiReplyChannel
 }
 
 /// <summary>
-/// Authoritative, verified document citation resolved from a matched <see cref="DocumentJob"/> and slice.
+/// Source citation metadata resolved from an inspected <see cref="DocumentJob"/> and slice.
 /// </summary>
 public sealed record AskAiCitation(
     [property: JsonPropertyName("citationNumber")] int CitationNumber,
@@ -64,7 +64,7 @@ public sealed record AskAiCitation(
     [property: JsonPropertyName("pdfUrl")] string PdfUrl);
 
 /// <summary>
-/// Step trace recorded during an agentic Ask AI run (schema injection, Cosmos SQL generation, tool execution, citation resolution).
+/// Step trace recorded during document search and evidence inspection.
 /// </summary>
 public sealed record AskAiStepTrace(
     [property: JsonPropertyName("stepName")] string StepName,
@@ -91,6 +91,9 @@ public sealed class AskAiRun
 
     [JsonPropertyName("errorMessage")]
     public string? ErrorMessage { get; set; }
+
+    [JsonPropertyName("errorCode")]
+    public string? ErrorCode { get; set; }
 
     [JsonPropertyName("modelIdUsed")]
     public string? ModelIdUsed { get; set; }
@@ -124,6 +127,9 @@ public sealed class AskAiRun
 
     [JsonPropertyName("completedAtUtc")]
     public DateTimeOffset? CompletedAtUtc { get; set; }
+
+    [JsonPropertyName("startedAtUtc")]
+    public DateTimeOffset? StartedAtUtc { get; set; }
 }
 
 /// <summary>
@@ -138,32 +144,41 @@ public interface IAskAiRunStore
 {
     Task UpsertRunAsync(AskAiRun run, CancellationToken cancellationToken = default);
 
-    Task<AskAiRun?> GetRunAsync(string runId, CancellationToken cancellationToken = default);
+    Task<AskAiRun?> GetRunAsync(string tenantId, string runId, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<AskAiRun>> ListRunsByTenantAsync(string tenantId, CancellationToken cancellationToken = default);
 }
 
 public sealed class InMemoryAskAiRunStore : IAskAiRunStore
 {
-    private readonly ConcurrentDictionary<string, AskAiRun> _runs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<(string TenantId, string RunId), string> _runs = new();
 
     public Task UpsertRunAsync(AskAiRun run, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(run);
-        _runs[run.RunId] = run;
+        ArgumentException.ThrowIfNullOrWhiteSpace(run.TenantId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(run.RunId);
+        cancellationToken.ThrowIfCancellationRequested();
+        _runs[(run.TenantId, run.RunId)] = JsonSerializer.Serialize(run);
         return Task.CompletedTask;
     }
 
-    public Task<AskAiRun?> GetRunAsync(string runId, CancellationToken cancellationToken = default)
+    public Task<AskAiRun?> GetRunAsync(string tenantId, string runId, CancellationToken cancellationToken = default)
     {
-        _runs.TryGetValue(runId, out var run);
-        return Task.FromResult(run);
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(runId);
+        cancellationToken.ThrowIfCancellationRequested();
+        _runs.TryGetValue((tenantId, runId), out var json);
+        return Task.FromResult(json is null ? null : JsonSerializer.Deserialize<AskAiRun>(json));
     }
 
     public Task<IReadOnlyList<AskAiRun>> ListRunsByTenantAsync(string tenantId, CancellationToken cancellationToken = default)
     {
-        IReadOnlyList<AskAiRun> list = _runs.Values
-            .Where(r => string.Equals(r.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlyList<AskAiRun> list = _runs
+            .Where(r => String.Equals(r.Key.TenantId, tenantId, StringComparison.Ordinal))
+            .Select(r => JsonSerializer.Deserialize<AskAiRun>(r.Value)!)
             .OrderByDescending(r => r.CreatedAtUtc)
             .Take(50)
             .ToList();
@@ -343,15 +358,10 @@ public sealed class AskAiOrchestrator
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentException.ThrowIfNullOrWhiteSpace(run.TenantId);
-        ArgumentException.ThrowIfNullOrWhiteSpace(run.Question);
-        if (run.Question.Length > 8_000)
+        var validationError = AskAiRequestValidator.GetError(run.Question, run.ReplyChannel.CallbackWebhookUrl);
+        if (validationError is not null)
         {
-            throw new ArgumentException("Ask AI questions must not exceed 8,000 characters.");
-        }
-        if (!String.IsNullOrWhiteSpace(run.ReplyChannel.CallbackWebhookUrl))
-        {
-            throw new InvalidOperationException(
-                "Callback delivery is not enabled. Poll the run endpoint until approved destinations are configured.");
+            throw new InvalidOperationException(validationError);
         }
 
         var tenant = await _harnessStore.GetTenantAsync(run.TenantId, cancellationToken)
@@ -364,6 +374,7 @@ public sealed class AskAiOrchestrator
         }
 
         run.Status = JobStatus.Running;
+        run.StartedAtUtc ??= DateTimeOffset.UtcNow;
         var modelId = _modelCatalog.ResolveModelId(tenant, askFeature.ModelIdOverride);
         run.ModelIdUsed = modelId;
         var chatClient = _modelCatalog.ResolveRequiredChatClient(tenant, askFeature.ModelIdOverride);
@@ -543,6 +554,7 @@ public sealed class AskAiOrchestrator
         };
         var response = await agentClient.GetResponseAsync(
             [new ChatMessage(ChatRole.User, run.Question)], options, cancellationToken);
+        cancellationToken.ThrowIfCancellationRequested();
         if (retrievalFailure is not null)
         {
             throw new InvalidOperationException("Document retrieval failed; no answer was produced.", retrievalFailure);
@@ -552,7 +564,8 @@ public sealed class AskAiOrchestrator
         var answer = JsonSerializer.Deserialize<AgentAnswer>(
             ReasoningCleanupChatClient.CleanModelText(text),
             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-        if (answer is null || answer.Kind is null || String.IsNullOrWhiteSpace(answer.Answer) ||
+        if (answer is null || answer.Kind is null || !Enum.IsDefined(answer.Kind.Value) ||
+            String.IsNullOrWhiteSpace(answer.Answer) ||
             answer.Answer.Length > 64_000 || answer.EvidenceIds is null ||
             answer.EvidenceIds.Distinct(StringComparer.Ordinal).Count() != answer.EvidenceIds.Count ||
             answer.EvidenceIds.Any(id => !evidence.ContainsKey(id)))

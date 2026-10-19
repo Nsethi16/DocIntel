@@ -364,18 +364,18 @@ public static class HarnessEndpoints
             return Results.File(pdfBytes, "application/pdf", enableRangeProcessing: true);
         });
 
-        // Agentic Ask AI across a tenant's processed documents (System Prompt + Prompt Columns + NL -> Cosmos SQL + Verified Citations)
+        // Conversational Ask AI with typed search tools and inspected-source citations.
         group.MapPost("/tenants/{tenantId}/ask", async (
             string tenantId,
             [FromBody] AskTenantDocumentsRequest req,
             IHarnessStore harnessStore,
-            AskAiOrchestrator askOrchestrator,
-            IAskAiRunStore runStore,
+            AskAiRunProcessor runProcessor,
             CancellationToken ct) =>
         {
-            if (string.IsNullOrWhiteSpace(req?.Question))
+            var validationError = AskAiRequestValidator.GetError(req.Question);
+            if (validationError is not null)
             {
-                return Results.BadRequest(new { error = "Question is required." });
+                return Results.BadRequest(new { error = validationError });
             }
 
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
@@ -392,9 +392,11 @@ public static class HarnessEndpoints
                 ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Web }
             };
 
-            await runStore.UpsertRunAsync(run, ct);
-            var completed = await askOrchestrator.ExecuteRunAsync(run, cancellationToken: ct);
-            await runStore.UpsertRunAsync(completed, ct);
+            var completed = await runProcessor.ExecuteInlineAsync(run, ct);
+            if (completed.Status == JobStatus.Failed)
+            {
+                return Results.Json(new { error = completed.ErrorMessage, completed.RunId }, statusCode: 502);
+            }
 
             return Results.Ok(new
             {
@@ -411,7 +413,7 @@ public static class HarnessEndpoints
             });
         });
 
-        // Submit Long-Running Async Ask AI Run (202 Accepted — supports Web, Email, Teams, and Webhook callbacks)
+        // Submit an asynchronous Ask AI run. Callback delivery is not enabled.
         group.MapPost("/tenants/{tenantId}/ask/runs", async (
             string tenantId,
             [FromBody] SubmitAskAiRunRequest req,
@@ -420,9 +422,11 @@ public static class HarnessEndpoints
             IAskAiQueue askQueue,
             CancellationToken ct) =>
         {
-            if (string.IsNullOrWhiteSpace(req?.Question))
+            var validationError = AskAiRequestValidator.GetError(
+                req.Question, req.ReplyChannel?.CallbackWebhookUrl);
+            if (validationError is not null)
             {
-                return Results.BadRequest(new { error = "Question is required." });
+                return Results.BadRequest(new { error = validationError });
             }
 
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
@@ -460,8 +464,8 @@ public static class HarnessEndpoints
             IAskAiRunStore runStore,
             CancellationToken ct) =>
         {
-            var run = await runStore.GetRunAsync(runId, ct);
-            if (run is null || !string.Equals(run.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+            var run = await runStore.GetRunAsync(tenantId, runId, ct);
+            if (run is null)
             {
                 return Results.NotFound(new { error = $"Ask AI run '{runId}' not found." });
             }
@@ -473,6 +477,7 @@ public static class HarnessEndpoints
                 run.Question,
                 status = run.Status.ToString(),
                 run.ErrorMessage,
+                run.ErrorCode,
                 run.ModelIdUsed,
                 run.Answer,
                 run.DocumentsEvaluated,
@@ -482,6 +487,7 @@ public static class HarnessEndpoints
                 run.EmailHtmlBody,
                 run.TeamsAdaptiveCardJson,
                 run.CreatedAtUtc,
+                run.StartedAtUtc,
                 run.CompletedAtUtc
             });
         });
@@ -491,15 +497,16 @@ public static class HarnessEndpoints
             string tenantId,
             [FromBody] InboundEmailAskRequest req,
             IHarnessStore harnessStore,
-            AskAiOrchestrator askOrchestrator,
+            AskAiRunProcessor runProcessor,
             IAskAiRunStore runStore,
             IAskAiQueue askQueue,
             CancellationToken ct) =>
         {
             var questionText = !string.IsNullOrWhiteSpace(req?.Body) ? req.Body.Trim() : req?.Subject?.Trim();
-            if (string.IsNullOrWhiteSpace(questionText))
+            var validationError = AskAiRequestValidator.GetError(questionText, req?.CallbackWebhookUrl);
+            if (String.IsNullOrWhiteSpace(questionText) || validationError is not null)
             {
-                return Results.BadRequest(new { error = "Email body or subject containing a question is required." });
+                return Results.BadRequest(new { error = validationError });
             }
 
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
@@ -536,8 +543,11 @@ public static class HarnessEndpoints
                 });
             }
 
-            var completed = await askOrchestrator.ExecuteRunAsync(run, cancellationToken: ct);
-            await runStore.UpsertRunAsync(completed, ct);
+            var completed = await runProcessor.ExecuteInlineAsync(run, ct);
+            if (completed.Status == JobStatus.Failed)
+            {
+                return Results.Json(new { error = completed.ErrorMessage, completed.RunId }, statusCode: 502);
+            }
 
             return Results.Ok(new
             {
@@ -557,14 +567,15 @@ public static class HarnessEndpoints
             string tenantId,
             [FromBody] InboundTeamsAskRequest req,
             IHarnessStore harnessStore,
-            AskAiOrchestrator askOrchestrator,
+            AskAiRunProcessor runProcessor,
             IAskAiRunStore runStore,
             IAskAiQueue askQueue,
             CancellationToken ct) =>
         {
-            if (string.IsNullOrWhiteSpace(req?.Text))
+            var validationError = AskAiRequestValidator.GetError(req.Text, req.CallbackWebhookUrl);
+            if (String.IsNullOrWhiteSpace(req.Text) || validationError is not null)
             {
-                return Results.BadRequest(new { error = "Teams message text is required." });
+                return Results.BadRequest(new { error = validationError });
             }
 
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
@@ -600,8 +611,11 @@ public static class HarnessEndpoints
                 });
             }
 
-            var completed = await askOrchestrator.ExecuteRunAsync(run, cancellationToken: ct);
-            await runStore.UpsertRunAsync(completed, ct);
+            var completed = await runProcessor.ExecuteInlineAsync(run, ct);
+            if (completed.Status == JobStatus.Failed)
+            {
+                return Results.Json(new { error = completed.ErrorMessage, completed.RunId }, statusCode: 502);
+            }
 
             return Results.Ok(new
             {

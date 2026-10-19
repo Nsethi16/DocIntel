@@ -147,6 +147,7 @@ public sealed class AskAiTrustTests
     [InlineData("")]
     [InlineData("{}")]
     [InlineData("{\"cosmosSql\":\"DELETE FROM c\"}")]
+    [InlineData("{\"kind\":44,\"answer\":\"Unsupported kind.\",\"evidenceIds\":[]}")]
     public async Task Invalid_Model_Query_Does_Not_Fall_Back_To_All_Documents(string responseText)
     {
         // Arrange

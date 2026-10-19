@@ -167,6 +167,11 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IAskAiRunStore, InMemoryAskAiRunStore>();
         services.TryAddSingleton<IAskAiQueue, ChannelAskAiQueue>();
         services.TryAddSingleton<AskAiOrchestrator>();
+        var askAiOptions = new AskAiExecutionOptions();
+        configuration?.GetSection(AskAiExecutionOptions.SectionName).Bind(askAiOptions);
+        askAiOptions.Validate();
+        services.TryAddSingleton(askAiOptions);
+        services.TryAddSingleton<AskAiRunProcessor>();
 
         return services;
     }

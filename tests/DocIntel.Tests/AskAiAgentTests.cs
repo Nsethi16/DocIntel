@@ -140,6 +140,32 @@ public sealed class AskAiAgentTests
     }
 
     [Fact]
+    public async Task Cancellation_During_Retrieval_Does_Not_Produce_A_Completed_Answer()
+    {
+        // Arrange
+        using var cancellation = new CancellationTokenSource();
+        var store = new Mock<IJobStore>(MockBehavior.Strict);
+        store.Setup(s => s.SearchDocumentsAsync("tenant-one", It.IsAny<DocumentQuery>(),
+                It.IsAny<CancellationToken>()))
+            .Returns((string _, DocumentQuery _, CancellationToken ct) =>
+            {
+                cancellation.Cancel();
+                return Task.FromCanceled<DocumentQueryPage>(ct);
+            });
+        var orchestrator = CreateOrchestrator(store.Object,
+            SearchCall(), Final("Conversation", "Finished."));
+        var run = CreateRun();
+
+        // Act
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            orchestrator.ExecuteRunAsync(run, cancellationToken: cancellation.Token));
+
+        // Assert
+        Assert.Null(run.Answer);
+        Assert.NotEqual(JobStatus.Completed, run.Status);
+    }
+
+    [Fact]
     public async Task A_Mismatched_Tenant_Returned_By_Storage_Is_Not_Exposed()
     {
         // Arrange

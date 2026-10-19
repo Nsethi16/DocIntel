@@ -1629,6 +1629,7 @@
 
   <div class="toast" id="toast"></div>
 
+  <script src="/ask-ai.js"></script>
   <script>
     let tenants = [];
     let currentTenant = null;
@@ -1657,6 +1658,9 @@
     let graphCustomNodePositions = {};
     let askAiQuestionInput = '';
     let askAiLoading = false;
+    let askAiLoadingChatId = null;
+    let askAiLoadingTenantId = null;
+    let askAiProgressText = '';
     let tenantChats = [];
     let activeChatId = null;
     let askInnerSidebarCollapsed = false;
@@ -1769,13 +1773,9 @@
       renderDocumentList();
       renderSelectedDocument();
 
-      // Auto-recover any chat whose last message is an unanswered user question
       const chat = getActiveChat();
-      const msgs = chat?.messages || [];
-      if (!askAiLoading && msgs.length > 0 && msgs[msgs.length - 1].role === 'user') {
-        const pendingQ = msgs.pop().text;
-        saveTenantChats();
-        runCrossDocumentAskAi(pendingQ);
+      if (!askAiLoading && chat?.pendingAskAi?.runId) {
+        runCrossDocumentAskAi(null, true);
       }
     }
 
@@ -1843,11 +1843,8 @@
       if (mode === 'ask') {
         loadTenantChats();
         const chat = getActiveChat();
-        const msgs = chat?.messages || [];
-        if (!askAiLoading && msgs.length > 0 && msgs[msgs.length - 1].role === 'user') {
-          const pendingQ = msgs.pop().text;
-          saveTenantChats();
-          setTimeout(() => runCrossDocumentAskAi(pendingQ), 50);
+        if (!askAiLoading && chat?.pendingAskAi?.runId) {
+          runCrossDocumentAskAi(null, true);
         }
       }
       renderDocumentList();
@@ -3627,93 +3624,99 @@
       drawFrame();
     }
 
-    async function runCrossDocumentAskAi(customQuestion) {
-      if (!currentTenant || askAiLoading) return;
-      const inputEl = document.getElementById('askAiMainInputEl');
-      const q = (customQuestion != null ? customQuestion : (inputEl ? inputEl.value : askAiQuestionInput)).trim();
-      if (!q) return;
+    function saveAskAiChatForTenant(tenantId, chat) {
+      if (currentTenant?.tenantId === tenantId) {
+        const index = tenantChats.findIndex(c => c.id === chat.id);
+        if (index < 0) return;
+        tenantChats[index] = chat;
+        saveTenantChats();
+        return;
+      }
+      try {
+        const key = `docintel_chats_${tenantId}`;
+        const chats = JSON.parse(localStorage.getItem(key) || '[]');
+        const index = chats.findIndex(c => c.id === chat.id);
+        if (index < 0) return;
+        chats[index] = chat;
+        localStorage.setItem(key, JSON.stringify(chats));
+      } catch {
+        console.error('Unable to save Ask AI chat state for its original tenant.');
+      }
+    }
 
+    async function runCrossDocumentAskAi(customQuestion, resume = false) {
+      if (!currentTenant || askAiLoading) return;
       loadTenantChats();
+      const tenantId = currentTenant.tenantId;
       const chat = getActiveChat();
-      const targetChatId = chat.id;
+      const inputEl = document.getElementById('askAiMainInputEl');
+      const q = resume ? chat.pendingAskAi?.question
+        : (customQuestion != null ? customQuestion : (inputEl ? inputEl.value : askAiQuestionInput)).trim();
+      if (!q || (resume && !chat.pendingAskAi?.runId)) return;
+      if (!resume && chat.pendingAskAi?.runId) {
+        showToast('Check the pending response or start a new chat before asking another question.');
+        return;
+      }
+
       if (!chat.messages) chat.messages = [];
-      if (chat.messages.length === 0 || chat.title === 'New chat') {
+      if (!resume && (chat.messages.length === 0 || chat.title === 'New chat')) {
         chat.title = q.length > 42 ? q.slice(0, 41) + '…' : q;
       }
-      chat.messages.push({
-        role: 'user',
-        text: q,
-        timestamp: new Date().toISOString()
-      });
+      if (!resume) {
+        chat.messages.push({ role: 'user', text: q, timestamp: new Date().toISOString() });
+        chat.pendingAskAi = { question: q, runId: null };
+      }
       chat.updatedAt = new Date().toISOString();
-      saveTenantChats();
+      saveAskAiChatForTenant(tenantId, chat);
 
       askAiQuestionInput = '';
       askAiLoading = true;
+      askAiLoadingChatId = chat.id;
+      askAiLoadingTenantId = tenantId;
+      askAiProgressText = resume ? 'Reconnecting to your question...' : 'Submitting your question...';
       renderDocumentList();
       renderSelectedDocument();
 
       try {
-        let finalData = null;
-
-        // Try direct /ask endpoint first for fast interactive web response, falling back to /ask/runs polling
-        const directResp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ question: q })
-        });
-
-        if (directResp.ok) {
-          finalData = await directResp.json();
-        } else {
-          const submitResp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask/runs`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              question: q,
-              replyChannel: { channelType: 'Web' }
-            })
-          });
-          if (submitResp.ok) {
-            const accepted = await submitResp.json();
-            for (let attempt = 0; attempt < 40; attempt++) {
-              const pollResp = await fetch(accepted.statusUrl || `/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask/runs/${encodeURIComponent(accepted.runId)}`);
-              if (!pollResp.ok) break;
-              const runData = await pollResp.json();
-              if (runData.status === 'Completed' || runData.status === 'Failed') {
-                finalData = runData;
-                break;
-              }
-              await new Promise(r => setTimeout(r, 350));
-            }
+        if (!resume) {
+          chat.pendingAskAi.runId = await DocIntelAskAi.submit(tenantId, q);
+          saveAskAiChatForTenant(tenantId, chat);
+        }
+        const finalData = await DocIntelAskAi.waitForRun(tenantId, chat.pendingAskAi.runId, run => {
+          askAiProgressText = run.status === 'Queued' ? 'Your question is queued...'
+            : (run.steps?.length ? 'Reviewing document evidence...' : 'Working on your question...');
+          if (currentTenant?.tenantId === tenantId && activeChatId === chat.id) {
+            const progress = document.getElementById('askAiProgress');
+            if (progress) progress.textContent = askAiProgressText;
           }
-        }
-
-        const activeTarget = tenantChats.find(c => c.id === targetChatId) || getActiveChat();
-        if (activeTarget) {
-          activeTarget.messages.push({
-            role: 'assistant',
-            text: (finalData && finalData.answer) ? finalData.answer : 'Unable to retrieve answer for this question.',
-            citations: (finalData && finalData.citations) ? finalData.citations.slice(0, 8) : [],
-            executedCosmosQueries: (finalData && finalData.executedCosmosQueries) ? finalData.executedCosmosQueries : [],
-            timestamp: new Date().toISOString()
-          });
-          activeTarget.updatedAt = new Date().toISOString();
-          saveTenantChats();
-        }
+        });
+        delete chat.pendingAskAi;
+        chat.messages.push({
+          role: 'assistant',
+          text: finalData.status === 'Failed' ? finalData.errorMessage || 'Ask AI could not complete this request.'
+            : finalData.answer,
+          isError: finalData.status === 'Failed',
+          citations: finalData.status === 'Completed' ? finalData.citations || [] : [],
+          executedCosmosQueries: finalData.executedCosmosQueries || [],
+          timestamp: new Date().toISOString()
+        });
+        chat.updatedAt = new Date().toISOString();
+        saveAskAiChatForTenant(tenantId, chat);
       } catch (err) {
-        const activeTarget = tenantChats.find(c => c.id === targetChatId) || getActiveChat();
-        if (activeTarget) {
-          activeTarget.messages.push({
-            role: 'assistant',
-            text: 'An error occurred while querying tenant documents.',
-            citations: [],
-            timestamp: new Date().toISOString()
-          });
-          saveTenantChats();
-        }
+        if (!err.resumable || !chat.pendingAskAi?.runId) delete chat.pendingAskAi;
+        chat.messages.push({
+          role: 'assistant',
+          text: err.message || 'Unable to connect to Ask AI. The question was not automatically resubmitted.',
+          isError: true,
+          citations: [],
+          timestamp: new Date().toISOString()
+        });
+        saveAskAiChatForTenant(tenantId, chat);
       } finally {
         askAiLoading = false;
+        askAiLoadingChatId = null;
+        askAiLoadingTenantId = null;
+        askAiProgressText = '';
         renderDocumentList();
         renderSelectedDocument();
       }
@@ -3739,7 +3742,9 @@
       loadTenantChats();
       const chat = getActiveChat();
       const messages = chat?.messages || [];
-      const isEmptyChat = messages.length === 0 && !askAiLoading;
+      const chatIsLoading = askAiLoading && askAiLoadingChatId === chat?.id &&
+        askAiLoadingTenantId === currentTenant?.tenantId;
+      const isEmptyChat = messages.length === 0 && !chatIsLoading;
       const isDocDrawerCollapsed = document.getElementById('docListPane')?.classList.contains('collapsed');
 
       // Only list chats that have at least 1 message so "New chat" is never duplicated under Chats
@@ -3846,7 +3851,7 @@
         const cites = m.citations || [];
         return `
           <div style="align-self:stretch;display:flex;flex-direction:column;gap:10px;padding:4px 0 12px 0;border-bottom:1px solid var(--line);">
-            <div class="insight-prose" style="margin:0;font-size:14px;line-height:1.65;">${formatMarkdownBold(m.text, cites)}</div>
+            <div class="insight-prose" ${m.isError ? 'role="alert"' : ''} style="margin:0;font-size:14px;line-height:1.65;">${formatMarkdownBold(m.text, cites)}</div>
             ${cites.length > 0 ? `
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                 ${cites.map(c => `
@@ -3867,7 +3872,9 @@
           <div class="ask-minimal-stage" style="justify-content:space-between;min-height:100%;margin:0 auto;">
             <div style="width:100%;display:flex;flex-direction:column;gap:18px;padding-bottom:28px;">
               ${threadHtml}
-              ${askAiLoading ? `<div style="color:var(--text-secondary);font-size:13.5px;">Thinking across your documents...</div>` : ''}
+              ${chatIsLoading ? `<div id="askAiProgress" role="status" style="color:var(--text-secondary);font-size:13.5px;">${escapeHtml(askAiProgressText)}</div>` : ''}
+              ${!chatIsLoading && chat?.pendingAskAi?.runId ? '<button type="button" class="text-link-btn" onclick="runCrossDocumentAskAi(null, true)">Check pending response</button>' : ''}
+              ${!chatIsLoading && !chat?.pendingAskAi?.runId && messages.at(-1)?.role === 'user' ? '<div role="status">No confirmed run is linked to this question. It was not automatically submitted again.</div>' : ''}
             </div>
 
             <div class="ask-pill-bar" style="position:sticky;bottom:8px;">

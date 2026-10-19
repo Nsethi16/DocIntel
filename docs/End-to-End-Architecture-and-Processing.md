@@ -33,6 +33,27 @@ callback URLs are rejected until an approved destination policy exists. The curr
 queue remain process-local: durable scheduling, identity/resource authorization, and Microsoft 365
 delivery are separate prerequisites before production rollout.
 
+The web client submits one asynchronous run and polls that run rather than retrying a failed
+synchronous request as a new execution. It stores the confirmed run ID with the chat and resumes
+polling after reopening; an unconfirmed submission is never automatically retried. Failed runs
+display explicit error messages, progress is scoped to the originating chat, and a tenant switch
+cannot move an answer into another tenant's chat. Polling lasts up to 30 minutes; after connection
+failure or that limit, the same confirmed run can be checked again without creating a new one.
+
+Run reads require both tenant ID and run ID and return isolated snapshots. The worker persists
+`Running` before model invocation, limits execution to `AskAi:MaxRunSeconds` (default 600, allowed
+1-3,600), and persists safe `Failed` states for provider failure, timeout, or graceful shutdown.
+Inline web/email/Teams adapters use the same execution policy. This does not make the in-memory
+queue/store durable, authorize a caller, or guarantee recovery after a process crash; a missing
+run is reported as unavailable, not silently re-created.
+
+Regression commands from the repository root:
+
+```powershell
+dotnet test tests\DocIntel.Tests\DocIntel.Tests.csproj -c Release
+node --test tests\DocIntel.Ui.Tests\ask-ai.test.cjs
+```
+
 ## 1. High-Level System Architecture
 
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).

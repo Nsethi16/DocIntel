@@ -112,19 +112,16 @@ public sealed class DocumentJobWorker : BackgroundService
 public sealed class AskAiRunWorker : BackgroundService
 {
     private readonly IAskAiQueue _askAiQueue;
-    private readonly IAskAiRunStore _runStore;
-    private readonly AskAiOrchestrator _orchestrator;
+    private readonly AskAiRunProcessor _processor;
     private readonly ILogger<AskAiRunWorker> _logger;
 
     public AskAiRunWorker(
         IAskAiQueue askAiQueue,
-        IAskAiRunStore runStore,
-        AskAiOrchestrator orchestrator,
+        AskAiRunProcessor processor,
         ILogger<AskAiRunWorker> logger)
     {
         _askAiQueue = askAiQueue ?? throw new ArgumentNullException(nameof(askAiQueue));
-        _runStore = runStore ?? throw new ArgumentNullException(nameof(runStore));
-        _orchestrator = orchestrator ?? throw new ArgumentNullException(nameof(orchestrator));
+        _processor = processor ?? throw new ArgumentNullException(nameof(processor));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -132,29 +129,13 @@ public sealed class AskAiRunWorker : BackgroundService
     {
         await foreach (var ticket in _askAiQueue.ReadAllAsync(stoppingToken))
         {
-            AskAiRun? run = null;
             try
             {
-                run = await _runStore.GetRunAsync(ticket.RunId, stoppingToken);
-                if (run is null) continue;
-
-                await _orchestrator.ExecuteRunAsync(
-                    run,
-                    onStepProgress: (progressRun, ct) => _runStore.UpsertRunAsync(progressRun, ct),
-                    cancellationToken: stoppingToken);
-
-                await _runStore.UpsertRunAsync(run, stoppingToken);
+                await _processor.ProcessAsync(ticket, stoppingToken);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
                 _logger.LogError(ex, "Failed processing AskAiRun '{RunId}' for tenant '{TenantId}'.", ticket.RunId, ticket.TenantId);
-                if (run is not null)
-                {
-                    run.Status = JobStatus.Failed;
-                    run.ErrorMessage = ex.Message;
-                    run.CompletedAtUtc = DateTimeOffset.UtcNow;
-                    await _runStore.UpsertRunAsync(run, stoppingToken);
-                }
             }
         }
     }
