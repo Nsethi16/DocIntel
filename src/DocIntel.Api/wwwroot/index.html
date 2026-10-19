@@ -2685,7 +2685,11 @@
         const cleanFileName = (j.fileName || 'Document').replace(/\.pdf$/i, '');
         const segs = j.segments || [];
         const docTypesSummary = [...new Set(segs.map(s => s.identifiedDocumentName || s.documentTypeName).filter(Boolean))].join(', ');
-        const matchingEntitiesForDoc = [];
+
+        // Collect all entities present on this document
+        const docEntities = [];
+        const docEntityNamesSet = new Set();
+        const docEntityPairsSet = new Set();
 
         segs.forEach(s => {
           (s.extractedEntities || []).forEach(e => {
@@ -2693,31 +2697,46 @@
             const eName = e.name.trim();
             const eVal = e.value.trim();
             const pairKey = `${eName}||${eVal}`;
-
-            const hasAnyFilter = graphSelectedEntityNames.size > 0 || graphSelectedEntityValues.size > 0;
-            if (hasAnyFilter) {
-              const matchedByType = graphSelectedEntityNames.has(eName);
-              const matchedByValue = graphSelectedEntityValues.has(pairKey);
-              if (!matchedByType && !matchedByValue) {
-                return;
-              }
-            }
-
-            const entNodeId = `ent:${pairKey}`;
-            if (!entityNodesMap.has(entNodeId)) {
-              entityNodesMap.set(entNodeId, {
-                id: entNodeId,
-                type: 'entity',
-                pairKey,
-                entityName: eName,
-                entityValue: eVal,
-                category: (e.category || 'Entity').toUpperCase(),
-                connectedDocs: []
-              });
-            }
-
-            matchingEntitiesForDoc.push(entNodeId);
+            docEntityNamesSet.add(eName);
+            docEntityPairsSet.add(pairKey);
+            docEntities.push({ eName, eVal, pairKey, category: (e.category || 'Entity').toUpperCase() });
           });
+        });
+
+        // Evaluate strict AND condition across all selected Entity Types and Entity Values
+        for (const reqName of graphSelectedEntityNames) {
+          if (!docEntityNamesSet.has(reqName)) return;
+        }
+        for (const reqPair of graphSelectedEntityValues) {
+          if (!docEntityPairsSet.has(reqPair)) return;
+        }
+
+        const hasAnyFilter = graphSelectedEntityNames.size > 0 || graphSelectedEntityValues.size > 0;
+        const matchingEntitiesForDoc = [];
+
+        docEntities.forEach(({ eName, eVal, pairKey, category }) => {
+          if (hasAnyFilter) {
+            const matchedByType = graphSelectedEntityNames.has(eName);
+            const matchedByValue = graphSelectedEntityValues.has(pairKey);
+            if (!matchedByType && !matchedByValue) {
+              return;
+            }
+          }
+
+          const entNodeId = `ent:${pairKey}`;
+          if (!entityNodesMap.has(entNodeId)) {
+            entityNodesMap.set(entNodeId, {
+              id: entNodeId,
+              type: 'entity',
+              pairKey,
+              entityName: eName,
+              entityValue: eVal,
+              category,
+              connectedDocs: []
+            });
+          }
+
+          matchingEntitiesForDoc.push(entNodeId);
         });
 
         const uniqEntIds = [...new Set(matchingEntitiesForDoc)];
@@ -2780,10 +2799,10 @@
         groupedByType.get(p.name).push(p);
       });
 
-      const selectedTagsHtml = [
+      const selectedTagsList = [
         ...[...graphSelectedEntityNames].map(name => `
           <span class="entity-selected-tag" onclick="event.stopPropagation()">
-            <span>All ${escapeHtml(name)}</span>
+            <span>Has ${escapeHtml(name)}</span>
             <button type="button" title="Remove" onclick="toggleGraphEntityNameFilter(${JSON.stringify(name).replace(/"/g, '&quot;')}, event)">✕</button>
           </span>
         `),
@@ -2796,7 +2815,8 @@
             </span>
           `;
         })
-      ].join('');
+      ];
+      const selectedTagsHtml = selectedTagsList.join('<span style="font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--text-secondary);">AND</span>');
 
       const groupsHtml = [...groupedByType.entries()].map(([groupName, items]) => {
         const isTypeSelected = graphSelectedEntityNames.has(groupName);
