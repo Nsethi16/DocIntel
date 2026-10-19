@@ -656,10 +656,46 @@
 
     .slice-section-head {
       display: flex;
-      align-items: baseline;
+      align-items: center;
       justify-content: space-between;
       gap: 16px;
-      margin-bottom: 10px;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    .slice-card-body {
+      display: none;
+      margin-top: 12px;
+      padding-top: 12px;
+      border-top: 1px solid var(--line);
+    }
+
+    .slice-section.expanded .slice-card-body {
+      display: block;
+    }
+
+    .slice-chevron-btn {
+      width: 26px;
+      height: 26px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      background: transparent;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: transform 0.16s ease, background 0.12s ease, color 0.12s ease;
+    }
+
+    .slice-chevron-btn:hover {
+      background: var(--header-surface);
+      color: var(--text-primary);
+    }
+
+    .slice-section.expanded .slice-chevron-btn {
+      transform: rotate(180deg);
+      color: var(--text-primary);
     }
 
     .slice-section-title {
@@ -2030,9 +2066,17 @@
       renderSelectedDocument();
     }
 
-    function jumpToSlicePdf(sliceIndex) {
+    function jumpToSlicePdf(sliceIndex, evt) {
+      if (evt) evt.stopPropagation();
       selectedSliceIndex = sliceIndex;
       setDocResultTab('document');
+    }
+
+    function toggleSliceCard(headEl) {
+      const card = headEl.closest('.slice-section');
+      if (card) {
+        card.classList.toggle('expanded');
+      }
     }
 
     function setEntityCategoryFilter(cat) {
@@ -2454,23 +2498,33 @@
           </div>
         `;
 
-        const sectionsHtml = activeSegs.map(s => {
+        const sectionsHtml = activeSegs.map((s, idx) => {
           const docName = s.identifiedDocumentName || s.documentTypeName || `Slice ${s.segmentIndex + 1}`;
           const prose = cleanInsightText(s.insightSummary) || 'No insight summary generated for this slice.';
           const langNote = s.wasTranslated
             ? ` · Translated ${(s.detectedLanguage || '').toUpperCase()} → ${(s.targetLanguage || 'en').toUpperCase()}`
             : '';
+          const isExpanded = idx === 0;
 
           return `
-            <article class="slice-section">
-              <div class="slice-section-head">
+            <article class="slice-section ${isExpanded ? 'expanded' : ''}">
+              <div class="slice-section-head" onclick="toggleSliceCard(this)">
                 <div>
                   <h3 class="slice-section-title">${escapeHtml(docName)}</h3>
                   <div class="slice-section-sub">Slice ${s.segmentIndex + 1} · Pages ${s.startPage}–${s.endPage}${escapeHtml(langNote)}</div>
                 </div>
-                <button type="button" class="text-link-btn" onclick="jumpToSlicePdf(${s.segmentIndex})">Pages ${s.startPage}–${s.endPage} ↗</button>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button type="button" class="text-link-btn" onclick="jumpToSlicePdf(${s.segmentIndex}, event)">Pages ${s.startPage}–${s.endPage} ↗</button>
+                  <button type="button" class="slice-chevron-btn" aria-label="Expand or collapse slice">
+                    <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
-              <p class="insight-prose" style="margin:0;">${escapeHtml(prose)}</p>
+              <div class="slice-card-body">
+                <p class="insight-prose" style="margin:0;">${escapeHtml(prose)}</p>
+              </div>
             </article>
           `;
         }).join('');
@@ -2560,8 +2614,9 @@
           return;
         }
 
-        body.innerHTML = `<div class="content-column">` + slicesWithData.map(s => {
+        body.innerHTML = `<div class="content-column"><div class="slices-wide-grid">` + slicesWithData.map((s, idx) => {
           const de = s.dataExtraction;
+          const isExpanded = idx === 0;
           const fieldsHtml = (de.fields && de.fields.length > 0) ? `
             <dl class="kv-grid">
               ${de.fields.map(f => `
@@ -2596,19 +2651,28 @@
           }).join('');
 
           return `
-            <section class="slice-section">
-              <div class="slice-section-head">
+            <section class="slice-section ${isExpanded ? 'expanded' : ''}">
+              <div class="slice-section-head" onclick="toggleSliceCard(this)">
                 <div>
                   <h3 class="slice-section-title">${escapeHtml(de.documentName)}</h3>
                   <div class="slice-section-sub">Slice ${s.segmentIndex + 1} · Pages ${escapeHtml(de.pageRange)}</div>
                 </div>
-                <button type="button" class="text-link-btn" onclick="jumpToSlicePdf(${s.segmentIndex})">View PDF ↗</button>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button type="button" class="text-link-btn" onclick="jumpToSlicePdf(${s.segmentIndex}, event)">View PDF ↗</button>
+                  <button type="button" class="slice-chevron-btn" aria-label="Expand or collapse slice">
+                    <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
-              ${fieldsHtml}
-              ${tablesHtml}
+              <div class="slice-card-body">
+                ${fieldsHtml}
+                ${tablesHtml}
+              </div>
             </section>
           `;
-        }).join('') + `</div>`;
+        }).join('') + `</div></div>`;
         return;
       }
 
@@ -2623,7 +2687,7 @@
           return colResult ? { slice: s, result: colResult } : null;
         }).filter(Boolean);
 
-        const sliceCardsHtml = matchingSliceEntries.map(({ slice, result }) => {
+        const sliceCardsHtml = matchingSliceEntries.map(({ slice, result }, idx) => {
           const docName = slice.identifiedDocumentName || slice.documentTypeName || `Slice ${slice.segmentIndex + 1}`;
           const cleanedOutcome = String(result.resultText || '')
             .replace(/^Summary\s*\([^)]*\):\s*/i, '')
@@ -2631,16 +2695,27 @@
             .replace(/\s*in a clear and concise manner\.?\s*Focus on key points, main arguments, and important conclusions\.?/gi, '')
             .replace(/\s*as concise bullet points\.?/gi, '')
             .trim();
+          const isExpanded = idx === 0;
 
           return `
-            <article class="slice-section">
-              <div class="slice-section-head">
+            <article class="slice-section ${isExpanded ? 'expanded' : ''}">
+              <div class="slice-section-head" onclick="toggleSliceCard(this)">
                 <div>
                   <h3 class="slice-section-title">${escapeHtml(docName)}</h3>
                   <div class="slice-section-sub">Pages ${slice.startPage}–${slice.endPage}</div>
                 </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button type="button" class="text-link-btn" onclick="jumpToSlicePdf(${slice.segmentIndex}, event)">Pages ${slice.startPage}–${slice.endPage} ↗</button>
+                  <button type="button" class="slice-chevron-btn" aria-label="Expand or collapse slice">
+                    <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
               </div>
-              <p class="insight-prose">${escapeHtml(cleanedOutcome)}</p>
+              <div class="slice-card-body">
+                <p class="insight-prose" style="margin:0;">${escapeHtml(cleanedOutcome)}</p>
+              </div>
             </article>
           `;
         }).join('');
