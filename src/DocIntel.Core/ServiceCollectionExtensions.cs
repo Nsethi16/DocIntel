@@ -1,6 +1,7 @@
 using Azure.Core;
 using Azure.Identity;
 using Azure.Storage.Blobs;
+using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Harness;
@@ -163,6 +164,9 @@ public static class ServiceCollectionExtensions
 
         services.TryAddSingleton<DocumentSplittingWorkflow>();
         services.TryAddSingleton<IJobQueue, ChannelJobQueue>();
+        services.TryAddSingleton<IAskAiRunStore, InMemoryAskAiRunStore>();
+        services.TryAddSingleton<IAskAiQueue, ChannelAskAiQueue>();
+        services.TryAddSingleton<AskAiOrchestrator>();
 
         return services;
     }

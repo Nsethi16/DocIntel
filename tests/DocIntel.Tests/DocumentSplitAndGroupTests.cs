@@ -1,6 +1,8 @@
 using System.Text.Json;
 using DocIntel.Core;
+using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Features.DocumentIdentification;
+using DocIntel.Core.Jobs;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Harness;
@@ -430,6 +432,83 @@ public sealed class DocumentSplitAndGroupTests
         Assert.False(slice1Mbsa.FilterMatched);
         Assert.Equal("SkippedByFilter", slice1Mbsa.Status);
         Assert.False(slice1Mbsa.ProcessedAsFileBase64);
+    }
+
+    [Fact]
+    public async Task AskAiOrchestrator_Injects_PromptColumns_Generates_CosmosSql_And_Returns_Citations_And_ChannelPayloads()
+    {
+        // Arrange
+        var harnessPath = Path.Combine(Path.GetTempPath(), $"docintel-askai-test-{Guid.NewGuid():N}.json");
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddDocIntelCore(harnessFilePath: harnessPath);
+
+        using var provider = services.BuildServiceProvider();
+        var harnessStore = provider.GetRequiredService<IHarnessStore>();
+        var jobStore = provider.GetRequiredService<IJobStore>();
+        var workflow = provider.GetRequiredService<DocumentSplittingWorkflow>();
+        var askOrchestrator = provider.GetRequiredService<AskAiOrchestrator>();
+
+        var tenant = await harnessStore.GetTenantAsync("contoso-legal")
+                     ?? new TenantHarness { TenantId = "contoso-legal", DisplayName = "Contoso Legal" };
+
+        // Verify system prompt includes Prompt Column definitions and Cosmos DB schema
+        var systemPrompt = AskAiPromptBuilder.BuildSystemPrompt(tenant);
+        Assert.Contains("ADMIN-DEFINED PROMPT COLUMNS", systemPrompt);
+        Assert.Contains("COSMOS DB 'jobs' CONTAINER JSON SCHEMA", systemPrompt);
+        Assert.Contains("Contract Check", systemPrompt);
+
+        var pdfBytes = PdfPigLayoutExtractor.CreateSamplePdf(
+        [
+            ("Program Signature Form\nCustomer Name: Woodgrove Bank NA\nMBA/MBSA Number: U8821904\nContract Number: 55109234", "ProgramSignForm-WG"),
+            ("Customer Price Sheet\nCustomer Name: Woodgrove Bank NA\nQuote Number: 4091120.002\nBilling currency: USD\nTotal deal value 1,850,000.00", "MSQuote-WG-USD")
+        ]);
+
+        var completedState = await workflow.ExecuteAsync(new SplittingState
+        {
+            DocumentId = "job-wg-1",
+            Tenant = tenant,
+            FileName = "Woodgrove-Bank-Global-MBSA-Packet.pdf",
+            SourcePdfBytes = pdfBytes
+        });
+
+        await jobStore.UpsertJobAsync(new DocIntel.Core.Jobs.DocumentJob
+        {
+            JobId = "job-wg-1",
+            TenantId = tenant.TenantId,
+            TenantDisplayName = tenant.DisplayName,
+            AppliedHarnessVersion = tenant.HarnessVersion,
+            FileName = "Woodgrove-Bank-Global-MBSA-Packet.pdf",
+            Status = DocIntel.Core.Jobs.JobStatus.Completed,
+            TotalPages = completedState.Pages.Count,
+            ExtractedEntities = completedState.ExtractedEntities,
+            DataExtractions = completedState.DataExtractions,
+            PromptColumnResults = completedState.PromptColumnResults,
+            Segments = completedState.Slices
+        });
+
+        // Act
+        var run = new AskAiRun
+        {
+            RunId = "run-1",
+            TenantId = tenant.TenantId,
+            Question = "What agreements and deal values exist for Woodgrove Bank?",
+            ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Email, FromAddress = "analyst@contoso.com" }
+        };
+
+        var finishedRun = await askOrchestrator.ExecuteRunAsync(run);
+
+        // Assert
+        Assert.Equal(DocIntel.Core.Jobs.JobStatus.Completed, finishedRun.Status);
+        Assert.NotEmpty(finishedRun.ExecutedCosmosQueries);
+        Assert.StartsWith("SELECT", finishedRun.ExecutedCosmosQueries[0]);
+        Assert.NotEmpty(finishedRun.Citations);
+        Assert.Equal(1, finishedRun.Citations[0].CitationNumber);
+        Assert.Equal("Woodgrove-Bank-Global-MBSA-Packet", finishedRun.Citations[0].CleanName);
+        Assert.Contains("[1]", finishedRun.Answer);
+        Assert.Contains("Woodgrove", finishedRun.Answer);
+        Assert.Contains("Open PDF", finishedRun.EmailHtmlBody);
+        Assert.Contains("AdaptiveCard", finishedRun.TeamsAdaptiveCardJson);
     }
 
     [Fact]

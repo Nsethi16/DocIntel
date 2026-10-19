@@ -403,4 +403,63 @@ public sealed class CosmosJobStore : IJobStore
 
         return results.OrderByDescending(j => j.CreatedAtUtc).ToList();
     }
+
+    public async Task<(IReadOnlyList<string> JsonRows, IReadOnlyList<string> MatchedJobIds)> ExecuteReadOnlyQueryAsync(
+        string tenantId,
+        string cosmosSqlQuery,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        InMemoryJobStore.ValidateReadOnlyCosmosSql(cosmosSqlQuery);
+
+        var rows = new List<string>();
+        var jobIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var queryDef = new QueryDefinition(cosmosSqlQuery);
+            using var iterator = _container.GetItemQueryIterator<JsonElement>(
+                queryDef,
+                requestOptions: new QueryRequestOptions
+                {
+                    PartitionKey = new PartitionKey(tenantId),
+                    MaxItemCount = 50
+                });
+
+            while (iterator.HasMoreResults && rows.Count < 50)
+            {
+                var page = await iterator.ReadNextAsync(cancellationToken).ConfigureAwait(false);
+                foreach (var item in page)
+                {
+                    var rawJson = item.GetRawText();
+                    rows.Add(rawJson);
+
+                    if (item.ValueKind == JsonValueKind.Object)
+                    {
+                        if (item.TryGetProperty("jobId", out var jIdProp) && jIdProp.ValueKind == JsonValueKind.String)
+                        {
+                            jobIds.Add(jIdProp.GetString()!);
+                        }
+                        else if (item.TryGetProperty("id", out var idProp) && idProp.ValueKind == JsonValueKind.String)
+                        {
+                            jobIds.Add(idProp.GetString()!);
+                        }
+                    }
+                }
+            }
+        }
+        catch (CosmosException)
+        {
+            // Fallback to partition-scoped full job scan if LLM-generated SQL had an unsupported Cosmos syntax construct
+            var allJobs = await ListJobsByTenantAsync(tenantId, cancellationToken).ConfigureAwait(false);
+            var memStore = new InMemoryJobStore();
+            foreach (var j in allJobs)
+            {
+                await memStore.UpsertJobAsync(j, cancellationToken).ConfigureAwait(false);
+            }
+            return await memStore.ExecuteReadOnlyQueryAsync(tenantId, cosmosSqlQuery, cancellationToken).ConfigureAwait(false);
+        }
+
+        return (rows, jobIds.ToList());
+    }
 }

@@ -3630,25 +3630,39 @@
       renderSelectedDocument();
 
       try {
-        const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask`, {
+        const submitResp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask/runs`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             question: q,
-            entityNames: [],
-            entityValuePair: 'ALL'
+            replyChannel: { channelType: 'Web' }
           })
         });
-        if (resp.ok) {
-          const data = await resp.json();
-          chat.messages.push({
-            role: 'assistant',
-            text: data.answer || 'No matching answer found.',
-            citations: (data.citations || []).slice(0, 6),
-            timestamp: new Date().toISOString()
-          });
-          chat.updatedAt = new Date().toISOString();
-          saveTenantChats();
+
+        if (submitResp.ok) {
+          const accepted = await submitResp.json();
+          let runData = null;
+          for (let attempt = 0; attempt < 40; attempt++) {
+            const pollResp = await fetch(accepted.statusUrl || `/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/ask/runs/${encodeURIComponent(accepted.runId)}`);
+            if (!pollResp.ok) break;
+            runData = await pollResp.json();
+            if (runData.status === 'Completed' || runData.status === 'Failed') {
+              break;
+            }
+            await new Promise(r => setTimeout(r, 350));
+          }
+
+          if (runData && runData.status === 'Completed') {
+            chat.messages.push({
+              role: 'assistant',
+              text: runData.answer || 'No matching answer found.',
+              citations: (runData.citations || []).slice(0, 8),
+              executedCosmosQueries: runData.executedCosmosQueries || [],
+              timestamp: new Date().toISOString()
+            });
+            chat.updatedAt = new Date().toISOString();
+            saveTenantChats();
+          }
         }
       } finally {
         askAiLoading = false;
@@ -3657,10 +3671,20 @@
       }
     }
 
-    function formatMarkdownBold(text) {
-      return escapeHtml(text || '')
+    function formatMarkdownBold(text, citations) {
+      let html = escapeHtml(text || '')
         .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
         .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+      if (Array.isArray(citations) && citations.length > 0) {
+        html = html.replace(/\[(\d+)\]/g, (match, numStr) => {
+          const num = parseInt(numStr, 10);
+          const cite = citations.find(c => c.citationNumber === num);
+          if (!cite) return match;
+          return `<button type="button" class="text-link-btn" style="padding:1px 6px;font-size:10.5px;margin:0 2px;" title="${escapeHtml(cite.cleanName)} (${escapeHtml(cite.pageRange)})" onclick="jumpFromGraphToSlice('${escapeHtml(cite.jobId)}', ${cite.sliceIndex})">[${num}]</button>`;
+        });
+      }
+      return html;
     }
 
     function renderCrossDocumentAskTab(body) {
@@ -3774,12 +3798,12 @@
         const cites = m.citations || [];
         return `
           <div style="align-self:stretch;display:flex;flex-direction:column;gap:10px;padding:4px 0 12px 0;border-bottom:1px solid var(--line);">
-            <div class="insight-prose" style="margin:0;font-size:14px;line-height:1.65;">${formatMarkdownBold(m.text)}</div>
+            <div class="insight-prose" style="margin:0;font-size:14px;line-height:1.65;">${formatMarkdownBold(m.text, cites)}</div>
             ${cites.length > 0 ? `
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                 ${cites.map(c => `
-                  <button type="button" class="text-link-btn" onclick="jumpFromGraphToSlice('${escapeHtml(c.jobId)}', ${c.sliceIndex})">
-                    ${escapeHtml(c.cleanName)} (${escapeHtml(c.pageRange)}) ↗
+                  <button type="button" class="text-link-btn" onclick="jumpFromGraphToSlice('${escapeHtml(c.jobId)}', ${c.sliceIndex})" title="${escapeHtml(c.documentName)} · ${escapeHtml(c.customerName || '')}">
+                    [${c.citationNumber || ''}] ${escapeHtml(c.cleanName)} (${escapeHtml(c.pageRange)}) ↗
                   </button>
                 `).join('')}
               </div>

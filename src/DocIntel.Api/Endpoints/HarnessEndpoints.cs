@@ -1,4 +1,5 @@
 using System.Text;
+using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Features.DocumentInsight;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Features.DocumentTranslation;
@@ -363,13 +364,13 @@ public static class HarnessEndpoints
             return Results.File(pdfBytes, "application/pdf", enableRangeProcessing: true);
         });
 
-        // Ask AI across a tenant's processed documents (with Entity Scope Filtering, Hebbia Matrix Grid, and Verifiable Citations)
+        // Agentic Ask AI across a tenant's processed documents (System Prompt + Prompt Columns + NL -> Cosmos SQL + Verified Citations)
         group.MapPost("/tenants/{tenantId}/ask", async (
             string tenantId,
             [FromBody] AskTenantDocumentsRequest req,
             IHarnessStore harnessStore,
-            IJobStore jobStore,
-            IModelCatalog modelCatalog,
+            AskAiOrchestrator askOrchestrator,
+            IAskAiRunStore runStore,
             CancellationToken ct) =>
         {
             if (string.IsNullOrWhiteSpace(req?.Question))
@@ -383,66 +384,234 @@ public static class HarnessEndpoints
                 return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
             }
 
-            var allCompletedJobs = (await jobStore.ListJobsByTenantAsync(tenantId, ct))
-                .Where(j => j.Status == JobStatus.Completed)
-                .ToList();
-
-            // Apply Entity Scope Filters (same model as Document Graph)
-            var filterEntityNames = (req.EntityNames ?? [])
-                .Where(n => !string.IsNullOrWhiteSpace(n))
-                .Select(n => n.Trim())
-                .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-            var filterPair = !string.IsNullOrWhiteSpace(req.EntityValuePair) &&
-                             !string.Equals(req.EntityValuePair, "ALL", StringComparison.OrdinalIgnoreCase)
-                ? req.EntityValuePair.Trim()
-                : null;
-
-            var scopedJobs = allCompletedJobs.Where(j =>
+            var run = new AskAiRun
             {
-                var jobEntities = j.Segments.SelectMany(s => s.ExtractedEntities).Concat(j.ExtractedEntities).ToList();
-                if (filterPair is not null)
-                {
-                    var parts = filterPair.Split("||", 2);
-                    if (parts.Length == 2 &&
-                        !jobEntities.Any(e => string.Equals(e.Name?.Trim(), parts[0], StringComparison.OrdinalIgnoreCase) &&
-                                              string.Equals(e.Value?.Trim(), parts[1], StringComparison.OrdinalIgnoreCase)))
-                    {
-                        return false;
-                    }
-                }
+                RunId = Guid.NewGuid().ToString("N"),
+                TenantId = tenantId,
+                Question = req.Question.Trim(),
+                ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Web }
+            };
 
-                if (filterEntityNames.Count > 0 &&
-                    !jobEntities.Any(e => e.Name is not null && filterEntityNames.Contains(e.Name.Trim())))
-                {
-                    return false;
-                }
+            await runStore.UpsertRunAsync(run, ct);
+            var completed = await askOrchestrator.ExecuteRunAsync(run, cancellationToken: ct);
+            await runStore.UpsertRunAsync(completed, ct);
 
-                return true;
-            }).ToList();
-
-            if (scopedJobs.Count == 0)
+            return Results.Ok(new
             {
-                return Results.Ok(new
+                runId = completed.RunId,
+                question = completed.Question,
+                answer = completed.Answer,
+                modelIdUsed = completed.ModelIdUsed,
+                documentsEvaluated = completed.DocumentsEvaluated,
+                executedCosmosQueries = completed.ExecutedCosmosQueries,
+                citations = completed.Citations,
+                steps = completed.Steps,
+                emailHtmlBody = completed.EmailHtmlBody,
+                teamsAdaptiveCardJson = completed.TeamsAdaptiveCardJson
+            });
+        });
+
+        // Submit Long-Running Async Ask AI Run (202 Accepted — supports Web, Email, Teams, and Webhook callbacks)
+        group.MapPost("/tenants/{tenantId}/ask/runs", async (
+            string tenantId,
+            [FromBody] SubmitAskAiRunRequest req,
+            IHarnessStore harnessStore,
+            IAskAiRunStore runStore,
+            IAskAiQueue askQueue,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(req?.Question))
+            {
+                return Results.BadRequest(new { error = "Question is required." });
+            }
+
+            var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
+            if (tenant is null)
+            {
+                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+            }
+
+            var runId = Guid.NewGuid().ToString("N");
+            var run = new AskAiRun
+            {
+                RunId = runId,
+                TenantId = tenantId,
+                Question = req.Question.Trim(),
+                Status = JobStatus.Queued,
+                ReplyChannel = req.ReplyChannel ?? new AskAiReplyChannel { ChannelType = AskAiChannelType.Web }
+            };
+
+            await runStore.UpsertRunAsync(run, ct);
+            await askQueue.EnqueueAsync(new AskAiQueueTicket(runId, tenantId), ct);
+
+            return Results.Accepted($"/api/harness/tenants/{tenantId}/ask/runs/{runId}", new
+            {
+                runId,
+                tenantId,
+                status = run.Status.ToString(),
+                statusUrl = $"/api/harness/tenants/{tenantId}/ask/runs/{runId}"
+            });
+        });
+
+        // Poll Long-Running Ask AI Run Status, Steps, Cosmos SQL Queries, and Citations
+        group.MapGet("/tenants/{tenantId}/ask/runs/{runId}", async (
+            string tenantId,
+            string runId,
+            IAskAiRunStore runStore,
+            CancellationToken ct) =>
+        {
+            var run = await runStore.GetRunAsync(runId, ct);
+            if (run is null || !string.Equals(run.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+            {
+                return Results.NotFound(new { error = $"Ask AI run '{runId}' not found." });
+            }
+
+            return Results.Ok(new
+            {
+                run.RunId,
+                run.TenantId,
+                run.Question,
+                status = run.Status.ToString(),
+                run.ErrorMessage,
+                run.ModelIdUsed,
+                run.Answer,
+                run.DocumentsEvaluated,
+                run.ExecutedCosmosQueries,
+                run.Citations,
+                run.Steps,
+                run.EmailHtmlBody,
+                run.TeamsAdaptiveCardJson,
+                run.CreatedAtUtc,
+                run.CompletedAtUtc
+            });
+        });
+
+        // Email Mailbox Integration Endpoint (Logic App / Exchange Graph Webhook trigger)
+        group.MapPost("/tenants/{tenantId}/ask/webhooks/email", async (
+            string tenantId,
+            [FromBody] InboundEmailAskRequest req,
+            IHarnessStore harnessStore,
+            AskAiOrchestrator askOrchestrator,
+            IAskAiRunStore runStore,
+            IAskAiQueue askQueue,
+            CancellationToken ct) =>
+        {
+            var questionText = !string.IsNullOrWhiteSpace(req?.Body) ? req.Body.Trim() : req?.Subject?.Trim();
+            if (string.IsNullOrWhiteSpace(questionText))
+            {
+                return Results.BadRequest(new { error = "Email body or subject containing a question is required." });
+            }
+
+            var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
+            if (tenant is null)
+            {
+                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+            }
+
+            var run = new AskAiRun
+            {
+                RunId = Guid.NewGuid().ToString("N"),
+                TenantId = tenantId,
+                Question = questionText,
+                ReplyChannel = new AskAiReplyChannel
                 {
-                    answer = "No documents match the selected entity filters. Clear or broaden the entity filter scope above to analyze across more tenant documents.",
-                    modelIdUsed = tenant.DefaultModelId,
-                    documentsEvaluated = 0,
-                    totalTenantDocuments = allCompletedJobs.Count,
-                    comparisonMatrix = Array.Empty<object>(),
-                    citations = Array.Empty<object>(),
-                    followUpSuggestions = new[]
-                    {
-                        "Compare total deal values and billing currencies across all customers",
-                        "Which customers have Spanish signature packets or M130 pricing amendments?",
-                        "Summarize all agreements and MBA/MBSA numbers across the tenant"
-                    }
+                    ChannelType = AskAiChannelType.Email,
+                    FromAddress = req?.From,
+                    Subject = req?.Subject ?? "Re: Document Intelligence Question",
+                    MessageId = req?.MessageId,
+                    CallbackWebhookUrl = req?.CallbackWebhookUrl
+                }
+            };
+
+            await runStore.UpsertRunAsync(run, ct);
+
+            if (req?.Async == true)
+            {
+                await askQueue.EnqueueAsync(new AskAiQueueTicket(run.RunId, tenantId), ct);
+                return Results.Accepted($"/api/harness/tenants/{tenantId}/ask/runs/{run.RunId}", new
+                {
+                    runId = run.RunId,
+                    status = "Queued",
+                    statusUrl = $"/api/harness/tenants/{tenantId}/ask/runs/{run.RunId}"
                 });
             }
 
-            var researchResult = SynthesizeCrossDocumentResearch(req.Question, scopedJobs, allCompletedJobs.Count, tenant.DefaultModelId);
+            var completed = await askOrchestrator.ExecuteRunAsync(run, cancellationToken: ct);
+            await runStore.UpsertRunAsync(completed, ct);
 
-            return Results.Ok(researchResult);
+            return Results.Ok(new
+            {
+                runId = completed.RunId,
+                to = completed.ReplyChannel.FromAddress,
+                subject = $"Re: {completed.ReplyChannel.Subject}",
+                inReplyToMessageId = completed.ReplyChannel.MessageId,
+                htmlBody = completed.EmailHtmlBody,
+                markdownBody = completed.Answer,
+                citations = completed.Citations,
+                executedCosmosQueries = completed.ExecutedCosmosQueries
+            });
+        });
+
+        // Microsoft Teams Integration Endpoint (Teams Bot / Outgoing Webhook trigger)
+        group.MapPost("/tenants/{tenantId}/ask/webhooks/teams", async (
+            string tenantId,
+            [FromBody] InboundTeamsAskRequest req,
+            IHarnessStore harnessStore,
+            AskAiOrchestrator askOrchestrator,
+            IAskAiRunStore runStore,
+            IAskAiQueue askQueue,
+            CancellationToken ct) =>
+        {
+            if (string.IsNullOrWhiteSpace(req?.Text))
+            {
+                return Results.BadRequest(new { error = "Teams message text is required." });
+            }
+
+            var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
+            if (tenant is null)
+            {
+                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+            }
+
+            var run = new AskAiRun
+            {
+                RunId = Guid.NewGuid().ToString("N"),
+                TenantId = tenantId,
+                Question = req.Text.Trim(),
+                ReplyChannel = new AskAiReplyChannel
+                {
+                    ChannelType = AskAiChannelType.Teams,
+                    ConversationId = req.ConversationId,
+                    ServiceUrl = req.ServiceUrl,
+                    CallbackWebhookUrl = req.CallbackWebhookUrl
+                }
+            };
+
+            await runStore.UpsertRunAsync(run, ct);
+
+            if (req.Async == true)
+            {
+                await askQueue.EnqueueAsync(new AskAiQueueTicket(run.RunId, tenantId), ct);
+                return Results.Accepted($"/api/harness/tenants/{tenantId}/ask/runs/{run.RunId}", new
+                {
+                    runId = run.RunId,
+                    status = "Queued",
+                    statusUrl = $"/api/harness/tenants/{tenantId}/ask/runs/{run.RunId}"
+                });
+            }
+
+            var completed = await askOrchestrator.ExecuteRunAsync(run, cancellationToken: ct);
+            await runStore.UpsertRunAsync(completed, ct);
+
+            return Results.Ok(new
+            {
+                runId = completed.RunId,
+                type = "message",
+                text = completed.Answer,
+                adaptiveCardJson = completed.TeamsAdaptiveCardJson,
+                citations = completed.Citations,
+                executedCosmosQueries = completed.ExecutedCosmosQueries
+            });
         });
 
         // Async Job Submission (202 Accepted)
@@ -1061,4 +1230,24 @@ public static class HarnessEndpoints
         string? JobId = null,
         List<string>? EntityNames = null,
         string? EntityValuePair = null);
+
+    public sealed record SubmitAskAiRunRequest(
+        string Question,
+        AskAiReplyChannel? ReplyChannel = null);
+
+    public sealed record InboundEmailAskRequest(
+        string? From,
+        string? Subject,
+        string? Body,
+        string? MessageId = null,
+        string? CallbackWebhookUrl = null,
+        bool Async = false);
+
+    public sealed record InboundTeamsAskRequest(
+        string? UserName,
+        string? Text,
+        string? ConversationId = null,
+        string? ServiceUrl = null,
+        string? CallbackWebhookUrl = null,
+        bool Async = false);
 }

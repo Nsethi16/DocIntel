@@ -1,3 +1,4 @@
+using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
@@ -99,6 +100,60 @@ public sealed class DocumentJobWorker : BackgroundService
                     {
                         _logger.LogWarning(persistEx, "Failed persisting error state for job '{JobId}'.", ticket.JobId);
                     }
+                }
+            }
+        }
+    }
+}
+
+/// <summary>
+/// Background worker that processes long-running agentic Ask AI runs asynchronously (Web UI, Email Mailbox, Microsoft Teams).
+/// </summary>
+public sealed class AskAiRunWorker : BackgroundService
+{
+    private readonly IAskAiQueue _askAiQueue;
+    private readonly IAskAiRunStore _runStore;
+    private readonly AskAiOrchestrator _orchestrator;
+    private readonly ILogger<AskAiRunWorker> _logger;
+
+    public AskAiRunWorker(
+        IAskAiQueue askAiQueue,
+        IAskAiRunStore runStore,
+        AskAiOrchestrator orchestrator,
+        ILogger<AskAiRunWorker> logger)
+    {
+        _askAiQueue = askAiQueue ?? throw new ArgumentNullException(nameof(askAiQueue));
+        _runStore = runStore ?? throw new ArgumentNullException(nameof(runStore));
+        _orchestrator = orchestrator ?? throw new ArgumentNullException(nameof(orchestrator));
+        _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+    }
+
+    protected override async Task ExecuteAsync(CancellationToken stoppingToken)
+    {
+        await foreach (var ticket in _askAiQueue.ReadAllAsync(stoppingToken))
+        {
+            AskAiRun? run = null;
+            try
+            {
+                run = await _runStore.GetRunAsync(ticket.RunId, stoppingToken);
+                if (run is null) continue;
+
+                await _orchestrator.ExecuteRunAsync(
+                    run,
+                    onStepProgress: (progressRun, ct) => _runStore.UpsertRunAsync(progressRun, ct),
+                    cancellationToken: stoppingToken);
+
+                await _runStore.UpsertRunAsync(run, stoppingToken);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                _logger.LogError(ex, "Failed processing AskAiRun '{RunId}' for tenant '{TenantId}'.", ticket.RunId, ticket.TenantId);
+                if (run is not null)
+                {
+                    run.Status = JobStatus.Failed;
+                    run.ErrorMessage = ex.Message;
+                    run.CompletedAtUtc = DateTimeOffset.UtcNow;
+                    await _runStore.UpsertRunAsync(run, stoppingToken);
                 }
             }
         }

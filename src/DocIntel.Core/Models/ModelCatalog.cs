@@ -414,6 +414,20 @@ public sealed class SimulatedSliceChatClient : IChatClient
             return Task.FromResult(SimulatePromptColumn(systemPrompt, userText));
         }
 
+        if (systemPrompt.Contains("[TASK:ASK_AI_COSMOS_SQL]", StringComparison.OrdinalIgnoreCase))
+        {
+            var q = userText.Replace("User Question:", "", StringComparison.OrdinalIgnoreCase).Trim();
+            var sql = DocIntel.Core.Features.AskAi.AskAiOrchestrator.BuildDeterministicCosmosSql("contoso-legal", q);
+            var sqlJson = JsonSerializer.Serialize(new { cosmosSql = sql });
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, sqlJson)) { ModelId = _modelId });
+        }
+
+        if (systemPrompt.Contains("[TASK:ASK_AI_SYNTHESIZE]", StringComparison.OrdinalIgnoreCase))
+        {
+            // Return empty so AskAiOrchestrator uses its structured citation narrative builder with [1], [2] badges
+            return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, string.Empty)) { ModelId = _modelId });
+        }
+
         var catalog = new List<(string Name, string Hint)>();
         foreach (Match m in CatalogLineRegex.Matches(systemPrompt))
         {

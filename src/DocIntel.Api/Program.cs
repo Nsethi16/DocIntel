@@ -19,6 +19,7 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 var harnessFilePath = Path.Combine(builder.Environment.ContentRootPath, "App_Data", "agent-harness-settings.json");
 builder.Services.AddDocIntelCore(configuration: builder.Configuration, harnessFilePath: harnessFilePath);
 builder.Services.AddHostedService<DocumentJobWorker>();
+builder.Services.AddHostedService<AskAiRunWorker>();
 
 var app = builder.Build();
 
