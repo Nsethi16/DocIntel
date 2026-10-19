@@ -518,36 +518,55 @@ public sealed class SimulatedSliceChatClient : IChatClient
 
         var stopWords = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
-            "if", "document", "footer", "contains", "title", "or", "and", "the", "has", "states", "with", "when", "this", "that", "body", "references", "form"
+            "if", "document", "footer", "contains", "title", "or", "and", "the", "has", "states", "with", "when", "this", "that", "body", "references", "form", "customer", "master", "agreement"
         };
 
         string matchedDocName = "Undefined";
         string? matchedRulePrompt = null;
         double confidence = 0.50;
 
+        // Pass 1: Prefer exact DocumentName title match in the document text
         foreach (var line in ruleLines)
         {
             var parts = line.Split('|', 3);
             if (parts.Length < 3) continue;
-
             var docName = parts[1].Trim();
             var prompt = parts[2].Trim();
 
-            // Extract meaningful phrases or tokens from the admin's identification prompt
-            var tokens = prompt
-                .Split([',', ';', '.', '"', '\'', '(', ')'], StringSplitOptions.RemoveEmptyEntries)
-                .SelectMany(chunk => chunk.Split(' ', StringSplitOptions.RemoveEmptyEntries))
-                .Where(w => w.Length >= 3 && !stopWords.Contains(w))
-                .Distinct(StringComparer.OrdinalIgnoreCase)
-                .ToList();
-
-            if (userText.Contains(docName, StringComparison.OrdinalIgnoreCase) ||
-                tokens.Any(t => userText.Contains(t, StringComparison.OrdinalIgnoreCase)))
+            if (userText.Contains(docName, StringComparison.OrdinalIgnoreCase))
             {
                 matchedDocName = docName;
                 matchedRulePrompt = prompt;
-                confidence = 0.96;
+                confidence = 0.98;
                 break;
+            }
+        }
+
+        // Pass 2: Check identification rule tokens (footer codes, bilingual titles, etc.)
+        if (matchedDocName == "Undefined")
+        {
+            foreach (var line in ruleLines)
+            {
+                var parts = line.Split('|', 3);
+                if (parts.Length < 3) continue;
+
+                var docName = parts[1].Trim();
+                var prompt = parts[2].Trim();
+
+                var tokens = prompt
+                    .Split([',', ';', '.', '"', '\'', '(', ')'], StringSplitOptions.RemoveEmptyEntries)
+                    .SelectMany(chunk => chunk.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                    .Where(w => w.Length >= 3 && !stopWords.Contains(w))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                if (tokens.Any(t => userText.Contains(t, StringComparison.OrdinalIgnoreCase)))
+                {
+                    matchedDocName = docName;
+                    matchedRulePrompt = prompt;
+                    confidence = 0.96;
+                    break;
+                }
             }
         }
 
