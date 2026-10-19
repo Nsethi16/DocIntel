@@ -227,6 +227,8 @@ public sealed class FeatureHarness
     public const string EntityExtractionKey = "EntityExtraction";
     public const string DataExtractionKey = "DataExtraction";
     public const string PromptColumnsKey = "PromptColumns";
+    public const string DocumentGraphKey = "DocumentGraph";
+    public const string AskAiKey = "AskAi";
 
     public bool Enabled { get; set; } = true;
 
@@ -483,6 +485,14 @@ public sealed class TenantHarness
                         }
                     ]
                 }
+            },
+            [FeatureHarness.DocumentGraphKey] = new FeatureHarness
+            {
+                Enabled = true
+            },
+            [FeatureHarness.AskAiKey] = new FeatureHarness
+            {
+                Enabled = true
             }
         };
 

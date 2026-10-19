@@ -67,6 +67,16 @@ public static class HarnessEndpoints
                     {
                         name = FeatureHarness.PromptColumnsKey,
                         description = "Define custom prompt columns with entity filters and process matching documents as PDF/Base64."
+                    },
+                    new
+                    {
+                        name = FeatureHarness.DocumentGraphKey,
+                        description = "Visualize cross-document relationships and constellations by extracted entities."
+                    },
+                    new
+                    {
+                        name = FeatureHarness.AskAiKey,
+                        description = "Conversational question answering and synthesis across tenant documents."
                     }
                 }
             });

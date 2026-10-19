@@ -1737,15 +1737,45 @@
       renderSelectedDocument();
     }
 
-    function setWorkspaceMode(mode) {
-      workspaceMode = mode;
+    function isGraphCapabilityEnabled() {
+      return currentTenant?.capabilities?.DocumentGraph?.enabled !== false;
+    }
+
+    function isAskAiCapabilityEnabled() {
+      return currentTenant?.capabilities?.AskAi?.enabled !== false;
+    }
+
+    function syncTenantWorkspaceCapabilities() {
+      const graphOn = isGraphCapabilityEnabled();
+      const askOn = isAskAiCapabilityEnabled();
+      const switcher = document.querySelector('#docListPane .workspace-mode-switcher');
       const btnDocs = document.getElementById('btnModeDocuments');
       const btnGraph = document.getElementById('btnModeGraph');
       const btnAsk = document.getElementById('btnModeAsk');
 
-      if (btnDocs) btnDocs.classList.toggle('active', mode === 'documents');
-      if (btnGraph) btnGraph.classList.toggle('active', mode === 'graph');
-      if (btnAsk) btnAsk.classList.toggle('active', mode === 'ask');
+      if (btnGraph) btnGraph.style.display = graphOn ? 'inline-flex' : 'none';
+      if (btnAsk) btnAsk.style.display = askOn ? 'inline-flex' : 'none';
+
+      const visibleCount = 1 + (graphOn ? 1 : 0) + (askOn ? 1 : 0);
+      if (switcher) {
+        switcher.style.display = visibleCount > 1 ? 'grid' : 'none';
+        switcher.style.gridTemplateColumns = `repeat(${visibleCount}, 1fr)`;
+      }
+
+      if ((workspaceMode === 'graph' && !graphOn) || (workspaceMode === 'ask' && !askOn)) {
+        workspaceMode = 'documents';
+      }
+
+      if (btnDocs) btnDocs.classList.toggle('active', workspaceMode === 'documents');
+      if (btnGraph) btnGraph.classList.toggle('active', workspaceMode === 'graph');
+      if (btnAsk) btnAsk.classList.toggle('active', workspaceMode === 'ask');
+    }
+
+    function setWorkspaceMode(mode) {
+      if (mode === 'graph' && !isGraphCapabilityEnabled()) mode = 'documents';
+      if (mode === 'ask' && !isAskAiCapabilityEnabled()) mode = 'documents';
+      workspaceMode = mode;
+      syncTenantWorkspaceCapabilities();
 
       if (mode === 'ask') {
         loadTenantChats();
@@ -1814,6 +1844,7 @@
         if (currentTenant && currentTenant.tenantId === t.tenantId) opt.selected = true;
         sel.appendChild(opt);
       });
+      syncTenantWorkspaceCapabilities();
     }
 
     async function onTenantSwitched(tenantId) {
