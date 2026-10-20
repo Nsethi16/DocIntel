@@ -34,7 +34,7 @@ public sealed record DocumentAccessScope(TenantRole? Role, IReadOnlySet<string>?
 }
 
 /// <summary>Reevaluates the stored run actor against current server-side membership and document permissions.</summary>
-public interface IAskAiAccessResolver
+public interface ITenantAccessResolver
 {
     Task<DocumentAccessScope> ResolveAsync(
         ActorIdentity? actor, string tenantId, CancellationToken cancellationToken = default);

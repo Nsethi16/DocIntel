@@ -201,7 +201,7 @@ public sealed class AskAiAgentTests
     {
         // Arrange
         var store = await CreateDocumentStoreAsync();
-        var resolver = new Mock<IAskAiAccessResolver>();
+        var resolver = new Mock<ITenantAccessResolver>();
         var grant = new DocumentAccessScope(TenantRole.Reader, new HashSet<string> { "source" });
         resolver.SetupSequence(r => r.ResolveAsync(
                 It.IsAny<ActorIdentity?>(), "tenant-one", It.IsAny<CancellationToken>()))
@@ -310,7 +310,7 @@ public sealed class AskAiAgentTests
 
     private static AskAiOrchestrator CreateOrchestrator(
         IJobStore store, IReadOnlyList<IAskAiToolProvider> tools, ChatResponse[] responses,
-        IAskAiAccessResolver? resolver = null)
+        ITenantAccessResolver? resolver = null)
     {
         var tenant = new TenantHarness { TenantId = "tenant-one", DisplayName = "Test" };
         var harness = new Mock<IHarnessStore>();

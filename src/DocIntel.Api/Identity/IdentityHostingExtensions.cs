@@ -68,6 +68,8 @@ public static class IdentityHostingExtensions
             Path.Combine(builder.Environment.ContentRootPath, "App_Data", "identity-keys"), webRoot);
         var runDirectory = builder.Configuration["AskAi:RunStorageDirectory"];
         if (!String.IsNullOrWhiteSpace(runDirectory)) RequirePrivateDirectory(runDirectory, webRoot);
+        var jobDatabase = builder.Configuration["DocumentJobs:DatabasePath"];
+        if (!String.IsNullOrWhiteSpace(jobDatabase)) RequirePrivateDirectory(jobDatabase, webRoot);
         builder.Services.AddOptions<IdentityOptions>()
             .Bind(builder.Configuration.GetSection(IdentityOptions.SectionName))
             .Validate(o => o.Mode == settings.Mode && o.DirectoryTenantId == settings.DirectoryTenantId &&
@@ -75,7 +77,7 @@ public static class IdentityHostingExtensions
                            o.HasValidMemberships(), "Invalid identity configuration or membership reload.")
             .ValidateOnStart();
         builder.Services.AddSingleton<IdentityAccessService>();
-        builder.Services.AddSingleton<IAskAiAccessResolver>(sp => sp.GetRequiredService<IdentityAccessService>());
+        builder.Services.AddSingleton<ITenantAccessResolver>(sp => sp.GetRequiredService<IdentityAccessService>());
         var keyDirectory = settings.DataProtectionDirectory ??
             Path.Combine(builder.Environment.ContentRootPath, "App_Data", "identity-keys");
         var protection = builder.Services.AddDataProtection().SetApplicationName($"DocIntel:{settings.ClientId}");

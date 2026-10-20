@@ -33,7 +33,8 @@ dotnet test DocIntel.slnx -c Release
 # Browser, identity, and real-process recovery regressions (requires the Release API build)
 dotnet build src\DocIntel.Api\DocIntel.Api.csproj -c Release
 node --test tests\DocIntel.Ui.Tests\ask-ai.test.cjs tests\DocIntel.Ui.Tests\identity-client.test.cjs `
-  tests\DocIntel.Ui.Tests\identity-http.test.cjs tests\DocIntel.Ui.Tests\ask-ai-restart.test.cjs
+  tests\DocIntel.Ui.Tests\identity-http.test.cjs tests\DocIntel.Ui.Tests\ask-ai-restart.test.cjs `
+  tests\DocIntel.Ui.Tests\document-restart.test.cjs
 ```
 
 Local development uses explicit loopback-only access. It is not an authentication mode for a
@@ -56,8 +57,24 @@ Uploads always require an actual PDF, with a 25 MiB limit; an empty request neve
 Accepted uploads persist an immutable `original.pdf` in the tenant artifact namespace before the
 job is recorded/enqueued. The accepted SHA-256 is stored with the job; processing reads and verifies
 that persisted source, not PDF bytes in a queue ticket. Authorized clients can retrieve it at
-`/api/harness/tenants/{tenantId}/jobs/{jobId}/original`. Originals alone do not make the remaining
-document-dispatch queue restart-safe.
+`/api/harness/tenants/{tenantId}/jobs/{jobId}/original`.
+
+Document jobs persist locally in a sibling `document-jobs.sqlite` database (SQLite WAL); override
+the private file using `DocumentJobs:DatabasePath`. Azure uses Cosmos metadata and distinct
+`document-jobs` / `document-jobs-poison` queues. Shared execution refuses local metadata or queue
+name collisions. Dispatch tickets contain only job/tenant identifiers, never filenames or PDFs.
+Persisted queued/interrupted jobs are rediscovered, so a full local hint channel or a temporary
+queue failure does not discard an accepted upload.
+
+Claims expire after 60 seconds and renew every 20 seconds. Writes require the current owner plus
+the local row version or Cosmos ETag; lost owners cannot publish results over a replacement.
+Retries use separate artifact namespaces and the public slice route follows the saved active
+attempt. Each new upload also freezes its accepted harness configuration, so a restart does not
+silently apply newer prompts under an older version label. Current membership and tenant activation
+are still enforced. Completed/failed jobs are not replayed; more than three interrupted executions
+fail for review/resubmission. Execution is bounded by `DocumentJobs:MaxRunSeconds` (default 1,800;
+range 1-3,600); recovery polling uses `DocumentJobs:RecoveryPollSeconds` (default 5; range 1-300).
+SQLite covers a single persistent host, not independent ephemeral Container Apps replica disks.
 
 ## Identity and document access
 
@@ -125,8 +142,8 @@ The UI reloads if another browser tab changes the signed-in account.
 
 ## Deploy to Azure
 
-The PowerShell/Bicep path wires shared Ask AI Blob snapshots, renewable storage-enforced leases,
-durable Azure Queue dispatch/poison handling, Blob-backed session keys encrypted by a rotating
+The PowerShell/Bicep path wires shared Ask AI Blob snapshots, Cosmos document metadata, fenced
+execution, separate durable Azure Queue dispatch/poison handling, and Blob-backed session keys encrypted by a rotating
 Key Vault key, queue backlog scaling, and readiness/liveness probes. Storage and Key Vault access
 use managed identity. No connection strings or web client secrets are deployed.
 
@@ -140,9 +157,9 @@ directory consent. ACR tokens are held only in process environment during image 
 
 Live Azure/Entra validation still requires an authorized target subscription. Native shared storage
 has SDK contract tests; this environment could not authenticate to the approved npm feed for the
-official Azurite emulator. Do not treat those tests as proof of a live cloud deployment. Document
-processing jobs still use their existing process-local dispatch queue; Ask AI's shared queue does
-not make document ingestion restart-safe. This remains a separate production rollout prerequisite.
+official Azurite emulator. Real-process tests verify local document/Ask AI crash recovery, accepted
+source integrity, and attempt isolation. Shared Cosmos/Queue behavior has SDK contract coverage,
+not live/emulator integration proof. Live storage, identity, and rollout verification remain prerequisites.
 
 ```powershell
 # Preview against an existing resource group (no apply)

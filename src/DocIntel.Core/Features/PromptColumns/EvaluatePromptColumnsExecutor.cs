@@ -198,7 +198,7 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
 
         var results = await EvaluateSlicesCoreAsync(
             tenant.TenantId,
-            job.JobId,
+            job.ArtifactDocumentId ?? job.JobId,
             job.Segments,
             activeColumns,
             chatClient,
@@ -269,7 +269,11 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
                     }
                     inputFingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
                     {
-                        version = 2, docName, modelId, supportsPdf, simulationUsed,
+                        version = 2,
+                        docName,
+                        modelId,
+                        supportsPdf,
+                        simulationUsed,
                         text = !String.IsNullOrWhiteSpace(slice.TranslatedText) ? slice.TranslatedText : slice.BodyText,
                         slice.ExtractedEntities,
                         pdfHash = pdfBytes is null ? null : Convert.ToHexString(SHA256.HashData(pdfBytes))

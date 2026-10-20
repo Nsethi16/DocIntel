@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "8862711382566089627"
+      "templateHash": "15146785632239939057"
     }
   },
   "parameters": {
@@ -331,6 +331,22 @@
       "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'ask-ai-poison')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/queueServices', variables('storageName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'document-jobs')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/queueServices', variables('storageName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'document-jobs-poison')]",
       "dependsOn": [
         "[resourceId('Microsoft.Storage/storageAccounts/queueServices', variables('storageName'), 'default')]"
       ]
@@ -663,6 +679,10 @@
                 {
                   "name": "AskAi__RecoveryPollSeconds",
                   "value": "30"
+                },
+                {
+                  "name": "DocumentJobs__RecoveryPollSeconds",
+                  "value": "30"
                 }
               ],
               "probes": [
@@ -703,6 +723,18 @@
                     "queueLength": "5"
                   }
                 }
+              },
+              {
+                "name": "document-backlog",
+                "custom": {
+                  "type": "azure-queue",
+                  "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]",
+                  "metadata": {
+                    "accountName": "[variables('storageName')]",
+                    "queueName": "document-jobs",
+                    "queueLength": "5"
+                  }
+                }
               }
             ]
           },
@@ -711,6 +743,8 @@
             "[reference(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'identity-keys'), '2023-05-01', 'full')]",
             "[reference(resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'ask-ai'), '2023-05-01', 'full')]",
             "[reference(resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'ask-ai-poison'), '2023-05-01', 'full')]",
+            "[reference(resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'document-jobs'), '2023-05-01', 'full')]",
+            "[reference(resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'document-jobs-poison'), '2023-05-01', 'full')]",
             "[reference(extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('storageBlobDataContributorRoleId'))), '2022-04-01', 'full')]",
             "[reference(extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '974c5e8b-45b9-4653-ba55-5f855dd0fb88')), '2022-04-01', 'full')]",
             "[reference(extensionResourceId(resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity'), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), 'e147488a-f6f5-4113-8e2d-b22465e65bf6')), '2022-04-01', 'full')]",
@@ -724,6 +758,8 @@
         "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName'))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments', variables('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '00000000-0000-0000-0000-000000000002'))]",
         "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'ask-ai')]",
+        "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'document-jobs-poison')]",
+        "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'document-jobs')]",
         "[resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity')]",
         "[extensionResourceId(resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity'), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), 'e147488a-f6f5-4113-8e2d-b22465e65bf6'))]",
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'identity-keys')]",

@@ -439,7 +439,7 @@ public sealed class AskAiOrchestrator
     private readonly IModelCatalog _modelCatalog;
     private readonly IEnumerable<IAskAiToolProvider> _toolProviders;
     private readonly ILogger<AskAiOrchestrator> _logger;
-    private readonly IAskAiAccessResolver? _accessResolver;
+    private readonly ITenantAccessResolver? _accessResolver;
 
     public bool CanAutomaticallyReplay => !_toolProviders.Any();
 
@@ -449,7 +449,7 @@ public sealed class AskAiOrchestrator
         IModelCatalog modelCatalog,
         IEnumerable<IAskAiToolProvider>? toolProviders,
         ILogger<AskAiOrchestrator> logger,
-        IAskAiAccessResolver? accessResolver = null)
+        ITenantAccessResolver? accessResolver = null)
     {
         _harnessStore = harnessStore ?? throw new ArgumentNullException(nameof(harnessStore));
         _jobStore = jobStore ?? throw new ArgumentNullException(nameof(jobStore));

@@ -12,7 +12,7 @@ namespace DocIntel.Api.Identity;
 public sealed class IdentityAccessService(
     IdentityOptions startup,
     IOptionsMonitor<IdentityOptions> configuration,
-    IHarnessStore harnessStore) : IAskAiAccessResolver
+    IHarnessStore harnessStore) : ITenantAccessResolver
 {
     public bool IsLocalDevelopment => startup.Mode == IdentityMode.LocalDevelopment;
 

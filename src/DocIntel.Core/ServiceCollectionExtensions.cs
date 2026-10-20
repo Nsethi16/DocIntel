@@ -111,6 +111,10 @@ public static class ServiceCollectionExtensions
         configuration?.GetSection(AskAiExecutionOptions.SectionName).Bind(askAiOptions);
         askAiOptions.Validate();
         services.TryAddSingleton(askAiOptions);
+        var documentOptions = new DocumentProcessingOptions();
+        configuration?.GetSection(DocumentProcessingOptions.SectionName).Bind(documentOptions);
+        documentOptions.Validate();
+        services.TryAddSingleton(documentOptions);
 
         var managedIdentityClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
         TokenCredential credential = !string.IsNullOrWhiteSpace(managedIdentityClientId)
@@ -120,6 +124,9 @@ public static class ServiceCollectionExtensions
         var cosmosUri = Endpoint(azureOptions.CosmosEndpoint);
         var blobUri = Endpoint(azureOptions.BlobEndpoint);
         var queueUri = Endpoint(azureOptions.QueueEndpoint);
+        if (new[] { askAiOptions.DispatchQueueName, askAiOptions.PoisonQueueName,
+            documentOptions.QueueName, documentOptions.PoisonQueueName }.Distinct(StringComparer.Ordinal).Count() != 4)
+            throw new InvalidOperationException("Ask AI and document dispatch/poison queues must have distinct names.");
         if (queueUri is not null && blobUri is null &&
             String.IsNullOrWhiteSpace(azureOptions.DevelopmentStorageConnectionString))
             throw new InvalidOperationException("A durable dispatch endpoint requires shared run Blob storage.");
@@ -140,10 +147,11 @@ public static class ServiceCollectionExtensions
                 cosmosClient,
                 azureOptions.CosmosDatabaseName,
                 azureOptions.CosmosHarnessesContainer));
-            services.TryAddSingleton<IJobStore>(_ => new CosmosJobStore(
+            services.TryAddSingleton<IJobStore>(sp => new CosmosJobStore(
                 cosmosClient,
                 azureOptions.CosmosDatabaseName,
-                azureOptions.CosmosJobsContainer));
+                azureOptions.CosmosJobsContainer,
+                logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CosmosJobStore>>()));
         }
         else
         {
@@ -152,7 +160,14 @@ public static class ServiceCollectionExtensions
                 services.TryAddSingleton<IHarnessStore>(_ => new FileHarnessStore(harnessFilePath));
             }
 
-            services.TryAddSingleton<IJobStore, InMemoryJobStore>();
+            if (!String.IsNullOrWhiteSpace(harnessFilePath) || !String.IsNullOrWhiteSpace(documentOptions.DatabasePath))
+            {
+                var database = documentOptions.DatabasePath ?? Path.Combine(
+                    Path.GetDirectoryName(Path.GetFullPath(harnessFilePath!))!, "document-jobs.sqlite");
+                services.TryAddSingleton<IJobStore>(sp => new SqliteJobStore(
+                    database, logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SqliteJobStore>>()));
+            }
+            else services.TryAddSingleton<IJobStore, InMemoryJobStore>();
         }
 
         // 2. Azure Blob Storage (per-tenant 'tenant-{tenantId}' containers) vs Local File Artifact Fallback
@@ -183,6 +198,8 @@ public static class ServiceCollectionExtensions
         }
         if (sharedBlobs is not null && sharedQueues is not null)
         {
+            if (cosmosUri is null)
+                throw new InvalidOperationException("Shared document execution requires Cosmos metadata storage.");
             if (!String.IsNullOrWhiteSpace(askAiOptions.RunStorageDirectory))
                 throw new InvalidOperationException("Shared storage cannot be combined with a local run directory.");
             services.TryAddSingleton(sharedBlobs);
@@ -197,6 +214,13 @@ public static class ServiceCollectionExtensions
             services.TryAddSingleton<IAskAiQueue>(sp => new AzureQueueAskAiQueue(
                 clients.Dispatch, clients.Poison, askAiOptions,
                 sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<AzureQueueAskAiQueue>>()));
+            var documents = new CloudDocumentClients(
+                sharedQueues.GetQueueClient(documentOptions.QueueName),
+                sharedQueues.GetQueueClient(documentOptions.PoisonQueueName));
+            services.TryAddSingleton(documents);
+            services.TryAddSingleton<IJobQueue>(sp => new AzureQueueJobQueue(
+                documents.Dispatch, documents.Poison, documentOptions,
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<AzureQueueJobQueue>>()));
         }
         else if (!string.IsNullOrWhiteSpace(harnessFilePath))
         {
@@ -237,6 +261,7 @@ public static class ServiceCollectionExtensions
             services.TryAddSingleton<IAskAiRunStore, InMemoryAskAiRunStore>();
         }
         services.TryAddSingleton<AskAiRunProcessor>();
+        services.TryAddSingleton<DocumentJobProcessor>();
 
         return services;
     }

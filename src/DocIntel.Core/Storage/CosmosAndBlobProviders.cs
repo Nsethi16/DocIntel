@@ -10,6 +10,8 @@ using Azure.Storage.Blobs.Models;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using Microsoft.Azure.Cosmos;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DocIntel.Core.Storage;
 
@@ -434,25 +436,53 @@ public sealed class CosmosHarnessStore : IHarnessStore
 /// Azure Cosmos DB implementation of <see cref="IJobStore"/> using a shared <c>jobs</c> container
 /// partitioned by <c>/tenantId</c>. Persists step-by-step workflow state transitions and results.
 /// </summary>
-public sealed class CosmosJobStore : IJobStore
+public sealed partial class CosmosJobStore : IJobStore
 {
     private readonly Container _container;
+    private readonly TimeProvider _jobClock;
+    private readonly ILogger _jobLogger;
 
-    public CosmosJobStore(CosmosClient cosmosClient, string databaseName = "DocIntel", string containerName = "jobs")
+    public CosmosJobStore(
+        CosmosClient cosmosClient, string databaseName = "DocIntel", string containerName = "jobs",
+        TimeProvider? clock = null, ILogger<CosmosJobStore>? logger = null)
     {
         ArgumentNullException.ThrowIfNull(cosmosClient);
         _container = cosmosClient.GetContainer(databaseName, containerName);
+        _jobClock = clock ?? TimeProvider.System;
+        _jobLogger = logger ?? NullLogger<CosmosJobStore>.Instance;
+    }
+
+    public CosmosJobStore(Container container, TimeProvider? clock = null, ILogger<CosmosJobStore>? logger = null)
+    {
+        _container = container ?? throw new ArgumentNullException(nameof(container));
+        _jobClock = clock ?? TimeProvider.System;
+        _jobLogger = logger ?? NullLogger<CosmosJobStore>.Instance;
+    }
+
+    /// <summary>Checks that the configured metadata container exists and is accessible to the service identity.</summary>
+    public async Task CheckReadinessAsync(CancellationToken cancellationToken = default)
+    {
+        await _container.ReadContainerAsync(cancellationToken: cancellationToken);
     }
 
     public async Task UpsertJobAsync(DocumentJob job, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(job);
         ArgumentException.ThrowIfNullOrWhiteSpace(job.TenantId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(job.JobId);
 
-        await _container.UpsertItemAsync(
-            job,
-            new PartitionKey(job.TenantId),
-            cancellationToken: cancellationToken).ConfigureAwait(false);
+        if (job.ProcessingOwner is not null)
+        {
+            if (job.ProcessingLeaseUntilUtc is null || job.ProcessingLeaseUntilUtc > _jobClock.GetUtcNow())
+                throw new InvalidOperationException("Save an owned document through its processing lease.");
+            job.ProcessingOwner = null;
+            job.ProcessingLeaseUntilUtc = null;
+        }
+        var response = job.ETag is null
+            ? await _container.CreateItemAsync(job, new PartitionKey(job.TenantId), cancellationToken: cancellationToken)
+            : await _container.ReplaceItemAsync(job, job.JobId, new PartitionKey(job.TenantId),
+                new ItemRequestOptions { IfMatchEtag = RequireETag(job.ETag) }, cancellationToken);
+        job.ETag = RequireETag(response.ETag);
     }
 
     public async Task<DocumentJob?> GetJobAsync(string jobId, CancellationToken cancellationToken = default, string? tenantId = null)
@@ -467,6 +497,9 @@ public sealed class CosmosJobStore : IJobStore
                     jobId,
                     new PartitionKey(tenantId),
                     cancellationToken: cancellationToken).ConfigureAwait(false);
+                if (ptResponse.Resource.TenantId != tenantId || ptResponse.Resource.JobId != jobId)
+                    throw new InvalidDataException("Stored document identity does not match its partition key.");
+                ptResponse.Resource.ETag = RequireETag(ptResponse.ETag);
                 return ptResponse.Resource;
             }
             catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
@@ -475,22 +508,23 @@ public sealed class CosmosJobStore : IJobStore
             }
         }
 
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.id = @jobId")
+        var query = new QueryDefinition("SELECT TOP 2 * FROM c WHERE c.id = @jobId")
             .WithParameter("@jobId", jobId);
 
         using var iterator = _container.GetItemQueryIterator<DocumentJob>(query);
-        while (iterator.HasMoreResults)
+        var matches = new List<DocumentJob>();
+        while (iterator.HasMoreResults && matches.Count < 2)
         {
             var page = await iterator.ReadNextAsync(cancellationToken).ConfigureAwait(false);
-            var match = page.FirstOrDefault();
-            if (match is not null)
-            {
-                return match;
-            }
+            matches.AddRange(page.Take(2 - matches.Count));
         }
-
-        return null;
+        if (matches.Count > 1) throw new InvalidOperationException("A tenant ID is required for this document ID.");
+        return matches.FirstOrDefault();
     }
+
+    private static string RequireETag(string? etag) =>
+        !String.IsNullOrWhiteSpace(etag) && etag != "*" ? etag :
+            throw new InvalidDataException("A specific document version is required for a fenced storage operation.");
 
     public async Task<IReadOnlyList<DocumentJob>> ListJobsByTenantAsync(string tenantId, CancellationToken cancellationToken = default)
     {

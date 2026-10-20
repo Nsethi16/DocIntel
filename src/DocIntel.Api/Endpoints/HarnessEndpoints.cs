@@ -285,7 +285,8 @@ public static class HarnessEndpoints
             byte[]? pdfBytes = null;
             if (artifactStore is not null)
             {
-                pdfBytes = await artifactStore.GetSlicePdfAsync(tenantId, jobId, sliceIndex, ct, isTranslated: wantTranslated);
+                pdfBytes = await artifactStore.GetSlicePdfAsync(
+                    tenantId, authorizedJob.ArtifactDocumentId ?? jobId, sliceIndex, ct, isTranslated: wantTranslated);
             }
 
             if (pdfBytes is null)
@@ -610,6 +611,7 @@ public static class HarnessEndpoints
                 TenantId = tenant.TenantId,
                 TenantDisplayName = tenant.DisplayName,
                 AppliedHarnessVersion = tenant.HarnessVersion,
+                ProcessingHarness = tenant,
                 FileName = fileName,
                 SubmittedBy = IdentityAccessService.GetActor(request.HttpContext.User),
                 Status = JobStatus.Queued
@@ -619,7 +621,7 @@ public static class HarnessEndpoints
                 tenantId, jobId, pdfBytes, ct);
             job.OriginalSha256 = Convert.ToHexString(SHA256.HashData(pdfBytes));
             await jobStore.UpsertJobAsync(job, ct);
-            await jobQueue.EnqueueAsync(new JobQueueTicket(jobId, tenant.TenantId, fileName), ct);
+            await jobQueue.TryEnqueueAsync(new JobQueueTicket(jobId, tenant.TenantId), ct);
 
             return Results.Accepted($"/api/harness/jobs/{jobId}", new
             {
@@ -670,6 +672,7 @@ public static class HarnessEndpoints
             string tenantId,
             IHostEnvironment environment,
             IModelCatalog modelCatalog,
+            IArtifactStore artifactStore,
             IHarnessStore harnessStore,
             IJobStore jobStore,
             IPageLayoutExtractor layoutExtractor,
@@ -696,7 +699,7 @@ public static class HarnessEndpoints
                 translationService,
                 workflowLogger,
                 azureOptions: new DocIntel.Core.AzureIntegrationOptions(),
-                artifactStore: null);
+                artifactStore: artifactStore);
 
             var examples = CreateExampleDocumentCorpus();
             var existingJobs = await jobStore.ListJobsByTenantAsync(tenantId, ct);
@@ -743,6 +746,9 @@ public static class HarnessEndpoints
                         CompletedAtUtc = DateTimeOffset.UtcNow
                     };
 
+                    job.OriginalPdfLocation = await artifactStore.SaveOriginalPdfAsync(
+                        tenantId, jobId, pdfBytes, token);
+                    job.OriginalSha256 = Convert.ToHexString(SHA256.HashData(pdfBytes));
                     await jobStore.UpsertJobAsync(job, token);
                     seededIds.Add(jobId);
                 });
@@ -994,6 +1000,7 @@ public static class HarnessEndpoints
         job.TenantDisplayName,
         job.AppliedHarnessVersion,
         job.FileName,
+        job.ExecutionAttempts,
         status = job.Status.ToString(),
         job.ErrorMessage,
         job.TotalPages,

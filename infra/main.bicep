@@ -228,6 +228,16 @@ resource poisonQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@202
   name: 'ask-ai-poison'
 }
 
+resource documentQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+  parent: queueService
+  name: 'document-jobs'
+}
+
+resource documentPoisonQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+  parent: queueService
+  name: 'document-jobs-poison'
+}
+
 resource storageQueueRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(storage.id, uami.id, '974c5e8b-45b9-4653-ba55-5f855dd0fb88')
   scope: storage
@@ -523,6 +533,10 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = if (deployAppli
               name: 'AskAi__RecoveryPollSeconds'
               value: '30'
             }
+            {
+              name: 'DocumentJobs__RecoveryPollSeconds'
+              value: '30'
+            }
           ]
           probes: [
             {
@@ -563,6 +577,18 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = if (deployAppli
               }
             }
           }
+          {
+            name: 'document-backlog'
+            custom: {
+              type: 'azure-queue'
+              identity: uami.id
+              metadata: {
+                accountName: storage.name
+                queueName: documentQueue.name
+                queueLength: '5'
+              }
+            }
+          }
         ]
       }
       dependsOn: [
@@ -570,6 +596,8 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = if (deployAppli
         identityKeys
         dispatchQueue
         poisonQueue
+        documentQueue
+        documentPoisonQueue
         storageRoleAssignment
         storageQueueRole
         identityKeyRole

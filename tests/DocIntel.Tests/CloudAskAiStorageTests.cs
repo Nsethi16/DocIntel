@@ -8,6 +8,7 @@ using Azure.Storage.Queues.Models;
 using DocIntel.Core;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Jobs;
+using DocIntel.Core.Storage;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -25,7 +26,8 @@ public sealed class CloudAskAiStorageTests
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
             ["AzureAI:BlobEndpoint"] = "https://example.blob.core.windows.net/",
-            ["AzureAI:QueueEndpoint"] = "https://example.queue.core.windows.net/"
+            ["AzureAI:QueueEndpoint"] = "https://example.queue.core.windows.net/",
+            ["AzureAI:CosmosEndpoint"] = "https://example.documents.azure.com/"
         }).Build();
         var services = new ServiceCollection();
         services.AddLogging();
@@ -35,6 +37,24 @@ public sealed class CloudAskAiStorageTests
         // Act / Assert
         Assert.IsType<AzureBlobAskAiRunStore>(provider.GetRequiredService<IAskAiRunStore>());
         Assert.IsType<AzureQueueAskAiQueue>(provider.GetRequiredService<IAskAiQueue>());
+        Assert.IsType<AzureQueueJobQueue>(provider.GetRequiredService<IJobQueue>());
+        Assert.IsType<CosmosJobStore>(provider.GetRequiredService<IJobStore>());
+    }
+
+    [Theory]
+    [InlineData("AzureAI:BlobEndpoint", "https://example.blob.core.windows.net/")]
+    [InlineData("DocumentJobs:QueueName", "ask-ai")]
+    public void Incomplete_Shared_Metadata_Or_Overlapping_Dispatch_Configuration_Is_Rejected(string setting, string value)
+    {
+        // Arrange
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            [setting] = value
+        }).Build();
+        var services = new ServiceCollection();
+
+        // Act / Assert
+        Assert.Throws<InvalidOperationException>(() => services.AddDocIntelCore(configuration));
     }
 
     [Fact]

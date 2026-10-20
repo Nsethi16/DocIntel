@@ -3,6 +3,8 @@ using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Authorization;
+using DocIntel.Core.Harness;
+using Microsoft.Extensions.Logging;
 
 namespace DocIntel.Core.Jobs;
 
@@ -40,6 +42,8 @@ public sealed class DocumentJob
 
     public required int AppliedHarnessVersion { get; init; }
 
+    public TenantHarness? ProcessingHarness { get; init; }
+
     public required string FileName { get; init; }
 
     public JobStatus Status { get; set; } = JobStatus.Queued;
@@ -50,7 +54,21 @@ public sealed class DocumentJob
 
     public string? OriginalSha256 { get; set; }
 
+    public string? ArtifactDocumentId { get; set; }
+
     public ActorIdentity? SubmittedBy { get; init; }
+
+    [JsonIgnore]
+    public long StoreVersion { get; set; }
+
+    [JsonPropertyName("_etag")]
+    public string? ETag { get; set; }
+
+    public string? ProcessingOwner { get; set; }
+
+    public DateTimeOffset? ProcessingLeaseUntilUtc { get; set; }
+
+    public int ExecutionAttempts { get; set; }
 
     public int TotalPages { get; set; }
 
@@ -77,7 +95,7 @@ public sealed class DocumentJob
     public DateTimeOffset? CompletedAtUtc { get; set; }
 }
 
-public sealed record JobQueueTicket(string JobId, string TenantId, string FileName);
+public sealed record JobQueueTicket(string JobId, string TenantId);
 
 public interface IJobStore
 {
@@ -90,18 +108,25 @@ public interface IJobStore
     /// <summary>Searches one tenant using a server-compiled, bounded query plan.</summary>
     Task<DocumentQueryPage> SearchDocumentsAsync(
         string tenantId, DocumentQuery query, CancellationToken cancellationToken = default);
+
+    Task<IDocumentJobLease?> TryAcquireJobAsync(
+        string tenantId, string jobId, CancellationToken cancellationToken = default);
+
+    Task<IReadOnlyList<JobQueueTicket>> ListRecoverableJobsAsync(
+        int maxCount, CancellationToken cancellationToken = default);
 }
 
 public interface IJobQueue
 {
-    ValueTask EnqueueAsync(JobQueueTicket ticket, CancellationToken cancellationToken = default);
+    ValueTask<bool> TryEnqueueAsync(JobQueueTicket ticket, CancellationToken cancellationToken = default);
 
     IAsyncEnumerable<JobQueueTicket> ReadAllAsync(CancellationToken cancellationToken = default);
 }
 
 public sealed class InMemoryJobStore : IJobStore
 {
-    private readonly ConcurrentDictionary<string, DocumentJob> _jobs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<(string Tenant, string Id), DocumentJob> _jobs = new();
+    private readonly ConcurrentDictionary<(string Tenant, string Id), SemaphoreSlim> _processing = new();
 
     /// <inheritdoc />
     public Task<DocumentQueryPage> SearchDocumentsAsync(
@@ -132,16 +157,28 @@ public sealed class InMemoryJobStore : IJobStore
     public Task UpsertJobAsync(DocumentJob job, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(job);
-        _jobs[job.JobId] = job;
+        cancellationToken.ThrowIfCancellationRequested();
+        var key = (job.TenantId, job.JobId);
+        var gate = _processing.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        if (!gate.Wait(0)) throw new InvalidOperationException("Save an owned document through its lease.");
+        try { _jobs[key] = job; }
+        finally { gate.Release(); }
         return Task.CompletedTask;
     }
 
     public Task<DocumentJob?> GetJobAsync(string jobId, CancellationToken cancellationToken = default, string? tenantId = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
-        _jobs.TryGetValue(jobId, out var job);
+        DocumentJob? job;
+        if (tenantId is not null) _jobs.TryGetValue((tenantId, jobId), out job);
+        else
+        {
+            var matches = _jobs.Where(item => item.Key.Id == jobId).Select(item => item.Value).Take(2).ToList();
+            if (matches.Count > 1) throw new InvalidOperationException("A tenant ID is required for this document ID.");
+            job = matches.FirstOrDefault();
+        }
         if (job is not null && !string.IsNullOrWhiteSpace(tenantId) &&
-            !string.Equals(job.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+            !string.Equals(job.TenantId, tenantId, StringComparison.Ordinal))
         {
             return Task.FromResult<DocumentJob?>(null);
         }
@@ -152,21 +189,63 @@ public sealed class InMemoryJobStore : IJobStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         IReadOnlyList<DocumentJob> list = _jobs.Values
-            .Where(j => string.Equals(j.TenantId, tenantId, StringComparison.OrdinalIgnoreCase))
+            .Where(j => string.Equals(j.TenantId, tenantId, StringComparison.Ordinal))
             .OrderByDescending(j => j.CreatedAtUtc)
             .ToList();
         return Task.FromResult(list);
     }
 
+    public async Task<IDocumentJobLease?> TryAcquireJobAsync(
+        string tenantId, string jobId, CancellationToken cancellationToken = default)
+    {
+        var key = (tenantId, jobId);
+        var gate = _processing.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
+        if (!await gate.WaitAsync(0, cancellationToken)) return null;
+        if (!_jobs.TryGetValue(key, out var job) || job.Status is JobStatus.Completed or JobStatus.Failed)
+        {
+            gate.Release();
+            return null;
+        }
+        job.ExecutionAttempts++;
+        return new DocumentJobLease(job, ct =>
+        {
+            ct.ThrowIfCancellationRequested();
+            _jobs[key] = job;
+            return Task.FromResult(true);
+        }, null, () =>
+        {
+            gate.Release();
+            return Task.CompletedTask;
+        });
+    }
+
+    public Task<IReadOnlyList<JobQueueTicket>> ListRecoverableJobsAsync(
+        int maxCount, CancellationToken cancellationToken = default)
+    {
+        ArgumentOutOfRangeException.ThrowIfLessThan(maxCount, 1);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(maxCount, 100);
+        cancellationToken.ThrowIfCancellationRequested();
+        IReadOnlyList<JobQueueTicket> tickets = _jobs
+            .Where(item => item.Value.Status is JobStatus.Queued or JobStatus.Running &&
+                (!_processing.TryGetValue(item.Key, out var gate) || gate.CurrentCount > 0))
+            .OrderBy(item => item.Value.CreatedAtUtc).Take(maxCount)
+            .Select(item => new JobQueueTicket(item.Value.JobId, item.Value.TenantId)).ToList();
+        return Task.FromResult(tickets);
+    }
+
 }
 
-public sealed class ChannelJobQueue : IJobQueue
+public sealed class ChannelJobQueue(ILogger<ChannelJobQueue> logger) : IJobQueue
 {
-    private readonly Channel<JobQueueTicket> _channel = Channel.CreateUnbounded<JobQueueTicket>(
-        new UnboundedChannelOptions { SingleReader = false, SingleWriter = false });
+    private readonly Channel<JobQueueTicket> _channel = Channel.CreateBounded<JobQueueTicket>(100);
 
-    public ValueTask EnqueueAsync(JobQueueTicket ticket, CancellationToken cancellationToken = default) =>
-        _channel.Writer.WriteAsync(ticket, cancellationToken);
+    public ValueTask<bool> TryEnqueueAsync(JobQueueTicket ticket, CancellationToken cancellationToken = default)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (_channel.Writer.TryWrite(ticket)) return ValueTask.FromResult(true);
+        logger.LogDebug("Document dispatch hints are full; persisted job {JobId} must be rediscovered.", ticket.JobId);
+        return ValueTask.FromResult(false);
+    }
 
     public IAsyncEnumerable<JobQueueTicket> ReadAllAsync(CancellationToken cancellationToken = default) =>
         _channel.Reader.ReadAllAsync(cancellationToken);

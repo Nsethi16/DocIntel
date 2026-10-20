@@ -67,9 +67,9 @@ at most 3,000 characters. Providers must support native function calling and str
 the existing text-only Foundry Inference adapter is explicitly unsupported for Ask AI.
 
 Email HTML and Teams cards are formatted payloads, not delivered integrations. Request-supplied
-callback URLs are rejected until an approved destination policy exists. Shared cloud scheduling,
-identity/resource authorization, and Microsoft 365 delivery remain prerequisites before production
-rollout. Local persisted execution is described below; it is not a substitute for a cloud broker.
+callback URLs are rejected until an approved destination policy exists. Microsoft 365 delivery and
+live cloud/identity verification remain prerequisites before production rollout. The native shared
+storage path and local persisted execution are described below.
 
 The web client submits one asynchronous run and polls that run rather than retrying a failed
 synchronous request as a new execution. It stores the confirmed run ID with the chat and resumes
@@ -105,8 +105,8 @@ replacement. It covers application-process crashes, not arbitrary power-loss rec
 independent Container Apps replica disks. Container Apps' default ephemeral filesystem is **not**
 durable storage: provision a supported persistent store/broker before cloud rollout. Without a
 configured directory or harness path, isolated library consumers/tests may still use the in-memory
-store. Local document jobs themselves remain in memory unless the existing Cosmos job store is
-configured. Missing/corrupt runs are surfaced, not replaced by fabricated answers.
+store. Local document metadata uses SQLite when a harness path or database path is configured.
+Missing/corrupt runs are surfaced, not replaced by fabricated answers.
 
 Regression commands from the repository root:
 
@@ -115,6 +115,7 @@ dotnet test tests\DocIntel.Tests\DocIntel.Tests.csproj -c Release
 node --test tests\DocIntel.Ui.Tests\ask-ai.test.cjs
 dotnet build src\DocIntel.Api\DocIntel.Api.csproj -c Release
 node --test tests\DocIntel.Ui.Tests\ask-ai-restart.test.cjs
+node --test tests\DocIntel.Ui.Tests\document-restart.test.cjs
 node --test tests\DocIntel.Ui.Tests\identity-http.test.cjs tests\DocIntel.Ui.Tests\identity-client.test.cjs
 ```
 
@@ -160,23 +161,55 @@ The Bicep path provisions run/key containers, dispatch/poison queues, managed-id
 and a versionless rotating Key Vault key for the standard ASP.NET Core Blob key-ring provider.
 Production key blobs require Key Vault encryption. Role/registration setup must be validated in
 the actual target directory; local issuer tests do not validate a live Entra deployment.
-Readiness fails when run storage or either queue is missing/inaccessible. The deployment script
+Readiness fails when run storage, document metadata, or a dispatch/poison queue is missing/inaccessible. The deployment script
 is preview-first, requires explicit identity inputs, and never replaces the running app before
 its web registration/federation prerequisites are met.
 
 SDK-level tests cover fencing, renewal failure, tenant namespaces, acknowledgement ordering and
-quarantine. Live/emulator storage integration is not yet verified in this environment. The
-document-ingestion queue remains process-local and needs separate durable original-file/dispatch
-work before production rollout.
+quarantine. Live/emulator storage integration is not yet verified in this environment.
+
+### Durable document ingestion
 
 Original ingestion files are now persisted before accepting/enqueueing a new job. Local writes
 use a temporary file followed by non-overwriting publication; Blob writes use `If-None-Match: *`.
 The stored original cannot be silently replaced through the artifact API. A SHA-256 binds it to
 the accepted job, and both processing and original-file retrieval check that binding. Document
-queue tickets contain identifiers and a filename, not the only in-memory PDF copy. The worker
-also rechecks the stored submitter's processing permission. Document metadata/dispatch recovery
-and distributed ownership are the next ingestion prerequisites; original-file persistence alone
-does not supply them.
+queue tickets contain only job/tenant identifiers, not filenames or PDF bytes.
+
+Local metadata is transactional SQLite WAL, defaulting to `document-jobs.sqlite` beside the
+harness settings; `DocumentJobs:DatabasePath` can select another private file. Shared deployment
+uses Cosmos job records plus `document-jobs` / `document-jobs-poison` queues. Shared queues cannot
+use local metadata, and all document/Ask AI dispatch/poison queue names must differ. The common
+queue transport bounds ticket size, acknowledges after processing, and quarantines malformed or
+repeated deliveries. A recovery loop redispatches unowned queued/running records. This is
+at-least-once scheduling, not an exactly-once external-action guarantee.
+
+Each claim has a unique owner, a 60-second expiry, and a persisted execution count. Renewal every
+20 seconds and every save require the current owner plus SQLite row version or Cosmos ETag.
+Missing/wildcard ETags are rejected. Renewals preserve the last persisted snapshot instead of
+publishing mutable in-flight workflow lists. Expired/replaced owners are cancelled and cannot
+overwrite a replacement, including during finalization or release.
+
+New uploads persist the accepted harness snapshot and version. Execution/recovery uses that
+snapshot while rechecking the submitter's current processing permission and the tenant's active
+state; newer tenant definitions do not silently change an interrupted job. Legacy jobs without
+a snapshot require a still-matching harness version. Artifacts are written under a unique
+`{jobId}-a{executionAttempt}` namespace, while the immutable original remains under `{jobId}`.
+The public slice and prompt-evaluation routes follow the saved attempt pointer. A stale worker
+may leave orphaned attempt files, but cannot overwrite the replacement's files or metadata.
+
+Execution defaults to 1,800 seconds and permits three attempts after interruptions. Graceful
+shutdown requeues the same job; a process crash requires the finite ownership lease to expire
+before a replacement claims it. Terminal jobs are not automatically replayed. Local recovery
+polls every five seconds; Bicep sets 30 seconds for shared deployment and scales on both queues.
+SQLite search applies the same typed predicates and document grants but currently scans one
+tenant's metadata, so it is a local/pilot backend, not a large-dataset query index.
+
+The document restart regression kills an actual API process during a native model request,
+changes the current tenant configuration, restarts from the same private storage, and verifies
+the original job completes using its accepted configuration and source bytes. It also writes
+to the stale attempt's file and verifies the public PDF route still reads the replacement.
+These local process tests and mocked Cosmos/Queue contracts do not verify live Azure behavior.
 
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).
 
@@ -189,7 +222,7 @@ flowchart TB
 
     subgraph API["DocIntel.Api (ASP.NET Core Minimal APIs + Background Worker)"]
         Endpoints["HarnessEndpoints.cs<br/>(/api/harness/tenants, /jobs, /slices/{idx}/pdf)"]
-        Queue["Channel&lt;string&gt; Async Job Queue"]
+        Queue["Azure Queue / bounded local dispatch hints"]
         Worker["DocumentJobWorker (BackgroundService)"]
     end
 
@@ -255,31 +288,31 @@ sequenceDiagram
     participant API as HarnessEndpoints
     participant Blob as BlobArtifactStore (tenant-{id})
     participant Cosmos as CosmosJobStore (jobs)
-    participant Queue as JobQueue (Channel)
+    participant Queue as Azure Queue / local dispatch hints
     participant Worker as DocumentJobWorker
     participant WF as DocumentSplittingWorkflow
 
     User->>API: POST /api/harness/tenants/{tenantId}/jobs (Multipart PDF)
     API->>Cosmos: Load TenantHarness for {tenantId}
-    API->>Blob: SaveInputPdfAsync(tenantId, jobId, fileName, pdfBytes)
-    API->>Cosmos: SaveJobAsync(status = "Queued")
-    API->>Queue: Enqueue(jobId)
+    API->>Blob: SaveOriginalPdfAsync(tenantId, jobId, pdfBytes)
+    API->>Cosmos: UpsertJobAsync(Queued, source hash, accepted harness snapshot)
+    API->>Queue: TryEnqueueAsync(tenantId, jobId)
     API-->>User: 202 Accepted { jobId, status: "Queued", statusUrl }
 
     Queue->>Worker: Dequeue(jobId)
-    Worker->>Cosmos: SaveJobAsync(status = "Running")
-    Worker->>WF: ExecuteAsync(pdfBytes, fileName, tenantHarness)
+    Worker->>Cosmos: Acquire version-fenced ownership; save Running
+    Worker->>Blob: Read and verify accepted original SHA-256
+    Worker->>WF: ExecuteAsync(original, accepted harness, attempt artifact ID)
     Note over WF: Runs 8 Executors sequentially<br/>(Layout -> Boundaries -> PDF Slice -> Identify -> Translate -> Insights -> Entities -> Data)
     WF-->>Worker: DocumentPacketResult (Segments + DataExtractions + ExecutionTrace)
-    Worker->>Blob: SaveSlicePdfAsync() for each split PDF segment
-    Worker->>Blob: SaveResultJsonAsync(result.json)
-    Worker->>Cosmos: SaveJobAsync(status = "Completed", segments, executionTrace)
+    WF->>Blob: SaveSlicePdfAsync() under attempt-specific namespace
+    Worker->>Cosmos: Fenced save (Completed, segments, executionTrace)
 
     User->>API: GET /api/harness/jobs/{jobId}
     API->>Cosmos: GetJobAsync(jobId)
     API-->>User: 200 OK (Full Job JSON with Segments, Insights, Entities, Tables, Trace)
     User->>API: GET /api/harness/tenants/{tenantId}/jobs/{jobId}/slices/{idx}/pdf
-    API->>Blob: GetSlicePdfAsync(tenantId, jobId, idx)
+    API->>Blob: GetSlicePdfAsync(tenantId, active artifact attempt, idx)
     API-->>User: 200 OK (application/pdf stream rendered in iframe)
 ```
 

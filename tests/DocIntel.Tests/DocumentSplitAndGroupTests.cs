@@ -16,8 +16,16 @@ using Xunit;
 
 namespace DocIntel.Tests;
 
-public sealed class DocumentSplitAndGroupTests
+public sealed class DocumentSplitAndGroupTests : IDisposable
 {
+    private readonly string _directory = Path.Combine(Path.GetTempPath(), "DocIntel.Workflow.Tests",
+        Guid.NewGuid().ToString("N"));
+
+    public void Dispose()
+    {
+        if (Directory.Exists(_directory)) Directory.Delete(_directory, recursive: true);
+    }
+
     [Fact]
     public void NormalizePageFootersBySimilarity_Clusters_Ocr_Garbled_Footers_To_Canonical_Value()
     {
@@ -438,7 +446,7 @@ public sealed class DocumentSplitAndGroupTests
     public async Task AskAiOrchestrator_Injects_PromptColumns_Generates_CosmosSql_And_Returns_Citations_And_ChannelPayloads()
     {
         // Arrange
-        var harnessPath = Path.Combine(Path.GetTempPath(), $"docintel-askai-test-{Guid.NewGuid():N}.json");
+        var harnessPath = Path.Combine(_directory, "harness.json");
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddDocIntelCore(harnessFilePath: harnessPath, allowDevelopmentSimulation: true);

@@ -22,7 +22,7 @@ var harnessFilePath = Path.Combine(builder.Environment.ContentRootPath, "App_Dat
 builder.Services.AddDocIntelCore(configuration: builder.Configuration, harnessFilePath: harnessFilePath);
 builder.Services.AddHostedService<DocumentJobWorker>();
 builder.Services.AddHostedService<AskAiRunWorker>();
-builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("ask-ai-storage", tags: ["ready"]);
+builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);
 
 var app = builder.Build();
 
