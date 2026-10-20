@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using DocIntel.Core.Harness;
+using DocIntel.Core.Evidence;
 
 namespace DocIntel.Core.Features.DocumentSplitting;
 
@@ -13,6 +14,14 @@ public sealed class PageLayout
     public double PageWidth { get; init; }
 
     public double PageHeight { get; init; }
+
+    public double ImageAreaRatio { get; init; }
+
+    public string TextSource { get; set; } = "Unknown";
+
+    public string? TextProvider { get; set; }
+
+    public IReadOnlyList<PageWord> Words { get; set; } = [];
 
     public int? SubDocPageNumber { get; set; }
 
@@ -210,6 +219,8 @@ public sealed class SplittingState
     public byte[]? SourcePdfBytes { get; init; }
 
     public List<PageLayout> Pages { get; set; } = [];
+
+    public string? LayoutSha256 { get; set; }
 
     public List<DocumentSlice> Slices { get; set; } = [];
 

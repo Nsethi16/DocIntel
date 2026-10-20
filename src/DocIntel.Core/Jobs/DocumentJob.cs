@@ -56,6 +56,8 @@ public sealed class DocumentJob
 
     public string? ArtifactDocumentId { get; set; }
 
+    public string? LayoutSha256 { get; set; }
+
     public ActorIdentity? SubmittedBy { get; init; }
 
     [JsonIgnore]

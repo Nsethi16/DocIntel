@@ -211,6 +211,29 @@ the original job completes using its accepted configuration and source bytes. It
 to the stale attempt's file and verifies the public PDF route still reads the replacement.
 These local process tests and mocked Cosmos/Queue contracts do not verify live Azure behavior.
 
+### Source layout evidence
+
+The layout extraction stage publishes an immutable `layout.json` before the corresponding job
+metadata references its SHA-256. The versioned envelope identifies the tenant, attempt, and original
+PDF SHA-256. Pages preserve native text, original dimensions, image-area coverage, source/provider
+labels, and stable word IDs with normalized, top-left-origin four-corner polygons. Native words
+have null OCR confidence: presence in a PDF text layer is not a recognition-accuracy estimate.
+The extractor preserves the existing portrait word strategy and uses PdfPig's rotation-aware
+nearest-neighbour strategy for rotated pages; tests verify all rotations and nonzero origins.
+
+`GET /api/harness/tenants/{tenantId}/jobs/{jobId}/layout` follows the authorized job's active attempt
+and checks both the saved layout digest and original-source identity. No client-supplied storage
+path or URL is accepted. Content, schema, tenant/document/source mismatches fail explicitly.
+The store bounds evidence to 16 MiB, 1,000 sequential pages and 50,000 words per page. Word arrays
+stay in the artifact, not Cosmos job bodies; metadata exposes only availability and a server-owned
+route. Old documents without evidence return 404 instead of fabricated geometry.
+
+Both local and Blob writes are non-overwriting; local publication uses the same temporary-file /
+flush / atomic-move helper as immutable originals. Blob uses `If-None-Match: *`. The process-crash
+regression verifies word IDs survive restart and stale-attempt layout changes cannot change the
+public route. Storage integrity does not by itself prove OCR accuracy or field-value entailment.
+OCR, value-level grounding, and the review/export surfaces remain subsequent work.
+
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).
 
 ```mermaid

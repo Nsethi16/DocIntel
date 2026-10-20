@@ -48,6 +48,7 @@ public sealed class DocumentJobProcessor(
             job.PromptColumnResults = [];
             job.ExecutionTrace = [];
             job.Segments = [];
+            job.LayoutSha256 = null;
             job.ArtifactDocumentId = $"{job.JobId}-a{job.ExecutionAttempts}";
             await lease.SaveAsync(execution.Token);
             await CheckAccessAsync(execution.Token);
@@ -119,6 +120,7 @@ public sealed class DocumentJobProcessor(
     private static void Update(DocumentJob job, SplittingState state)
     {
         job.TotalPages = state.Pages.Count;
+        job.LayoutSha256 = state.LayoutSha256;
         job.StrategyUsed = state.StrategyUsed;
         job.ModelIdUsed = state.ModelIdUsed;
         job.HasDevelopmentResults = state.HasDevelopmentResults;

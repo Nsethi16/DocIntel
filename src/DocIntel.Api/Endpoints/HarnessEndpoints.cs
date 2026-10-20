@@ -645,6 +645,16 @@ public static class HarnessEndpoints
             return bytes is null ? Results.NotFound() : Results.File(bytes, "application/pdf", enableRangeProcessing: true);
         });
 
+        group.MapGet("/tenants/{tenantId}/jobs/{jobId}/layout", async (
+            string tenantId, string jobId, IJobStore store, IArtifactStore artifacts, CancellationToken ct) =>
+        {
+            var job = await store.GetJobAsync(jobId, ct, tenantId);
+            if (job?.LayoutSha256 is null || job.OriginalSha256 is null) return Results.NotFound();
+            var layout = await artifacts.GetLayoutAsync(tenantId, job.ArtifactDocumentId ?? jobId,
+                job.LayoutSha256, job.OriginalSha256, ct);
+            return layout is null ? Results.NotFound() : Results.Ok(layout);
+        });
+
         // Poll Async Job Status
         group.MapGet("/jobs/{jobId}", async (
             string jobId, HttpContext context, IdentityAccessService access,
@@ -737,6 +747,7 @@ public static class HarnessEndpoints
                         StrategyUsed = completed.StrategyUsed,
                         ModelIdUsed = completed.ModelIdUsed,
                         HasDevelopmentResults = completed.HasDevelopmentResults,
+                        LayoutSha256 = completed.LayoutSha256,
                         PacketSummary = completed.PacketSummary,
                         ExtractedEntities = completed.ExtractedEntities,
                         DataExtractions = completed.DataExtractions,
@@ -1008,6 +1019,9 @@ public static class HarnessEndpoints
         job.ModelIdUsed,
         job.HasDevelopmentResults,
         job.OriginalSha256,
+        layoutAvailable = job.LayoutSha256 is not null,
+        layoutUrl = job.LayoutSha256 is null ? null :
+            $"/api/harness/tenants/{Uri.EscapeDataString(job.TenantId)}/jobs/{Uri.EscapeDataString(job.JobId)}/layout",
         job.PacketSummary,
         job.ExtractedEntities,
         job.DataExtractions,

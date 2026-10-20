@@ -76,6 +76,19 @@ fail for review/resubmission. Execution is bounded by `DocumentJobs:MaxRunSecond
 range 1-3,600); recovery polling uses `DocumentJobs:RecoveryPollSeconds` (default 5; range 1-300).
 SQLite covers a single persistent host, not independent ephemeral Container Apps replica disks.
 
+Newly processed documents also persist an immutable, versioned `layout.json` beside their
+attempt-specific slices. It contains original page text, stable `w_{page}_{index}` word IDs,
+four-corner polygons in normalized top-left coordinates, and image-area coverage. Layout bytes
+and the original PDF are bound by separate SHA-256 checks. Job metadata exposes `layoutAvailable`
+and an authorized `layoutUrl`; it does not embed the word collection in Cosmos. Legacy documents
+without saved evidence return 404 rather than reconstructed coordinates.
+
+Native PDF words are labeled `EmbeddedText` / `PdfPig`, with null OCR confidence. Geometry
+regressions include all four page rotations and nonzero page origins. Layout storage rejects
+invalid geometry, duplicate IDs, content/identity mismatches, and oversized evidence (16 MiB,
+up to 1,000 sequential pages and 50,000 words per page). This is the source-evidence foundation,
+not yet an OCR provider, field-grounding model, calibrated confidence, or review approval.
+
 ## Identity and document access
 
 Production defaults to **Entra** and fails startup when identity configuration is incomplete.

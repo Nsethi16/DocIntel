@@ -1,9 +1,12 @@
 using System.Text;
 using System.Text.RegularExpressions;
 using DocIntel.Core.Harness;
+using DocIntel.Core.Evidence;
+using DocIntel.Core.Storage;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Content;
 using UglyToad.PdfPig.Core;
+using UglyToad.PdfPig.DocumentLayoutAnalysis.WordExtractor;
 using UglyToad.PdfPig.Fonts.Standard14Fonts;
 using UglyToad.PdfPig.Writer;
 
@@ -47,6 +50,8 @@ public sealed class PdfPigLayoutExtractor : IPageLayoutExtractor, IPdfSlicer
         ArgumentNullException.ThrowIfNull(config);
 
         using var document = PdfDocument.Open(pdfBytes, new ParsingOptions { ClipPaths = false });
+        if (document.NumberOfPages is < 1 or > DocumentLayoutCodec.MaxPages)
+            throw new InvalidDataException("The PDF page count exceeds the supported layout limits.");
         var pages = new List<PageLayout>(document.NumberOfPages);
 
         for (var pageNumber = 1; pageNumber <= document.NumberOfPages; pageNumber++)
@@ -235,7 +240,16 @@ public sealed class PdfPigLayoutExtractor : IPageLayoutExtractor, IPdfSlicer
         int pageNumber,
         IReadOnlyList<string> footersToIgnore)
     {
-        var words = page.GetWords().ToList();
+        if (!Double.IsFinite(page.Width) || page.Width <= 0 || !Double.IsFinite(page.Height) || page.Height <= 0)
+            throw new InvalidDataException("The PDF page has invalid dimensions.");
+        var extractedWords = page.Rotation.Value == 0
+            ? page.GetWords() : page.GetWords(NearestNeighbourWordExtractor.Instance);
+        var words = extractedWords.Where(word => !String.IsNullOrWhiteSpace(word.Text))
+            .Take(DocumentLayoutCodec.MaxWordsPerPage + 1)
+            .OrderByDescending(word => word.BoundingBox.Top)
+            .ThenBy(word => word.BoundingBox.Left).ToList();
+        if (words.Count > DocumentLayoutCodec.MaxWordsPerPage)
+            throw new InvalidDataException("The PDF word count exceeds the supported per-page layout limit.");
         var footerBoundaryY = page.Height * 0.10; // Bottom 10% of page height
 
         var footerWords = new List<string>();
@@ -301,6 +315,18 @@ public sealed class PdfPigLayoutExtractor : IPageLayoutExtractor, IPdfSlicer
             PageNumber = pageNumber,
             PageWidth = page.Width,
             PageHeight = page.Height,
+            ImageAreaRatio = Math.Clamp(page.GetImages().Sum(image => image.BoundingBox.Area) / (page.Width * page.Height), 0, 1),
+            TextSource = "EmbeddedText",
+            TextProvider = "PdfPig",
+            Words = words.Select((word, index) => new PageWord($"w_{pageNumber}_{index}", word.Text,
+                new BoundingBox(pageNumber, new[]
+                {
+                    word.BoundingBox.TopLeft, word.BoundingBox.TopRight,
+                    word.BoundingBox.BottomRight, word.BoundingBox.BottomLeft
+                }.SelectMany(point => new[]
+                {
+                    Math.Clamp(point.X / page.Width, 0, 1), Math.Clamp(1 - point.Y / page.Height, 0, 1)
+                }).ToArray()))).ToArray(),
             SubDocPageNumber = subDocPageNumber,
             SubDocTotalPages = subDocTotalPages,
             BodyText = bodyText,

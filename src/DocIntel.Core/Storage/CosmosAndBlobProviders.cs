@@ -9,6 +9,7 @@ using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
+using DocIntel.Core.Evidence;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -21,6 +22,13 @@ namespace DocIntel.Core.Storage;
 /// </summary>
 public interface IArtifactStore
 {
+    /// <summary>Publishes immutable source-layout evidence and returns its SHA-256.</summary>
+    Task<string> SaveLayoutAsync(DocumentLayout layout, CancellationToken cancellationToken = default);
+
+    /// <summary>Reads source-bound layout evidence, rejecting content or identity mismatches.</summary>
+    Task<DocumentLayout?> GetLayoutAsync(string tenantId, string documentId,
+        string expectedSha256, string originalSha256, CancellationToken cancellationToken = default);
+
     Task<string> SaveOriginalPdfAsync(
         string tenantId, string documentId, byte[] pdfBytes, CancellationToken cancellationToken = default);
 
@@ -46,7 +54,7 @@ public interface IArtifactStore
 /// <summary>
 /// Local file-system implementation of <see cref="IArtifactStore"/> used for zero-Docker local development.
 /// </summary>
-public sealed class LocalFileArtifactStore : IArtifactStore
+public sealed partial class LocalFileArtifactStore : IArtifactStore
 {
     private readonly string _baseDirectory;
 
@@ -61,27 +69,7 @@ public sealed class LocalFileArtifactStore : IArtifactStore
     {
         ValidateDocumentKey(documentId, 0);
         ValidateOriginal(pdfBytes);
-        var directory = Path.Combine(_baseDirectory, SanitizeContainerName(tenantId), documentId);
-        Directory.CreateDirectory(directory);
-        var path = Path.Combine(directory, "original.pdf");
-        var temporary = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".upload");
-        try
-        {
-            await using (var stream = new FileStream(temporary, FileMode.CreateNew,
-                FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
-            {
-                await stream.WriteAsync(pdfBytes, cancellationToken);
-                await stream.FlushAsync(cancellationToken);
-                stream.Flush(flushToDisk: true);
-            }
-            cancellationToken.ThrowIfCancellationRequested();
-            File.Move(temporary, path, overwrite: false);
-            return path;
-        }
-        finally
-        {
-            File.Delete(temporary);
-        }
+        return await WriteImmutableAsync(tenantId, documentId, "original.pdf", pdfBytes, cancellationToken);
     }
 
     public async Task<byte[]?> GetOriginalPdfAsync(
@@ -166,7 +154,7 @@ public sealed class LocalFileArtifactStore : IArtifactStore
 /// Azure Blob Storage implementation of <see cref="IArtifactStore"/> using Managed Identity (<see cref="TokenCredential"/>).
 /// Stores each tenant's artifacts inside a dedicated <c>tenant-{tenantId}</c> container.
 /// </summary>
-public sealed class BlobArtifactStore : IArtifactStore
+public sealed partial class BlobArtifactStore : IArtifactStore
 {
     private readonly BlobServiceClient _blobServiceClient;
 

@@ -339,6 +339,14 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
           assert.equal(stored.status, 200);
           assert.deepEqual(Buffer.from(await stored.arrayBuffer()), Buffer.from(pdf));
           assert.equal((await request(original, reader)).status, 404);
+          assert.equal(job.layoutAvailable, true);
+          const layoutResponse = await request(job.layoutUrl, processor);
+          assert.equal(layoutResponse.status, 200);
+          const layout = await layoutResponse.json();
+          assert.equal(layout.originalSha256, job.originalSha256);
+          assert.equal(layout.pages.length, job.totalPages);
+          assert.ok(layout.pages.some(page => page.words.length > 0));
+          assert.equal((await request(job.layoutUrl, reader)).status, 404);
         } finally {
           assert.equal((await request(tenantPath, administrator, 'PUT', original)).status, 200);
         }
@@ -368,6 +376,8 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         assert.equal((await request(`/api/harness/jobs/${forbiddenDocumentId}`, reader)).status, 404);
         assert.equal((await request(`${tenantPath}/jobs/${allowedDocumentId}/slices/0/pdf`, reader)).status, 200);
         assert.equal((await request(`${tenantPath}/jobs/${forbiddenDocumentId}/slices/0/pdf`, reader)).status, 404);
+        assert.equal((await request(`${tenantPath}/jobs/${allowedDocumentId}/layout`, reader)).status, 200);
+        assert.equal((await request(`${tenantPath}/jobs/${forbiddenDocumentId}/layout`, reader)).status, 404);
       });
       await t.test('model arguments cannot broaden the server-owned document search scope', async () => {
         const response = await request(tenantPath + '/ask', reader, 'POST', {

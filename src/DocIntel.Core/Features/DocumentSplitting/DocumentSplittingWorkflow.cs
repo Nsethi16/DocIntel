@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Security.Cryptography;
+using DocIntel.Core.Evidence;
 using DocIntel.Core.Features.DataExtraction;
 using DocIntel.Core.Features.DocumentIdentification;
 using DocIntel.Core.Features.DocumentInsight;
@@ -87,7 +89,7 @@ public sealed class DocumentSplittingWorkflow
             return state;
         }
 
-        var extractExecutor = new ExtractPageLayoutsExecutor(_layoutExtractor);
+        var extractExecutor = new ExtractPageLayoutsExecutor(_layoutExtractor, _artifactStore);
         var detectExecutor = new DetectSliceBoundariesExecutor();
         var slicePdfExecutor = new WritePdfSlicesExecutor(_pdfSlicer, _artifactStore);
         var identifyExecutor = new IdentifyDocumentsExecutor(_modelCatalog);
@@ -147,11 +149,13 @@ public sealed class DocumentSplittingWorkflow
 internal sealed class ExtractPageLayoutsExecutor : Executor<SplittingState, SplittingState>
 {
     private readonly IPageLayoutExtractor _extractor;
+    private readonly IArtifactStore? _artifacts;
 
-    public ExtractPageLayoutsExecutor(IPageLayoutExtractor extractor)
+    public ExtractPageLayoutsExecutor(IPageLayoutExtractor extractor, IArtifactStore? artifacts = null)
         : base(nameof(ExtractPageLayoutsExecutor))
     {
         _extractor = extractor;
+        _artifacts = artifacts;
     }
 
     public override async ValueTask<SplittingState> HandleAsync(
@@ -168,6 +172,13 @@ internal sealed class ExtractPageLayoutsExecutor : Executor<SplittingState, Spli
                 : new SplittingConfig();
             var extracted = await _extractor.ExtractPagesAsync(message.SourcePdfBytes, config, cancellationToken);
             message.Pages = extracted.ToList();
+        }
+
+        if (_artifacts is not null && message.SourcePdfBytes is { Length: > 0 } original)
+        {
+            message.LayoutSha256 = await _artifacts.SaveLayoutAsync(new DocumentLayout(
+                message.Tenant.TenantId, message.DocumentId, Convert.ToHexString(SHA256.HashData(original)),
+                message.Pages), cancellationToken);
         }
 
         sw.Stop();

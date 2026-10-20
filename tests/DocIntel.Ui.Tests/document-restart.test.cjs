@@ -88,6 +88,11 @@ test('an uploaded document survives an API crash and resumes under a new fenced 
       const running = await (await fetch(api.url + accepted.statusUrl)).json();
       assert.equal(running.status, 'Running');
       assert.equal(running.executionAttempts, 1);
+      assert.equal(running.layoutAvailable, true);
+      const firstLayoutResponse = await fetch(api.url + running.layoutUrl);
+      assert.equal(firstLayoutResponse.status, 200);
+      const firstLayout = await firstLayoutResponse.json();
+      assert.ok(firstLayout.pages[0].words.length > 0);
       const changed = structuredClone(tenant);
       changed.capabilities.IdentifyDocuments.enabled = false;
       changed.decisionModelId = 'not-configured-for-this-job';
@@ -116,15 +121,27 @@ test('an uploaded document survives an API crash and resumes under a new fenced 
       assert.equal(calls, recovered.segments.length + 1);
       assert.equal(recovered.hasDevelopmentResults, false);
       assert.equal(recovered.originalSha256, crypto.createHash('sha256').update(pdf).digest('hex').toUpperCase());
+      assert.equal(recovered.layoutAvailable, true);
+      const layoutResponse = await fetch(api.url + recovered.layoutUrl);
+      assert.equal(layoutResponse.status, 200);
+      const layout = await layoutResponse.json();
+      assert.equal(layout.originalSha256, recovered.originalSha256);
+      assert.equal(layout.documentId, `${recovered.jobId}-a2`);
+      assert.deepEqual(layout.pages.map(page => page.words.map(word => word.id)),
+        firstLayout.pages.map(page => page.words.map(word => word.id)));
+      assert.ok(layout.pages.every(page => page.textSource === 'EmbeddedText' &&
+        page.words.every(word => word.ocrConfidence === null)));
       assert.ok(recovered.segments.every(segment => segment.identificationConfidence === 0.77));
       const original = await fetch(api.url + tenantPath + `/jobs/${accepted.jobId}/original`);
       assert.equal(original.status, 200);
       assert.deepEqual(Buffer.from(await original.arrayBuffer()), pdf);
       const currentSlice = await fs.readFile(path.join(artifactDirectory, `${accepted.jobId}-a2`, 'slice-1.pdf'));
       await fs.writeFile(oldSlice, '%PDF-stale-owner');
+      await fs.writeFile(path.join(artifactDirectory, `${accepted.jobId}-a1`, 'layout.json'), '{"stale":true}');
       const slice = await fetch(api.url + tenantPath + `/jobs/${accepted.jobId}/slices/0/pdf`);
       assert.equal(slice.status, 200);
       assert.deepEqual(Buffer.from(await slice.arrayBuffer()), currentSlice);
+      assert.deepEqual(await (await fetch(api.url + recovered.layoutUrl)).json(), layout);
       assert.equal(recovered.processingOwner, undefined);
       assert.equal(recovered._etag, undefined);
     } finally {
