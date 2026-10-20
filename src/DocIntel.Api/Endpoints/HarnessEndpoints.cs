@@ -1,4 +1,5 @@
 using System.Text;
+using System.Security.Cryptography;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Api.Identity;
 using DocIntel.Core.Authorization;
@@ -591,6 +592,7 @@ public static class HarnessEndpoints
             IHarnessStore harnessStore,
             IJobStore jobStore,
             IJobQueue jobQueue,
+            IArtifactStore artifactStore,
             CancellationToken ct) =>
         {
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
@@ -609,11 +611,15 @@ public static class HarnessEndpoints
                 TenantDisplayName = tenant.DisplayName,
                 AppliedHarnessVersion = tenant.HarnessVersion,
                 FileName = fileName,
+                SubmittedBy = IdentityAccessService.GetActor(request.HttpContext.User),
                 Status = JobStatus.Queued
             };
 
+            job.OriginalPdfLocation = await artifactStore.SaveOriginalPdfAsync(
+                tenantId, jobId, pdfBytes, ct);
+            job.OriginalSha256 = Convert.ToHexString(SHA256.HashData(pdfBytes));
             await jobStore.UpsertJobAsync(job, ct);
-            await jobQueue.EnqueueAsync(new JobQueueTicket(jobId, tenant.TenantId, fileName, pdfBytes), ct);
+            await jobQueue.EnqueueAsync(new JobQueueTicket(jobId, tenant.TenantId, fileName), ct);
 
             return Results.Accepted($"/api/harness/jobs/{jobId}", new
             {
@@ -623,6 +629,18 @@ public static class HarnessEndpoints
                 status = job.Status.ToString(),
                 statusUrl = $"/api/harness/jobs/{jobId}"
             });
+        });
+
+        group.MapGet("/tenants/{tenantId}/jobs/{jobId}/original", async (
+            string tenantId, string jobId, IJobStore store, IArtifactStore artifacts, CancellationToken ct) =>
+        {
+            var job = await store.GetJobAsync(jobId, ct, tenantId);
+            if (job is null) return Results.NotFound();
+            var bytes = await artifacts.GetOriginalPdfAsync(tenantId, jobId, ct);
+            if (bytes is not null && job.OriginalSha256 is not null &&
+                !String.Equals(job.OriginalSha256, Convert.ToHexString(SHA256.HashData(bytes)), StringComparison.Ordinal))
+                throw new InvalidDataException("The persisted source PDF does not match its accepted hash.");
+            return bytes is null ? Results.NotFound() : Results.File(bytes, "application/pdf", enableRangeProcessing: true);
         });
 
         // Poll Async Job Status
@@ -982,6 +1000,7 @@ public static class HarnessEndpoints
         job.StrategyUsed,
         job.ModelIdUsed,
         job.HasDevelopmentResults,
+        job.OriginalSha256,
         job.PacketSummary,
         job.ExtractedEntities,
         job.DataExtractions,

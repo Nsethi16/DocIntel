@@ -53,6 +53,12 @@ against original source text rather than trust unverified derived results. The e
 `seed-examples` adapter is available only in loopback development with simulation enabled.
 Uploads always require an actual PDF, with a 25 MiB limit; an empty request never creates a sample.
 
+Accepted uploads persist an immutable `original.pdf` in the tenant artifact namespace before the
+job is recorded/enqueued. The accepted SHA-256 is stored with the job; processing reads and verifies
+that persisted source, not PDF bytes in a queue ticket. Authorized clients can retrieve it at
+`/api/harness/tenants/{tenantId}/jobs/{jobId}/original`. Originals alone do not make the remaining
+document-dispatch queue restart-safe.
+
 ## Identity and document access
 
 Production defaults to **Entra** and fails startup when identity configuration is incomplete.

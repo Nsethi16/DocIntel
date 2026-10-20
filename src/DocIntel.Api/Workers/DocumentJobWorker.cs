@@ -2,6 +2,9 @@ using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
+using DocIntel.Core.Storage;
+using DocIntel.Api.Identity;
+using System.Security.Cryptography;
 
 namespace DocIntel.Api.Workers;
 
@@ -15,12 +18,16 @@ public sealed class DocumentJobWorker : BackgroundService
     private readonly IHarnessStore _harnessStore;
     private readonly DocumentSplittingWorkflow _splittingWorkflow;
     private readonly ILogger<DocumentJobWorker> _logger;
+    private readonly IArtifactStore _artifacts;
+    private readonly IdentityAccessService _access;
 
     public DocumentJobWorker(
         IJobQueue jobQueue,
         IJobStore jobStore,
         IHarnessStore harnessStore,
         DocumentSplittingWorkflow splittingWorkflow,
+        IArtifactStore artifacts,
+        IdentityAccessService access,
         ILogger<DocumentJobWorker> logger)
     {
         _jobQueue = jobQueue ?? throw new ArgumentNullException(nameof(jobQueue));
@@ -28,6 +35,8 @@ public sealed class DocumentJobWorker : BackgroundService
         _harnessStore = harnessStore ?? throw new ArgumentNullException(nameof(harnessStore));
         _splittingWorkflow = splittingWorkflow ?? throw new ArgumentNullException(nameof(splittingWorkflow));
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _artifacts = artifacts;
+        _access = access;
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -48,19 +57,28 @@ public sealed class DocumentJobWorker : BackgroundService
 
                 var tenant = await _harnessStore.GetTenantAsync(ticket.TenantId, stoppingToken)
                     ?? throw new InvalidOperationException($"Tenant '{ticket.TenantId}' not found.");
+                var permission = await _access.ResolveAsync(job.SubmittedBy, ticket.TenantId, stoppingToken);
+                if (!permission.CanProcess) throw new UnauthorizedAccessException("Processing access is no longer granted.");
+                var original = await _artifacts.GetOriginalPdfAsync(ticket.TenantId, ticket.JobId, stoppingToken)
+                    ?? throw new InvalidDataException("The persisted source PDF is unavailable.");
+                if (job.OriginalSha256 is null || !String.Equals(
+                    job.OriginalSha256, Convert.ToHexString(SHA256.HashData(original)), StringComparison.Ordinal))
+                    throw new InvalidDataException("The persisted source PDF does not match the accepted upload.");
 
                 var state = new SplittingState
                 {
                     DocumentId = ticket.JobId,
                     Tenant = tenant,
                     FileName = ticket.FileName,
-                    SourcePdfBytes = ticket.PdfBytes
+                    SourcePdfBytes = original
                 };
 
                 var completedState = await _splittingWorkflow.ExecuteAsync(
                     state,
                     onStepCompleted: async (stepState, ct) =>
                     {
+                        if (!(await _access.ResolveAsync(job.SubmittedBy, ticket.TenantId, ct)).CanProcess)
+                            throw new UnauthorizedAccessException("Processing access changed during execution.");
                         job.TotalPages = stepState.Pages.Count;
                         job.StrategyUsed = stepState.StrategyUsed;
                         job.ModelIdUsed = stepState.ModelIdUsed;
@@ -88,8 +106,10 @@ public sealed class DocumentJobWorker : BackgroundService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogError("Document job {JobId} failed with {ErrorType}; root cause {CauseType}.",
-                    ticket.JobId, ex.GetType().Name, ex.GetBaseException().GetType().Name);
+                var cause = ex.GetBaseException();
+                _logger.LogError("Document job {JobId} failed with {ErrorType}; root cause {CauseType}; code {Code}; site {Site}.",
+                    ticket.JobId, ex.GetType().Name, cause.GetType().Name, cause.HResult & 0xffff,
+                    cause.TargetSite?.DeclaringType?.Name + "." + cause.TargetSite?.Name);
                 if (job is not null)
                 {
                     try

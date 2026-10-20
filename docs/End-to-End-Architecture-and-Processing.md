@@ -169,6 +169,15 @@ quarantine. Live/emulator storage integration is not yet verified in this enviro
 document-ingestion queue remains process-local and needs separate durable original-file/dispatch
 work before production rollout.
 
+Original ingestion files are now persisted before accepting/enqueueing a new job. Local writes
+use a temporary file followed by non-overwriting publication; Blob writes use `If-None-Match: *`.
+The stored original cannot be silently replaced through the artifact API. A SHA-256 binds it to
+the accepted job, and both processing and original-file retrieval check that binding. Document
+queue tickets contain identifiers and a filename, not the only in-memory PDF copy. The worker
+also rechecks the stored submitter's processing permission. Document metadata/dispatch recovery
+and distributed ownership are the next ingestion prerequisites; original-file persistence alone
+does not supply them.
+
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).
 
 ```mermaid

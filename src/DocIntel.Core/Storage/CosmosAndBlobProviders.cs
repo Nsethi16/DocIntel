@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using Azure.Core;
 using Azure.Identity;
 using Azure.Storage.Blobs;
+using Azure.Storage.Blobs.Models;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using Microsoft.Azure.Cosmos;
@@ -18,6 +19,12 @@ namespace DocIntel.Core.Storage;
 /// </summary>
 public interface IArtifactStore
 {
+    Task<string> SaveOriginalPdfAsync(
+        string tenantId, string documentId, byte[] pdfBytes, CancellationToken cancellationToken = default);
+
+    Task<byte[]?> GetOriginalPdfAsync(
+        string tenantId, string documentId, CancellationToken cancellationToken = default);
+
     Task<string> SaveSlicePdfAsync(
         string tenantId,
         string documentId,
@@ -45,6 +52,52 @@ public sealed class LocalFileArtifactStore : IArtifactStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(baseDirectory);
         _baseDirectory = baseDirectory;
+    }
+
+    public async Task<string> SaveOriginalPdfAsync(
+        string tenantId, string documentId, byte[] pdfBytes, CancellationToken cancellationToken = default)
+    {
+        ValidateDocumentKey(documentId, 0);
+        ValidateOriginal(pdfBytes);
+        var directory = Path.Combine(_baseDirectory, SanitizeContainerName(tenantId), documentId);
+        Directory.CreateDirectory(directory);
+        var path = Path.Combine(directory, "original.pdf");
+        var temporary = Path.Combine(directory, Guid.NewGuid().ToString("N") + ".upload");
+        try
+        {
+            await using (var stream = new FileStream(temporary, FileMode.CreateNew,
+                FileAccess.Write, FileShare.None, 4096, FileOptions.Asynchronous))
+            {
+                await stream.WriteAsync(pdfBytes, cancellationToken);
+                await stream.FlushAsync(cancellationToken);
+                stream.Flush(flushToDisk: true);
+            }
+            cancellationToken.ThrowIfCancellationRequested();
+            File.Move(temporary, path, overwrite: false);
+            return path;
+        }
+        finally
+        {
+            File.Delete(temporary);
+        }
+    }
+
+    public async Task<byte[]?> GetOriginalPdfAsync(
+        string tenantId, string documentId, CancellationToken cancellationToken = default)
+    {
+        ValidateDocumentKey(documentId, 0);
+        var path = Path.Combine(_baseDirectory, SanitizeContainerName(tenantId), documentId, "original.pdf");
+        if (!File.Exists(path)) return null;
+        if (new FileInfo(path).Length > 25 * 1024 * 1024)
+            throw new InvalidDataException("The stored original PDF exceeds the supported size.");
+        return await File.ReadAllBytesAsync(path, cancellationToken);
+    }
+
+    internal static void ValidateOriginal(byte[] pdfBytes)
+    {
+        ArgumentNullException.ThrowIfNull(pdfBytes);
+        if (pdfBytes.Length is < 5 or > 25 * 1024 * 1024 || !pdfBytes.AsSpan().StartsWith("%PDF-"u8))
+            throw new InvalidDataException("An original artifact must be a PDF of at most 25 MiB.");
     }
 
     public async Task<string> SaveSlicePdfAsync(
@@ -118,6 +171,44 @@ public sealed class BlobArtifactStore : IArtifactStore
     public BlobArtifactStore(BlobServiceClient blobServiceClient)
     {
         _blobServiceClient = blobServiceClient ?? throw new ArgumentNullException(nameof(blobServiceClient));
+    }
+
+    public async Task<string> SaveOriginalPdfAsync(
+        string tenantId, string documentId, byte[] pdfBytes, CancellationToken cancellationToken = default)
+    {
+        LocalFileArtifactStore.ValidateDocumentKey(documentId, 0);
+        LocalFileArtifactStore.ValidateOriginal(pdfBytes);
+        var container = _blobServiceClient.GetBlobContainerClient(LocalFileArtifactStore.SanitizeContainerName(tenantId));
+        await container.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
+        var blob = container.GetBlobClient($"{documentId}/original.pdf");
+        await blob.UploadAsync(BinaryData.FromBytes(pdfBytes), new BlobUploadOptions
+        {
+            Conditions = new BlobRequestConditions { IfNoneMatch = Azure.ETag.All },
+            HttpHeaders = new BlobHttpHeaders { ContentType = "application/pdf" }
+        }, cancellationToken);
+        return blob.Uri.ToString();
+    }
+
+    public async Task<byte[]?> GetOriginalPdfAsync(
+        string tenantId, string documentId, CancellationToken cancellationToken = default)
+    {
+        LocalFileArtifactStore.ValidateDocumentKey(documentId, 0);
+        var blob = _blobServiceClient.GetBlobContainerClient(LocalFileArtifactStore.SanitizeContainerName(tenantId))
+            .GetBlobClient($"{documentId}/original.pdf");
+        try
+        {
+            var downloaded = await blob.DownloadStreamingAsync(new BlobDownloadOptions(), cancellationToken);
+            await using var stream = downloaded.Value.Content;
+            if (downloaded.Value.Details.ContentLength > 25 * 1024 * 1024)
+                throw new InvalidDataException("The stored original PDF exceeds the supported size.");
+            using var content = new MemoryStream();
+            await stream.CopyToAsync(content, cancellationToken);
+            return content.ToArray();
+        }
+        catch (Azure.RequestFailedException exception) when (exception.Status == 404)
+        {
+            return null;
+        }
     }
 
     public async Task<string> SaveSlicePdfAsync(

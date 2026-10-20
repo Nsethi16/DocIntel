@@ -168,8 +168,10 @@ public sealed class AskAiRunProcessor(
         {
             run.ErrorCode = "ExecutionFailed";
             run.ErrorMessage = "Ask AI could not complete this request. Check the model configuration or try again.";
-            logger.LogError("Ask AI run {RunId} failed with {ErrorType}; root cause {CauseType}.",
-                run.RunId, exception.GetType().Name, exception.GetBaseException().GetType().Name);
+            var cause = exception.GetBaseException();
+            logger.LogError("Ask AI run {RunId} failed with {ErrorType}; root cause {CauseType}; code {Code}; site {Site}.",
+                run.RunId, exception.GetType().Name, cause.GetType().Name, cause.HResult & 0xffff,
+                cause.TargetSite?.DeclaringType?.Name + "." + cause.TargetSite?.Name);
         }
 
         run.Status = stoppingToken.IsCancellationRequested ? JobStatus.Queued : JobStatus.Failed;

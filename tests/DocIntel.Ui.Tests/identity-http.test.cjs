@@ -329,10 +329,16 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
             if (job.status === 'Completed' || job.status === 'Failed') break;
             await new Promise(resolve => setTimeout(resolve, 100));
           }
-          assert.equal(job.status, 'Completed', job.errorMessage);
+          assert.equal(job.status, 'Completed', `${job.errorMessage || ''}\n${api.getLogs()}`);
           assert.ok(job.segments.length > 0);
           assert.equal(job.hasDevelopmentResults, false);
           assert.equal(job.modelIdUsed, null);
+          assert.equal(job.originalSha256, crypto.createHash('sha256').update(Buffer.from(pdf)).digest('hex').toUpperCase());
+          const original = `${tenantPath}/jobs/${job.jobId}/original`;
+          const stored = await request(original, processor);
+          assert.equal(stored.status, 200);
+          assert.deepEqual(Buffer.from(await stored.arrayBuffer()), Buffer.from(pdf));
+          assert.equal((await request(original, reader)).status, 404);
         } finally {
           assert.equal((await request(tenantPath, administrator, 'PUT', original)).status, 200);
         }
@@ -368,7 +374,7 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
           question: 'Find an accessible document.'
         });
         const answer = await response.json();
-        assert.equal(response.status, 200, JSON.stringify(answer));
+        assert.equal(response.status, 200, `${JSON.stringify(answer)}\n${api.getLogs()}`);
         assert.equal(answer.citations.length, 1);
         assert.equal(answer.citations[0].jobId, allowedDocumentId);
         assert.ok(answer.executedCosmosQueries[0].includes('@authorizedJobIds'));
@@ -385,8 +391,9 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
       });
       await t.test('only an explicitly mapped service principal can use app-only access grants', async () => {
         const service = signToken(issuer, apiClientId, { oid: serviceId, sub: serviceId, roles: ['DocIntel.Access'] });
-        assert.equal((await request(tenantPath + '/ask/webhooks/email', service, 'POST',
-          { body: 'Hi', from: 'untrusted-sender@example.invalid' })).status, 200);
+        const delivered = await request(tenantPath + '/ask/webhooks/email', service, 'POST',
+          { body: 'Hi', from: 'untrusted-sender@example.invalid' });
+        assert.equal(delivered.status, 200, `${await delivered.text()}\n${api.getLogs()}`);
         const unknown = signToken(issuer, apiClientId, {
           oid: crypto.randomUUID(), roles: ['DocIntel.Access']
         });
@@ -462,6 +469,9 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         assert.ok(after.every(job => !(job.promptColumnResults || [])
           .some(result => result.columnId === 'must-not-run-on-read')));
       });
+      const workerFailures = api.getLogs().split('\n')
+        .filter(line => line.includes('failed with') || line.includes('could not be processed:'));
+      if (workerFailures.length) console.error('Safe worker error diagnostics:', workerFailures.join('\n'));
       assert.deepEqual(providerErrors, []);
     } finally {
       await killApi(api);

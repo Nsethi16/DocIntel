@@ -8,6 +8,52 @@ public sealed class ArtifactIsolationTests : IDisposable
     private readonly string _directory = Path.Combine(Path.GetTempPath(), "DocIntel.Artifacts.Tests",
         Guid.NewGuid().ToString("N"));
 
+    [Fact]
+    public async Task Original_Uploads_Are_Readable_After_The_Artifact_Store_Is_Recreated()
+    {
+        // Arrange
+        var bytes = "%PDF-Original bytes"u8.ToArray();
+        var first = new LocalFileArtifactStore(_directory);
+        await first.SaveOriginalPdfAsync("tenant", "one", bytes);
+
+        // Act
+        var restarted = new LocalFileArtifactStore(_directory);
+        var original = await restarted.GetOriginalPdfAsync("tenant", "one");
+
+        // Assert
+        Assert.Equal(bytes, original);
+        Assert.Null(await restarted.GetOriginalPdfAsync("other-tenant", "one"));
+    }
+
+    [Fact]
+    public async Task A_Persisted_Original_Cannot_Be_Silently_Replaced()
+    {
+        // Arrange
+        var store = new LocalFileArtifactStore(_directory);
+        var original = "%PDF-Original"u8.ToArray();
+        await store.SaveOriginalPdfAsync("tenant", "one", original);
+
+        // Act / Assert
+        await Assert.ThrowsAsync<IOException>(() =>
+            store.SaveOriginalPdfAsync("tenant", "one", "%PDF-Replacement"u8.ToArray()));
+        Assert.Equal(original, await store.GetOriginalPdfAsync("tenant", "one"));
+        Assert.Empty(Directory.GetFiles(_directory, "*.upload", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task Canceled_Original_Uploads_Do_Not_Expose_A_Partial_Source_File()
+    {
+        // Arrange
+        var store = new LocalFileArtifactStore(_directory);
+        using var canceled = new CancellationTokenSource();
+        canceled.Cancel();
+
+        // Act / Assert
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            store.SaveOriginalPdfAsync("tenant", "one", "%PDF-Original"u8.ToArray(), canceled.Token));
+        Assert.Null(await store.GetOriginalPdfAsync("tenant", "one"));
+    }
+
     [Theory]
     [InlineData("a_b", "a-b")]
     [InlineData("Tenant", "tenant")]

@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Text.Json.Serialization;
 using System.Threading.Channels;
 using DocIntel.Core.Features.DocumentSplitting;
+using DocIntel.Core.Authorization;
 
 namespace DocIntel.Core.Jobs;
 
@@ -45,6 +46,12 @@ public sealed class DocumentJob
 
     public string? ErrorMessage { get; set; }
 
+    public string? OriginalPdfLocation { get; set; }
+
+    public string? OriginalSha256 { get; set; }
+
+    public ActorIdentity? SubmittedBy { get; init; }
+
     public int TotalPages { get; set; }
 
     public string StrategyUsed { get; set; } = "Pending";
@@ -70,7 +77,7 @@ public sealed class DocumentJob
     public DateTimeOffset? CompletedAtUtc { get; set; }
 }
 
-public sealed record JobQueueTicket(string JobId, string TenantId, string FileName, byte[] PdfBytes);
+public sealed record JobQueueTicket(string JobId, string TenantId, string FileName);
 
 public interface IJobStore
 {

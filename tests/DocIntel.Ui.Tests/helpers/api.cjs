@@ -50,7 +50,7 @@ async function startApi(directory, settings = {}, { environment = 'Development',
       }
     });
   });
-  return { child, url };
+  return { child, url, getLogs: () => output };
 }
 
 async function killApi(api) {
