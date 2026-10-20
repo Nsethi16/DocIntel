@@ -34,7 +34,8 @@ dotnet test DocIntel.slnx -c Release
 dotnet build src\DocIntel.Api\DocIntel.Api.csproj -c Release
 node --test tests\DocIntel.Ui.Tests\ask-ai.test.cjs tests\DocIntel.Ui.Tests\identity-client.test.cjs `
   tests\DocIntel.Ui.Tests\identity-http.test.cjs tests\DocIntel.Ui.Tests\ask-ai-restart.test.cjs `
-  tests\DocIntel.Ui.Tests\document-restart.test.cjs tests\DocIntel.Ui.Tests\admin-ocr.test.cjs
+  tests\DocIntel.Ui.Tests\document-restart.test.cjs tests\DocIntel.Ui.Tests\admin-ocr.test.cjs `
+  tests\DocIntel.Ui.Tests\evidence.test.cjs
 ```
 
 Local development uses explicit loopback-only access. It is not an authentication mode for a
@@ -146,6 +147,27 @@ Tenant-wide administrators can use `GET/PUT .../tenants/{tenantId}/ocr-budget` a
 `GET .../tenants/{tenantId}/ocr-usage?period=yyyy-MM` under `/api/harness`. Writes require the current
 policy `version` and browser CSRF protection; stale edits return 409. Readers, processors and
 document-restricted administrators cannot inspect or change tenant-wide usage controls.
+
+## Field source evidence
+
+Entities, structured fields and table cells retain their existing numeric model scores and add
+`provenance` / `confidenceSignals`. A unique whole-word value occurrence within its own original
+document slice receives actual word IDs and normalized polygons. Matching normalizes whitespace
+and compares ordinally ignoring case; it does not remove punctuation, translate, infer, fuzzy-match,
+join across pages or pick the first of several occurrences. Ambiguous, absent, incomplete and
+over-64-word reference cases remain explicit and do not acquire invented coordinates. Jobs also
+cap attached word references at 1,024 to keep duplicated metadata bounded; excess values receive
+an explicit reference-limit status, never partial geometry.
+
+The workspace labels **Model score**, never calibrated confidence, and distinguishes exact source
+text from ambiguous/unavailable evidence. Exact matches link to the original PDF page, not a
+translated page with unrelated coordinates. Text occurrence alone is not proof that the field
+label or meaning is correct, and it is not human approval. Model and grounding signals are
+separate; they are not averaged into a misleading probability.
+
+Ask AI receives lightweight source-occurrence status without heavy polygon arrays; original
+bounded text remains its citation evidence. Prompt-cache fingerprints track actual entity inputs,
+not added provenance annotations, so grounding does not force an unnecessary reevaluation.
 
 ## Identity and document access
 

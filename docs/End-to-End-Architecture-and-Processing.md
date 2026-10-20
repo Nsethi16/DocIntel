@@ -232,7 +232,7 @@ Both local and Blob writes are non-overwriting; local publication uses the same 
 flush / atomic-move helper as immutable originals. Blob uses `If-None-Match: *`. The process-crash
 regression verifies word IDs survive restart and stale-attempt layout changes cannot change the
 public route. Storage integrity does not by itself prove OCR accuracy or field-value entailment.
-Value-level grounding and the review/export surfaces remain subsequent work.
+The review/export surfaces remain subsequent work.
 
 The extraction stage now applies the accepted `Ocr.Mode` before publishing layout evidence and
 before boundary detection. `Auto` selects pages with fewer than 50 body characters and image
@@ -297,6 +297,33 @@ Budget edits do not change document harness versions. The Admin panel ignores st
 does not automatically retry unconfirmed mutations and requires reload after an edit conflict.
 Cookie writes require the normal CSRF token. Threshold crossings and rejections generate
 structured warnings; live monitoring alert provisioning and invoice reconciliation are separate.
+
+### Value-level source occurrence grounding
+
+After typed extraction/prompt evaluation, `GroundExtractedValuesExecutor` builds a page-local
+word index from the actual original layout. It attaches additive provenance to entities, structured
+fields and every table cell while preserving their existing values and numeric score contracts.
+Only a unique whole-word occurrence within that slice's original page range is marked
+`ExactTextMatch`. Whitespace is normalized and case comparison is ordinal-ignore-case. Punctuation,
+currency symbols, translations and cross-page concatenations are not guessed. A second occurrence
+produces `Ambiguous` with no arbitrarily chosen geometry; missing/incomplete source words remain
+`Unavailable`. References exceeding 64 words per value or 1,024 attached words per job are explicit
+rather than partially cited; heavy job annotations must not grow without bounds.
+
+An exact match contains the actual original word IDs/polygons and a bounded original-text excerpt.
+Model scores are normalized separately (entities 0-1, structured values 0-100), retain zero and
+unknown signals, and stay `Calibrated=false`. Grounding score describes text presence only.
+There is deliberately no fused average or probability claim before validated calibration/review.
+The UI labels model scores accordingly, displays occurrence status and links exact matches to the
+authorized immutable original PDF page. It does not claim a bounding-box overlay or semantic
+entailment merely because the text appears.
+
+The job retains field annotations, but Ask AI tool projections omit heavy geometry while retaining
+values, scores and occurrence status so large annotation arrays cannot crowd out source text.
+Prompt fingerprints omit provenance-only annotations because prompt entity context is unchanged.
+Regression tests cover actual PDF words, table/entity consistency, slice isolation, ambiguity,
+incomplete scans, substring/currency/translation rejection, zero scores, annotation size limits,
+cache stability and bounded native Ask AI tool payloads.
 
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).
 

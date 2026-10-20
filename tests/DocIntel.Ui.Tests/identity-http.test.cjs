@@ -306,6 +306,25 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
       assert.ok(jobs.every(job => job.hasDevelopmentResults === true));
       allowedDocumentId = jobs[0].jobId;
       const forbiddenDocumentId = jobs[1].jobId;
+      await t.test('field evidence uses actual authorized layout words and does not claim calibrated confidence', async () => {
+        const candidates = jobs.flatMap(job => job.segments.flatMap(segment =>
+          (segment.extractedEntities || []).map(entity => ({ job, segment, entity }))));
+        assert.ok(candidates.length > 0);
+        assert.ok(candidates.every(candidate => candidate.entity.confidenceSignals?.calibrated === false));
+        const selected = candidates.find(candidate => candidate.entity.provenance?.status === 'ExactTextMatch');
+        assert.ok(selected, 'Expected at least one exact occurrence in the native seed source.');
+        const layoutResponse = await request(selected.job.layoutUrl, processor);
+        assert.equal(layoutResponse.status, 200);
+        const layout = await layoutResponse.json();
+        const words = new Map(layout.pages.flatMap(page => page.words.map(word => [word.id, word])));
+        for (let index = 0; index < selected.entity.provenance.wordIds.length; index++) {
+          const word = words.get(selected.entity.provenance.wordIds[index]);
+          assert.ok(word);
+          assert.deepEqual(selected.entity.provenance.boxes[index], word.box);
+          assert.ok(word.box.page >= selected.segment.startPage && word.box.page <= selected.segment.endPage);
+        }
+        assert.equal(selected.entity.confidenceSignals.groundingScore, 1);
+      });
 
       await t.test('uploads without an actual valid PDF do not create implicit sample documents', async () => {
         assert.equal((await request(tenantPath + '/jobs', processor, 'POST', {})).status, 400);

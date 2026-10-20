@@ -12,6 +12,8 @@ using Microsoft.Extensions.AI;
 using Moq;
 using Xunit;
 
+using DocIntel.Core.Evidence;
+
 namespace DocIntel.Tests;
 
 public sealed class ProcessingTrustTests
@@ -166,6 +168,35 @@ public sealed class ProcessingTrustTests
         // Assert
         Assert.Equal("Second.", job.PromptColumnResults[0].ResultText);
         Assert.NotEqual(previousFingerprint, job.PromptColumnResults[0].InputFingerprint);
+    }
+
+    [Fact]
+    public async Task Grounding_Metadata_Does_Not_Invalidate_Unchanged_Prompt_Input()
+    {
+        // Arrange
+        var tenant = CreateTenant("phi-4");
+        var job = CreateJob();
+        job.Segments[0].ExtractedEntities = [new ExtractedEntity("Customer", "Woodgrove", "Party", 0.9)];
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "{\"result\":\"Same input.\"}")));
+        var catalog = Catalog(client.Object, modelId: "phi-4");
+        await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, tenant, catalog);
+        var fingerprint = job.PromptColumnResults[0].InputFingerprint;
+        job.Segments[0].ExtractedEntities = [job.Segments[0].ExtractedEntities[0] with
+        {
+            Provenance = new ValueProvenance(GroundingStatus.NotFound, [], [], null),
+            ConfidenceSignals = new ConfidenceSignals(0.9, 0)
+        }];
+
+        // Act
+        await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, tenant, catalog);
+
+        // Assert
+        Assert.Equal(fingerprint, job.PromptColumnResults[0].InputFingerprint);
+        client.Verify(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

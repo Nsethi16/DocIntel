@@ -1634,6 +1634,7 @@
 
   <script src="/identity.js"></script>
   <script src="/ask-ai.js"></script>
+  <script src="/evidence.js"></script>
   <script>
     let tenants = [];
     let currentTenant = null;
@@ -1893,6 +1894,22 @@
 
     function escapeJsArg(value) {
       return escapeHtml(JSON.stringify(String(value ?? '')));
+    }
+
+    function formatModelScore(value, scale) {
+      const info = DocIntelEvidence.describe(value, scale);
+      return info.modelPercent === null ? 'Unknown model score' : `Model score ${info.modelPercent}%`;
+    }
+
+    function renderValueProvenance(value, job, scale) {
+      const info = DocIntelEvidence.describe(value, scale);
+      const source = job?.tenantId && job?.jobId
+        ? `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/original`
+        : null;
+      const links = source ? info.pages.map(page =>
+        `<a class="text-link-btn" href="${escapeHtml(source)}#page=${page}" target="_blank" rel="noopener noreferrer">Original p.${page}</a>`
+      ).join(' ') : '';
+      return `<div style="font-size:11px;color:var(--text-muted);" title="${escapeHtml(info.tooltip)}">${escapeHtml(info.status)}${links ? ' · ' + links : ''}</div>`;
     }
 
     function showToast(msg) {
@@ -2614,20 +2631,20 @@
                   <th>Value</th>
                   <th>Category</th>
                   <th>Source</th>
-                  <th>Confidence</th>
+                  <th>Model score</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 ${filteredEntities.map(e => {
-                  const pct = Math.round((e.confidence <= 1 ? e.confidence * 100 : e.confidence));
+                  const info = DocIntelEvidence.describe(e, 1);
                   return `
                     <tr>
                       <td style="color:var(--text-secondary);">${escapeHtml(e.name)}</td>
                       <td style="font-weight:600;color:var(--text-primary);">${escapeHtml(e.value)}</td>
                       <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(e.category || 'Entity')}</td>
-                      <td><button type="button" class="text-link-btn" onclick="jumpToSlicePdf(${e.sliceIndex})">Slice ${e.sliceNum} (p.${escapeHtml(e.pageRange)}) ↗</button></td>
-                      <td style="color:var(--text-secondary);font-size:12.5px;">${pct}%</td>
+                      <td><button type="button" class="text-link-btn" onclick="jumpToSlicePdf(${e.sliceIndex})">Slice ${e.sliceNum} (p.${escapeHtml(e.pageRange)}) ↗</button>${renderValueProvenance(e, job, 1)}</td>
+                      <td title="${escapeHtml(info.tooltip)}" style="color:var(--text-secondary);font-size:12.5px;">${info.modelPercent === null ? 'Unknown' : info.modelPercent + '%'}</td>
                       <td style="text-align:right;"><button type="button" class="text-link-btn" onclick="copyTextValue(${escapeJsArg(e.value)})">Copy</button></td>
                     </tr>
                   `;
@@ -2664,8 +2681,8 @@
             <dl class="kv-grid">
               ${de.fields.map(f => `
                 <div class="kv-item">
-                  <dt>${escapeHtml(f.fieldName)} <span style="color:var(--text-muted);">(${Math.round(f.confidenceValue)}%)</span></dt>
-                  <dd>${escapeHtml(f.fieldValue || '—')}</dd>
+                  <dt>${escapeHtml(f.fieldName)} <span style="color:var(--text-muted);" title="${escapeHtml(DocIntelEvidence.describe(f, 100).tooltip)}">(${formatModelScore(f, 100)})</span></dt>
+                  <dd>${escapeHtml(f.fieldValue || '—')}${renderValueProvenance(f, job, 100)}</dd>
                 </div>
               `).join('')}
             </dl>
@@ -2684,7 +2701,7 @@
                     </thead>
                     <tbody>
                       ${rows.map(r => `
-                        <tr>${(r.fields || []).map(cell => `<td>${escapeHtml(cell.fieldValue)}</td>`).join('')}</tr>
+                        <tr>${(r.fields || []).map(cell => `<td title="${escapeHtml(DocIntelEvidence.describe(cell, 100).tooltip)}">${escapeHtml(cell.fieldValue)}${renderValueProvenance(cell, job, 100)}</td>`).join('')}</tr>
                       `).join('')}
                     </tbody>
                   </table>

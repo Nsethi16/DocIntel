@@ -617,8 +617,27 @@ public sealed class AskAiOrchestrator
                     nextTextOffset = textOffset + sourceText.Length < slice.BodyText.Length
                         ? (int?)(textOffset + sourceText.Length) : null,
                     slice.InsightSummary,
-                    slice.ExtractedEntities,
-                    slice.DataExtraction,
+                    ExtractedEntities = slice.ExtractedEntities.Select(entity => new
+                    {
+                        name = entity.Name,
+                        value = entity.Value,
+                        category = entity.Category,
+                        confidence = entity.Confidence,
+                        confidenceSignals = entity.ConfidenceSignals,
+                        sourceOccurrenceStatus = entity.Provenance?.Status
+                    }),
+                    DataExtraction = slice.DataExtraction is not { } data ? null : new
+                    {
+                        documentName = data.DocumentName,
+                        footerId = data.FooterId,
+                        pageRange = data.PageRange,
+                        fields = data.Fields.Select(InspectField),
+                        tables = data.Tables.Select(table => new
+                        {
+                            tableName = table.TableName,
+                            rows = table.Rows.Select(row => new { fields = row.Fields.Select(InspectField) })
+                        })
+                    },
                     promptResults = slice.PromptColumnResults.Where(p => p.FilterMatched).Select(p => new
                     {
                         p.ColumnId,
@@ -672,6 +691,9 @@ public sealed class AskAiOrchestrator
                 hasDevelopmentResults=true means derived results include development simulation;
                 null means legacy provenance is unknown. Ground factual claims in original source text,
                 not those unverified derived results.
+                confidenceSignals are uncalibrated model/text-presence signals, not probabilities.
+                ExactTextMatch only means a value occurs uniquely in source text, not that the field meaning
+                was verified or a human approved it. Heavy word polygons are excluded from tool payloads.
                 Return JSON: kind is Conversation, Clarification, NoEvidence, or DocumentAnswer.
                 answer is a friendly Markdown response; evidenceIds lists ONLY evidenceIds you
                 actually used, in citation order. Inline [1], [2], etc. refer to that list. Every document-specific
@@ -750,6 +772,15 @@ public sealed class AskAiOrchestrator
         return run;
     }
 
+    private static object InspectField(ExtractedFieldValue field) => new
+    {
+        fieldName = field.FieldName,
+        fieldValue = field.FieldValue,
+        confidenceValue = field.ConfidenceValue,
+        confidenceSignals = field.ConfidenceSignals,
+        sourceOccurrenceStatus = field.Provenance?.Status
+    };
+
     private sealed class GuardedFunction(
         AIFunction innerFunction,
         Action checkBudget,
@@ -764,6 +795,7 @@ public sealed class AskAiOrchestrator
                 checkBudget();
                 return await base.InvokeCoreAsync(arguments, cancellationToken);
             }
+
             catch (Exception exception)
             {
                 onFailure(exception);

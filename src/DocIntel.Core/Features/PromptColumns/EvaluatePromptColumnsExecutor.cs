@@ -269,13 +269,20 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
                     }
                     inputFingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
                     {
-                        version = 2,
+                        version = 3,
                         docName,
                         modelId,
                         supportsPdf,
                         simulationUsed,
                         text = !String.IsNullOrWhiteSpace(slice.TranslatedText) ? slice.TranslatedText : slice.BodyText,
-                        slice.ExtractedEntities,
+                        ExtractedEntities = slice.ExtractedEntities.Select(entity => new
+                        {
+                            entity.Name,
+                            entity.Value,
+                            entity.Category,
+                            entity.Confidence,
+                            entity.SourceSliceIndex
+                        }),
                         pdfHash = pdfBytes is null ? null : Convert.ToHexString(SHA256.HashData(pdfBytes))
                     })));
                 }

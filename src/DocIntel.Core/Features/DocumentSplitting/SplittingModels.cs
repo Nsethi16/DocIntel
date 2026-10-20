@@ -46,7 +46,9 @@ public sealed class PageLayout
 public sealed record ExtractedFieldValue(
     [property: JsonPropertyName("fieldName")] string FieldName,
     [property: JsonPropertyName("fieldValue")] string FieldValue,
-    [property: JsonPropertyName("confidenceValue")] double ConfidenceValue = 0);
+    [property: JsonPropertyName("confidenceValue")] double ConfidenceValue = 0,
+    [property: JsonPropertyName("provenance")] ValueProvenance? Provenance = null,
+    [property: JsonPropertyName("confidenceSignals")] ConfidenceSignals? ConfidenceSignals = null);
 
 /// <summary>
 /// Represents a single extracted table row containing column values.
@@ -99,7 +101,9 @@ public sealed record ExtractedEntity(
     [property: JsonPropertyName("value")] string Value,
     [property: JsonPropertyName("category")] string Category,
     [property: JsonPropertyName("confidence")] double Confidence = 0,
-    [property: JsonPropertyName("sourceSliceIndex")] int? SourceSliceIndex = null);
+    [property: JsonPropertyName("sourceSliceIndex")] int? SourceSliceIndex = null,
+    [property: JsonPropertyName("provenance")] ValueProvenance? Provenance = null,
+    [property: JsonPropertyName("confidenceSignals")] ConfidenceSignals? ConfidenceSignals = null);
 
 /// <summary>
 /// Represents a single logical sub-document identified and sliced from a multi-document file.

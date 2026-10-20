@@ -102,6 +102,7 @@ public sealed class DocumentSplittingWorkflow
         var entityExecutor = new ExtractEntitiesExecutor(_modelCatalog);
         var dataExtractionExecutor = new ExtractDocumentDataExecutor(_modelCatalog);
         var promptColumnsExecutor = new EvaluatePromptColumnsExecutor(_modelCatalog, _artifactStore);
+        var groundingExecutor = new GroundExtractedValuesExecutor();
 
         var workflow = new WorkflowBuilder(extractExecutor)
             .AddEdge(extractExecutor, detectExecutor)
@@ -112,7 +113,8 @@ public sealed class DocumentSplittingWorkflow
             .AddEdge(insightExecutor, entityExecutor)
             .AddEdge(entityExecutor, dataExtractionExecutor)
             .AddEdge(dataExtractionExecutor, promptColumnsExecutor)
-            .WithOutputFrom(promptColumnsExecutor)
+            .AddEdge(promptColumnsExecutor, groundingExecutor)
+            .WithOutputFrom(groundingExecutor)
             .Build();
 
         await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, state, cancellationToken: cancellationToken);

@@ -176,7 +176,7 @@ public sealed class DocumentSplitAndGroupTests : IDisposable
 
         // Assert
         Assert.Null(completed.ModelIdUsed);
-        Assert.Equal(9, completed.ExecutionTrace.Count);
+        Assert.Equal(10, completed.ExecutionTrace.Count);
         Assert.Equal(2, completed.Slices.Count);
 
         Assert.Equal("Master Business Service Agreement", completed.Slices[0].DocumentTypeName);

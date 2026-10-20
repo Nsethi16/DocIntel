@@ -10,6 +10,8 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
 
+using DocIntel.Core.Evidence;
+
 namespace DocIntel.Tests;
 
 public sealed class AskAiAgentTests
@@ -104,6 +106,31 @@ public sealed class AskAiAgentTests
         Assert.Equal("p.2-3", citation.PageRange);
         Assert.Equal("source.pdf", citation.FileName);
         Assert.Contains("tenant-one", citation.PdfUrl);
+    }
+
+    [Fact]
+    public async Task Heavy_Field_Geometry_Does_Not_Exhaust_The_Ask_Ai_Tool_Payload()
+    {
+        // Arrange
+        var store = await CreateDocumentStoreAsync();
+        var job = (await store.GetJobAsync("source", tenantId: "tenant-one"))!;
+        var boxes = Enumerable.Range(0, 64)
+            .Select(_ => new BoundingBox(2, [0.1, 0.1, 0.2, 0.1, 0.2, 0.2, 0.1, 0.2])).ToArray();
+        var provenance = new ValueProvenance(GroundingStatus.ExactTextMatch,
+            Enumerable.Range(0, 64).Select(index => $"w_2_{index}").ToArray(), boxes, "Source");
+        job.Segments[0].ExtractedEntities = Enumerable.Range(0, 15).Select(index =>
+            new ExtractedEntity("Field" + index, "Value" + index, "Party", 0.9, 0, provenance,
+                new ConfidenceSignals(0.9, 1))).ToList();
+        Assert.True(JsonSerializer.Serialize(job.Segments[0].ExtractedEntities).Length > 32_000);
+        var orchestrator = CreateOrchestrator(store,
+            SearchCall(), InspectCall(), Final("DocumentAnswer", "The source is available [1].", "e1"));
+
+        // Act
+        var run = await orchestrator.ExecuteRunAsync(CreateRun());
+
+        // Assert
+        Assert.Equal(JobStatus.Completed, run.Status);
+        Assert.Single(run.Citations);
     }
 
     [Fact]
