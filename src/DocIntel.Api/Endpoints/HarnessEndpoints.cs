@@ -446,7 +446,14 @@ public static class HarnessEndpoints
                 run.CreatedAtUtc,
                 run.StartedAtUtc,
                 run.ExecutionAttempts,
-                run.CompletedAtUtc
+                run.CompletedAtUtc,
+                delivery = run.ChannelDelivery is null ? null : new
+                {
+                    status = run.ChannelDelivery.Status.ToString(),
+                    run.ChannelDelivery.ErrorCode,
+                    run.ChannelDelivery.AttemptedAtUtc,
+                    run.ChannelDelivery.SentAtUtc
+                }
             });
         });
 

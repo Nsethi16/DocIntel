@@ -1,4 +1,5 @@
 using DocIntel.Core.Jobs;
+using DocIntel.Core.Channels;
 using Microsoft.Extensions.Logging;
 
 namespace DocIntel.Core.Features.AskAi;
@@ -66,7 +67,8 @@ public sealed class AskAiRunProcessor(
     IAskAiRunStore runStore,
     AskAiOrchestrator orchestrator,
     AskAiExecutionOptions options,
-    ILogger<AskAiRunProcessor> logger)
+    ILogger<AskAiRunProcessor> logger,
+    ChannelDeliveryProcessor? delivery = null)
 {
     public async Task<AskAiRun> ExecuteInlineAsync(AskAiRun run, CancellationToken cancellationToken = default)
     {
@@ -97,6 +99,13 @@ public sealed class AskAiRunProcessor(
             return;
         }
         var run = lease.Run;
+        if (run.Status == JobStatus.Completed && run.ChannelDelivery is not null)
+        {
+            if (delivery is null)
+                throw new InvalidOperationException("Trusted channel delivery requires a configured delivery processor.");
+            await delivery.ProcessAsync(lease, stoppingToken);
+            return;
+        }
         if (run.Status is JobStatus.Completed or JobStatus.Failed)
         {
             logger.LogDebug("Skipping Ask AI ticket {RunId} in state {Status}.", ticket.RunId, run.Status);
@@ -183,6 +192,11 @@ public sealed class AskAiRunProcessor(
 
     private static void ClearAnswer(AskAiRun run)
     {
+        if (run.Status == JobStatus.Failed && run.ChannelDelivery is not null)
+        {
+            run.ChannelDelivery.Status = ChannelDeliveryStatus.Failed;
+            run.ChannelDelivery.ErrorCode = "QuestionExecutionFailed";
+        }
         run.Answer = null;
         run.Citations.Clear();
         run.EmailHtmlBody = null;

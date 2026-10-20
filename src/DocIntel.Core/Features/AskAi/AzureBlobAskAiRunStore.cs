@@ -6,6 +6,7 @@ using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using Azure.Storage.Blobs.Specialized;
 using DocIntel.Core.Jobs;
+using DocIntel.Core.Channels;
 using Microsoft.Extensions.Logging;
 
 namespace DocIntel.Core.Features.AskAi;
@@ -76,6 +77,26 @@ public sealed class AzureBlobAskAiRunStore(
         return null;
     }
 
+    public async Task<bool> TryCreateRunAsync(AskAiRun run, CancellationToken cancellationToken = default)
+    {
+        if (run.SchemaVersion != 1) throw new InvalidDataException("Unsupported Ask AI snapshot schema.");
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(run);
+        if (bytes.Length > MaximumSnapshotBytes) throw new InvalidDataException("The Ask AI snapshot is too large.");
+        var blob = container.GetBlobClient(Name(run.TenantId, run.RunId));
+        try
+        {
+            await blob.UploadAsync(BinaryData.FromBytes(bytes), new BlobUploadOptions
+            {
+                Conditions = new BlobRequestConditions { IfNoneMatch = ETag.All },
+                Metadata = RunMetadata(run)
+            }, cancellationToken);
+            return true;
+        }
+        catch (RequestFailedException exception) when (exception.Status == 412 ||
+            exception.Status == 409 && exception.ErrorCode == "BlobAlreadyExists")
+        { return false; }
+    }
+
     public async Task<IReadOnlyList<AskAiQueueTicket>> ListUnfinishedRunsAsync(
         int maxCount, CancellationToken cancellationToken = default)
     {
@@ -85,9 +106,12 @@ public sealed class AzureBlobAskAiRunStore(
         await foreach (var item in container.GetBlobsAsync(
             BlobTraits.Metadata, BlobStates.None, "v1/", cancellationToken))
         {
+            item.Metadata.TryGetValue("status", out var status);
+            item.Metadata.TryGetValue("delivery", out var delivery);
+            var pendingDelivery = status == nameof(JobStatus.Completed) && delivery is
+                    nameof(ChannelDeliveryStatus.Pending) or nameof(ChannelDeliveryStatus.Sending);
             if (item.Properties.LeaseState == LeaseState.Leased ||
-                !item.Metadata.TryGetValue("status", out var status) ||
-                status is not (nameof(JobStatus.Queued) or nameof(JobStatus.Running)))
+                status is not (nameof(JobStatus.Queued) or nameof(JobStatus.Running)) && !pendingDelivery)
             {
                 continue;
             }
@@ -164,14 +188,17 @@ public sealed class AzureBlobAskAiRunStore(
         await blob.UploadAsync(BinaryData.FromBytes(bytes), new BlobUploadOptions
         {
             Conditions = leaseId is null ? null : new BlobRequestConditions { LeaseId = leaseId },
-            Metadata = new Dictionary<string, string>
-            {
-                ["status"] = run.Status.ToString(),
-                ["tenant"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(run.TenantId)),
-                ["run"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(run.RunId))
-            }
+            Metadata = RunMetadata(run)
         }, cancellationToken);
     }
+
+    private static Dictionary<string, string> RunMetadata(AskAiRun run) => new()
+    {
+        ["status"] = run.Status.ToString(),
+        ["tenant"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(run.TenantId)),
+        ["run"] = Convert.ToBase64String(Encoding.UTF8.GetBytes(run.RunId)),
+        ["delivery"] = run.ChannelDelivery?.Status.ToString() ?? nameof(ChannelDeliveryStatus.None)
+    };
 
     private static async Task ReleaseAsync(BlobLeaseClient lease, string runId, ILogger logger)
     {

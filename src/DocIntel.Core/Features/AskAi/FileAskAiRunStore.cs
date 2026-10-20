@@ -3,6 +3,7 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using DocIntel.Core.Jobs;
+using DocIntel.Core.Channels;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -76,6 +77,19 @@ public sealed class FileAskAiRunStore : IAskAiRunStore
         await using var gate = TryOpenLock(path)
             ?? throw new InvalidOperationException("This run is leased; save through the owning lease.");
         await WriteAsync(path, run, cancellationToken);
+    }
+
+    public async Task<bool> TryCreateRunAsync(AskAiRun run, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        var path = GetPath(run.TenantId, run.RunId);
+        if (File.Exists(path)) return false;
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        await using var gate = TryOpenLock(path)
+            ?? throw new InvalidOperationException("Initial run creation is busy; retry the verified channel notification.");
+        if (await ReadAsync(path, cancellationToken) is not null) return false;
+        await WriteAsync(path, run, cancellationToken);
+        return true;
     }
 
     public async Task<AskAiRun?> GetRunAsync(
@@ -177,7 +191,9 @@ public sealed class FileAskAiRunStore : IAskAiRunStore
                 }
                 if (run is not null)
                 {
-                    if (run.Status is JobStatus.Queued or JobStatus.Running)
+                    if (run.Status is JobStatus.Queued or JobStatus.Running ||
+                        run.Status == JobStatus.Completed && run.ChannelDelivery?.Status is
+                            ChannelDeliveryStatus.Pending or ChannelDeliveryStatus.Sending)
                     {
                         tickets.Add(new AskAiQueueTicket(run.RunId, run.TenantId));
                         if (tickets.Count == maxCount)

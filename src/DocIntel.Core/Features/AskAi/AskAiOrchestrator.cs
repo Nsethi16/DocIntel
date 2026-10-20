@@ -11,6 +11,7 @@ using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Models;
 using DocIntel.Core.Review;
+using DocIntel.Core.Channels;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 
@@ -143,6 +144,10 @@ public sealed class AskAiRun
 
     [JsonPropertyName("executionAttempts")]
     public int ExecutionAttempts { get; set; }
+
+    /// <summary>Trusted channel state, populated by server adapters rather than Ask AI request DTOs.</summary>
+    [JsonPropertyName("channelDelivery")]
+    public ChannelDelivery? ChannelDelivery { get; set; }
 }
 
 /// <summary>
@@ -155,6 +160,8 @@ public interface IAskAiToolProvider
 
 public interface IAskAiRunStore
 {
+    Task<bool> TryCreateRunAsync(AskAiRun run, CancellationToken cancellationToken = default);
+
     Task UpsertRunAsync(AskAiRun run, CancellationToken cancellationToken = default);
 
     Task<AskAiRun?> GetRunAsync(string tenantId, string runId, CancellationToken cancellationToken = default);
@@ -182,6 +189,15 @@ public sealed class InMemoryAskAiRunStore : IAskAiRunStore
 {
     private readonly ConcurrentDictionary<(string TenantId, string RunId), string> _runs = new();
     private readonly ConcurrentDictionary<(string TenantId, string RunId), SemaphoreSlim> _locks = new();
+
+    public Task<bool> TryCreateRunAsync(AskAiRun run, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(run);
+        ArgumentException.ThrowIfNullOrWhiteSpace(run.TenantId);
+        ArgumentException.ThrowIfNullOrWhiteSpace(run.RunId);
+        cancellationToken.ThrowIfCancellationRequested();
+        return Task.FromResult(_runs.TryAdd((run.TenantId, run.RunId), JsonSerializer.Serialize(run)));
+    }
 
     public Task UpsertRunAsync(AskAiRun run, CancellationToken cancellationToken = default)
     {
@@ -272,7 +288,9 @@ public sealed class InMemoryAskAiRunStore : IAskAiRunStore
         cancellationToken.ThrowIfCancellationRequested();
         IReadOnlyList<AskAiQueueTicket> tickets = _runs.Values
             .Select(json => JsonSerializer.Deserialize<AskAiRun>(json)!)
-            .Where(run => run.Status is JobStatus.Queued or JobStatus.Running)
+            .Where(run => run.Status is JobStatus.Queued or JobStatus.Running ||
+                run.Status == JobStatus.Completed && run.ChannelDelivery?.Status is
+                    ChannelDeliveryStatus.Pending or ChannelDeliveryStatus.Sending)
             .Where(run => !_locks.TryGetValue((run.TenantId, run.RunId), out var gate) || gate.CurrentCount > 0)
             .OrderBy(run => run.CreatedAtUtc).Take(maxCount)
             .Select(run => new AskAiQueueTicket(run.RunId, run.TenantId)).ToList();
@@ -833,6 +851,9 @@ public sealed class AskAiOrchestrator
         }
 
         var finalAccess = await ResolveAccessAsync(cancellationToken);
+        if (run.ChannelDelivery is not null &&
+            ChannelDelivery.GetAccessFingerprint(initialAccess) != ChannelDelivery.GetAccessFingerprint(finalAccess))
+            throw new UnauthorizedAccessException("Permissions changed before the channel answer completed.");
         if (answer.EvidenceIds.Any(id => !finalAccess.CanReadDocument(evidence[id].JobId)))
         {
             throw new UnauthorizedAccessException("Document permissions changed before the answer completed.");
@@ -848,6 +869,8 @@ public sealed class AskAiOrchestrator
                 throw new InvalidOperationException("Human review changed before the answer completed. Refresh the question.");
         }
         run.Citations = answer.EvidenceIds.Select((id, i) => evidence[id] with { CitationNumber = i + 1 }).ToList();
+        if (run.ChannelDelivery is not null)
+            run.ChannelDelivery.AccessFingerprint = ChannelDelivery.GetAccessFingerprint(finalAccess);
         run.Answer = answer.Answer;
         run.EmailHtmlBody = FormatEmailHtmlResponse(tenant.DisplayName, run.Question, answer.Answer, run.Citations);
         run.TeamsAdaptiveCardJson = FormatTeamsAdaptiveCardJson(

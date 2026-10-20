@@ -9,6 +9,7 @@ using DocIntel.Core;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Storage;
+using DocIntel.Core.Channels;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,6 +20,34 @@ namespace DocIntel.Tests;
 
 public sealed class CloudAskAiStorageTests
 {
+    [Fact]
+    public async Task Channel_Creation_Is_Conditional_And_Records_Delivery_Recovery_Metadata()
+    {
+        // Arrange
+        var fixture = new BlobFixture();
+        BlobUploadOptions? written = null;
+        fixture.Blob.Setup(b => b.UploadAsync(It.IsAny<BinaryData>(), It.IsAny<BlobUploadOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<BinaryData, BlobUploadOptions, CancellationToken>((_, options, _) => written = options)
+            .ReturnsAsync(Mock.Of<Response<BlobContentInfo>>());
+        var run = Run("tenant");
+        run.Status = JobStatus.Completed;
+        run.ChannelDelivery = new ChannelDelivery { Transport = "Teams", Profile = "profile", DestinationId = "chat" };
+
+        // Act
+        var created = await fixture.Store.TryCreateRunAsync(run);
+
+        // Assert
+        Assert.True(created);
+        Assert.Equal(ETag.All, written!.Conditions.IfNoneMatch);
+        Assert.Equal("Completed", written.Metadata["status"]);
+        Assert.Equal("Pending", written.Metadata["delivery"]);
+        fixture.Blob.Setup(b => b.UploadAsync(It.IsAny<BinaryData>(), It.IsAny<BlobUploadOptions>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new RequestFailedException(412, "Existing run.", "ConditionNotMet", null));
+        Assert.False(await fixture.Store.TryCreateRunAsync(run));
+    }
+
     [Fact]
     public void Shared_Storage_Configuration_Does_Not_Fall_Back_To_Process_Local_State()
     {

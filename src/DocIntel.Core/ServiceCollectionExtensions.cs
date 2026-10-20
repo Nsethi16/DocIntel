@@ -11,6 +11,7 @@ using DocIntel.Core.Jobs;
 using DocIntel.Core.Models;
 using DocIntel.Core.Ocr;
 using DocIntel.Core.Review;
+using DocIntel.Core.Channels;
 using DocIntel.Core.Storage;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
@@ -194,6 +195,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IOcrUsageStore, InMemoryOcrUsageStore>();
         services.TryAddSingleton<IReviewStore, InMemoryReviewStore>();
         services.TryAddSingleton<ReviewService>();
+        services.TryAddSingleton<ChannelDeliveryProcessor>();
 
         // 2. Azure Blob Storage (per-tenant 'tenant-{tenantId}' containers) vs Local File Artifact Fallback
         BlobServiceClient? sharedBlobs = null;

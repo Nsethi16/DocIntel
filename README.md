@@ -268,6 +268,13 @@ The API registration must expose the delegated permission and application role. 
 also need an explicitly mapped membership with `ServicePrincipal: true`; neither a sender address
 nor an asserted `Admin` token role grants application privileges. Email/Teams adapters require
 that verified service identity and still return payloads rather than delivering messages.
+Trusted server adapters have a separate durable delivery state: the answer completes before
+delivery is leased, current tenant activation and the original permission scope are rechecked,
+and reviewed citations must still reference the same review version. The send marker is saved
+before contacting a transport. Interrupted or uncertain sends become `OutcomeUnknown` and are
+never automatically replayed; `Sent` means transport acknowledgement, not proof of user receipt.
+Run polling exposes only delivery status/timestamps/error codes, not trusted routing configuration.
+Conditional run creation prevents duplicate channel activities from replacing an existing answer.
 Managed-identity sign-in requires a matching federated credential on the web app registration;
 this code does not create registrations or consent/permission grants.
 
