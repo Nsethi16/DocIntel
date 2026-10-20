@@ -2047,6 +2047,14 @@
 
           <div class="feature-drawer" id="splitDrawer">
             <div class="drawer-row">
+              <label class="drawer-label" for="ocrModeSelect">Page text recognition</label>
+              <select class="clean-input" id="ocrModeSelect" onchange="onHarnessChanged()">
+                <option value="Auto">Automatic for scanned pages</option>
+                <option value="Always">Recognize every page</option>
+                <option value="Never">Use the PDF text layer only</option>
+              </select>
+            </div>
+            <div class="drawer-row">
               <div style="display:flex;align-items:center;gap:8px;flex:1;">
                 <span class="drawer-label">Footers to ignore</span>
                 <input type="text" class="clean-input" id="footersToIgnoreInput" style="flex:1;" placeholder="Confidential, Page" oninput="onHarnessChanged()" />
@@ -2701,6 +2709,7 @@
 
       updated.decisionModelId = decisionModel;
       updated.defaultModelId = languageModel;
+      updated.ocr = { ...(updated.ocr || {}), mode: document.getElementById('ocrModeSelect').value };
       updated.capabilities = updated.capabilities || {};
 
       // 1. SplitAndGroup
@@ -2824,6 +2833,7 @@
         ? JSON.stringify({
             decisionModelId: currentPayload.decisionModelId,
             defaultModelId: currentPayload.defaultModelId,
+            ocr: currentPayload.ocr,
             capabilities: currentPayload.capabilities
           })
         : '';
@@ -2875,6 +2885,7 @@
       // 1. Split
       const splitCap = caps.SplitAndGroup || { enabled: true, splitAndGroup: {} };
       const splitCfg = splitCap.splitAndGroup || {};
+      document.getElementById('ocrModeSelect').value = currentTenant.ocr?.mode || 'Auto';
       document.getElementById('splitFeatureToggle').checked = splitCap.enabled !== false;
       document.getElementById('footersToIgnoreInput').value = (splitCfg.footersToIgnore || ['Confidential', 'Microsoft Confidential', 'Page']).join(', ');
       document.getElementById('amendmentIndicatorsInput').value = (splitCfg.amendmentIndicators || ['amendment', 'avenant', 'enmienda', 'nachtrag', 'ctm']).join(', ');
@@ -2940,6 +2951,7 @@
         ? JSON.stringify({
             decisionModelId: initialPayload.decisionModelId,
             defaultModelId: initialPayload.defaultModelId,
+            ocr: initialPayload.ocr,
             capabilities: initialPayload.capabilities
           })
         : '';

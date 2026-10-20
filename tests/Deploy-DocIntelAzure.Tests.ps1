@@ -53,4 +53,15 @@ try {
 finally {
     if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary }
 }
-Write-Output 'Deployment parser and fail-fast preflight tests passed without Azure calls.'
+$templatePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'infra\azuredeploy.json'
+$template = Get-Content -LiteralPath $templatePath -Raw | ConvertFrom-Json -Depth 100
+$applications = @($template.resources | Where-Object { $_.type -eq 'Microsoft.App/containerApps' })
+if ($applications.Count -ne 1) { throw 'Expected exactly one conditional Container App resource.' }
+$application = $applications[0]
+if ($application.properties.template.PSObject.Properties['dependsOn']) {
+    throw 'Container App dependencies must not be emitted as ARM resource lookups inside its API properties.'
+}
+if (-not @($application.dependsOn | Where-Object { $_ -match "variables\('documentIntelligenceName'\)" })) {
+    throw 'The conditional OCR role must be a resource-level dependency, safe when an existing endpoint is used.'
+}
+Write-Output 'Deployment parser, fail-fast preflight, and ARM dependency-shape tests passed without Azure calls.'

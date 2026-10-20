@@ -232,7 +232,29 @@ Both local and Blob writes are non-overwriting; local publication uses the same 
 flush / atomic-move helper as immutable originals. Blob uses `If-None-Match: *`. The process-crash
 regression verifies word IDs survive restart and stale-attempt layout changes cannot change the
 public route. Storage integrity does not by itself prove OCR accuracy or field-value entailment.
-OCR, value-level grounding, and the review/export surfaces remain subsequent work.
+Value-level grounding and the review/export surfaces remain subsequent work.
+
+The extraction stage now applies the accepted `Ocr.Mode` before publishing layout evidence and
+before boundary detection. `Auto` selects pages with fewer than 50 body characters and image
+coverage strictly above 0.5; `Always` selects all pages and `Never` selects none. A configured
+native `DocumentIntelligenceClient` sends the actual original PDF and selected page numbers to
+`prebuilt-read`, under the worker's cancellation/deadline policy. The credential-bearing endpoint
+is server configuration, never a tenant-supplied URL.
+
+Recognition output must contain exactly the requested original pages. Dimensions, page identity,
+provider identity, word confidence and normalized geometry are validated. A source/provider aspect
+ratio mismatch fails rather than guessing coordinate rotation. All recognized pages are staged
+before replacing native state, and the common text-layout composer applies existing footer,
+pagination and markdown behavior. The immutable layout records `TextSource=Ocr`, the actual
+provider name and actual word scores, including zero. The OCR trace is present only when OCR ran;
+native-text processing performs no OCR call.
+
+The Admin policy participates in dirty-state/save handling and is frozen with the accepted job
+harness. Bicep configures a separate passwordless Document Intelligence account/data role, with an
+optional existing endpoint. SDK mocks and a real image-only PDF test verify parser/pipeline/storage
+wiring, not live OCR accuracy. Persistent recognition caching, monthly budget/usage accounting,
+air-gapped Tesseract assets and live Azure verification remain outstanding; there is no claim of
+exactly-once OCR billing or offline recognition support.
 
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).
 

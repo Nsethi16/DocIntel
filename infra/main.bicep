@@ -39,6 +39,9 @@ param azureOpenAiEndpoint string = ''
 @description('Optional existing Azure AI Translator endpoint. Defaults to the provisioned Foundry resource when empty.')
 param translatorEndpoint string = ''
 
+@description('Optional existing Azure Document Intelligence endpoint. Empty provisions managed-identity prebuilt-read access.')
+param documentIntelligenceEndpoint string = ''
+
 @description('Foundry model deployments to provision automatically under the Foundry account.')
 param modelDeployments array = [
   {
@@ -63,6 +66,7 @@ var foundryName = 'aif-docintel-${environmentName}-${uniqueSuffix}'
 var keyVaultName = 'kv-di-${take(environmentName, 3)}-${uniqueSuffix}'
 var effectiveAcrName = !empty(acrName) ? acrName : take('acrdocintel${environmentName}${uniqueSuffix}', 50)
 var createFoundryResource = empty(foundryInferenceEndpoint)
+var documentIntelligenceName = 'di-docintel-${environmentName}-${uniqueSuffix}'
 
 // 1. User-Assigned Managed Identity (Passwordless Auth for Foundry, Translator, Blob, and ACR)
 resource uami 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
@@ -113,6 +117,30 @@ resource foundryModelDeployments 'Microsoft.CognitiveServices/accounts/deploymen
 var cognitiveServicesUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')
 var cognitiveServicesOpenAiUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
 var foundryAiUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')
+
+resource documentIntelligence 'Microsoft.CognitiveServices/accounts@2024-10-01' = if (empty(documentIntelligenceEndpoint)) {
+  name: documentIntelligenceName
+  location: location
+  kind: 'FormRecognizer'
+  sku: {
+    name: 'S0'
+  }
+  properties: {
+    customSubDomainName: documentIntelligenceName
+    publicNetworkAccess: 'Enabled'
+    disableLocalAuth: true
+  }
+}
+
+resource documentIntelligenceUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (empty(documentIntelligenceEndpoint)) {
+  name: guid(resourceGroup().id, uami.id, documentIntelligenceName, cognitiveServicesUserRoleId)
+  scope: documentIntelligence
+  properties: {
+    principalId: uami.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: cognitiveServicesUserRoleId
+  }
+}
 
 resource foundryCogUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createFoundryResource) {
   name: guid(resourceGroup().id, uami.id, cognitiveServicesUserRoleId)
@@ -478,6 +506,12 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = if (deployAppli
               value: effectiveTranslatorEndpoint
             }
             {
+              name: 'AzureAI__DocumentIntelligenceEndpoint'
+              value: !empty(documentIntelligenceEndpoint)
+                ? documentIntelligenceEndpoint
+                : 'https://${documentIntelligenceName}.cognitiveservices.azure.com/'
+            }
+            {
               name: 'AzureAI__CosmosEndpoint'
               value: cosmosAccount.properties.documentEndpoint
             }
@@ -591,20 +625,21 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = if (deployAppli
           }
         ]
       }
-      dependsOn: [
-        runContainer
-        identityKeys
-        dispatchQueue
-        poisonQueue
-        documentQueue
-        documentPoisonQueue
-        storageRoleAssignment
-        storageQueueRole
-        identityKeyRole
-        cosmosSqlRoleAssignment
-      ]
     }
   }
+  dependsOn: [
+    runContainer
+    identityKeys
+    dispatchQueue
+    poisonQueue
+    documentQueue
+    documentPoisonQueue
+    storageRoleAssignment
+    storageQueueRole
+    identityKeyRole
+    cosmosSqlRoleAssignment
+    documentIntelligenceUserRole
+  ]
 }
 
 output containerAppFqdn string = 'https://${appName}.${cae.properties.defaultDomain}'

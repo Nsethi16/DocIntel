@@ -293,7 +293,7 @@ public sealed class PageEvidenceTests : IDisposable
         }
     ]);
 
-    private static byte[] PdfWithRotation(int rotation, bool offsetOrigin = false, bool imageOnly = false)
+    internal static byte[] PdfWithRotation(int rotation, bool offsetOrigin = false, bool imageOnly = false)
     {
         var content = imageOnly ? "q 612 0 0 792 0 0 cm /Im1 Do Q" : offsetOrigin
             ? "BT /F1 12 Tf 150 920 Td (Customer Name) Tj ET" : "BT /F1 12 Tf 50 720 Td (Customer Name) Tj ET";

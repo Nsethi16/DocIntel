@@ -118,11 +118,13 @@ public static class HarnessEndpoints
             IHarnessStore store,
             CancellationToken ct) =>
         {
+            if (updated.Ocr is null || !Enum.IsDefined(updated.Ocr.Mode))
+                return Results.BadRequest(new { error = "A supported OCR policy is required." });
             updated.TenantId = tenantId;
             TenantHarness.EnsureDefaultCapabilities(updated);
             var saved = await store.UpsertTenantAsync(updated, ct);
 
-            return TypedResults.Ok(saved);
+            return Results.Ok(saved);
         });
 
         // Lightweight Server-Side Graph Projection API (scalable for 100K+ documents — returns only nodes, edges, and facets)

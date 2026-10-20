@@ -273,6 +273,8 @@ public sealed class TenantHarness
 
     public int HarnessVersion { get; set; } = 1;
 
+    public DocIntel.Core.Ocr.OcrPolicy Ocr { get; set; } = new();
+
     public bool IsActive { get; set; } = true;
 
     /// <summary>

@@ -34,7 +34,7 @@ dotnet test DocIntel.slnx -c Release
 dotnet build src\DocIntel.Api\DocIntel.Api.csproj -c Release
 node --test tests\DocIntel.Ui.Tests\ask-ai.test.cjs tests\DocIntel.Ui.Tests\identity-client.test.cjs `
   tests\DocIntel.Ui.Tests\identity-http.test.cjs tests\DocIntel.Ui.Tests\ask-ai-restart.test.cjs `
-  tests\DocIntel.Ui.Tests\document-restart.test.cjs
+  tests\DocIntel.Ui.Tests\document-restart.test.cjs tests\DocIntel.Ui.Tests\admin-ocr.test.cjs
 ```
 
 Local development uses explicit loopback-only access. It is not an authentication mode for a
@@ -86,8 +86,31 @@ without saved evidence return 404 rather than reconstructed coordinates.
 Native PDF words are labeled `EmbeddedText` / `PdfPig`, with null OCR confidence. Geometry
 regressions include all four page rotations and nonzero page origins. Layout storage rejects
 invalid geometry, duplicate IDs, content/identity mismatches, and oversized evidence (16 MiB,
-up to 1,000 sequential pages and 50,000 words per page). This is the source-evidence foundation,
-not yet an OCR provider, field-grounding model, calibrated confidence, or review approval.
+up to 1,000 sequential pages and 50,000 words per page). Stored source evidence is not itself
+field grounding, calibrated confidence, or review approval.
+
+## Scanned PDF recognition
+
+`Ocr.Mode` is part of each accepted tenant harness snapshot: `Auto` recognizes a page only when
+its body text has fewer than 50 characters and embedded images cover more than half the page;
+`Always` requests every page, and `Never` uses only the existing PDF text layer. Admin exposes
+this policy under the file-splitting settings and includes it in unsaved-change tracking.
+
+Configure the service-owned `AzureAI:DocumentIntelligenceEndpoint` to enable native Azure
+`prebuilt-read` using managed identity. Requests send original PDF bytes plus explicit page
+numbers; no client URL, local PDF rendering dependency, or generative text fallback is used.
+Recognized words retain actual provider scores, pass geometry/source-page validation, and use
+the same footer/pagination rules as embedded text before splitting and immutable layout
+publication. Missing configuration, missing pages, malformed output, cancellation and provider
+errors fail explicitly. OCR dimensions must match the source page orientation; no unverified
+rotation correction is guessed.
+
+Bicep provisions a passwordless Document Intelligence account and the application's data role,
+or accepts `documentIntelligenceEndpoint` for an existing account whose access must be configured
+separately. Tests verify the native SDK contract and an actual image-only PDF through a scripted
+recognizer; live recognition quality and permissions remain unverified here. Persistent OCR
+caching, monthly usage/budget enforcement, and an air-gapped Tesseract runtime are not implemented
+by this increment. Repeated analysis can therefore incur additional provider usage.
 
 ## Identity and document access
 

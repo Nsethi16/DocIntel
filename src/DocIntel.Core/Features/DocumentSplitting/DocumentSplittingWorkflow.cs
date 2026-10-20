@@ -9,6 +9,7 @@ using DocIntel.Core.Features.EntityExtraction;
 using DocIntel.Core.Features.PromptColumns;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Models;
+using DocIntel.Core.Ocr;
 using DocIntel.Core.Storage;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.Logging;
@@ -35,6 +36,7 @@ public sealed class DocumentSplittingWorkflow
     private readonly IArtifactStore? _artifactStore;
     private readonly AzureIntegrationOptions _azureOptions;
     private readonly ILogger<DocumentSplittingWorkflow> _logger;
+    private readonly OcrProcessor _ocr;
 
     public DocumentSplittingWorkflow(
         IPageLayoutExtractor layoutExtractor,
@@ -43,7 +45,8 @@ public sealed class DocumentSplittingWorkflow
         IDocumentTranslationService translationService,
         ILogger<DocumentSplittingWorkflow> logger,
         AzureIntegrationOptions? azureOptions = null,
-        IArtifactStore? artifactStore = null)
+        IArtifactStore? artifactStore = null,
+        OcrProcessor? ocr = null)
     {
         _layoutExtractor = layoutExtractor ?? throw new ArgumentNullException(nameof(layoutExtractor));
         _pdfSlicer = pdfSlicer ?? throw new ArgumentNullException(nameof(pdfSlicer));
@@ -52,6 +55,7 @@ public sealed class DocumentSplittingWorkflow
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _azureOptions = azureOptions ?? new AzureIntegrationOptions();
         _artifactStore = artifactStore;
+        _ocr = ocr ?? new OcrProcessor(Microsoft.Extensions.Logging.Abstractions.NullLogger<OcrProcessor>.Instance);
     }
 
     public async Task<SplittingState> ExecuteAsync(
@@ -89,7 +93,7 @@ public sealed class DocumentSplittingWorkflow
             return state;
         }
 
-        var extractExecutor = new ExtractPageLayoutsExecutor(_layoutExtractor, _artifactStore);
+        var extractExecutor = new ExtractPageLayoutsExecutor(_layoutExtractor, _artifactStore, _ocr);
         var detectExecutor = new DetectSliceBoundariesExecutor();
         var slicePdfExecutor = new WritePdfSlicesExecutor(_pdfSlicer, _artifactStore);
         var identifyExecutor = new IdentifyDocumentsExecutor(_modelCatalog);
@@ -150,12 +154,14 @@ internal sealed class ExtractPageLayoutsExecutor : Executor<SplittingState, Spli
 {
     private readonly IPageLayoutExtractor _extractor;
     private readonly IArtifactStore? _artifacts;
+    private readonly OcrProcessor? _ocr;
 
-    public ExtractPageLayoutsExecutor(IPageLayoutExtractor extractor, IArtifactStore? artifacts = null)
+    public ExtractPageLayoutsExecutor(IPageLayoutExtractor extractor, IArtifactStore? artifacts = null, OcrProcessor? ocr = null)
         : base(nameof(ExtractPageLayoutsExecutor))
     {
         _extractor = extractor;
         _artifacts = artifacts;
+        _ocr = ocr;
     }
 
     public override async ValueTask<SplittingState> HandleAsync(
@@ -173,6 +179,8 @@ internal sealed class ExtractPageLayoutsExecutor : Executor<SplittingState, Spli
             var extracted = await _extractor.ExtractPagesAsync(message.SourcePdfBytes, config, cancellationToken);
             message.Pages = extracted.ToList();
         }
+
+        if (_ocr is not null) await _ocr.EnrichAsync(message, cancellationToken);
 
         if (_artifacts is not null && message.SourcePdfBytes is { Length: > 0 } original)
         {

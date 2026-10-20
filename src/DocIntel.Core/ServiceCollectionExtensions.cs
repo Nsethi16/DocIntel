@@ -1,4 +1,5 @@
 using Azure.Core;
+using Azure.AI.DocumentIntelligence;
 using Azure.Identity;
 using Azure.Storage.Blobs;
 using Azure.Storage.Queues;
@@ -8,6 +9,7 @@ using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Models;
+using DocIntel.Core.Ocr;
 using DocIntel.Core.Storage;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
@@ -40,6 +42,8 @@ public sealed class AzureIntegrationOptions
     /// Optional local OpenAI-compatible endpoint (e.g. Foundry Local "http://localhost:5272/v1" or Ollama "http://localhost:11434/v1").
     /// </summary>
     public string? LocalOpenAIEndpoint { get; set; }
+
+    public string? DocumentIntelligenceEndpoint { get; set; }
 
     /// <summary>
     /// Optional Azure Cosmos DB account endpoint (e.g. "https://cosmos-docintel-dev.documents.azure.com:443/").
@@ -121,6 +125,13 @@ public static class ServiceCollectionExtensions
             ? new ManagedIdentityCredential(ManagedIdentityId.FromUserAssignedClientId(managedIdentityClientId))
             : new DefaultAzureCredential();
         services.TryAddSingleton(credential);
+        var ocrUri = Endpoint(azureOptions.DocumentIntelligenceEndpoint);
+        if (ocrUri is not null)
+        {
+            services.TryAddSingleton(_ => new DocumentIntelligenceClient(ocrUri, credential));
+            services.TryAddSingleton<IOcrProvider, AzureDocumentIntelligenceOcrProvider>();
+        }
+        services.TryAddSingleton<OcrProcessor>();
         var cosmosUri = Endpoint(azureOptions.CosmosEndpoint);
         var blobUri = Endpoint(azureOptions.BlobEndpoint);
         var queueUri = Endpoint(azureOptions.QueueEndpoint);

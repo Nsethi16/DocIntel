@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.RegularExpressions;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Evidence;
 using DocIntel.Core.Storage;
@@ -33,14 +32,6 @@ public interface IPdfSlicer
 /// </summary>
 public sealed class PdfPigLayoutExtractor : IPageLayoutExtractor, IPdfSlicer
 {
-    private static readonly Regex InlineFooterCommentRegex = new(
-        @"<!--\s*PageFooter[:""\s]\s*([^"">]+?)\s*""?\s*-->",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
-    private static readonly Regex PageXOfYRegex = new(
-        @"\b(?:Page|Página|Pagina|Seite)\s+(\d+)\s+(?:of|de|von)\s+(\d+)\b",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
     public Task<IReadOnlyList<PageLayout>> ExtractPagesAsync(
         byte[] pdfBytes,
         SplittingConfig config,
@@ -250,67 +241,7 @@ public sealed class PdfPigLayoutExtractor : IPageLayoutExtractor, IPdfSlicer
             .ThenBy(word => word.BoundingBox.Left).ToList();
         if (words.Count > DocumentLayoutCodec.MaxWordsPerPage)
             throw new InvalidDataException("The PDF word count exceeds the supported per-page layout limit.");
-        var footerBoundaryY = page.Height * 0.10; // Bottom 10% of page height
-
-        var footerWords = new List<string>();
-        var bodyLines = new List<string>();
-        int? subDocPageNumber = null;
-        int? subDocTotalPages = null;
-
-        var lineGroups = words
-            .GroupBy(w => Math.Round(w.BoundingBox.Bottom / 3.0) * 3.0)
-            .OrderByDescending(g => g.Key);
-
-        foreach (var lineGroup in lineGroups)
-        {
-            var lineText = string.Join(" ", lineGroup.OrderBy(w => w.BoundingBox.Left).Select(w => w.Text)).Trim();
-            if (string.IsNullOrWhiteSpace(lineText))
-            {
-                continue;
-            }
-
-            if (lineGroup.Key <= footerBoundaryY)
-            {
-                // Detect "Page X of Y" before stripping it so we preserve form-internal pagination signals
-                var pageMatch = PageXOfYRegex.Match(lineText);
-                if (pageMatch.Success)
-                {
-                    subDocPageNumber = int.Parse(pageMatch.Groups[1].Value);
-                    subDocTotalPages = int.Parse(pageMatch.Groups[2].Value);
-                    lineText = PageXOfYRegex.Replace(lineText, string.Empty).Trim();
-                }
-
-                if (!string.IsNullOrWhiteSpace(lineText) && !IsIgnoredFooter(lineText, footersToIgnore))
-                {
-                    footerWords.Add(lineText.Replace(" ", string.Empty, StringComparison.Ordinal));
-                }
-            }
-            else
-            {
-                bodyLines.Add(lineText);
-            }
-        }
-
-        var bodyText = string.Join(Environment.NewLine, bodyLines);
-        var footerText = string.Join(",", footerWords.Where(f => !string.IsNullOrEmpty(f)));
-
-        if (string.IsNullOrEmpty(footerText))
-        {
-            var match = InlineFooterCommentRegex.Match(bodyText);
-            if (match.Success)
-            {
-                footerText = match.Groups[1].Value.Trim().Replace(" ", string.Empty, StringComparison.Ordinal);
-            }
-        }
-
-        var md = new StringBuilder(bodyText);
-        if (!string.IsNullOrEmpty(footerText))
-        {
-            md.AppendLine();
-            md.Append($"<!-- PageFooter=\"{footerText}\" -->");
-        }
-
-        return new PageLayout
+        var layout = new PageLayout
         {
             PageNumber = pageNumber,
             PageWidth = page.Width,
@@ -327,40 +258,9 @@ public sealed class PdfPigLayoutExtractor : IPageLayoutExtractor, IPdfSlicer
                 {
                     Math.Clamp(point.X / page.Width, 0, 1), Math.Clamp(1 - point.Y / page.Height, 0, 1)
                 }).ToArray()))).ToArray(),
-            SubDocPageNumber = subDocPageNumber,
-            SubDocTotalPages = subDocTotalPages,
-            BodyText = bodyText,
-            FooterText = footerText,
-            Markdown = md.ToString()
         };
+        PageTextLayout.Apply(layout, words.Select(word =>
+            new LayoutTextWord(word.Text, word.BoundingBox.Left, word.BoundingBox.Bottom)), footersToIgnore);
+        return layout;
     }
-
-    private static bool IsIgnoredFooter(string text, IReadOnlyList<string> ignoredValues)
-    {
-        var normalized = NormalizeFooter(text);
-        if (string.IsNullOrEmpty(normalized)) return true;
-
-        foreach (var ignored in ignoredValues)
-        {
-            var normalizedIgnored = NormalizeFooter(ignored);
-            if (string.IsNullOrEmpty(normalizedIgnored)) continue;
-
-            // Ignore bare "Page" or "CTM" only when the entire remaining footer equals that token
-            if (normalizedIgnored is "ctm" or "page")
-            {
-                if (normalized == normalizedIgnored) return true;
-                continue;
-            }
-
-            if (normalized.Contains(normalizedIgnored, StringComparison.Ordinal))
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
-    private static string NormalizeFooter(string value) =>
-        string.Concat((value ?? string.Empty).Where(c => !char.IsWhiteSpace(c))).ToLowerInvariant();
 }

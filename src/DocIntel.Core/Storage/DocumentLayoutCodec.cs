@@ -48,7 +48,7 @@ internal static class DocumentLayoutCodec
         return layout;
     }
 
-    private static void Validate(DocumentLayout layout)
+    public static void Validate(DocumentLayout layout)
     {
         ArgumentNullException.ThrowIfNull(layout);
         ArgumentException.ThrowIfNullOrWhiteSpace(layout.TenantId);
