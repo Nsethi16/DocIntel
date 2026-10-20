@@ -58,6 +58,25 @@ function loadPage(app) {
   `, app.context);
 }
 
+test('human-reviewed citations route to review evidence rather than pretending to quote the original PDF', () => {
+  const app = runtime();
+  loadPage(app);
+  app.context.citation = { jobId: 'reviewed-job', sliceIndex: 0, evidenceKind: 'HumanReviewedField' };
+  const action = vm.runInContext('citationAction(citation)', app.context);
+  assert.match(action, /^jumpToHumanReview/);
+  app.context.citation = { jobId: 'source-job', sliceIndex: 2, evidenceKind: 'OriginalSourceText' };
+  assert.match(vm.runInContext('citationAction(citation)', app.context), /^jumpFromGraphToSlice/);
+});
+
+test('untrusted cached citation indices cannot become inline JavaScript', () => {
+  const app = runtime();
+  loadPage(app);
+  app.context.citation = { jobId: 'source-job', sliceIndex: '0);alert(1)//' };
+  const action = vm.runInContext('citationAction(citation)', app.context);
+  assert.ok(!action.includes('alert'));
+  assert.match(action, /, 0\)$/);
+});
+
 test('one async submission is polled beyond the old 14-second limit', async () => {
   const queued = Array.from({ length: 50 }, () => ({ status: 'Queued' }));
   const app = runtime([{ runId: 'run-one' }, ...queued, { status: 'Completed', answer: 'Done.' }]);

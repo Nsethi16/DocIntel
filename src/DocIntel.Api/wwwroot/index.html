@@ -3767,6 +3767,17 @@
       }
     }
 
+    function jumpToHumanReview(jobId) {
+      window.location.href = '/review.html?tenant=' + encodeURIComponent(currentTenant?.tenantId || '') +
+        '&job=' + encodeURIComponent(jobId);
+    }
+
+    function citationAction(citation) {
+      const reviewed = ['HumanReviewStatus', 'HumanReviewedField'].includes(citation.evidenceKind);
+      return reviewed ? `jumpToHumanReview(${escapeJsArg(citation.jobId)})` :
+        `jumpFromGraphToSlice(${escapeJsArg(citation.jobId)}, ${Number.isSafeInteger(citation.sliceIndex) ? citation.sliceIndex : 0})`;
+    }
+
     function formatMarkdownBold(text, citations) {
       let html = escapeHtml(text || '')
         .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
@@ -3777,7 +3788,7 @@
           const num = parseInt(numStr, 10);
           const cite = citations.find(c => c.citationNumber === num);
           if (!cite) return match;
-          return `<button type="button" class="text-link-btn" style="padding:1px 6px;font-size:10.5px;margin:0 2px;" title="${escapeHtml(cite.cleanName)} (${escapeHtml(cite.pageRange)})" onclick="jumpFromGraphToSlice(${escapeJsArg(cite.jobId)}, ${cite.sliceIndex})">[${num}]</button>`;
+          return `<button type="button" class="text-link-btn" style="padding:1px 6px;font-size:10.5px;margin:0 2px;" title="${escapeHtml(cite.cleanName)} (${escapeHtml(cite.pageRange)})" onclick="${citationAction(cite)}">[${num}]</button>`;
         });
       }
       return html;
@@ -3900,7 +3911,7 @@
             ${cites.length > 0 ? `
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                 ${cites.map(c => `
-                  <button type="button" class="text-link-btn" onclick="jumpFromGraphToSlice(${escapeJsArg(c.jobId)}, ${c.sliceIndex})" title="${escapeHtml(c.documentName)} · ${escapeHtml(c.customerName || '')}">
+                  <button type="button" class="text-link-btn" onclick="${citationAction(c)}" title="${escapeHtml(c.documentName)} · ${escapeHtml(c.customerName || '')}">
                     [${c.citationNumber || ''}] ${escapeHtml(c.cleanName)} (${escapeHtml(c.pageRange)}) ↗
                   </button>
                 `).join('')}

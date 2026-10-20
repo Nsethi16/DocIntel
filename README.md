@@ -169,6 +169,13 @@ Ask AI receives lightweight source-occurrence status without heavy polygon array
 bounded text remains its citation evidence. Prompt-cache fingerprints track actual entity inputs,
 not added provenance annotations, so grounding does not force an unnecessary reevaluation.
 
+Ask AI can separately inspect human review status and approved effective fields with
+`inspect_human_review`. It searches/authorizes the document first, verifies the review source
+and audit snapshot, pages at most five fields, and rechecks cited review versions before
+publishing. Human corrections receive `HumanReviewedField` citations linked to the review
+workspace; they are never presented as verbatim original-PDF quotations. Pending review does
+not expose unapproved effective-field evidence.
+
 ## Human review
 
 Open **Human review** in the workspace or `/review.html?tenant=<tenant>&job=<job>`.

@@ -325,6 +325,15 @@ Regression tests cover actual PDF words, table/entity consistency, slice isolati
 incomplete scans, substring/currency/translation rejection, zero scores, annotation size limits,
 cache stability and bounded native Ask AI tool payloads.
 
+`inspect_human_review` is a separate bounded read tool. It requires a preceding authorized
+document search and current resource grants, validates the source-bound session/audit prefix,
+and returns a status evidence ID plus at most five approved effective fields per page. Its
+citations explicitly identify `HumanReviewStatus` or `HumanReviewedField` and the review version.
+Excerpts are actual stored status/value data, not rewritten original source quotations.
+Unapproved effective fields are not returned. Cited review versions/statuses are revalidated
+before answer publication, and the browser routes these citation buttons to the human review
+workspace rather than falsely implying a matching PDF text span.
+
 ### Actor-audited human review
 
 Accepted `ReviewPolicy` controls automatic queue creation on completion, optional dual review
