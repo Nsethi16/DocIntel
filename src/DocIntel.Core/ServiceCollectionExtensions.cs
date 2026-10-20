@@ -91,9 +91,12 @@ public static class ServiceCollectionExtensions
         IConfiguration? configuration = null,
         string? harnessFilePath = null,
         IEnumerable<ModelDescriptor>? modelDescriptors = null,
-        IDictionary<string, IChatClient>? customModelClients = null)
+        IDictionary<string, IChatClient>? customModelClients = null,
+        bool allowDevelopmentSimulation = false)
     {
         ArgumentNullException.ThrowIfNull(services);
+        var simulationAllowed = configuration?.GetValue<bool?>("Models:AllowDevelopmentSimulation")
+            ?? allowDevelopmentSimulation;
 
         var azureOptions = new AzureIntegrationOptions();
         configuration?.GetSection(AzureIntegrationOptions.SectionName).Bind(azureOptions);
@@ -155,8 +158,10 @@ public static class ServiceCollectionExtensions
             azureOptions.AzureOpenAIEndpoint,
             azureOptions.LocalOpenAIEndpoint);
 
-        services.TryAddSingleton<IModelCatalog>(_ => new ModelCatalog(descriptors, customModelClients, credential));
-        services.TryAddSingleton<IDocumentTranslationService>(_ => new AzureDocumentTranslationService(credential));
+        services.TryAddSingleton<IModelCatalog>(_ => new ModelCatalog(
+            descriptors, customModelClients, credential, simulationAllowed));
+        services.TryAddSingleton<IDocumentTranslationService>(_ => new AzureDocumentTranslationService(
+            credential, allowDevelopmentSimulation: simulationAllowed));
 
         services.TryAddSingleton<PdfPigLayoutExtractor>();
         services.TryAddSingleton<IPageLayoutExtractor>(sp => sp.GetRequiredService<PdfPigLayoutExtractor>());

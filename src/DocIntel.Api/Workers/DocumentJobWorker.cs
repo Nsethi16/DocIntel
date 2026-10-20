@@ -64,6 +64,7 @@ public sealed class DocumentJobWorker : BackgroundService
                         job.TotalPages = stepState.Pages.Count;
                         job.StrategyUsed = stepState.StrategyUsed;
                         job.ModelIdUsed = stepState.ModelIdUsed;
+                        job.HasDevelopmentResults = stepState.HasDevelopmentResults;
                         job.ExecutionTrace = stepState.ExecutionTrace.ToList();
                         job.Segments = stepState.Slices.ToList();
                         await _jobStore.UpsertJobAsync(job, ct);
@@ -73,6 +74,7 @@ public sealed class DocumentJobWorker : BackgroundService
                 job.TotalPages = completedState.Pages.Count;
                 job.StrategyUsed = completedState.StrategyUsed;
                 job.ModelIdUsed = completedState.ModelIdUsed;
+                job.HasDevelopmentResults = completedState.HasDevelopmentResults;
                 job.PacketSummary = completedState.PacketSummary;
                 job.ExtractedEntities = completedState.ExtractedEntities;
                 job.DataExtractions = completedState.DataExtractions;
@@ -86,13 +88,14 @@ public sealed class DocumentJobWorker : BackgroundService
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                _logger.LogError(ex, "Failed processing async job '{JobId}' for tenant '{TenantId}'.", ticket.JobId, ticket.TenantId);
+                _logger.LogError("Document job {JobId} failed with {ErrorType}; root cause {CauseType}.",
+                    ticket.JobId, ex.GetType().Name, ex.GetBaseException().GetType().Name);
                 if (job is not null)
                 {
                     try
                     {
                         job.Status = JobStatus.Failed;
-                        job.ErrorMessage = ex.Message;
+                        job.ErrorMessage = "Document processing failed. Check the provider configuration or source PDF and retry.";
                         job.CompletedAtUtc = DateTimeOffset.UtcNow;
                         await _jobStore.UpsertJobAsync(job, stoppingToken);
                     }

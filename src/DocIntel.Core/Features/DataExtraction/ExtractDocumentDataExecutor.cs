@@ -52,8 +52,18 @@ public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, Split
             .Where(p => !string.IsNullOrWhiteSpace(p.DocumentName))
             .ToDictionary(p => p.DocumentName.Trim(), p => p, StringComparer.OrdinalIgnoreCase);
 
+        if (!message.Slices.Any(slice => profilesByDocName.ContainsKey(
+            (slice.IdentifiedDocumentName ?? slice.DocumentTypeName ?? "Undefined").Trim())))
+        {
+            message.ExecutionTrace.Add(new WorkflowStepTrace(
+                nameof(ExtractDocumentDataExecutor), false, true, null, sw.Elapsed.TotalMilliseconds,
+                "Skipped (No matching document data-extraction profile)."));
+            return message;
+        }
+
         var modelId = _modelCatalog.ResolveModelId(message.Tenant, feature.ModelIdOverride);
-        var chatClient = _modelCatalog.ResolveChatClient(message.Tenant, feature.ModelIdOverride);
+        using var chatClient = _modelCatalog.ResolveChatClient(message.Tenant, feature.ModelIdOverride);
+        message.HasDevelopmentResults |= _modelCatalog.UsesDevelopmentSimulation(message.Tenant, feature.ModelIdOverride);
 
         var extractedDocs = new List<DocumentDataExtractionResult>();
 
@@ -103,15 +113,25 @@ public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, Split
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             }
 
-            var fields = (parsed?.Fields ?? [])
+            if (parsed?.Fields is null || parsed.Tables is null ||
+                parsed.Fields.Any(f => f is null || String.IsNullOrWhiteSpace(f.FieldName) ||
+                    !Double.IsFinite(f.ConfidenceValue) || f.ConfidenceValue is < 0 or > 100) ||
+                parsed.Tables.Any(t => t is null || String.IsNullOrWhiteSpace(t.TableName) || t.Rows is null ||
+                    t.Rows.Any(r => r is null || r.Fields is null || r.Fields.Any(f =>
+                        f is null || String.IsNullOrWhiteSpace(f.FieldName) || !Double.IsFinite(f.ConfidenceValue) ||
+                        f.ConfidenceValue is < 0 or > 100))))
+            {
+                throw new InvalidDataException("Structured extraction returned invalid fields, tables, or confidence signals.");
+            }
+            var fields = parsed.Fields
                 .Where(f => !string.IsNullOrWhiteSpace(f.FieldName))
                 .Select(f => new ExtractedFieldValue(
                     f.FieldName!.Trim(),
                     f.FieldValue?.Trim() ?? string.Empty,
-                    f.ConfidenceValue > 0 ? f.ConfidenceValue : 98.0))
+                    f.ConfidenceValue))
                 .ToList();
 
-            var tables = (parsed?.Tables ?? [])
+            var tables = parsed.Tables
                 .Where(t => !string.IsNullOrWhiteSpace(t.TableName))
                 .Select(t => new ExtractedTableValue(
                     t.TableName!.Trim(),
@@ -122,7 +142,7 @@ public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, Split
                                 .Select(c => new ExtractedFieldValue(
                                     c.FieldName!.Trim(),
                                     c.FieldValue?.Trim() ?? string.Empty,
-                                    c.ConfidenceValue > 0 ? c.ConfidenceValue : 96.0))
+                                    c.ConfidenceValue))
                                 .ToList()))
                         .ToList()))
                 .ToList();

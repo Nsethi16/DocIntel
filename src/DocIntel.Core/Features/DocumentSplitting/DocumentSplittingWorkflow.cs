@@ -109,17 +109,14 @@ public sealed class DocumentSplittingWorkflow
             .WithOutputFrom(promptColumnsExecutor)
             .Build();
 
-        SplittingState current = state;
-
         await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, state, cancellationToken: cancellationToken);
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().WithCancellation(cancellationToken))
         {
             if (evt is ExecutorCompletedEvent completed && completed.Data is SplittingState stepState)
             {
-                current = stepState;
                 if (onStepCompleted is not null)
                 {
-                    await onStepCompleted(current, cancellationToken);
+                    await onStepCompleted(stepState, cancellationToken);
                 }
             }
             else if (evt is WorkflowOutputEvent output && output.Data is SplittingState finalState)
@@ -139,7 +136,7 @@ public sealed class DocumentSplittingWorkflow
             }
         }
 
-        return current;
+        throw new InvalidOperationException("Document processing ended without a completed workflow output.");
     }
 }
 

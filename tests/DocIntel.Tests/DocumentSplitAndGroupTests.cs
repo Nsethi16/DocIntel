@@ -144,7 +144,7 @@ public sealed class DocumentSplitAndGroupTests
 
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDocIntelCore();
+        services.AddDocIntelCore(allowDevelopmentSimulation: true);
 
         using var provider = services.BuildServiceProvider();
         var workflow = provider.GetRequiredService<DocumentSplittingWorkflow>();
@@ -290,7 +290,7 @@ public sealed class DocumentSplitAndGroupTests
 
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDocIntelCore();
+        services.AddDocIntelCore(allowDevelopmentSimulation: true);
 
         using var provider = services.BuildServiceProvider();
         var workflow = provider.GetRequiredService<DocumentSplittingWorkflow>();
@@ -349,13 +349,13 @@ public sealed class DocumentSplitAndGroupTests
         {
             TenantId = "contoso-prompts",
             DisplayName = "Contoso Prompt Studio",
-            DefaultModelId = "phi-4"
+            DefaultModelId = "gpt-5-mini"
         };
 
         tenant.Capabilities[FeatureHarness.PromptColumnsKey] = new FeatureHarness
         {
             Enabled = true,
-            ModelIdOverride = "phi-4",
+            ModelIdOverride = "gpt-5-mini",
             PromptColumns = new PromptColumnsConfig
             {
                 Columns =
@@ -389,7 +389,7 @@ public sealed class DocumentSplitAndGroupTests
 
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDocIntelCore();
+        services.AddDocIntelCore(allowDevelopmentSimulation: true);
 
         using var provider = services.BuildServiceProvider();
         var workflow = provider.GetRequiredService<DocumentSplittingWorkflow>();
@@ -441,7 +441,7 @@ public sealed class DocumentSplitAndGroupTests
         var harnessPath = Path.Combine(Path.GetTempPath(), $"docintel-askai-test-{Guid.NewGuid():N}.json");
         var services = new ServiceCollection();
         services.AddLogging();
-        services.AddDocIntelCore(harnessFilePath: harnessPath);
+        services.AddDocIntelCore(harnessFilePath: harnessPath, allowDevelopmentSimulation: true);
 
         using var provider = services.BuildServiceProvider();
         var harnessStore = provider.GetRequiredService<IHarnessStore>();
@@ -554,8 +554,8 @@ public sealed class DocumentSplitAndGroupTests
         };
 
         var extractor = new PdfPigLayoutExtractor();
-        var catalog = new ModelCatalog();
-        var translator = new AzureDocumentTranslationService();
+        var catalog = new ModelCatalog(allowDevelopmentSimulation: true);
+        var translator = new AzureDocumentTranslationService(allowDevelopmentSimulation: true);
         var workflow = new DocumentSplittingWorkflow(extractor, extractor, catalog, translator, NullLogger<DocumentSplittingWorkflow>.Instance);
 
         var state = new SplittingState

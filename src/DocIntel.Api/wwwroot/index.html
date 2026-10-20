@@ -2340,7 +2340,9 @@
       const cleanTitle = (job.fileName || 'Document').replace(/\.pdf$/i, '');
       document.getElementById('selectedDocTitle').textContent = cleanTitle;
       document.getElementById('selectedDocTitle').title = job.fileName;
-      document.getElementById('selectedDocMetaText').textContent = `${job.totalPages || 0} pp`;
+      const provenance = job.status !== 'Completed' ? '' : job.hasDevelopmentResults === true
+        ? ' · Development/simulated results' : job.hasDevelopmentResults == null ? ' · Legacy results: verify source' : '';
+      document.getElementById('selectedDocMetaText').textContent = `${job.totalPages || 0} pp${provenance}`;
 
       const totalEntitiesCount = segs.reduce((acc, s) => acc + ((s.extractedEntities || []).length), 0);
       const totalStructuredCount = segs.reduce((acc, s) => {

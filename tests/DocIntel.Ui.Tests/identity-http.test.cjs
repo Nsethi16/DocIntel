@@ -278,8 +278,65 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
       assert.equal((await request(tenantPath + '/seed-examples', processor, 'POST', {})).status, 200);
       const jobs = await (await request(tenantPath + '/jobs', processor)).json();
       assert.ok(jobs.length >= 2);
+      assert.ok(jobs.every(job => job.hasDevelopmentResults === true));
       allowedDocumentId = jobs[0].jobId;
       const forbiddenDocumentId = jobs[1].jobId;
+
+      await t.test('uploads without an actual valid PDF do not create implicit sample documents', async () => {
+        assert.equal((await request(tenantPath + '/jobs', processor, 'POST', {})).status, 400);
+        const form = new FormData();
+        form.set('file', new Blob(['This is not a PDF.'], { type: 'application/pdf' }), 'not-a-pdf.pdf');
+        assert.equal((await fetch(api.url + tenantPath + '/jobs', {
+          method: 'POST', headers: { Authorization: `Bearer ${processor}` }, body: form
+        })).status, 400);
+        const oversized = new Uint8Array(25 * 1024 * 1024 + 1);
+        oversized.set(Buffer.from('%PDF-'));
+        const largeForm = new FormData();
+        largeForm.set('file', new Blob([oversized], { type: 'application/pdf' }), 'too-large.pdf');
+        assert.equal((await fetch(api.url + tenantPath + '/jobs', {
+          method: 'POST', headers: { Authorization: `Bearer ${processor}` }, body: largeForm
+        })).status, 400);
+        assert.equal((await (await request(tenantPath + '/jobs', processor)).json()).length, jobs.length);
+      });
+      await t.test('a missing translated artifact is not substituted with the original PDF or generated text', async () => {
+        const original = jobs.flatMap(job => job.segments.map(segment => ({ job, segment })))
+          .find(item => !item.segment.wasTranslated);
+        assert.ok(original);
+        const source = `${tenantPath}/jobs/${original.job.jobId}/slices/${original.segment.segmentIndex}/pdf`;
+        assert.equal((await request(source, processor)).status, 200);
+        assert.equal((await request(source + '?translated=true', processor)).status, 404);
+      });
+      await t.test('deterministic splitting processes an actual upload without inventing model results', async () => {
+        const source = `${tenantPath}/jobs/${jobs[0].jobId}/slices/0/pdf`;
+        const pdf = await (await request(source, processor)).arrayBuffer();
+        const original = await (await request(tenantPath, administrator)).json();
+        const deterministic = structuredClone(original);
+        for (const [name, capability] of Object.entries(deterministic.capabilities)) {
+          capability.enabled = name === 'SplitAndGroup';
+        }
+        assert.equal((await request(tenantPath, administrator, 'PUT', deterministic)).status, 200);
+        try {
+          const form = new FormData();
+          form.set('file', new Blob([pdf], { type: 'application/pdf' }), 'deterministic-source.pdf');
+          const uploaded = await fetch(api.url + tenantPath + '/jobs', {
+            method: 'POST', headers: { Authorization: `Bearer ${processor}` }, body: form
+          });
+          assert.equal(uploaded.status, 202);
+          const accepted = await uploaded.json();
+          let job;
+          for (let attempt = 0; attempt < 100; attempt++) {
+            job = await (await request(accepted.statusUrl, processor)).json();
+            if (job.status === 'Completed' || job.status === 'Failed') break;
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          assert.equal(job.status, 'Completed', job.errorMessage);
+          assert.ok(job.segments.length > 0);
+          assert.equal(job.hasDevelopmentResults, false);
+          assert.equal(job.modelIdUsed, null);
+        } finally {
+          assert.equal((await request(tenantPath, administrator, 'PUT', original)).status, 200);
+        }
+      });
 
       await t.test('empty document grants yield no list or graph data and cannot upload or inspect documents', async () => {
         assert.deepEqual(await (await request(tenantPath + '/jobs', reader)).json(), []);

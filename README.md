@@ -41,6 +41,18 @@ publicly exposed service: `LocalDevelopment` is refused outside `Development` or
 on wildcard/non-loopback addresses. Ask AI separately requires a real configured tool-calling
 model; missing endpoints do not produce simulated answers.
 
+Document-processing simulation is an explicit development-only setting:
+`Models:AllowDevelopmentSimulation` (environment variable `Models__AllowDevelopmentSimulation`).
+The Development settings enable it for loopback demos/tests; set it to `false` to require real
+configured providers locally. Production refuses this flag. A configured provider's errors never
+trigger a switch to another provider or the simulator, even in development.
+
+Jobs expose `hasDevelopmentResults`: `true` identifies development-derived results; `null` means
+legacy provenance is unknown. The workspace labels these cases and Ask AI is told to verify
+against original source text rather than trust unverified derived results. The explicit
+`seed-examples` adapter is available only in loopback development with simulation enabled.
+Uploads always require an actual PDF, with a 25 MiB limit; an empty request never creates a sample.
+
 ## Identity and document access
 
 Production defaults to **Entra** and fails startup when identity configuration is incomplete.
@@ -85,6 +97,19 @@ definitions, use the existing explicit prompt-evaluation action with processing/
 Browser mutations require a request-verification token, acquired automatically by the bundled UI.
 The default per-identity request limits are 300 reads and 20 mutations per minute, configurable
 through `Identity:ReadRequestsPerMinute` and `Identity:WriteRequestsPerMinute`.
+
+Prompt columns use the selected catalog model's explicit PDF capability. Text-only models receive
+text with `ProcessedAsFileBase64=false`; PDF-capable models require the real slice PDF. There is no
+provider-error text retry or invented PDF from extracted text. Invalid result JSON fails rather
+than producing a templated answer. Cache reuse also requires a matching input/model/mode
+fingerprint, and a failed reevaluation does not publish partial slice results.
+
+Live translation requires a server-configured HTTPS endpoint and actual source PDF bytes. Tenant
+settings cannot redirect credential-bearing translation calls to another endpoint. The provider
+auto-detects source language; `und` records that a separate detected-language value is unavailable,
+not that the source is English. Missing translated artifacts return 404 instead of the original
+PDF or a newly generated text document. Confidence values are model signals, not calibrated
+probabilities; missing/zero confidence is not inflated to 95-98 percent.
 
 Chat history is partitioned by a server-derived account identifier and application tenant.
 Legacy unscoped history is not automatically assigned to a signed-in account or deleted.

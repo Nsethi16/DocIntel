@@ -49,13 +49,20 @@ public sealed record ModelDescriptor(
     string Family,
     ModelProvider Provider,
     string DeploymentName,
-    string? Endpoint = null);
+    string? Endpoint = null,
+    bool SupportsPdfInputs = false);
 
 /// <summary>
 /// Resolves provider-agnostic <see cref="IChatClient"/> instances for any model in the catalog.
 /// </summary>
 public interface IModelCatalog
 {
+    bool AllowsDevelopmentSimulation { get; }
+
+    bool UsesDevelopmentSimulation(TenantHarness tenant, string? modelOverride = null);
+
+    bool SupportsPdfInputs(TenantHarness tenant, string? modelOverride = null);
+
     IReadOnlyList<ModelDescriptor> ListModels();
 
     string ResolveModelId(TenantHarness tenant, string? modelOverride = null);
@@ -81,9 +88,11 @@ public sealed class ModelCatalog : IModelCatalog
     public ModelCatalog(
         IEnumerable<ModelDescriptor>? descriptors = null,
         IDictionary<string, IChatClient>? customClients = null,
-        TokenCredential? credential = null)
+        TokenCredential? credential = null,
+        bool allowDevelopmentSimulation = false)
     {
         _descriptors = (descriptors ?? CreateDefaultDescriptors()).ToList();
+        AllowsDevelopmentSimulation = allowDevelopmentSimulation;
         _customClients = customClients is not null
             ? new Dictionary<string, IChatClient>(customClients, StringComparer.OrdinalIgnoreCase)
             : new Dictionary<string, IChatClient>(StringComparer.OrdinalIgnoreCase);
@@ -95,6 +104,24 @@ public sealed class ModelCatalog : IModelCatalog
     }
 
     public IReadOnlyList<ModelDescriptor> ListModels() => _descriptors;
+
+    public bool AllowsDevelopmentSimulation { get; }
+
+    public bool UsesDevelopmentSimulation(TenantHarness tenant, string? modelOverride = null)
+    {
+        var id = ResolveModelId(tenant, modelOverride);
+        if (_customClients.TryGetValue(id, out var client)) return client is SimulatedSliceChatClient;
+        var descriptor = _descriptors.FirstOrDefault(d => String.Equals(d.ModelId, id, StringComparison.OrdinalIgnoreCase));
+        return AllowsDevelopmentSimulation && (descriptor is null ||
+            descriptor.Provider == ModelProvider.Simulated || String.IsNullOrWhiteSpace(descriptor.Endpoint));
+    }
+
+    public bool SupportsPdfInputs(TenantHarness tenant, string? modelOverride = null)
+    {
+        var id = ResolveModelId(tenant, modelOverride);
+        return _descriptors.FirstOrDefault(d =>
+            String.Equals(d.ModelId, id, StringComparison.OrdinalIgnoreCase))?.SupportsPdfInputs == true;
+    }
 
     public string ResolveModelId(TenantHarness tenant, string? modelOverride = null)
     {
@@ -114,64 +141,21 @@ public sealed class ModelCatalog : IModelCatalog
         return target;
     }
 
-    public IChatClient ResolveChatClient(TenantHarness tenant, string? modelOverride = null)
-    {
-        var modelId = ResolveModelId(tenant, modelOverride);
-
-        if (_customClients.TryGetValue(modelId, out var injectedClient))
-        {
-            return new ReasoningCleanupChatClient(injectedClient, ownsInnerClient: false);
-        }
-
-        var descriptor = _descriptors.FirstOrDefault(d =>
-            string.Equals(d.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
-
-        if (descriptor is null || string.IsNullOrWhiteSpace(descriptor.Endpoint) || descriptor.Provider == ModelProvider.Simulated)
-        {
-            return new SimulatedSliceChatClient(modelId);
-        }
-
-        IChatClient rawClient = descriptor.Provider switch
-        {
-            ModelProvider.FoundryInference => CreateFoundryInferenceClient(descriptor.Endpoint, descriptor.DeploymentName),
-
-            ModelProvider.AzureOpenAI => new AzureOpenAIClient(new Uri(descriptor.Endpoint), _credential)
-                .GetChatClient(descriptor.DeploymentName)
-                .AsIChatClient(),
-
-            ModelProvider.OpenAICompatible => new OpenAIClient(
-                    new System.ClientModel.ApiKeyCredential("local"),
-                    new OpenAIClientOptions { Endpoint = new Uri(descriptor.Endpoint) })
-                .GetChatClient(descriptor.DeploymentName)
-                .AsIChatClient(),
-
-            _ => new SimulatedSliceChatClient(modelId)
-        };
-
-        // Provide fallback to gpt-5-mini (if deployed) and SimulatedSliceChatClient so undeployed catalog models never fail a run
-        IChatClient? openAiFallback = null;
-        var gptMiniDesc = _descriptors.FirstOrDefault(d => string.Equals(d.ModelId, "gpt-5-mini", StringComparison.OrdinalIgnoreCase));
-        if (gptMiniDesc is not null &&
-            !string.IsNullOrWhiteSpace(gptMiniDesc.Endpoint) &&
-            !string.Equals(descriptor.ModelId, "gpt-5-mini", StringComparison.OrdinalIgnoreCase))
-        {
-            openAiFallback = new AzureOpenAIClient(new Uri(gptMiniDesc.Endpoint), _credential)
-                .GetChatClient(gptMiniDesc.DeploymentName)
-                .AsIChatClient();
-        }
-
-        return new ReasoningCleanupChatClient(rawClient, new SimulatedSliceChatClient(modelId), openAiFallback);
-    }
+    public IChatClient ResolveChatClient(TenantHarness tenant, string? modelOverride = null) =>
+        ResolveClient(tenant, modelOverride, requireTools: false);
 
     /// <inheritdoc />
-    public IChatClient ResolveRequiredChatClient(TenantHarness tenant, string? modelOverride = null)
+    public IChatClient ResolveRequiredChatClient(TenantHarness tenant, string? modelOverride = null) =>
+        ResolveClient(tenant, modelOverride, requireTools: true);
+
+    private IChatClient ResolveClient(TenantHarness tenant, string? modelOverride, bool requireTools)
     {
         var modelId = ResolveModelId(tenant, modelOverride);
         if (_customClients.TryGetValue(modelId, out var injectedClient))
         {
-            if (injectedClient is SimulatedSliceChatClient)
+            if (injectedClient is SimulatedSliceChatClient && (requireTools || !AllowsDevelopmentSimulation))
             {
-                throw new InvalidOperationException("Ask AI requires a configured, non-simulated model.");
+                throw new InvalidOperationException("This operation requires a configured, non-simulated model.");
             }
 
             return new ReasoningCleanupChatClient(injectedClient, ownsInnerClient: false);
@@ -179,20 +163,26 @@ public sealed class ModelCatalog : IModelCatalog
 
         var descriptor = _descriptors.FirstOrDefault(d =>
             String.Equals(d.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
+        if (!requireTools && AllowsDevelopmentSimulation && (descriptor is null ||
+            descriptor.Provider == ModelProvider.Simulated || String.IsNullOrWhiteSpace(descriptor.Endpoint)))
+        {
+            return new SimulatedSliceChatClient(modelId);
+        }
         if (descriptor is null || descriptor.Provider == ModelProvider.Simulated ||
             !Uri.TryCreate(descriptor.Endpoint, UriKind.Absolute, out var endpoint) ||
             (endpoint.Scheme != Uri.UriSchemeHttps &&
              (endpoint.Scheme != Uri.UriSchemeHttp || !endpoint.IsLoopback)))
         {
             throw new InvalidOperationException(
-                "Ask AI requires a configured model endpoint using HTTPS or loopback HTTP.");
+                "Model execution requires a configured endpoint using HTTPS or loopback HTTP.");
         }
 
         IChatClient client = descriptor.Provider switch
         {
-            ModelProvider.FoundryInference => throw new NotSupportedException(
+            ModelProvider.FoundryInference when requireTools => throw new NotSupportedException(
                 "The legacy inference adapter does not support Ask AI tool calling. " +
                 "Select a configured OpenAI-compatible tool-calling deployment."),
+            ModelProvider.FoundryInference => CreateFoundryInferenceClient(endpoint.ToString(), descriptor.DeploymentName),
             ModelProvider.AzureOpenAI => new AzureOpenAIClient(endpoint, _credential)
                 .GetChatClient(descriptor.DeploymentName).AsIChatClient(),
             ModelProvider.OpenAICompatible => new OpenAIClient(
@@ -220,14 +210,14 @@ public sealed class ModelCatalog : IModelCatalog
         string? azureOpenAiEndpoint = null,
         string? localOpenAiEndpoint = null) =>
     [
-        new("decision-1", "Microsoft Decision 1", "Microsoft", ModelProvider.AzureOpenAI, "gpt-5-mini", azureOpenAiEndpoint ?? foundryInferenceEndpoint),
+        new("decision-1", "Microsoft Decision 1", "Microsoft", ModelProvider.AzureOpenAI, "gpt-5-mini", azureOpenAiEndpoint ?? foundryInferenceEndpoint, true),
         new("phi-4", "Microsoft Phi-4 (Foundry)", "Microsoft", ModelProvider.FoundryInference, "Phi-4", foundryInferenceEndpoint),
         new("mai-reasoning", "Microsoft MAI-Reasoning (Foundry)", "Microsoft", ModelProvider.FoundryInference, "MAI-Reasoning", foundryInferenceEndpoint),
         new("llama-3.3-70b", "Meta Llama 3.3 70B Instruct (Foundry)", "Meta", ModelProvider.FoundryInference, "Llama-3.3-70B-Instruct", foundryInferenceEndpoint),
         new("deepseek-r1", "DeepSeek R1 Reasoning (Foundry)", "DeepSeek", ModelProvider.FoundryInference, "DeepSeek-R1", foundryInferenceEndpoint),
         new("mistral-large", "Mistral Large 2411 (Foundry)", "Mistral", ModelProvider.FoundryInference, "Mistral-Large-2411", foundryInferenceEndpoint),
-        new("gpt-5-mini", "GPT-5 Mini (Foundry / Azure OpenAI)", "OpenAI", ModelProvider.AzureOpenAI, "gpt-5-mini", azureOpenAiEndpoint ?? foundryInferenceEndpoint),
-        new("gpt-4o", "GPT-4o (Foundry / Azure OpenAI)", "OpenAI", ModelProvider.AzureOpenAI, "gpt-4o", azureOpenAiEndpoint ?? foundryInferenceEndpoint),
+        new("gpt-5-mini", "GPT-5 Mini (Foundry / Azure OpenAI)", "OpenAI", ModelProvider.AzureOpenAI, "gpt-5-mini", azureOpenAiEndpoint ?? foundryInferenceEndpoint, true),
+        new("gpt-4o", "GPT-4o (Foundry / Azure OpenAI)", "OpenAI", ModelProvider.AzureOpenAI, "gpt-4o", azureOpenAiEndpoint ?? foundryInferenceEndpoint, true),
         new("foundry-local-phi4", "Phi-4 (On-Device Foundry Local / Ollama)", "Local", ModelProvider.OpenAICompatible, "phi-4", localOpenAiEndpoint)
     ];
 }
@@ -323,19 +313,13 @@ public sealed class ReasoningCleanupChatClient : DelegatingChatClient
         @"^```(?:json)?\s*([\s\S]*?)\s*```$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
 
-    private readonly IChatClient? _simulatedFallback;
-    private readonly IChatClient? _openAiFallback;
     private readonly bool _ownsInnerClient;
 
     public ReasoningCleanupChatClient(
         IChatClient innerClient,
-        IChatClient? simulatedFallback = null,
-        IChatClient? openAiFallback = null,
         bool ownsInnerClient = true)
         : base(innerClient)
     {
-        _simulatedFallback = simulatedFallback;
-        _openAiFallback = openAiFallback;
         _ownsInnerClient = ownsInnerClient;
     }
 
@@ -344,30 +328,7 @@ public sealed class ReasoningCleanupChatClient : DelegatingChatClient
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var msgList = messages.ToList();
-        ChatResponse response;
-        try
-        {
-            response = await base.GetResponseAsync(msgList, options, cancellationToken).ConfigureAwait(false);
-        }
-        catch (Exception) when (_openAiFallback is not null || _simulatedFallback is not null)
-        {
-            if (_openAiFallback is not null)
-            {
-                try
-                {
-                    response = await _openAiFallback.GetResponseAsync(msgList, options, cancellationToken).ConfigureAwait(false);
-                }
-                catch (Exception) when (_simulatedFallback is not null)
-                {
-                    response = await _simulatedFallback.GetResponseAsync(msgList, options, cancellationToken).ConfigureAwait(false);
-                }
-            }
-            else
-            {
-                response = await _simulatedFallback!.GetResponseAsync(msgList, options, cancellationToken).ConfigureAwait(false);
-            }
-        }
+        var response = await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
 
         foreach (var message in response.Messages)
         {

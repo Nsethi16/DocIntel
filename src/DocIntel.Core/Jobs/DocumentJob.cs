@@ -51,6 +51,8 @@ public sealed class DocumentJob
 
     public string? ModelIdUsed { get; set; }
 
+    public bool? HasDevelopmentResults { get; set; }
+
     public string? PacketSummary { get; set; }
 
     public List<ExtractedEntity> ExtractedEntities { get; set; } = [];

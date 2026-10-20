@@ -60,15 +60,13 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
             : (!string.IsNullOrWhiteSpace(config.DecisionModelId) ? config.DecisionModelId : feature.ModelIdOverride);
 
         var modelId = _modelCatalog.ResolveModelId(message.Tenant, preferredModel);
-        var chatClient = _modelCatalog.ResolveChatClient(message.Tenant, preferredModel);
-
         if (activeRules.Count == 0)
         {
             foreach (var slice in message.Slices)
             {
                 slice.IdentifiedDocumentName = UndefinedDocumentName;
                 slice.DocumentTypeName = UndefinedDocumentName;
-                slice.IdentificationConfidence = 1.0;
+                slice.IdentificationConfidence = 0;
                 slice.MatchedIdentificationRule = null;
             }
 
@@ -77,12 +75,14 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
                 nameof(IdentifyDocumentsExecutor),
                 Executed: true,
                 Succeeded: true,
-                ModelIdUsed: modelId,
+                ModelIdUsed: null,
                 DurationMs: sw.Elapsed.TotalMilliseconds,
                 Notes: $"Marked {message.Slices.Count} slice(s) as '{UndefinedDocumentName}' (no active identification rules configured)."));
             return message;
         }
 
+        using var chatClient = _modelCatalog.ResolveChatClient(message.Tenant, preferredModel);
+        message.HasDevelopmentResults |= _modelCatalog.UsesDevelopmentSimulation(message.Tenant, preferredModel);
         var instructions = BuildDecisionModelInstructions(activeRules, feature.CustomSystemPrompt);
         var chatOptions = new ChatOptions
         {
@@ -130,13 +130,20 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
             }
 
             var candidateName = decision?.IdentifiedDocumentName?.Trim();
+            if (String.IsNullOrWhiteSpace(candidateName) || decision is null ||
+                (!String.Equals(candidateName, UndefinedDocumentName, StringComparison.OrdinalIgnoreCase) &&
+                 !ruleLookup.ContainsKey(candidateName)) ||
+                !Double.IsFinite(decision.Confidence) || decision.Confidence is < 0 or > 1)
+            {
+                throw new InvalidDataException("Document identification returned an invalid closed-set decision.");
+            }
             if (!string.IsNullOrWhiteSpace(candidateName) &&
                 ruleLookup.TryGetValue(candidateName, out var matchedRule))
             {
                 slice.IdentifiedDocumentName = matchedRule.DocumentName;
                 slice.DocumentTypeName = matchedRule.DocumentName;
                 slice.IsInferred = false;
-                slice.IdentificationConfidence = decision?.Confidence ?? 0.95;
+                slice.IdentificationConfidence = decision.Confidence;
                 slice.MatchedIdentificationRule = matchedRule.IdentificationPrompt;
             }
             else
@@ -144,7 +151,7 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
                 slice.IdentifiedDocumentName = UndefinedDocumentName;
                 slice.DocumentTypeName = UndefinedDocumentName;
                 slice.IsInferred = true;
-                slice.IdentificationConfidence = decision?.Confidence ?? 0.50;
+                slice.IdentificationConfidence = decision.Confidence;
                 slice.MatchedIdentificationRule = null;
             }
         }

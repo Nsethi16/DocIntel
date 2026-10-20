@@ -53,7 +53,8 @@ public sealed class GenerateDocumentInsightsExecutor : Executor<SplittingState, 
             : config.SummaryInstructions;
 
         var modelId = _modelCatalog.ResolveModelId(message.Tenant, feature.ModelIdOverride);
-        var chatClient = _modelCatalog.ResolveChatClient(message.Tenant, feature.ModelIdOverride);
+        using var chatClient = _modelCatalog.ResolveChatClient(message.Tenant, feature.ModelIdOverride);
+        message.HasDevelopmentResults |= _modelCatalog.UsesDevelopmentSimulation(message.Tenant, feature.ModelIdOverride);
 
         var chatOptions = new ChatOptions
         {
@@ -93,7 +94,11 @@ public sealed class GenerateDocumentInsightsExecutor : Executor<SplittingState, 
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             }
 
-            slice.InsightSummary = parsed?.Summary ?? cleanedJson;
+            if (String.IsNullOrWhiteSpace(parsed?.Summary))
+            {
+                throw new InvalidDataException("The insight provider did not return a summary.");
+            }
+            slice.InsightSummary = parsed.Summary;
             sliceSummaries.Add($"Slice #{slice.SegmentIndex + 1} ({slice.DocumentTypeName ?? "Document"}, Pages {slice.StartPage}-{slice.EndPage}): {slice.InsightSummary}");
         }
 
@@ -140,7 +145,8 @@ public sealed class GenerateDocumentInsightsExecutor : Executor<SplittingState, 
             ? feature.CustomSystemPrompt!
             : config.SummaryInstructions;
 
-        var chatClient = modelCatalog.ResolveChatClient(tenant, feature.ModelIdOverride);
+        using var chatClient = modelCatalog.ResolveChatClient(tenant, feature.ModelIdOverride);
+        if (modelCatalog.UsesDevelopmentSimulation(tenant, feature.ModelIdOverride)) job.HasDevelopmentResults = true;
         var chatOptions = new ChatOptions
         {
             Instructions = $"[TASK:DOCUMENT_INSIGHT]\nYou are an enterprise document insight assistant.\n{summaryInstructions}",
@@ -177,7 +183,11 @@ public sealed class GenerateDocumentInsightsExecutor : Executor<SplittingState, 
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             }
 
-            slice.InsightSummary = parsed?.Summary ?? cleanedJson;
+            if (String.IsNullOrWhiteSpace(parsed?.Summary))
+            {
+                throw new InvalidDataException("The insight provider did not return a summary.");
+            }
+            slice.InsightSummary = parsed.Summary;
             sliceSummaries.Add($"Slice #{slice.SegmentIndex + 1} ({slice.IdentifiedDocumentName ?? slice.DocumentTypeName ?? "Document"}, Pages {slice.StartPage}-{slice.EndPage}): {slice.InsightSummary}");
         }
 

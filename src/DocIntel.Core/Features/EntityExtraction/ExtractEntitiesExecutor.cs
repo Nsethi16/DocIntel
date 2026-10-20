@@ -52,7 +52,8 @@ public sealed class ExtractEntitiesExecutor : Executor<SplittingState, Splitting
             : config.ExtractionPrompt;
 
         var modelId = _modelCatalog.ResolveModelId(message.Tenant, feature.ModelIdOverride);
-        var chatClient = _modelCatalog.ResolveChatClient(message.Tenant, feature.ModelIdOverride);
+        using var chatClient = _modelCatalog.ResolveChatClient(message.Tenant, feature.ModelIdOverride);
+        message.HasDevelopmentResults |= _modelCatalog.UsesDevelopmentSimulation(message.Tenant, feature.ModelIdOverride);
 
         var chatOptions = new ChatOptions
         {
@@ -92,13 +93,18 @@ public sealed class ExtractEntitiesExecutor : Executor<SplittingState, Splitting
                     new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
             }
 
-            var sliceEntities = (parsed?.Entities ?? [])
-                .Where(e => !string.IsNullOrWhiteSpace(e.Name) && !string.IsNullOrWhiteSpace(e.Value))
+            if (parsed?.Entities is null || parsed.Entities.Any(e => e is null ||
+                String.IsNullOrWhiteSpace(e.Name) || String.IsNullOrWhiteSpace(e.Value) ||
+                !Double.IsFinite(e.Confidence) || e.Confidence is < 0 or > 1))
+            {
+                throw new InvalidDataException("Entity extraction returned an invalid entities collection.");
+            }
+            var sliceEntities = parsed.Entities
                 .Select(e => new ExtractedEntity(
                     e.Name!.Trim(),
                     e.Value!.Trim(),
                     e.Category ?? "General",
-                    e.Confidence > 0 ? e.Confidence : 0.95,
+                    e.Confidence,
                     slice.SegmentIndex))
                 .ToList();
 
@@ -123,7 +129,7 @@ public sealed class ExtractEntitiesExecutor : Executor<SplittingState, Splitting
     private sealed class EntityExtractionEnvelopeDto
     {
         [JsonPropertyName("entities")]
-        public List<ExtractedEntityDto> Entities { get; set; } = [];
+        public List<ExtractedEntityDto>? Entities { get; set; }
     }
 
     private sealed class ExtractedEntityDto

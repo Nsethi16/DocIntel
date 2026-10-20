@@ -35,7 +35,7 @@ public sealed class PageLayout
 public sealed record ExtractedFieldValue(
     [property: JsonPropertyName("fieldName")] string FieldName,
     [property: JsonPropertyName("fieldValue")] string FieldValue,
-    [property: JsonPropertyName("confidenceValue")] double ConfidenceValue = 98.0);
+    [property: JsonPropertyName("confidenceValue")] double ConfidenceValue = 0);
 
 /// <summary>
 /// Represents a single extracted table row containing column values.
@@ -80,13 +80,14 @@ public sealed record PromptColumnResult(
     [property: JsonPropertyName("segmentIndex")] int SegmentIndex,
     [property: JsonPropertyName("documentName")] string DocumentName,
     [property: JsonPropertyName("pageRange")] string PageRange,
-    [property: JsonPropertyName("evaluatedAtUtc")] DateTimeOffset EvaluatedAtUtc);
+    [property: JsonPropertyName("evaluatedAtUtc")] DateTimeOffset EvaluatedAtUtc,
+    [property: JsonPropertyName("inputFingerprint")] string? InputFingerprint = null);
 
 public sealed record ExtractedEntity(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("value")] string Value,
     [property: JsonPropertyName("category")] string Category,
-    [property: JsonPropertyName("confidence")] double Confidence = 0.95,
+    [property: JsonPropertyName("confidence")] double Confidence = 0,
     [property: JsonPropertyName("sourceSliceIndex")] int? SourceSliceIndex = null);
 
 /// <summary>
@@ -195,6 +196,8 @@ public sealed record WorkflowStepTrace(
 /// </summary>
 public sealed class SplittingState
 {
+    public bool HasDevelopmentResults { get; set; }
+
     public required TenantHarness Tenant { get; init; }
 
     public required string FileName { get; init; }

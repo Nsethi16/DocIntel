@@ -296,21 +296,10 @@ public static class HarnessEndpoints
                     {
                         pdfBytes = seg.TranslatedPdfBytes;
                     }
-                    else if (!string.IsNullOrWhiteSpace(seg?.TranslatedText))
-                    {
-                        var footer = seg.Footers.FirstOrDefault() ?? $"Translated-{(seg.TargetLanguage ?? "EN").ToUpperInvariant()}";
-                        pdfBytes = PdfPigLayoutExtractor.CreateSamplePdf([(seg.TranslatedText, footer)]);
-                    }
                 }
-
-                if (pdfBytes is null)
+                else
                 {
-                    if (artifactStore is not null && wantTranslated)
-                    {
-                        pdfBytes = await artifactStore.GetSlicePdfAsync(tenantId, jobId, sliceIndex, ct, isTranslated: false);
-                    }
-
-                    pdfBytes ??= seg?.SplitPdfBytes;
+                    pdfBytes = seg?.SplitPdfBytes;
                 }
             }
 
@@ -661,6 +650,8 @@ public static class HarnessEndpoints
         // Seed 26 realistic example documents across customers, languages, and document types into IJobStore (Cosmos DB / InMemory)
         group.MapPost("/tenants/{tenantId}/seed-examples", async (
             string tenantId,
+            IHostEnvironment environment,
+            IModelCatalog modelCatalog,
             IHarnessStore harnessStore,
             IJobStore jobStore,
             IPageLayoutExtractor layoutExtractor,
@@ -669,6 +660,10 @@ public static class HarnessEndpoints
             ILogger<DocumentSplittingWorkflow> workflowLogger,
             CancellationToken ct) =>
         {
+            if (!environment.IsDevelopment() || !modelCatalog.AllowsDevelopmentSimulation)
+            {
+                return Results.NotFound();
+            }
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
             if (tenant is null)
             {
@@ -679,7 +674,7 @@ public static class HarnessEndpoints
             var fastWorkflow = new DocumentSplittingWorkflow(
                 layoutExtractor,
                 pdfSlicer,
-                new ModelCatalog(),
+                new ModelCatalog(allowDevelopmentSimulation: true),
                 translationService,
                 workflowLogger,
                 azureOptions: new DocIntel.Core.AzureIntegrationOptions(),
@@ -720,6 +715,7 @@ public static class HarnessEndpoints
                         TotalPages = completed.Pages.Count,
                         StrategyUsed = completed.StrategyUsed,
                         ModelIdUsed = completed.ModelIdUsed,
+                        HasDevelopmentResults = completed.HasDevelopmentResults,
                         PacketSummary = completed.PacketSummary,
                         ExtractedEntities = completed.ExtractedEntities,
                         DataExtractions = completed.DataExtractions,
@@ -777,6 +773,7 @@ public static class HarnessEndpoints
                 totalPages = completed.Pages.Count,
                 strategyUsed = completed.StrategyUsed,
                 modelIdUsed = completed.ModelIdUsed,
+                hasDevelopmentResults = completed.HasDevelopmentResults,
                 packetSummary = completed.PacketSummary,
                 extractedEntities = completed.ExtractedEntities,
                 dataExtractions = completed.DataExtractions,
@@ -811,24 +808,28 @@ public static class HarnessEndpoints
 
     private static async Task<(string FileName, byte[] PdfBytes)> ResolvePdfBytesAsync(HttpRequest request, CancellationToken ct)
     {
-        if (request.HasFormContentType && request.Form.Files.Count > 0)
+        if (!request.HasFormContentType)
         {
-            var file = request.Form.Files[0];
-            using var ms = new MemoryStream();
-            await file.CopyToAsync(ms, ct);
-            return (file.FileName, ms.ToArray());
+            throw new BadHttpRequestException("A multipart PDF upload is required.", 400);
         }
-
-        var sampleBytes = PdfPigLayoutExtractor.CreateSamplePdf(
-        [
-            ("Formulario de Firma del Programa\nNúmero de MBA/MBSA: U5389226323\nNúmero de contrato: 69943885\nNombre de la entidad: Contoso Legal\nCuando Microsoft haya formalizado debidamente el formulario de firma, el Cliente recibirá una copia de confirmación.", "X20-12661-01-SigForm-ES"),
-            ("Master Business Service Agreement\nThis Master Agreement governs all enterprise purchases.\nSection 1: Definitions and Scope.", "Form-MBSA-v1"),
-            ("Master Business Service Agreement\nSection 2: Confidentiality and Liability Limits.\nSigned by Authorized Representative.", "Form-MBSA-v1"),
-            ("Enterprise Enrollment\nEnrollment under the Master Business Service Agreement.\nIncludes 2,500 Enterprise Seats.", "Form-EA-v2"),
-            ("Amendment ID M130\nCustom Pricing and Volume Discount Schedule.\nApplies to Enterprise Enrollment.", "VLAmendments,M130")
-        ]);
-
-        return ("Enterprise-Contract-Packet-Sample.pdf", sampleBytes);
+        var form = await request.ReadFormAsync(ct);
+        if (form.Files.Count != 1)
+        {
+            throw new BadHttpRequestException("Upload exactly one PDF file.", 400);
+        }
+        var file = form.Files[0];
+        if (file.Length is < 5 or > 25 * 1024 * 1024)
+        {
+            throw new BadHttpRequestException("The PDF must contain data and be at most 25 MiB.", 400);
+        }
+        using var stream = new MemoryStream();
+        await file.CopyToAsync(stream, ct);
+        var bytes = stream.ToArray();
+        if (!bytes.AsSpan().StartsWith("%PDF-"u8))
+        {
+            throw new BadHttpRequestException("The uploaded file is not a PDF.", 400);
+        }
+        return (file.FileName, bytes);
     }
 
     private static IReadOnlyList<(string FileName, (string Body, string Footer)[] Pages)> CreateExampleDocumentCorpus() =>
@@ -980,6 +981,7 @@ public static class HarnessEndpoints
         job.TotalPages,
         job.StrategyUsed,
         job.ModelIdUsed,
+        job.HasDevelopmentResults,
         job.PacketSummary,
         job.ExtractedEntities,
         job.DataExtractions,

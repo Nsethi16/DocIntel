@@ -31,6 +31,13 @@ public static class IdentityHostingExtensions
         var settings = new IdentityOptions();
         builder.Configuration.GetSection(IdentityOptions.SectionName).Bind(settings);
         settings.Validate(builder.Environment, builder.Configuration["urls"]);
+        if (builder.Configuration.GetValue<bool>("Models:AllowDevelopmentSimulation") &&
+            (!builder.Environment.IsDevelopment() || String.IsNullOrWhiteSpace(builder.Configuration["urls"]) ||
+             !builder.Configuration["urls"]!.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                 .All(IdentityOptions.IsLoopbackUrl)))
+        {
+            throw new InvalidOperationException("Development simulation requires an explicit loopback Development host.");
+        }
         builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
         builder.Services.AddSingleton(settings);
         var webRoot = builder.Environment.WebRootPath ?? Path.Combine(builder.Environment.ContentRootPath, "wwwroot");
@@ -70,7 +77,9 @@ public static class IdentityHostingExtensions
                 return RateLimitPartition.GetFixedWindowLimiter((key, read), _ => new FixedWindowRateLimiterOptions
                 {
                     PermitLimit = read ? settings.ReadRequestsPerMinute : settings.WriteRequestsPerMinute,
-                    Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
+                    Window = TimeSpan.FromMinutes(1),
+                    QueueLimit = 0,
+                    AutoReplenishment = true
                 });
             });
             o.OnRejected = async (context, cancellationToken) =>
@@ -129,8 +138,11 @@ public static class IdentityHostingExtensions
                 o.TokenValidationParameters = new TokenValidationParameters
                 {
                     AuthenticationType = BearerScheme,
-                    ValidateIssuerSigningKey = true, ValidateIssuer = true,
-                    ValidateAudience = true, ValidateLifetime = true, ClockSkew = TimeSpan.FromMinutes(1)
+                    ValidateIssuerSigningKey = true,
+                    ValidateIssuer = true,
+                    ValidateAudience = true,
+                    ValidateLifetime = true,
+                    ClockSkew = TimeSpan.FromMinutes(1)
                 };
                 o.Events = new JwtBearerEvents
                 {

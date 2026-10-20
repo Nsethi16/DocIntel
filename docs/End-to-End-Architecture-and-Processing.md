@@ -7,10 +7,25 @@ This document provides a comprehensive technical walkthrough of **what** happens
 ## Ask AI execution policy
 
 Ask AI requires a configured, non-simulated model endpoint. It does not inherit the legacy
-document-processing simulator or cross-provider fallback: missing configuration, invalid model
+document-processing simulator: missing configuration, invalid model
 output, provider errors, and cancellation must not be converted into successful document answers.
 Tests inject scripted model clients; they do not require a cloud deployment. The tenant must be
 active with the `AskAi` capability enabled.
+
+The document-processing catalog also no longer falls back across providers or into simulation
+after errors. Simulation must be explicitly enabled with `Models:AllowDevelopmentSimulation` on
+a loopback Development host; it is rejected in Production. Development-derived jobs are tagged
+and surfaced in the workspace; untagged legacy jobs have unknown provenance. Missing/malformed
+model output, provider failures, and cancellation are not successful model results. In particular,
+zero/missing confidence remains zero rather than receiving an artificial high confidence default.
+
+Prompt-column execution selects PDF or text inputs from server-owned model capability metadata.
+It never retries a failed file request as text, reconstructs a missing source PDF for live
+execution, or substitutes a deterministic result for invalid JSON. Cached results include the
+source text/PDF, entity context, model, and input-mode fingerprint. Slice result updates are staged
+until evaluation succeeds. Live translation uses provider-side source-language detection without
+claiming every non-Spanish input is English; no local phrase substitution follows a provider error.
+Tenant translation URLs must match the server-configured provider before credentials can be used.
 
 All `/api/harness` operations now require authenticated, server-authorized access. Entra browser
 sessions and API bearer tokens are validated with the standard ASP.NET Core authentication

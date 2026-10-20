@@ -605,6 +605,7 @@ public sealed class AskAiOrchestrator
                 {
                     evidenceId,
                     job.FileName,
+                    job.HasDevelopmentResults,
                     job.AppliedHarnessVersion,
                     sliceIndex,
                     slice.StartPage,
@@ -665,6 +666,9 @@ public sealed class AskAiOrchestrator
                 unless its result supports the claim. No matches must not be replaced by unrelated documents.
                 Keep currencies separate. Distinguish source text from derived AI results. Disclose pagination
                 or evidence limits; never claim a sampled search covered the entire corpus.
+                hasDevelopmentResults=true means derived results include development simulation;
+                null means legacy provenance is unknown. Ground factual claims in original source text,
+                not those unverified derived results.
                 Return JSON: kind is Conversation, Clarification, NoEvidence, or DocumentAnswer.
                 answer is a friendly Markdown response; evidenceIds lists ONLY evidenceIds you
                 actually used, in citation order. Inline [1], [2], etc. refer to that list. Every document-specific
