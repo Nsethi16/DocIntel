@@ -266,8 +266,10 @@ Configure `Identity` through environment/configuration providers:
 
 The API registration must expose the delegated permission and application role. App-only callers
 also need an explicitly mapped membership with `ServicePrincipal: true`; neither a sender address
-nor an asserted `Admin` token role grants application privileges. Email/Teams adapters require
-that verified service identity and still return payloads rather than delivering messages.
+nor an asserted `Admin` token role grants application privileges. Legacy email/Teams webhook
+payload endpoints require that verified service identity; they do not send messages or treat a
+submitted sender address as the user's identity. Native personal-chat Teams delivery is separate,
+as described below.
 Trusted server adapters have a separate durable delivery state: the answer completes before
 delivery is leased, current tenant activation and the original permission scope are rechecked,
 and reviewed citations must still reference the same review version. The send marker is saved
@@ -277,6 +279,53 @@ Run polling exposes only delivery status/timestamps/error codes, not trusted rou
 Conditional run creation prevents duplicate channel activities from replacing an existing answer.
 Managed-identity sign-in requires a matching federated credential on the web app registration;
 this code does not create registrations or consent/permission grants.
+
+### Native Teams personal-chat adapter
+
+The supported Microsoft Teams SDK (`Microsoft.Teams.Apps` 2.1.2, approved NuGet feed) hosts
+`POST /api/messages` only when `Channels:Teams:Enabled` is true. The default is disabled.
+This pilot supports **personal chats only**, one configured bot/application tenant and one exact
+public-cloud service URL. Shared channels/group chats, arbitrary callback destinations and
+anonymous bot authentication are rejected. A verified Teams AAD object ID must have current
+server-side DocIntel membership; directory membership alone does not grant document access.
+
+| `Channels:Teams` setting | Purpose |
+|---|---|
+| `Enabled` | Explicit opt-in; false leaves the native route and transport unregistered |
+| `TenantId` | Entra directory GUID; must match `Identity:DirectoryTenantId` |
+| `ClientId` | Separate bot application/UAMI client GUID, not the web/API registration |
+| `ApplicationTenantId` | Fixed DocIntel tenant slug; never chosen from incoming message text |
+| `ServiceUrl` | Exact HTTPS `smba.trafficmanager.net` regional/Teams URL for the registered bot |
+| `PublicOrigin` | HTTPS application origin; must match `Identity:PublicOrigin` |
+| `ClientCredentials` | Optional native SDK federation configuration; omit for a bot registered as UserAssignedMSI |
+
+Environment variables use double underscores, for example `Channels__Teams__Enabled`.
+For a UserAssignedMSI bot, assign that user-managed identity to the host and set `ClientId` to its
+client ID. For an application registration using managed-identity federation, configure the SDK's
+`ClientCredentials` with `SourceType: SignedAssertionFromManagedIdentity` and the managed identity
+client ID. Provisioning identities, the Azure Bot registration, the Teams application manifest
+(personal scope only), federation and installation/consent requires authorized operator setup;
+the deployment script does not provision a bot or change directory permissions.
+
+Native SDK signature/key, audience, lifetime and issuer validation runs before activity handling;
+this adapter additionally restricts the issuer to Bot Framework and RS256. Browser/API authentication
+remains separate, including PKCE, CSRF and live membership reload. SDK registration is deliberately
+isolated from the application's default authorization policy and host-owned configuration lifetime.
+The bounded in-memory cache is for reacquirable SDK tokens, **not** for questions or conversation state.
+
+Accepted questions receive a private acknowledgement and a sign-in-required
+`/ask-run.html?tenant=...&run=...` progress link. Activity deduplication, job execution and answer
+delivery use the existing persistent run store/leases/recovery worker. A single bounded plaintext
+answer preview includes citation labels and the full-answer link; large answers are not split into
+replay-prone partial messages. The progress page shows the complete answer, collapsed cited evidence,
+original PDF links or version-labeled human-review links, and explicit execution/delivery failures.
+It only polls the original run, never resubmits it. An uncertain send must be investigated rather
+than automatically replayed.
+
+No real bot registration or private Teams message has been exercised by offline checks. Those
+checks cover native-route authentication refusal, the existing bearer/browser/CSRF/revocation
+flows with Teams enabled, trusted routing, duplicate activity recovery and bounded previews.
+Mailbox Graph ingestion and Entra-confirmed email reply authorization remain separate connector work.
 
 Each membership has `DirectoryTenantId`, `ObjectId`, `ApplicationTenantId`, `Role` (`Reader`,
 `Reviewer`, `Processor`, or `Admin`), `AllDocuments`, and `DocumentIds`. Use the **user or enterprise service

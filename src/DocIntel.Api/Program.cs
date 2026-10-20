@@ -3,6 +3,7 @@ using System.Text.Json.Serialization;
 using DocIntel.Api.Endpoints;
 using DocIntel.Api.Identity;
 using DocIntel.Api.Workers;
+using DocIntel.Api.Channels;
 using DocIntel.Core;
 using DocIntel.Core.Ocr;
 using DocIntel.Core.Review;
@@ -13,6 +14,7 @@ var builder = WebApplication.CreateBuilder(args);
 builder.AddServiceDefaults();
 builder.Services.AddProblemDetails();
 builder.AddDocIntelIdentity();
+builder.AddDocIntelTeams();
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -41,6 +43,13 @@ app.UseExceptionHandler(new ExceptionHandlerOptions
 app.Use(async (context, next) =>
 {
     context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    if (context.Request.Path == "/ask-run.html")
+    {
+        context.Response.Headers["Content-Security-Policy"] =
+            "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; " +
+            "base-uri 'self'; object-src 'none'";
+        context.Response.Headers["X-Frame-Options"] = "DENY";
+    }
     if (context.Request.Path == "/review" || context.Request.Path == "/review.html")
     {
         context.Response.Headers["Content-Security-Policy"] =
@@ -85,6 +94,7 @@ app.UseStaticFiles(new StaticFileOptions
 app.MapGet("/admin", () => Results.Redirect("/admin.html"));
 app.MapDefaultEndpoints();
 app.MapDocIntelIdentity();
+app.MapDocIntelTeams();
 app.MapHarnessEndpoints();
 app.MapOcrUsageEndpoints();
 app.MapReviewEndpoints();

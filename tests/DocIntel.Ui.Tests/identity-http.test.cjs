@@ -223,6 +223,12 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         'Identity:Mode': 'Entra', 'Identity:DirectoryTenantId': directoryId,
         'Identity:ClientId': webClientId, 'Identity:ApiClientId': apiClientId,
         'Identity:AllowLoopbackAuthority': true, 'Identity:LoopbackAuthority': issuer,
+        'Identity:PublicOrigin': 'https://docintel.example',
+        'Channels:Teams:Enabled': true, 'Channels:Teams:TenantId': directoryId,
+        'Channels:Teams:ClientId': crypto.randomUUID(),
+        'Channels:Teams:ApplicationTenantId': 'contoso-legal',
+        'Channels:Teams:PublicOrigin': 'https://docintel.example',
+        'Channels:Teams:ServiceUrl': 'https://smba.trafficmanager.net/teams/',
         'Identity:WriteRequestsPerMinute': 100,
         'AzureAI:LocalOpenAIEndpoint': `${issuer}/model/v1`
       }, { env: { Identity__ClientSecret: crypto.randomBytes(48).toString('base64url') } });
@@ -579,6 +585,7 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
       await t.test('browser code flow uses PKCE, an HttpOnly session, CSRF protection and safe sign-out', async () => {
         const jar = new Map();
         async function browser(url, options = {}) {
+          url = url.replace(/^https:\/\/docintel\.example(?=\/)/, api.url);
           const headers = new Headers(options.headers);
           if (url.startsWith(api.url) && jar.size) headers.set('Cookie',
             [...jar].map(([name, value]) => `${name}=${value}`).join('; '));
@@ -600,6 +607,9 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         assert.equal(signedIn.status, 302);
         assert.ok(cookies(signedIn).some(cookie => cookie.startsWith('.DocIntel.Session=') && /httponly/i.test(cookie)));
         assert.equal((await browser(api.url + tenantPath)).status, 200);
+        assert.equal((await browser(api.url + '/api/messages', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ type: 'message' })
+        })).status, 401);
         assert.equal((await browser(api.url + tenantPath + '/ask/runs', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: 'Hi' })
         })).status, 400);

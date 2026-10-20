@@ -1,0 +1,10 @@
+body { margin: 0; color: #172b4d; background: #f7f9fc; font: 16px/1.6 system-ui, sans-serif; }
+main { max-width: 960px; margin: 2rem auto; padding: 2rem; background: white; border-radius: 12px; }
+a { color: #0758a8; }
+button { padding: .6rem 1rem; cursor: pointer; }
+#question, #answer, details p { white-space: pre-wrap; overflow-wrap: anywhere; }
+#question { font-weight: 600; }
+#answer { margin-top: 2rem; }
+li { margin-bottom: 1rem; }
+details { margin-top: .4rem; }
+@media (max-width: 650px) { main { margin: 0; padding: 1rem; border-radius: 0; } }

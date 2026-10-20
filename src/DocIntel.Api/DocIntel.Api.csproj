@@ -11,6 +11,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
     <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
+    <PackageReference Include="Microsoft.Teams.Apps" />
     <PackageReference Include="Azure.Extensions.AspNetCore.DataProtection.Blobs" />
     <PackageReference Include="Azure.Extensions.AspNetCore.DataProtection.Keys" />
     <ProjectReference Include="..\DocIntel.Core\DocIntel.Core.csproj" />

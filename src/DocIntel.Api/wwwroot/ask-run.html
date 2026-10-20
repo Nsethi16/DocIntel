@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DocIntel question</title>
+  <link rel="stylesheet" href="/ask-run.css">
+  <script src="/identity.js" defer></script>
+  <script src="/ask-run.js" defer></script>
+</head>
+<body>
+  <main>
+    <nav><a href="/" id="workspace">Document workspace</a></nav>
+    <h1>Your DocIntel question</h1>
+    <p id="question"></p>
+    <p id="status" role="status" aria-live="polite">Loading your question...</p>
+    <p id="delivery"></p>
+    <button id="refresh" type="button">Refresh status</button>
+    <section aria-label="Answer"><div id="answer"></div></section>
+    <section aria-label="Cited sources"><h2>Cited sources</h2><ol id="citations"></ol></section>
+  </main>
+</body>
+</html>
