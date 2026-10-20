@@ -10,6 +10,7 @@ using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Models;
 using DocIntel.Core.Ocr;
+using DocIntel.Core.Review;
 using DocIntel.Core.Storage;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.AI;
@@ -167,6 +168,8 @@ public static class ServiceCollectionExtensions
                 logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CosmosJobStore>>()));
             services.TryAddSingleton<IOcrUsageStore>(_ => new CosmosOcrUsageStore(
                 cosmosClient.GetContainer(azureOptions.CosmosDatabaseName, "ocr-usage")));
+            services.TryAddSingleton<IReviewStore>(_ => new CosmosReviewStore(
+                cosmosClient.GetContainer(azureOptions.CosmosDatabaseName, "review-sessions")));
         }
         else
         {
@@ -183,10 +186,14 @@ public static class ServiceCollectionExtensions
                     database, logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SqliteJobStore>>()));
                 services.TryAddSingleton<IOcrUsageStore>(sp => new SqliteJobStore(
                     database, logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SqliteJobStore>>()));
+                services.TryAddSingleton<IReviewStore>(sp => new SqliteJobStore(
+                    database, logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SqliteJobStore>>()));
             }
             else services.TryAddSingleton<IJobStore, InMemoryJobStore>();
         }
         services.TryAddSingleton<IOcrUsageStore, InMemoryOcrUsageStore>();
+        services.TryAddSingleton<IReviewStore, InMemoryReviewStore>();
+        services.TryAddSingleton<ReviewService>();
 
         // 2. Azure Blob Storage (per-tenant 'tenant-{tenantId}' containers) vs Local File Artifact Fallback
         BlobServiceClient? sharedBlobs = null;

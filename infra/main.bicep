@@ -424,6 +424,22 @@ resource ocrUsageContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/c
 }
 
 var cosmosDataContributorRoleId = '${cosmosAccount.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
+resource reviewsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = {
+  parent: cosmosDatabase
+  name: 'review-sessions'
+  properties: {
+    resource: {
+      id: 'review-sessions'
+      partitionKey: {
+        paths: [
+          '/tenantId'
+        ]
+        kind: 'Hash'
+      }
+    }
+  }
+}
+
 resource cosmosSqlRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {
   parent: cosmosAccount
   name: guid(cosmosAccount.id, uami.id, '00000000-0000-0000-0000-000000000002')
@@ -653,6 +669,7 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
     identityKeyRole
     cosmosSqlRoleAssignment
     ocrUsageContainer
+    reviewsContainer
     documentIntelligenceUserRole
   ]
 }

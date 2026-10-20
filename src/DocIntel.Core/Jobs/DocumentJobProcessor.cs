@@ -4,6 +4,7 @@ using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Storage;
 using DocIntel.Core.Ocr;
+using DocIntel.Core.Review;
 using Microsoft.Extensions.Logging;
 
 namespace DocIntel.Core.Jobs;
@@ -16,7 +17,8 @@ public sealed class DocumentJobProcessor(
     DocumentSplittingWorkflow workflow,
     DocumentProcessingOptions options,
     ILogger<DocumentJobProcessor> logger,
-    ITenantAccessResolver? access = null)
+    ITenantAccessResolver? access = null,
+    ReviewService? reviews = null)
 {
     public async Task ProcessAsync(JobQueueTicket ticket, CancellationToken stoppingToken = default)
     {
@@ -50,6 +52,7 @@ public sealed class DocumentJobProcessor(
             job.ExecutionTrace = [];
             job.Segments = [];
             job.LayoutSha256 = null;
+            job.ReviewId = null;
             job.ArtifactDocumentId = $"{job.JobId}-a{job.ExecutionAttempts}";
             await lease.SaveAsync(execution.Token);
             await CheckAccessAsync(execution.Token);
@@ -81,6 +84,11 @@ public sealed class DocumentJobProcessor(
             Update(job, result);
             job.Status = JobStatus.Completed;
             job.CompletedAtUtc = DateTimeOffset.UtcNow;
+            if (tenant.ReviewPolicy?.Enabled == true)
+            {
+                if (reviews is null) throw new InvalidOperationException("Human review storage is not configured.");
+                job.ReviewId = await reviews.CreateAsync(job, tenant.ReviewPolicy, execution.Token);
+            }
             await lease.SaveAsync(execution.Token);
             return;
         }

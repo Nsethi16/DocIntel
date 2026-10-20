@@ -63,11 +63,13 @@ internal sealed class TenantAccessHandler(
                 return 404;
             }
             var ask = pattern.Contains("/ask", StringComparison.Ordinal);
+            var review = pattern.Contains("/review", StringComparison.Ordinal);
             var usageOperation = pattern.EndsWith("/ocr-budget", StringComparison.Ordinal) ||
                 pattern.EndsWith("/ocr-usage", StringComparison.Ordinal);
             if (usageOperation && (!scope.CanAdmin || scope.AllowedJobIds is not null))
                 return Denied(pattern, context);
-            if (!scope.CanRead || (!read && !ask && !scope.CanProcess && !scope.CanAdmin) ||
+            if (review && !read && !scope.CanReview) return Denied(pattern, context);
+            if (!scope.CanRead || (!read && !ask && !review && !scope.CanProcess && !scope.CanAdmin) ||
                 (!read && pattern.EndsWith("/tenants/{tenantId}", StringComparison.Ordinal) && !scope.CanAdmin) ||
                 (!read && pattern.EndsWith("/jobs", StringComparison.Ordinal) && !scope.CanProcess) ||
                 (!read && pattern.EndsWith("/run-split", StringComparison.Ordinal) && !scope.CanProcess) ||
@@ -100,6 +102,9 @@ internal sealed class TenantAccessHandler(
             return Denied(pattern, context);
         }
         var actor = IdentityAccessService.GetActor(context.User);
+        if (pattern.Contains("/review", StringComparison.Ordinal) && !read && !access.IsLocalDevelopment &&
+            (actor is null || access.IsServicePrincipal(actor)))
+            return Denied(pattern, context);
         if (pattern.Contains("/webhooks/", StringComparison.Ordinal) && !access.IsLocalDevelopment &&
             (!bearer || actor is null || !access.IsServicePrincipal(actor)))
         {

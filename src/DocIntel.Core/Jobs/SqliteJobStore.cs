@@ -59,6 +59,13 @@ public sealed partial class SqliteJobStore : IJobStore
                         CREATE TABLE IF NOT EXISTS ocr_requests (
                             tenant TEXT NOT NULL, id TEXT NOT NULL, period TEXT NOT NULL, pages INTEGER NOT NULL,
                             provider TEXT NOT NULL, document_id TEXT NOT NULL, PRIMARY KEY(tenant,id));
+                        CREATE TABLE IF NOT EXISTS document_reviews (
+                            tenant TEXT NOT NULL,id TEXT NOT NULL,body BLOB NOT NULL,version INTEGER NOT NULL,
+                            last_hash TEXT NOT NULL,PRIMARY KEY(tenant,id));
+                        CREATE TABLE IF NOT EXISTS review_events (
+                            tenant TEXT NOT NULL,review_id TEXT NOT NULL,sequence INTEGER NOT NULL,
+                            id TEXT NOT NULL,body BLOB NOT NULL,PRIMARY KEY(tenant,review_id,sequence),
+                            UNIQUE(tenant,id));
                         """;
                     await schema.ExecuteNonQueryAsync(ct);
                     _initialized = true;

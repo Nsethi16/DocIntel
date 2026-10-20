@@ -232,7 +232,7 @@ Both local and Blob writes are non-overwriting; local publication uses the same 
 flush / atomic-move helper as immutable originals. Blob uses `If-None-Match: *`. The process-crash
 regression verifies word IDs survive restart and stale-attempt layout changes cannot change the
 public route. Storage integrity does not by itself prove OCR accuracy or field-value entailment.
-The review/export surfaces remain subsequent work.
+Export/delivery and global audit archival remain subsequent work; human review is described below.
 
 The extraction stage now applies the accepted `Ocr.Mode` before publishing layout evidence and
 before boundary detection. `Auto` selects pages with fewer than 50 body characters and image
@@ -324,6 +324,50 @@ Prompt fingerprints omit provenance-only annotations because prompt entity conte
 Regression tests cover actual PDF words, table/entity consistency, slice isolation, ambiguity,
 incomplete scans, substring/currency/translation rejection, zero scores, annotation size limits,
 cache stability and bounded native Ask AI tool payloads.
+
+### Actor-audited human review
+
+Accepted `ReviewPolicy` controls automatic queue creation on completion, optional dual review
+and elapsed UTC due hours (not business-calendar hours). A review snapshot binds the immutable
+original/layout hashes, applied harness version and original field IDs/labels/values. Legacy
+completed documents with a persisted source can start explicitly. Corrections change only the
+review's effective values, never the original model output, model score or source annotation.
+Any changed extraction/source fingerprint prevents use of an incompatible review snapshot.
+
+Claims are versioned and finite (15 minutes), renew on field decisions, and cannot be taken
+from another active reviewer. Every change and its audit event commit together in one SQLite
+transaction or same-tenant Cosmos batch with a specific ETag. Source/claim/version mismatches
+are 409 conflicts, not last-writer-wins edits. Decisions require a reason for correction/rejection;
+pending or rejected fields prevent approval. Dual-review submission records two distinct
+directory identities; the second pass cannot silently alter first-pass decisions.
+
+`Reviewer` is a least-privileged application role that supports document-scoped review without
+upload/administration rights. Processors/Admins can also review authorized documents. Production
+mutations reject app-only callers before body binding and derive the actor from verified claims.
+Development identity activity is marked, not presented as a verified production human.
+API writes require browser CSRF plus strong `If-Match: "review-N"` versions. Audit reads verify
+the complete version/hash chain and share document authorization. There is no public audit
+update/delete operation; privileged-storage tamper resistance and seven-year immutable archival
+are separate, unimplemented guarantees.
+
+The dedicated review SPA uses external scripts/styles and a focused CSP, pinned PDF.js, actual
+normalized source polygons, field-to-source selection and source-to-field hit testing. Renderer
+failures are explicit and retain the authorized original-PDF link. Mutations are never silently
+retried; stale reads cannot populate another tenant/document's workspace. Original-value regions
+remain labeled original when a human effective value differs. Keyboard operations require an
+active claim; no score-only bulk approval is provided while signals are uncalibrated.
+Visual checks used isolated generated development documents, confirmed source/overlay canvas
+alignment at zero CSS-pixel offset and exercised an actual claimed correction without changing
+the original value. They do not prove generalized OCR accuracy or a human throughput SLA.
+The owned temporary preview process and fixture were stopped/removed after checks.
+
+Queue reads are currently pilot-scale job-metadata traversal with bounded pages, not a large
+review search index. Review sessions allow at most 2,000 typed fields and 10,000 audit versions.
+Terminal-action capacity is reserved so repeated field edits cannot consume every opportunity
+to finalize/reject; the admitted field count has sufficient ordinary and dual-review capacity.
+Audit reads verify the prefix ending at their captured state version, not a later concurrent edit.
+Shared chrome deduplication and global immutable audit infrastructure are not part of this
+increment; neither are advertised as completed production controls.
 
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).
 

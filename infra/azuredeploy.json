@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "5916838062875051765"
+      "templateHash": "9386825530604598513"
     }
   },
   "parameters": {
@@ -577,6 +577,25 @@
       ]
     },
     {
+      "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
+      "apiVersion": "2024-05-15",
+      "name": "[format('{0}/{1}/{2}', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'review-sessions')]",
+      "properties": {
+        "resource": {
+          "id": "review-sessions",
+          "partitionKey": {
+            "paths": [
+              "/tenantId"
+            ],
+            "kind": "Hash"
+          }
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases', variables('cosmosAccountName'), variables('cosmosDatabaseName'))]"
+      ]
+    },
+    {
       "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
       "apiVersion": "2024-05-15",
       "name": "[format('{0}/{1}', variables('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '00000000-0000-0000-0000-000000000002'))]",
@@ -818,6 +837,7 @@
         "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'ocr-usage')]",
         "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'ask-ai-poison')]",
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'review-sessions')]",
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'ask-ai-runs')]",
         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
         "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '974c5e8b-45b9-4653-ba55-5f855dd0fb88'))]",

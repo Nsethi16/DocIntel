@@ -1,0 +1,45 @@
+:root { color-scheme: light; font-family: system-ui, sans-serif; color: #252525; background: #faf9f6; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+header, .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; }
+header { padding: .8rem 1rem; border-bottom: 1px solid #ddd; background: white; }
+h1 { font-size: 1.2rem; margin: 0 1rem; }
+h2 { font-size: 1.1rem; }
+#heading { overflow-wrap: anywhere; margin-top: .3rem; }
+button, select, textarea { font: inherit; border: 1px solid #aaa; border-radius: .3rem; padding: .45rem; }
+button { background: white; cursor: pointer; }
+button:disabled { cursor: default; opacity: .5; }
+button:focus-visible, a:focus-visible { outline: 3px solid #3769bc; outline-offset: 2px; }
+main { display: grid; grid-template-columns: minmax(120px, 16%) minmax(250px, 50%) minmax(270px, 34%); height: calc(100vh - 110px); }
+nav, .review { overflow: auto; padding: .8rem; }
+nav { border-right: 1px solid #ddd; }
+#queue button, #fields button { display: block; width: 100%; text-align: left; margin-bottom: .4rem; overflow-wrap: anywhere; }
+#queue button { font-size: .8rem; }
+#fields { max-height: 20vh; overflow: auto; margin: .6rem 0; }
+#fields button { font-size: .8rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.selected { border-color: #3769bc; background: #eaf1ff; }
+.source { padding: .8rem; background: #e7e5e0; overflow: auto; }
+.source .toolbar { margin-bottom: .7rem; }
+.page { position: relative; width: 100%; }
+.page.zoom150 { width: 150%; }
+.page.zoom200 { width: 200%; }
+canvas { display: block; width: 100%; height: auto; background: white; }
+#highlights { position: absolute; inset: 0; width: 100%; height: 100%; }
+#highlights polygon { fill: #f8d85c33; stroke: #ad8200; stroke-width: 1; }
+#highlights polygon.active { fill: #51a0ff55; stroke: #155db2; stroke-width: 2; }
+textarea { width: 100%; min-height: 4rem; margin: .3rem 0 .7rem; resize: vertical; }
+#originalValue { min-height: 2.6rem; height: 2.6rem; }
+.review textarea { min-height: 2.6rem; height: 2.6rem; margin: .2rem 0 .5rem; font-size: .85rem; }
+.review label, .review .toolbar button { font-size: .8rem; }
+.review h3 { font-size: .95rem; margin: .5rem 0; }
+.review .toolbar button { padding: .35rem; }
+#reviewStatus { font-size: .8rem; margin: .4rem 0; }
+label { display: inline-block; }
+.review { background: white; border-left: 1px solid #ddd; }
+.caution, #fieldEvidence { color: #66552c; font-size: .85rem; }
+#notice { min-height: 1.4rem; margin: .4rem 1rem; }
+#reviewStatus, #pdfNotice { overflow-wrap: anywhere; }
+.final { margin-top: 1rem; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .75rem; }
+dialog { max-width: 650px; }
+@media (max-width: 720px) { main { grid-template-columns: 1fr; height: auto; } nav { max-height: 200px; } .source, .review { min-height: 350px; } }

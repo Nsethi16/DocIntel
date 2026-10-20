@@ -55,7 +55,7 @@ test('changing only OCR policy marks the harness dirty and reverting it restores
     const initial = buildPayloadFromUi();
     savedSnapshotJson = JSON.stringify({
       decisionModelId: initial.decisionModelId, defaultModelId: initial.defaultModelId,
-      ocr: initial.ocr, capabilities: initial.capabilities
+      ocr: initial.ocr, reviewPolicy: initial.reviewPolicy, capabilities: initial.capabilities
     });
 
     updateDirtyState();

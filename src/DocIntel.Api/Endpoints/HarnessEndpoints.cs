@@ -120,6 +120,8 @@ public static class HarnessEndpoints
         {
             if (updated.Ocr is null || !Enum.IsDefined(updated.Ocr.Mode))
                 return Results.BadRequest(new { error = "A supported OCR policy is required." });
+            if (updated.ReviewPolicy is null || updated.ReviewPolicy.DueHours is < 1 or > 720)
+                return Results.BadRequest(new { error = "A review policy with bounded UTC due hours is required." });
             updated.TenantId = tenantId;
             TenantHarness.EnsureDefaultCapabilities(updated);
             var saved = await store.UpsertTenantAsync(updated, ct);
@@ -1021,6 +1023,7 @@ public static class HarnessEndpoints
         job.ModelIdUsed,
         job.HasDevelopmentResults,
         job.OriginalSha256,
+        job.ReviewId,
         layoutAvailable = job.LayoutSha256 is not null,
         layoutUrl = job.LayoutSha256 is null ? null :
             $"/api/harness/tenants/{Uri.EscapeDataString(job.TenantId)}/jobs/{Uri.EscapeDataString(job.JobId)}/layout",

@@ -1587,6 +1587,9 @@
       <button type="button" id="identitySignOut" class="admin-switch-link" onclick="DocIntelIdentity.signOut()" hidden>
         Sign out
       </button>
+      <a href="/review.html" class="admin-switch-link" onclick="this.href='/review.html?tenant=' + encodeURIComponent(currentTenant ? currentTenant.tenantId : '')">
+        Human review
+      </a>
     </div>
   </aside>
 

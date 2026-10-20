@@ -2068,6 +2068,16 @@
               <p>Separate from the harness version. Zero blocks fresh OCR, not validated cache reuse.
                 Failed or interrupted provider requests retain their reserved pages; these counts are not an invoice.</p>
             </details>
+            <details>
+              <summary>Human review policy</summary>
+              <div class="drawer-row">
+                <label><input id="reviewEnabled" type="checkbox" onchange="onHarnessChanged()" /> Queue completed documents</label>
+                <label><input id="reviewDual" type="checkbox" onchange="onHarnessChanged()" /> Require two distinct reviewers</label>
+                <label for="reviewDueHours">Due after UTC hours</label>
+                <input id="reviewDueHours" class="clean-input" type="number" min="1" max="720" onchange="onHarnessChanged()" />
+              </div>
+              <p>Uncalibrated model scores never automatically approve fields. Due hours are elapsed UTC hours, not a business calendar.</p>
+            </details>
             <div class="drawer-row">
               <div style="display:flex;align-items:center;gap:8px;flex:1;">
                 <span class="drawer-label">Footers to ignore</span>
@@ -2799,6 +2809,9 @@
       updated.decisionModelId = decisionModel;
       updated.defaultModelId = languageModel;
       updated.ocr = { ...(updated.ocr || {}), mode: document.getElementById('ocrModeSelect').value };
+      updated.reviewPolicy = { enabled: document.getElementById('reviewEnabled').checked,
+        requiresDualReview: document.getElementById('reviewDual').checked,
+        dueHours: Number(document.getElementById('reviewDueHours').value) };
       updated.capabilities = updated.capabilities || {};
 
       // 1. SplitAndGroup
@@ -2923,6 +2936,7 @@
             decisionModelId: currentPayload.decisionModelId,
             defaultModelId: currentPayload.defaultModelId,
             ocr: currentPayload.ocr,
+            reviewPolicy: currentPayload.reviewPolicy,
             capabilities: currentPayload.capabilities
           })
         : '';
@@ -2982,6 +2996,9 @@
       const splitCap = caps.SplitAndGroup || { enabled: true, splitAndGroup: {} };
       const splitCfg = splitCap.splitAndGroup || {};
       document.getElementById('ocrModeSelect').value = currentTenant.ocr?.mode || 'Auto';
+      document.getElementById('reviewEnabled').checked = currentTenant.reviewPolicy?.enabled !== false;
+      document.getElementById('reviewDual').checked = currentTenant.reviewPolicy?.requiresDualReview === true;
+      document.getElementById('reviewDueHours').value = currentTenant.reviewPolicy?.dueHours || 24;
       document.getElementById('splitFeatureToggle').checked = splitCap.enabled !== false;
       document.getElementById('footersToIgnoreInput').value = (splitCfg.footersToIgnore || ['Confidential', 'Microsoft Confidential', 'Page']).join(', ');
       document.getElementById('amendmentIndicatorsInput').value = (splitCfg.amendmentIndicators || ['amendment', 'avenant', 'enmienda', 'nachtrag', 'ctm']).join(', ');
@@ -3048,6 +3065,7 @@
             decisionModelId: initialPayload.decisionModelId,
             defaultModelId: initialPayload.defaultModelId,
             ocr: initialPayload.ocr,
+            reviewPolicy: initialPayload.reviewPolicy,
             capabilities: initialPayload.capabilities
           })
         : '';

@@ -13,7 +13,8 @@ public enum TenantRole
 {
     Reader,
     Processor,
-    Admin
+    Admin,
+    Reviewer
 }
 
 /// <summary>A tenant role plus explicit document access; an empty document set grants no document access.</summary>
@@ -26,6 +27,8 @@ public sealed record DocumentAccessScope(TenantRole? Role, IReadOnlySet<string>?
     public bool CanRead => Role.HasValue;
 
     public bool CanAdmin => Role == TenantRole.Admin;
+
+    public bool CanReview => Role is TenantRole.Reviewer or TenantRole.Processor or TenantRole.Admin;
 
     public bool CanProcess => Role is TenantRole.Processor or TenantRole.Admin && AllowedJobIds is null;
 

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Document review - DocIntel</title>
+  <link rel="stylesheet" href="/review.css" />
+  <script src="/identity.js" defer></script>
+  <script src="/evidence.js" defer></script>
+  <script src="/review-client.js" defer></script>
+  <script src="/review.js" defer></script>
+</head>
+<body>
+  <header>
+    <a href="/">DocIntel</a><h1>Human review</h1>
+    <label for="tenant">Tenant</label><select id="tenant"></select>
+    <label for="status">Queue</label>
+    <select id="status"><option value="">All states</option><option>Pending</option><option>InReview</option>
+      <option>AwaitingSecondReview</option><option>Approved</option><option>Rejected</option></select>
+    <button id="refresh">Refresh</button><button id="help">Shortcuts</button>
+  </header>
+  <p id="notice" role="status" aria-live="polite"></p>
+  <main>
+    <nav aria-label="Document review queue"><div id="queue"></div><button id="more" hidden>More documents</button></nav>
+    <section aria-label="Original PDF" class="source">
+      <div class="toolbar"><button id="previousPage" disabled>Previous page</button>
+        <span id="pageLabel">Original source</span><button id="nextPage" disabled>Next page</button>
+        <label for="zoom">Zoom</label><select id="zoom"><option value="100">Fit</option>
+          <option value="150">150%</option><option value="200">200%</option></select>
+        <a id="original" target="_blank" rel="noopener noreferrer" hidden>Open original PDF</a></div>
+      <p id="pdfNotice" role="status"></p>
+      <div class="page" id="pdfPage"><canvas id="pdf" aria-label="Original PDF page"></canvas>
+        <svg id="highlights" aria-label="Original extraction source regions"></svg></div>
+    </section>
+    <section class="review" aria-label="Review decisions">
+      <h2 id="heading">Select a document</h2><p id="reviewStatus"></p>
+      <p class="caution">Uncalibrated scores. Highlights show original text, not review approval.</p>
+      <div class="toolbar">
+        <button id="start" hidden>Start review</button><button id="claim" disabled>Claim / renew</button>
+        <button id="release" disabled>Release</button><button id="reload" disabled>Reload</button>
+        <button id="audit" disabled>Audit history</button>
+      </div>
+      <div id="fields"></div>
+      <section id="editor" hidden>
+        <h3 id="fieldLabel"></h3><label for="originalValue">Original model value</label>
+        <textarea id="originalValue" readonly></textarea>
+        <p id="fieldEvidence"></p>
+        <label for="correctedValue">Effective value</label><textarea id="correctedValue" maxlength="16000"></textarea>
+        <label for="reason">Reason / comment (required for corrections and rejection)</label>
+        <textarea id="reason" maxlength="2000"></textarea>
+        <div class="toolbar"><button id="approve" disabled>Approve field</button>
+          <button id="correct" disabled>Save correction</button><button id="rejectField" disabled>Reject field</button></div>
+      </section>
+      <label for="documentReason">Document rejection reason</label>
+      <textarea id="documentReason" maxlength="2000" readonly></textarea>
+      <div class="toolbar final"><button id="submit" disabled>Submit human review</button>
+        <button id="rejectDocument" disabled>Reject document</button></div>
+      <pre id="auditText" hidden></pre>
+    </section>
+  </main>
+  <dialog id="shortcuts"><h2>Review shortcuts</h2>
+    <p>Outside a text box: Tab / Shift+Tab select fields; Enter approves the selected field;
+      e edits; / focuses the reason; Esc focuses the rejection reason; j / k select documents; ? opens this help.</p>
+    <p>There is no score-driven bulk approval while model scores are uncalibrated.
+      Claim first, decide each field, then submit. Dual review requires a different verified person.</p>
+    <button id="closeHelp">Close</button>
+  </dialog>
+</body>
+</html>

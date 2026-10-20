@@ -275,6 +275,8 @@ public sealed class TenantHarness
 
     public DocIntel.Core.Ocr.OcrPolicy Ocr { get; set; } = new();
 
+    public DocIntel.Core.Review.ReviewPolicy ReviewPolicy { get; set; } = new();
+
     public bool IsActive { get; set; } = true;
 
     /// <summary>

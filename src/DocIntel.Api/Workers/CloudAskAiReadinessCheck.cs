@@ -3,6 +3,7 @@ using Azure.Identity;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Ocr;
+using DocIntel.Core.Review;
 using DocIntel.Core.Storage;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
@@ -31,6 +32,9 @@ public sealed class CloudAskAiReadinessCheck(IServiceProvider services) : IHealt
             if (services.GetRequiredService<IOcrUsageStore>() is not CosmosOcrUsageStore usage)
                 return HealthCheckResult.Unhealthy("Shared execution requires shared OCR allowance storage.");
             await usage.CheckReadinessAsync(cancellationToken);
+            if (services.GetRequiredService<IReviewStore>() is not CosmosReviewStore reviews)
+                return HealthCheckResult.Unhealthy("Shared execution requires shared review storage.");
+            await reviews.CheckReadinessAsync(cancellationToken);
             return HealthCheckResult.Healthy();
         }
         catch (Exception exception) when (exception is RequestFailedException or AuthenticationFailedException or

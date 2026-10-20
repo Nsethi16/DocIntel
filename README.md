@@ -35,7 +35,7 @@ dotnet build src\DocIntel.Api\DocIntel.Api.csproj -c Release
 node --test tests\DocIntel.Ui.Tests\ask-ai.test.cjs tests\DocIntel.Ui.Tests\identity-client.test.cjs `
   tests\DocIntel.Ui.Tests\identity-http.test.cjs tests\DocIntel.Ui.Tests\ask-ai-restart.test.cjs `
   tests\DocIntel.Ui.Tests\document-restart.test.cjs tests\DocIntel.Ui.Tests\admin-ocr.test.cjs `
-  tests\DocIntel.Ui.Tests\evidence.test.cjs
+  tests\DocIntel.Ui.Tests\evidence.test.cjs tests\DocIntel.Ui.Tests\review-client.test.cjs
 ```
 
 Local development uses explicit loopback-only access. It is not an authentication mode for a
@@ -169,6 +169,41 @@ Ask AI receives lightweight source-occurrence status without heavy polygon array
 bounded text remains its citation evidence. Prompt-cache fingerprints track actual entity inputs,
 not added provenance annotations, so grounding does not force an unnecessary reevaluation.
 
+## Human review
+
+Open **Human review** in the workspace or `/review.html?tenant=<tenant>&job=<job>`.
+New completed jobs are routed to persisted review by the accepted `ReviewPolicy` (enabled by
+default, elapsed-UTC due hours default 24, optional dual review). Existing completed jobs can
+start a review explicitly. No uncalibrated score automatically approves a value.
+
+The focused workspace keeps original PDF rendering/highlights separate from fields and human
+decisions. It uses pinned PDF.js 4.6.82 from cdnjs with an explicit unavailable-renderer message
+and an original-PDF link if loading fails. Clicking a field seeks its original page/region;
+hovering a source region identifies the associated original field. Zoom and keyboard shortcuts
+are available. Corrections never rewrite model outputs or pretend their new value is supported
+by an old highlighted region.
+
+`Reviewer`, `Processor` and `Admin` roles can review only documents they may read; `Reviewer`
+does not gain upload, tenant-edit or budget permissions. Production decisions require a verified
+human directory identity, not an app-only service principal. Claims expire after 15 minutes.
+Every mutation requires the current strong `If-Match: "review-N"` version; stale edits and active
+claim conflicts return 409. Reload after an unconfirmed mutation rather than retrying it blindly.
+Dual review requires two different verified identities, and the second review cannot silently
+rewrite the first review's field decisions. Pending/rejected fields block submission.
+
+Sessions and their audit appends commit atomically in SQLite or the separate `review-sessions`
+Cosmos tenant partition. Audit events carry verified actors, source-bound review identity,
+sequence, UTC time and a checked SHA-256 continuity chain. Original and effective values are
+separate. Development identity activity is explicitly tagged. Review fields are capped at 2,000
+and audit versions at 10,000 per session, with reserved terminal-action capacity; source changes
+invalidate old snapshots. This accommodates individual decisions for all 2,000 admitted fields.
+
+This is application-level append-only review history, **not** immutable/legal-hold archival,
+global endpoint audit coverage, SOC 2 certification or calibrated accuracy. Broad shared-chrome
+refactoring, business-calendar SLA computation, leaderboard metrics and model-score bulk
+approval are not claimed. The review page has a focused CSP; existing legacy SPAs are not
+silently broken by applying an incompatible CSP to their inline scripts.
+
 ## Identity and document access
 
 Production defaults to **Entra** and fails startup when identity configuration is incomplete.
@@ -203,7 +238,7 @@ Managed-identity sign-in requires a matching federated credential on the web app
 this code does not create registrations or consent/permission grants.
 
 Each membership has `DirectoryTenantId`, `ObjectId`, `ApplicationTenantId`, `Role` (`Reader`,
-`Processor`, or `Admin`), `AllDocuments`, and `DocumentIds`. Use the **user or enterprise service
+`Reviewer`, `Processor`, or `Admin`), `AllDocuments`, and `DocumentIds`. Use the **user or enterprise service
 principal object ID**, not an application/client ID. `AllDocuments` defaults to false;
 `DocumentIds` is an explicit allowlist. Creating/processing new documents requires tenant-wide
 processing permissions. Admins can edit tenant configuration, but document access is still explicit.

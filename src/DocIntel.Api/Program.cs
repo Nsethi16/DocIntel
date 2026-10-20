@@ -5,6 +5,7 @@ using DocIntel.Api.Identity;
 using DocIntel.Api.Workers;
 using DocIntel.Core;
 using DocIntel.Core.Ocr;
+using DocIntel.Core.Review;
 using DocIntel.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -33,12 +34,21 @@ app.UseExceptionHandler(new ExceptionHandlerOptions
     {
         BadHttpRequestException request => request.StatusCode,
         OcrBudgetExceededException => StatusCodes.Status429TooManyRequests,
+        ReviewConflictException => StatusCodes.Status409Conflict,
         _ => StatusCodes.Status500InternalServerError
     }
 });
 app.Use(async (context, next) =>
 {
     context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    if (context.Request.Path == "/review" || context.Request.Path == "/review.html")
+    {
+        context.Response.Headers["Content-Security-Policy"] =
+            "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self'; " +
+            "img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob: https://cdnjs.cloudflare.com; " +
+            "frame-ancestors 'none'; base-uri 'self'; object-src 'none'";
+        context.Response.Headers["X-Frame-Options"] = "DENY";
+    }
     if (context.Request.Path.StartsWithSegments("/api") || context.Request.Path.StartsWithSegments("/auth") ||
         context.Request.Path.StartsWithSegments("/signin-oidc"))
     {
@@ -77,6 +87,10 @@ app.MapDefaultEndpoints();
 app.MapDocIntelIdentity();
 app.MapHarnessEndpoints();
 app.MapOcrUsageEndpoints();
+app.MapReviewEndpoints();
+app.MapGet("/review", (HttpRequest request) => Results.Redirect(
+    "/review.html?tenant=" + Uri.EscapeDataString(request.Query["tenant"].ToString()) +
+    "&job=" + Uri.EscapeDataString(request.Query["job"].ToString())));
 
 app.Run();
 
