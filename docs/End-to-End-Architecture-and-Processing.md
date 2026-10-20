@@ -12,6 +12,29 @@ output, provider errors, and cancellation must not be converted into successful 
 Tests inject scripted model clients; they do not require a cloud deployment. The tenant must be
 active with the `AskAi` capability enabled.
 
+All `/api/harness` operations now require authenticated, server-authorized access. Entra browser
+sessions and API bearer tokens are validated with the standard ASP.NET Core authentication
+handlers. Tenant roles come from server membership configuration, not request bodies, email
+senders, token role labels, or a directory tenant GUID treated as an application tenant slug.
+Document lists, graph projections, point lookups, PDFs, run polling, and agent search/inspection
+apply document permissions. Job lookups use only permitted tenant partitions. Run actors are
+captured from the verified caller and rechecked during execution, including before the final
+answer is returned; revocation produces no answer or citations.
+
+Role/resource authorization runs before body binding. Cookie-authenticated mutations also require
+CSRF protection. Browser sign-in uses authorization code + PKCE, short-lived HttpOnly application
+sessions, and a minimal identity-only principal. API bearer tokens require the separate API
+audience and access scope, or an app role on an explicitly mapped service principal. Request
+limits reject excess work with 429/Retry-After rather than retaining unbounded HTTP requests.
+Production cannot use the loopback development identity or omit the required Entra settings.
+See README for the identity configuration contract and deployment prerequisites.
+
+Account/tenant browser cache partitioning prevents one signed-in account from loading another's
+chat history. An identity response header detects account changes in other tabs before data is
+returned to the old UI state. Legacy unscoped browser history is neither imported nor deleted.
+Untrusted labels/values passed to inline handlers are JSON-encoded and then HTML-encoded; HTML
+entity decoding must not turn document-derived text into JavaScript.
+
 The conversational loop uses `FunctionInvokingChatClient` with `search_documents` and
 `inspect_document_slice`. Search accepts a typed plan, not model-generated SQL: the server binds
 tenant, status, text, document type, and ANDed entity conditions as Cosmos parameters and queries
@@ -77,11 +100,24 @@ dotnet test tests\DocIntel.Tests\DocIntel.Tests.csproj -c Release
 node --test tests\DocIntel.Ui.Tests\ask-ai.test.cjs
 dotnet build src\DocIntel.Api\DocIntel.Api.csproj -c Release
 node --test tests\DocIntel.Ui.Tests\ask-ai-restart.test.cjs
+node --test tests\DocIntel.Ui.Tests\identity-http.test.cjs tests\DocIntel.Ui.Tests\identity-client.test.cjs
 ```
 
 The restart test uses a loopback-only scripted model endpoint and isolated temporary storage. It
 kills the real API process while a run is active, starts a new process, and verifies completion
 under the original run ID. It tests recovery and provider-adapter wiring, not live model quality.
+
+The identity test hosts a loopback-only OIDC/JWKS provider with generated signing keys. It exercises
+the actual bearer handler, browser code/PKCE callback, session cookies, CSRF, membership reload,
+role/document restrictions, native model tools, and mid-run revocation. It does not validate a
+live Entra registration or grant Azure permissions.
+
+Canonical legacy tenant artifact names remain unchanged. Noncanonical or reserved `v2-` tenant
+IDs use a versioned SHA-256 namespace instead of lossy normalization, preventing distinct tenants
+from sharing artifact paths. Legacy artifacts for those noncanonical IDs need an explicit,
+verified migration; there is no ambiguous fallback across tenant namespaces. Document artifact
+keys reject path separators/traversal, and private run/key directories cannot be placed under
+the web root.
 
 ## 1. High-Level System Architecture
 

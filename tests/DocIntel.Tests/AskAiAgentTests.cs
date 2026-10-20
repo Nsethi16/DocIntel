@@ -1,5 +1,6 @@
 using System.Text.Json;
 using DocIntel.Core.Features.AskAi;
+using DocIntel.Core.Authorization;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
@@ -196,6 +197,29 @@ public sealed class AskAiAgentTests
     }
 
     [Fact]
+    public async Task Permission_Revocation_Is_Checked_Again_Before_The_Final_Answer_Is_Returned()
+    {
+        // Arrange
+        var store = await CreateDocumentStoreAsync();
+        var resolver = new Mock<IAskAiAccessResolver>();
+        var grant = new DocumentAccessScope(TenantRole.Reader, new HashSet<string> { "source" });
+        resolver.SetupSequence(r => r.ResolveAsync(
+                It.IsAny<ActorIdentity?>(), "tenant-one", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(grant).ReturnsAsync(grant).ReturnsAsync(grant)
+            .ReturnsAsync(DocumentAccessScope.Denied);
+        var orchestrator = CreateOrchestrator(store, [],
+            [SearchCall(), InspectCall(), Final("DocumentAnswer", "A source answer [1].", "e1")], resolver.Object);
+        var run = CreateRun();
+
+        // Act
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => orchestrator.ExecuteRunAsync(run));
+
+        // Assert
+        Assert.Null(run.Answer);
+        Assert.Empty(run.Citations);
+    }
+
+    [Fact]
     public async Task Extension_Tools_Share_The_Run_Tool_Call_Budget()
     {
         // Arrange
@@ -285,7 +309,8 @@ public sealed class AskAiAgentTests
         CreateOrchestrator(store, [], responses);
 
     private static AskAiOrchestrator CreateOrchestrator(
-        IJobStore store, IReadOnlyList<IAskAiToolProvider> tools, ChatResponse[] responses)
+        IJobStore store, IReadOnlyList<IAskAiToolProvider> tools, ChatResponse[] responses,
+        IAskAiAccessResolver? resolver = null)
     {
         var tenant = new TenantHarness { TenantId = "tenant-one", DisplayName = "Test" };
         var harness = new Mock<IHarnessStore>();
@@ -302,6 +327,6 @@ public sealed class AskAiAgentTests
             [tenant.DefaultModelId] = client.Object
         });
         return new AskAiOrchestrator(
-            harness.Object, store, catalog, tools, NullLogger<AskAiOrchestrator>.Instance);
+            harness.Object, store, catalog, tools, NullLogger<AskAiOrchestrator>.Instance, resolver);
     }
 }

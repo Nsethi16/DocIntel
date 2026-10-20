@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using DocIntel.Api.Endpoints;
+using DocIntel.Api.Identity;
 using DocIntel.Api.Workers;
 using DocIntel.Core;
 using DocIntel.ServiceDefaults;
@@ -9,6 +10,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 builder.Services.AddProblemDetails();
+builder.AddDocIntelIdentity();
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -23,7 +25,33 @@ builder.Services.AddHostedService<AskAiRunWorker>();
 
 var app = builder.Build();
 
-app.UseExceptionHandler();
+app.UseExceptionHandler(new ExceptionHandlerOptions
+{
+    StatusCodeSelector = exception => exception is BadHttpRequestException request
+        ? request.StatusCode : StatusCodes.Status500InternalServerError
+});
+app.Use(async (context, next) =>
+{
+    context.Response.Headers["Referrer-Policy"] = "no-referrer";
+    if (context.Request.Path.StartsWithSegments("/api") || context.Request.Path.StartsWithSegments("/auth") ||
+        context.Request.Path.StartsWithSegments("/signin-oidc"))
+    {
+        context.Response.Headers.CacheControl = "no-store";
+    }
+    await next();
+});
+app.UseAuthentication();
+app.Use(async (context, next) =>
+{
+    if (context.User.Identity?.IsAuthenticated == true && context.Request.Path.StartsWithSegments("/api"))
+    {
+        var access = context.RequestServices.GetRequiredService<IdentityAccessService>();
+        context.Response.Headers["X-DocIntel-Identity"] = access.GetChatPartition(context.User);
+    }
+    await next();
+});
+app.UseRateLimiter();
+app.UseAuthorization();
 app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions
 {
@@ -40,6 +68,7 @@ app.UseStaticFiles(new StaticFileOptions
 
 app.MapGet("/admin", () => Results.Redirect("/admin.html"));
 app.MapDefaultEndpoints();
+app.MapDocIntelIdentity();
 app.MapHarnessEndpoints();
 
 app.Run();

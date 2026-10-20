@@ -137,11 +137,18 @@ public sealed class AskAiRunProcessor(
                 : "This question exceeded the processing time limit. Try a more focused question.";
             logger.LogWarning("Ask AI run {RunId} stopped with {ErrorCode}.", run.RunId, run.ErrorCode);
         }
+        catch (UnauthorizedAccessException)
+        {
+            run.ErrorCode = "AccessRevoked";
+            run.ErrorMessage = "Your access changed while this question was processing. No answer was returned.";
+            logger.LogWarning("Access changed before Ask AI run {RunId} completed.", run.RunId);
+        }
         catch (Exception exception)
         {
             run.ErrorCode = "ExecutionFailed";
             run.ErrorMessage = "Ask AI could not complete this request. Check the model configuration or try again.";
-            logger.LogError(exception, "Ask AI run {RunId} failed.", run.RunId);
+            logger.LogError("Ask AI run {RunId} failed with {ErrorType}; root cause {CauseType}.",
+                run.RunId, exception.GetType().Name, exception.GetBaseException().GetType().Name);
         }
 
         run.Status = stoppingToken.IsCancellationRequested ? JobStatus.Queued : JobStatus.Failed;

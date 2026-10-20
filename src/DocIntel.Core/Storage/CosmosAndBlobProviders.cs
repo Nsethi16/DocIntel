@@ -1,4 +1,6 @@
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.Core;
@@ -53,6 +55,7 @@ public sealed class LocalFileArtifactStore : IArtifactStore
         CancellationToken cancellationToken = default,
         bool isTranslated = false)
     {
+        ValidateDocumentKey(documentId, sliceIndex);
         var containerFolder = Path.Combine(_baseDirectory, SanitizeContainerName(tenantId), documentId);
         Directory.CreateDirectory(containerFolder);
 
@@ -69,6 +72,7 @@ public sealed class LocalFileArtifactStore : IArtifactStore
         CancellationToken cancellationToken = default,
         bool isTranslated = false)
     {
+        ValidateDocumentKey(documentId, sliceIndex);
         var fileName = isTranslated ? $"slice-{sliceIndex + 1}-translated.pdf" : $"slice-{sliceIndex + 1}.pdf";
         var filePath = Path.Combine(_baseDirectory, SanitizeContainerName(tenantId), documentId, fileName);
         if (!File.Exists(filePath))
@@ -81,13 +85,25 @@ public sealed class LocalFileArtifactStore : IArtifactStore
 
     internal static string SanitizeContainerName(string tenantId)
     {
-        var cleaned = new string((tenantId ?? "default")
-            .ToLowerInvariant()
-            .Select(c => char.IsLetterOrDigit(c) ? c : '-')
-            .ToArray())
-            .Trim('-');
-        var name = $"tenant-{cleaned}";
-        return name.Length > 63 ? name[..63].TrimEnd('-') : name;
+        ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(tenantId.Length, 512);
+        var canonical = tenantId.Length <= 56 && tenantId[0] != '-' && tenantId[^1] != '-' &&
+            !tenantId.Contains("--", StringComparison.Ordinal) && !tenantId.StartsWith("v2-", StringComparison.Ordinal) &&
+            tenantId.All(c => c is >= 'a' and <= 'z' or >= '0' and <= '9' or '-');
+        return canonical ? $"tenant-{tenantId}" :
+            "tenant-v2-" + Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(tenantId)))[..52]
+                .ToLowerInvariant();
+    }
+
+    internal static void ValidateDocumentKey(string documentId, int sliceIndex)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(documentId);
+        if (documentId.Length > 128 || documentId.Any(c => !Char.IsAsciiLetterOrDigit(c) && c is not '-' and not '_'))
+        {
+            throw new ArgumentException("The document ID must be an opaque alphanumeric, '-' or '_' key.");
+        }
+        ArgumentOutOfRangeException.ThrowIfNegative(sliceIndex);
+        ArgumentOutOfRangeException.ThrowIfGreaterThan(sliceIndex, Int32.MaxValue - 1);
     }
 }
 
@@ -112,6 +128,7 @@ public sealed class BlobArtifactStore : IArtifactStore
         CancellationToken cancellationToken = default,
         bool isTranslated = false)
     {
+        LocalFileArtifactStore.ValidateDocumentKey(documentId, sliceIndex);
         var containerName = LocalFileArtifactStore.SanitizeContainerName(tenantId);
         var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
         await containerClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken).ConfigureAwait(false);
@@ -133,6 +150,7 @@ public sealed class BlobArtifactStore : IArtifactStore
         CancellationToken cancellationToken = default,
         bool isTranslated = false)
     {
+        LocalFileArtifactStore.ValidateDocumentKey(documentId, sliceIndex);
         var containerName = LocalFileArtifactStore.SanitizeContainerName(tenantId);
         var containerClient = _blobServiceClient.GetBlobContainerClient(containerName);
         var suffix = isTranslated ? "-translated" : string.Empty;

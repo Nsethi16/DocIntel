@@ -1,6 +1,7 @@
 using System.Text;
 using DocIntel.Core.Features.AskAi;
-using DocIntel.Core.Features.DocumentInsight;
+using DocIntel.Api.Identity;
+using DocIntel.Core.Authorization;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Features.PromptColumns;
@@ -17,7 +18,8 @@ public static class HarnessEndpoints
 {
     public static IEndpointRouteBuilder MapHarnessEndpoints(this IEndpointRouteBuilder app)
     {
-        var group = app.MapGroup("/api/harness");
+        var group = app.MapGroup("/api/harness").RequireAuthorization("TenantAccess").RequireRateLimiting("DocIntelApi");
+        group.AddEndpointFilter<CsrfEndpointFilter>();
 
         group.MapGet("/catalog", (IModelCatalog modelCatalog, IHarnessStore store) =>
         {
@@ -84,10 +86,21 @@ public static class HarnessEndpoints
             });
         });
 
-        group.MapGet("/tenants", async (IHarnessStore store, CancellationToken ct) =>
+        group.MapGet("/tenants", async (
+            HttpContext context, IdentityAccessService access, IHarnessStore store, CancellationToken ct) =>
         {
-            var tenants = await store.ListTenantsAsync(ct);
-            return TypedResults.Ok(tenants);
+            var ids = access.GetTenantIds(context.User);
+            if (ids is null)
+            {
+                return Results.Ok(await store.ListTenantsAsync(ct));
+            }
+            var tenants = new List<TenantHarness>();
+            foreach (var id in ids)
+            {
+                var tenant = await store.GetTenantAsync(id, ct);
+                if (tenant is not null) tenants.Add(tenant);
+            }
+            return Results.Ok(tenants);
         });
 
         group.MapGet("/tenants/{tenantId}", async (string tenantId, IHarnessStore store, CancellationToken ct) =>
@@ -102,42 +115,11 @@ public static class HarnessEndpoints
             string tenantId,
             [FromBody] TenantHarness updated,
             IHarnessStore store,
-            IJobStore jobStore,
-            IModelCatalog modelCatalog,
-            IArtifactStore? artifactStore,
             CancellationToken ct) =>
         {
             updated.TenantId = tenantId;
             TenantHarness.EnsureDefaultCapabilities(updated);
             var saved = await store.UpsertTenantAsync(updated, ct);
-
-            // Re-evaluate Document Insights and Prompt Columns across existing completed jobs when Admin saves harness changes
-            _ = Task.Run(async () =>
-            {
-                try
-                {
-                    var fastCatalog = new ModelCatalog();
-                    var jobs = await jobStore.ListJobsByTenantAsync(tenantId, CancellationToken.None);
-                    foreach (var job in jobs.Where(j => j.Status == JobStatus.Completed))
-                    {
-                        await GenerateDocumentInsightsExecutor.EvaluateJobInsightsAsync(job, saved, fastCatalog, CancellationToken.None);
-                        if (EvaluatePromptColumnsExecutor.JobNeedsPromptEvaluation(job, saved))
-                        {
-                            await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(
-                                job,
-                                saved,
-                                fastCatalog,
-                                artifactStore,
-                                CancellationToken.None,
-                                forceReevaluateAll: false);
-                        }
-                        await jobStore.UpsertJobAsync(job, CancellationToken.None);
-                    }
-                }
-                catch
-                {
-                }
-            });
 
             return TypedResults.Ok(saved);
         });
@@ -149,11 +131,14 @@ public static class HarnessEndpoints
             string? entityValue,
             string? q,
             int? maxDocs,
+            HttpContext context,
+            IdentityAccessService access,
             IHarnessStore harnessStore,
             IJobStore jobStore,
             CancellationToken ct) =>
         {
-            var jobs = (await jobStore.ListJobsByTenantAsync(tenantId, ct))
+            var jobs = (await GetVisibleJobsAsync(
+                    tenantId, access.GetAccess(context.User, tenantId), jobStore, ct))
                 .Where(j => j.Status == JobStatus.Completed)
                 .ToList();
 
@@ -238,48 +223,13 @@ public static class HarnessEndpoints
         // List all jobs for a tenant (newest first)
         group.MapGet("/tenants/{tenantId}/jobs", async (
             string tenantId,
-            IHarnessStore harnessStore,
+            HttpContext context,
+            IdentityAccessService access,
             IJobStore jobStore,
-            IModelCatalog modelCatalog,
-            IArtifactStore? artifactStore,
             CancellationToken ct) =>
         {
-            var jobs = await jobStore.ListJobsByTenantAsync(tenantId, ct);
-            var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
-
-            if (tenant is not null)
-            {
-                var pendingEval = jobs.Where(j => EvaluatePromptColumnsExecutor.JobNeedsPromptEvaluation(j, tenant)).ToList();
-                if (pendingEval.Count > 0)
-                {
-                    var fastCatalog = new ModelCatalog();
-                    foreach (var job in pendingEval)
-                    {
-                        await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(
-                            job,
-                            tenant,
-                            fastCatalog,
-                            artifactStore: null,
-                            ct,
-                            forceReevaluateAll: false);
-                    }
-
-                    _ = Task.Run(async () =>
-                    {
-                        foreach (var job in pendingEval)
-                        {
-                            try
-                            {
-                                await jobStore.UpsertJobAsync(job, CancellationToken.None);
-                            }
-                            catch
-                            {
-                            }
-                        }
-                    });
-                }
-            }
-
+            var scope = access.GetAccess(context.User, tenantId);
+            var jobs = await GetVisibleJobsAsync(tenantId, scope, jobStore, ct);
             return Results.Ok(jobs.Select(FormatJobResponse));
         });
 
@@ -322,6 +272,15 @@ public static class HarnessEndpoints
             CancellationToken ct) =>
         {
             var wantTranslated = translated == true;
+            if (sliceIndex < 0 || sliceIndex == Int32.MaxValue)
+            {
+                return Results.BadRequest(new { error = "The slice index is invalid." });
+            }
+            var authorizedJob = await jobStore.GetJobAsync(jobId, ct, tenantId);
+            if (authorizedJob is null)
+            {
+                return Results.NotFound();
+            }
             byte[]? pdfBytes = null;
             if (artifactStore is not null)
             {
@@ -330,8 +289,7 @@ public static class HarnessEndpoints
 
             if (pdfBytes is null)
             {
-                var job = await jobStore.GetJobAsync(jobId, ct, tenantId);
-                var seg = job?.Segments.FirstOrDefault(s => s.SegmentIndex == sliceIndex);
+                var seg = authorizedJob.Segments.FirstOrDefault(s => s.SegmentIndex == sliceIndex);
                 if (wantTranslated)
                 {
                     if (seg?.TranslatedPdfBytes is { Length: > 0 })
@@ -368,6 +326,7 @@ public static class HarnessEndpoints
         group.MapPost("/tenants/{tenantId}/ask", async (
             string tenantId,
             [FromBody] AskTenantDocumentsRequest req,
+            HttpContext context,
             IHarnessStore harnessStore,
             AskAiRunProcessor runProcessor,
             CancellationToken ct) =>
@@ -387,6 +346,7 @@ public static class HarnessEndpoints
             var run = new AskAiRun
             {
                 RunId = Guid.NewGuid().ToString("N"),
+                Actor = IdentityAccessService.GetActor(context.User),
                 TenantId = tenantId,
                 Question = req.Question.Trim(),
                 ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Web }
@@ -417,6 +377,7 @@ public static class HarnessEndpoints
         group.MapPost("/tenants/{tenantId}/ask/runs", async (
             string tenantId,
             [FromBody] SubmitAskAiRunRequest req,
+            HttpContext context,
             IHarnessStore harnessStore,
             IAskAiRunStore runStore,
             IAskAiQueue askQueue,
@@ -439,6 +400,7 @@ public static class HarnessEndpoints
             var run = new AskAiRun
             {
                 RunId = runId,
+                Actor = IdentityAccessService.GetActor(context.User),
                 TenantId = tenantId,
                 Question = req.Question.Trim(),
                 Status = JobStatus.Queued,
@@ -497,6 +459,7 @@ public static class HarnessEndpoints
         group.MapPost("/tenants/{tenantId}/ask/webhooks/email", async (
             string tenantId,
             [FromBody] InboundEmailAskRequest req,
+            HttpContext context,
             IHarnessStore harnessStore,
             AskAiRunProcessor runProcessor,
             IAskAiRunStore runStore,
@@ -519,6 +482,7 @@ public static class HarnessEndpoints
             var run = new AskAiRun
             {
                 RunId = Guid.NewGuid().ToString("N"),
+                Actor = IdentityAccessService.GetActor(context.User),
                 TenantId = tenantId,
                 Question = questionText,
                 ReplyChannel = new AskAiReplyChannel
@@ -567,6 +531,7 @@ public static class HarnessEndpoints
         group.MapPost("/tenants/{tenantId}/ask/webhooks/teams", async (
             string tenantId,
             [FromBody] InboundTeamsAskRequest req,
+            HttpContext context,
             IHarnessStore harnessStore,
             AskAiRunProcessor runProcessor,
             IAskAiRunStore runStore,
@@ -588,6 +553,7 @@ public static class HarnessEndpoints
             var run = new AskAiRun
             {
                 RunId = Guid.NewGuid().ToString("N"),
+                Actor = IdentityAccessService.GetActor(context.User),
                 TenantId = tenantId,
                 Question = req.Text.Trim(),
                 ReplyChannel = new AskAiReplyChannel
@@ -671,15 +637,25 @@ public static class HarnessEndpoints
         });
 
         // Poll Async Job Status
-        group.MapGet("/jobs/{jobId}", async (string jobId, IJobStore jobStore, CancellationToken ct) =>
+        group.MapGet("/jobs/{jobId}", async (
+            string jobId, HttpContext context, IdentityAccessService access,
+            IHarnessStore harnessStore, IJobStore jobStore, CancellationToken ct) =>
         {
-            var job = await jobStore.GetJobAsync(jobId, ct);
-            if (job is null)
+            var tenantIds = access.GetTenantIds(context.User) ??
+                (await harnessStore.ListTenantsAsync(ct)).Select(t => t.TenantId).ToHashSet(StringComparer.Ordinal);
+            foreach (var tenantId in tenantIds)
             {
-                return Results.NotFound(new { error = $"Job '{jobId}' not found." });
+                if (!access.GetAccess(context.User, tenantId).CanReadDocument(jobId))
+                {
+                    continue;
+                }
+                var job = await jobStore.GetJobAsync(jobId, ct, tenantId);
+                if (job is not null)
+                {
+                    return Results.Ok(FormatJobResponse(job));
+                }
             }
-
-            return Results.Ok(FormatJobResponse(job));
+            return Results.NotFound(new { error = $"Job '{jobId}' not found." });
         });
 
         // Seed 26 realistic example documents across customers, languages, and document types into IJobStore (Cosmos DB / InMemory)
@@ -812,6 +788,25 @@ public static class HarnessEndpoints
         });
 
         return app;
+    }
+
+    private static async Task<IReadOnlyList<DocumentJob>> GetVisibleJobsAsync(
+        string tenantId, DocumentAccessScope scope, IJobStore store, CancellationToken cancellationToken)
+    {
+        if (scope.AllowedJobIds is null)
+        {
+            return await store.ListJobsByTenantAsync(tenantId, cancellationToken);
+        }
+        var jobs = new List<DocumentJob>();
+        foreach (var id in scope.AllowedJobIds)
+        {
+            var job = await store.GetJobAsync(id, cancellationToken, tenantId);
+            if (job is not null && String.Equals(job.TenantId, tenantId, StringComparison.Ordinal))
+            {
+                jobs.Add(job);
+            }
+        }
+        return jobs.OrderByDescending(job => job.CreatedAtUtc).ToList();
     }
 
     private static async Task<(string FileName, byte[] PdfBytes)> ResolvePdfBytesAsync(HttpRequest request, CancellationToken ct)

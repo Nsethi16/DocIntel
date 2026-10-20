@@ -6,6 +6,7 @@ using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using System.Threading.Channels;
 using DocIntel.Core.Features.DocumentSplitting;
+using DocIntel.Core.Authorization;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Models;
@@ -77,6 +78,9 @@ public sealed record AskAiStepTrace(
 /// </summary>
 public sealed class AskAiRun
 {
+    [JsonPropertyName("actor")]
+    public ActorIdentity? Actor { get; init; }
+
     [JsonPropertyName("schemaVersion")]
     public int SchemaVersion { get; init; } = 1;
 
@@ -316,7 +320,7 @@ public static class AskAiPromptBuilder
 
         var sb = new StringBuilder();
         sb.AppendLine($"You are the Enterprise Document Intelligence Ask AI Agent for tenant '{tenant.DisplayName}' (tenantId: '{tenant.TenantId}').");
-        sb.AppendLine("You have access to all processed documents, extracted entities, structured tables, and Prompt Column results stored in the Azure Cosmos DB 'jobs' container (partitioned by /tenantId).");
+        sb.AppendLine("Use only authorized documents returned by tenant-scoped tools. Results include original text, extracted entities, structured tables, and Prompt Column results.");
         sb.AppendLine();
 
         // 1. Defined Document Types
@@ -432,6 +436,7 @@ public sealed class AskAiOrchestrator
     private readonly IModelCatalog _modelCatalog;
     private readonly IEnumerable<IAskAiToolProvider> _toolProviders;
     private readonly ILogger<AskAiOrchestrator> _logger;
+    private readonly IAskAiAccessResolver? _accessResolver;
 
     public bool CanAutomaticallyReplay => !_toolProviders.Any();
 
@@ -440,13 +445,15 @@ public sealed class AskAiOrchestrator
         IJobStore jobStore,
         IModelCatalog modelCatalog,
         IEnumerable<IAskAiToolProvider>? toolProviders,
-        ILogger<AskAiOrchestrator> logger)
+        ILogger<AskAiOrchestrator> logger,
+        IAskAiAccessResolver? accessResolver = null)
     {
         _harnessStore = harnessStore ?? throw new ArgumentNullException(nameof(harnessStore));
         _jobStore = jobStore ?? throw new ArgumentNullException(nameof(jobStore));
         _modelCatalog = modelCatalog ?? throw new ArgumentNullException(nameof(modelCatalog));
         _toolProviders = toolProviders?.ToArray() ?? [];
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+        _accessResolver = accessResolver;
     }
 
     public async Task<AskAiRun> ExecuteRunAsync(
@@ -464,6 +471,23 @@ public sealed class AskAiOrchestrator
 
         var tenant = await _harnessStore.GetTenantAsync(run.TenantId, cancellationToken)
             ?? throw new InvalidOperationException($"Tenant '{run.TenantId}' not found.");
+
+        async Task<DocumentAccessScope> ResolveAccessAsync(CancellationToken ct)
+        {
+            var access = _accessResolver is null ? DocumentAccessScope.Unrestricted
+                : await _accessResolver.ResolveAsync(run.Actor, run.TenantId, ct);
+            if (!access.CanRead)
+            {
+                throw new UnauthorizedAccessException("This actor no longer has access to the requested tenant.");
+            }
+            return access;
+        }
+
+        var initialAccess = await ResolveAccessAsync(cancellationToken);
+        if (_toolProviders.Any() && (initialAccess.AllowedJobIds is not null || !initialAccess.CanProcess))
+        {
+            throw new InvalidOperationException("Extension tools require tenant-wide processing permissions.");
+        }
 
         if (!tenant.IsActive ||
             !tenant.Capabilities.TryGetValue(FeatureHarness.AskAiKey, out var askFeature) || !askFeature.Enabled)
@@ -506,6 +530,8 @@ public sealed class AskAiOrchestrator
             var timer = Stopwatch.StartNew();
             try
             {
+                var access = await ResolveAccessAsync(ct);
+                query = query.WithAccess(access.AllowedJobIds);
                 var compiled = DocumentQueryCompiler.Compile(tenant.TenantId, query);
                 var page = await _jobStore.SearchDocumentsAsync(tenant.TenantId, query, ct);
                 foreach (var document in page.Documents)
@@ -534,6 +560,11 @@ public sealed class AskAiOrchestrator
                 if (!allowedJobIds.Contains(jobId))
                 {
                     throw new InvalidOperationException("Search for the document before inspecting its slices.");
+                }
+                var access = await ResolveAccessAsync(ct);
+                if (!access.CanReadDocument(jobId))
+                {
+                    throw new UnauthorizedAccessException("This actor no longer has access to this document.");
                 }
 
                 var job = await _jobStore.GetJobAsync(jobId, ct, tenant.TenantId);
@@ -650,11 +681,23 @@ public sealed class AskAiOrchestrator
             MaximumIterationsPerRequest = 12,
             MaximumConsecutiveErrorsPerRequest = 1
         };
-        var response = await agentClient.GetResponseAsync(
-            [new ChatMessage(ChatRole.User, run.Question)], options, cancellationToken);
+        ChatResponse response;
+        try
+        {
+            response = await agentClient.GetResponseAsync(
+                [new ChatMessage(ChatRole.User, run.Question)], options, cancellationToken);
+        }
+        catch (Exception) when (retrievalFailure is UnauthorizedAccessException)
+        {
+            throw new UnauthorizedAccessException("Document access changed during processing.", retrievalFailure);
+        }
         cancellationToken.ThrowIfCancellationRequested();
         if (retrievalFailure is not null)
         {
+            if (retrievalFailure is UnauthorizedAccessException)
+            {
+                throw new UnauthorizedAccessException("Document access changed during processing.", retrievalFailure);
+            }
             throw new InvalidOperationException("Document retrieval failed; no answer was produced.", retrievalFailure);
         }
 
@@ -683,6 +726,11 @@ public sealed class AskAiOrchestrator
             throw new InvalidOperationException("The answer's citation markers do not match its evidence.");
         }
 
+        var finalAccess = await ResolveAccessAsync(cancellationToken);
+        if (answer.EvidenceIds.Any(id => !finalAccess.CanReadDocument(evidence[id].JobId)))
+        {
+            throw new UnauthorizedAccessException("Document permissions changed before the answer completed.");
+        }
         run.Citations = answer.EvidenceIds.Select((id, i) => evidence[id] with { CitationNumber = i + 1 }).ToList();
         run.Answer = answer.Answer;
         run.EmailHtmlBody = FormatEmailHtmlResponse(tenant.DisplayName, run.Question, answer.Answer, run.Citations);

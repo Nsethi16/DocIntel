@@ -43,6 +43,24 @@ public sealed class AskAiTrustTests
     }
 
     [Fact]
+    public void Nonlocal_Cleartext_Model_Endpoints_Are_Not_Used_For_Document_Questions()
+    {
+        // Arrange
+        var tenant = CreateTenant();
+        var catalog = new ModelCatalog(
+        [
+            new(tenant.DefaultModelId, "Test", "Test", ModelProvider.OpenAICompatible,
+                "test", "http://example.invalid")
+        ]);
+
+        // Act
+        var exception = Assert.Throws<InvalidOperationException>(() => catalog.ResolveRequiredChatClient(tenant));
+
+        // Assert
+        Assert.Contains("HTTPS", exception.Message);
+    }
+
+    [Fact]
     public void Text_Only_Inference_Adapter_Is_Rejected_For_Tool_Calling()
     {
         // Arrange

@@ -1,0 +1,158 @@
+using DocIntel.Core.Features.AskAi;
+using DocIntel.Core.Harness;
+using Microsoft.AspNetCore.Antiforgery;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization.Policy;
+
+namespace DocIntel.Api.Identity;
+
+internal sealed class TenantAccessRequirement : IAuthorizationRequirement
+{
+}
+
+/// <summary>Authorizes roles and resources before request-body binding or endpoint execution.</summary>
+internal sealed class TenantAccessHandler(
+    IdentityAccessService access,
+    IHarnessStore harnessStore,
+    IAskAiRunStore runStore,
+    ILogger<TenantAccessHandler> logger) : AuthorizationHandler<TenantAccessRequirement>
+{
+    internal static object DeniedStatusKey { get; } = new();
+
+    protected override async Task HandleRequirementAsync(
+        AuthorizationHandlerContext authorization, TenantAccessRequirement requirement)
+    {
+        if (authorization.Resource is not HttpContext context)
+        {
+            authorization.Fail();
+            return;
+        }
+        var status = await GetStatusAsync(context);
+        if (status == 0)
+        {
+            authorization.Succeed(requirement);
+        }
+        else
+        {
+            context.Items[DeniedStatusKey] = status;
+            authorization.Fail();
+        }
+    }
+
+    private async Task<int> GetStatusAsync(HttpContext context)
+    {
+        var pattern = (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? String.Empty;
+        var read = HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method);
+        var bearer = context.User.Identities.Any(i => i.AuthenticationType == IdentityHostingExtensions.BearerScheme);
+        if (!access.HasAnyMembership(context.User) ||
+            (pattern.EndsWith("/catalog", StringComparison.Ordinal) && !access.CanAdministerAnyTenant(context.User)))
+        {
+            return Denied(pattern, context);
+        }
+        if (context.Request.RouteValues["tenantId"]?.ToString() is { } tenantId)
+        {
+            var scope = access.GetAccess(context.User, tenantId);
+            if (!scope.CanRead)
+            {
+                return Denied(pattern, context);
+            }
+            var tenant = await harnessStore.GetTenantAsync(tenantId, context.RequestAborted);
+            var configurationOperation = pattern.EndsWith("/tenants/{tenantId}", StringComparison.Ordinal);
+            if (tenant?.IsActive != true && !(configurationOperation && scope.CanAdmin))
+            {
+                return 404;
+            }
+            var ask = pattern.Contains("/ask", StringComparison.Ordinal);
+            if (!scope.CanRead || (!read && !ask && !scope.CanProcess && !scope.CanAdmin) ||
+                (!read && pattern.EndsWith("/tenants/{tenantId}", StringComparison.Ordinal) && !scope.CanAdmin) ||
+                (!read && pattern.EndsWith("/jobs", StringComparison.Ordinal) && !scope.CanProcess) ||
+                (!read && pattern.EndsWith("/run-split", StringComparison.Ordinal) && !scope.CanProcess) ||
+                (!read && pattern.EndsWith("/seed-examples", StringComparison.Ordinal) && !scope.CanProcess))
+            {
+                return Denied(pattern, context);
+            }
+            if (context.Request.RouteValues["jobId"]?.ToString() is { } jobId &&
+                !scope.CanReadDocument(jobId))
+            {
+                return 404;
+            }
+            if (context.Request.RouteValues["runId"]?.ToString() is { } runId)
+            {
+                var run = await runStore.GetRunAsync(tenantId, runId, context.RequestAborted);
+                if (run is null ||
+                    (!(scope.CanAdmin && scope.AllowedJobIds is null) &&
+                     run.Actor != IdentityAccessService.GetActor(context.User)) ||
+                    run.Citations.Any(c => !scope.CanReadDocument(c.JobId)))
+                {
+                    return 404;
+                }
+            }
+        }
+        else if ((!read && !access.IsPlatformAdministrator(context.User)) ||
+                 (read && !pattern.EndsWith("/tenants", StringComparison.Ordinal) &&
+                  !pattern.EndsWith("/catalog", StringComparison.Ordinal) &&
+                  !pattern.EndsWith("/jobs/{jobId}", StringComparison.Ordinal)))
+        {
+            return Denied(pattern, context);
+        }
+        var actor = IdentityAccessService.GetActor(context.User);
+        if (pattern.Contains("/webhooks/", StringComparison.Ordinal) && !access.IsLocalDevelopment &&
+            (!bearer || actor is null || !access.IsServicePrincipal(actor)))
+        {
+            return Denied(pattern, context);
+        }
+        return 0;
+    }
+
+    private int Denied(string pattern, HttpContext context)
+    {
+        logger.LogWarning("Access denied for {Operation}; trace {TraceId}.", pattern, context.TraceIdentifier);
+        return 403;
+    }
+}
+
+internal sealed class TenantAuthorizationResultHandler : IAuthorizationMiddlewareResultHandler
+{
+    private readonly AuthorizationMiddlewareResultHandler _defaultHandler = new();
+
+    public async Task HandleAsync(
+        RequestDelegate next, HttpContext context, AuthorizationPolicy policy, PolicyAuthorizationResult result)
+    {
+        if (result.Forbidden && context.Items[TenantAccessHandler.DeniedStatusKey] is int status)
+        {
+            context.Response.StatusCode = status;
+            await context.Response.WriteAsJsonAsync(new
+            {
+                error = status == 404 ? "The requested resource is not available." : "Access to this operation is not permitted."
+            });
+            return;
+        }
+        await _defaultHandler.HandleAsync(next, context, policy, result);
+    }
+}
+
+/// <summary>Validates browser request verification tokens after framework authentication/authorization.</summary>
+public sealed class CsrfEndpointFilter(
+    IAntiforgery antiforgery, ILogger<CsrfEndpointFilter> logger) : IEndpointFilter
+{
+    public async ValueTask<object?> InvokeAsync(EndpointFilterInvocationContext invocation, EndpointFilterDelegate next)
+    {
+        var context = invocation.HttpContext;
+        var bearer = context.User.Identities.Any(i => i.AuthenticationType == IdentityHostingExtensions.BearerScheme);
+        if (!HttpMethods.IsGet(context.Request.Method) && !HttpMethods.IsHead(context.Request.Method) && !bearer)
+        {
+            try
+            {
+                await antiforgery.ValidateRequestAsync(context);
+            }
+            catch (AntiforgeryValidationException)
+            {
+                logger.LogWarning("Rejected a browser request without valid CSRF protection.");
+                return Results.BadRequest(new { error = "A valid request verification token is required." });
+            }
+        }
+        context.Response.Headers.CacheControl = "no-store";
+        return await next(invocation);
+    }
+
+}

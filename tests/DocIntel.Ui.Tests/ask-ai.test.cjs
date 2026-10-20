@@ -16,6 +16,7 @@ function runtime(responses = []) {
   const storage = new Map();
   const context = vm.createContext({
     console,
+    DocIntelIdentity: { chatPartition: 'test-user' },
     AbortSignal,
     Date: class extends Date {
       static now() { return elapsedMs; }
@@ -53,6 +54,7 @@ function loadPage(app) {
     currentTenant = { tenantId: 'first' };
     tenantChats = [{ id: 'chat-one', title: 'New chat', messages: [] }];
     activeChatId = 'chat-one';
+    loadedChatStorageKey = getChatsStorageKey();
   `, app.context);
 }
 
@@ -115,7 +117,7 @@ test('a failed run shows its explicit error rather than a successful-looking ans
   loadPage(app);
 
   await vm.runInContext("runCrossDocumentAskAi('Hi')", app.context);
-  const chat = JSON.parse(app.storage.get('docintel_chats_first'))[0];
+  const chat = JSON.parse(app.storage.get('docintel_chats_v2_test-user_first'))[0];
 
   assert.equal(chat.messages[1].text, 'The model is unavailable.');
   assert.equal(chat.messages[1].isError, true);
@@ -131,7 +133,7 @@ test('restoring a pending chat resumes the same run without duplicating its ques
   `, app.context);
 
   await vm.runInContext('runCrossDocumentAskAi(null, true)', app.context);
-  const chat = JSON.parse(app.storage.get('docintel_chats_first'))[0];
+  const chat = JSON.parse(app.storage.get('docintel_chats_v2_test-user_first'))[0];
 
   assert.equal(chat.messages.length, 2);
   assert.equal(chat.messages[1].text, 'Recovered.');
@@ -159,8 +161,8 @@ test('switching tenants during a run cannot attach its answer to another tenant 
   finish({ status: 'Completed', answer: 'First tenant answer.', citations: [] });
   await running;
 
-  const first = JSON.parse(app.storage.get('docintel_chats_first'))[0];
-  const second = JSON.parse(app.storage.get('docintel_chats_second'))[0];
+  const first = JSON.parse(app.storage.get('docintel_chats_v2_test-user_first'))[0];
+  const second = JSON.parse(app.storage.get('docintel_chats_v2_test-user_second'))[0];
   assert.equal(first.messages[1].text, 'First tenant answer.');
   assert.equal(second.messages.length, 0);
 });
@@ -184,7 +186,7 @@ test('deleting the original chat does not move its eventual answer into the acti
   finish({ status: 'Completed', answer: 'Old answer.', citations: [] });
   await running;
 
-  const chats = JSON.parse(app.storage.get('docintel_chats_first'));
+  const chats = JSON.parse(app.storage.get('docintel_chats_v2_test-user_first'));
   assert.equal(chats.length, 1);
   assert.equal(chats[0].id, 'chat-two');
   assert.equal(chats[0].messages.length, 0);
@@ -197,6 +199,56 @@ test('all cited sources survive the UI instead of being truncated to eight', asy
 
   await vm.runInContext("runCrossDocumentAskAi('Question')", app.context);
 
-  const chat = JSON.parse(app.storage.get('docintel_chats_first'))[0];
+  const chat = JSON.parse(app.storage.get('docintel_chats_v2_test-user_first'))[0];
   assert.equal(chat.messages[1].citations.length, 12);
+});
+
+test('another account never loads the previous account chat history for the same tenant', () => {
+  const app = runtime();
+  loadPage(app);
+  vm.runInContext(`
+    tenantChats[0].messages.push({ role: 'assistant', text: 'Private to the first account.' });
+    saveTenantChats();
+    DocIntelIdentity.chatPartition = 'another-account';
+    tenantChats = [];
+    activeChatId = null;
+    loadTenantChats(true);
+  `, app.context);
+
+  const current = JSON.parse(app.storage.get('docintel_chats_v2_another-account_first'));
+  assert.equal(current[0].messages.length, 0);
+  assert.ok(app.storage.get('docintel_chats_v2_test-user_first').includes('Private to the first account.'));
+});
+
+test('legacy unscoped browser history is not silently assigned to a newly signed-in account', () => {
+  const app = runtime();
+  loadPage(app);
+  app.storage.set('docintel_chats_first', JSON.stringify([
+    { id: 'old', title: 'Unverified owner', messages: [{ role: 'assistant', text: 'Legacy private answer.' }] }
+  ]));
+
+  vm.runInContext('tenantChats = []; activeChatId = null; loadTenantChats(true);', app.context);
+
+  const current = JSON.parse(app.storage.get('docintel_chats_v2_test-user_first'));
+  assert.equal(current[0].messages.length, 0);
+});
+
+test('inline handler arguments remain data after browser entity decoding', () => {
+  const app = runtime();
+  loadPage(app);
+  const payloads = [
+    "');globalThis.injected=true;//",
+    '&quot;);globalThis.injected=true;//',
+    '\\";globalThis.injected=true;//',
+    '<img src=x onerror=globalThis.injected=true>'
+  ];
+  const entities = { '&amp;': '&', '&lt;': '<', '&gt;': '>', '&quot;': '"', '&#39;': "'" };
+  for (const payload of payloads) {
+    app.context.inputValue = payload;
+    const escaped = vm.runInContext('escapeJsArg(inputValue)', app.context);
+    const decoded = escaped.replace(/&(?:amp|lt|gt|quot|#39);/g, entity => entities[entity]);
+    const result = vm.runInContext(`(${decoded})`, app.context);
+    assert.equal(result, payload);
+    assert.equal(app.context.injected, undefined);
+  }
 });

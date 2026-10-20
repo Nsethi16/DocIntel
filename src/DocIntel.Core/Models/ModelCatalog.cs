@@ -181,9 +181,11 @@ public sealed class ModelCatalog : IModelCatalog
             String.Equals(d.ModelId, modelId, StringComparison.OrdinalIgnoreCase));
         if (descriptor is null || descriptor.Provider == ModelProvider.Simulated ||
             !Uri.TryCreate(descriptor.Endpoint, UriKind.Absolute, out var endpoint) ||
-            (endpoint.Scheme != Uri.UriSchemeHttps && endpoint.Scheme != Uri.UriSchemeHttp))
+            (endpoint.Scheme != Uri.UriSchemeHttps &&
+             (endpoint.Scheme != Uri.UriSchemeHttp || !endpoint.IsLoopback)))
         {
-            throw new InvalidOperationException("Ask AI requires a configured, non-simulated model endpoint.");
+            throw new InvalidOperationException(
+                "Ask AI requires a configured model endpoint using HTTPS or loopback HTTP.");
         }
 
         IChatClient client = descriptor.Provider switch

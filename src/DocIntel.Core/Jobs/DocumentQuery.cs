@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Serialization;
 
 namespace DocIntel.Core.Jobs;
 
@@ -12,6 +13,20 @@ public sealed record DocumentEntityCondition(string Name, string Value);
 /// </summary>
 public sealed class DocumentQuery
 {
+    [JsonIgnore]
+    internal IReadOnlySet<string>? AuthorizedJobIds { get; init; }
+
+    /// <summary>Applies a server-owned document scope without adding model-controllable arguments.</summary>
+    public DocumentQuery WithAccess(IReadOnlySet<string>? jobIds) => new()
+    {
+        SearchText = SearchText,
+        DocumentType = DocumentType,
+        Entities = Entities,
+        PageSize = PageSize,
+        ContinuationToken = ContinuationToken,
+        AuthorizedJobIds = jobIds
+    };
+
     public string? SearchText { get; init; }
 
     public string? DocumentType { get; init; }
@@ -72,6 +87,12 @@ public static class DocumentQueryCompiler
             ["@status"] = nameof(JobStatus.Completed)
         };
 
+        if (query.AuthorizedJobIds is not null)
+        {
+            sql.Append(" AND ARRAY_CONTAINS(@authorizedJobIds, c.jobId)");
+            parameters["@authorizedJobIds"] = query.AuthorizedJobIds.ToArray();
+        }
+
         if (!String.IsNullOrWhiteSpace(query.DocumentType))
         {
             sql.Append(" AND EXISTS(SELECT VALUE s FROM s IN c.segments " +
@@ -106,6 +127,7 @@ public static class DocumentQueryCompiler
     public static bool Matches(DocumentJob job, string tenantId, DocumentQuery query)
     {
         if (!String.Equals(job.TenantId, tenantId, StringComparison.Ordinal) ||
+            (query.AuthorizedJobIds is not null && !query.AuthorizedJobIds.Contains(job.JobId)) ||
             job.Status != JobStatus.Completed)
         {
             return false;

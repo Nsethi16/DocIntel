@@ -9,6 +9,8 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.JwtBearer" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.OpenIdConnect" />
     <ProjectReference Include="..\DocIntel.Core\DocIntel.Core.csproj" />
     <ProjectReference Include="..\DocIntel.ServiceDefaults\DocIntel.ServiceDefaults.csproj" />
   </ItemGroup>

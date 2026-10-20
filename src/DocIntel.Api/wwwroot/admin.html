@@ -1892,7 +1892,7 @@
       </button>
     </div>
 
-    <div class="nav-item primary-pill" title="New tenant" onclick="expandAndOpenNewTenant()">
+    <div class="nav-item primary-pill" id="platformNewTenant" title="New tenant" onclick="expandAndOpenNewTenant()">
       <svg viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
       </svg>
@@ -1918,7 +1918,7 @@
 
     <div class="sidebar-section-header">
       <span>Tenants</span>
-      <button class="icon-btn" title="Create tenant" onclick="expandAndOpenNewTenant()">+</button>
+      <button class="icon-btn" id="platformCreateTenant" title="Create tenant" onclick="expandAndOpenNewTenant()">+</button>
     </div>
 
     <!-- Inline New Tenant Popover -->
@@ -1932,6 +1932,9 @@
     </div>
 
     <div class="tenant-list" id="tenantList"></div>
+    <button type="button" id="identitySignOut" class="nav-item" onclick="DocIntelIdentity.signOut()" hidden>
+      Sign out
+    </button>
   </aside>
 
   <!-- Right Panel: Tenant Agent Harness Canvas -->
@@ -2434,6 +2437,7 @@
 
   <div class="toast" id="toast"></div>
 
+  <script src="/identity.js"></script>
   <script>
     let tenants = [];
     let currentTenant = null;
@@ -3283,6 +3287,10 @@
       return String(str == null ? '' : str).replace(/[&<>"']/g, m => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[m]));
     }
 
+    function escapeJsArg(value) {
+      return escapeHtml(JSON.stringify(String(value ?? '')));
+    }
+
     // =========================================================================
     // Document Intelligence Results Workspace (3-Pane View by Tenant)
     // =========================================================================
@@ -3740,7 +3748,7 @@
             <div class="entity-filter-bar">
               <div class="entity-cat-pills">
                 ${categories.map(cat => `
-                  <button type="button" class="entity-cat-pill ${selectedEntityCategory === cat ? 'active' : ''}" onclick="setEntityCategoryFilter('${escapeHtml(cat)}')">
+                  <button type="button" class="entity-cat-pill ${selectedEntityCategory === cat ? 'active' : ''}" onclick="setEntityCategoryFilter(${escapeJsArg(cat)})">
                     ${cat === 'ALL' ? `All (${allEntities.length})` : escapeHtml(cat)}
                   </button>
                 `).join('')}
@@ -3758,7 +3766,7 @@
                     <div class="entity-chip-name">${escapeHtml(e.name)}</div>
                     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
                       <div class="entity-chip-val">${escapeHtml(e.value)}</div>
-                      <button type="button" class="copy-chip-btn" onclick="copyTextValue(${JSON.stringify(String(e.value || '')).replace(/"/g, '&quot;')})" title="Copy value">Copy</button>
+                      <button type="button" class="copy-chip-btn" onclick="copyTextValue(${escapeJsArg(e.value)})" title="Copy value">Copy</button>
                     </div>
                     <div style="height:4px;background:#eeeae2;border-radius:99px;overflow:hidden;margin-top:6px;">
                       <div style="height:100%;width:${Math.min(100, Math.max(10, pct))}%;background:#16a34a;border-radius:99px;"></div>

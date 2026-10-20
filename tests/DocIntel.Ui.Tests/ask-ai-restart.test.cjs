@@ -1,56 +1,11 @@
 const assert = require('node:assert/strict');
-const { spawn } = require('node:child_process');
 const { once } = require('node:events');
 const fs = require('node:fs/promises');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-
-const apiDll = path.join(__dirname, '..', '..', 'src', 'DocIntel.Api',
-  'bin', 'Release', 'net10.0', 'DocIntel.Api.dll');
-
-async function startApi(directory, modelUrl) {
-  const child = spawn('dotnet', [
-    apiDll, '--urls', 'http://127.0.0.1:0', '--contentRoot', directory,
-    '--AzureAI:LocalOpenAIEndpoint', modelUrl,
-    '--AzureAI:CosmosEndpoint', '', '--AzureAI:BlobEndpoint', '',
-    '--AzureAI:AzureOpenAIEndpoint', '', '--AzureAI:FoundryInferenceEndpoint', ''
-  ], {
-    env: { ...process.env, DOTNET_ENVIRONMENT: 'Production', ASPNETCORE_ENVIRONMENT: 'Production' },
-    stdio: ['ignore', 'pipe', 'pipe']
-  });
-  let output = '';
-  const url = await new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      child.kill('SIGKILL');
-      reject(new Error(`API startup timed out: ${output}`));
-    }, 20000);
-    child.on('error', reject);
-    child.on('exit', code => {
-      clearTimeout(timeout);
-      reject(new Error(`API exited (${code}): ${output}`));
-    });
-    child.stderr.on('data', chunk => { output += chunk; });
-    child.stdout.on('data', chunk => {
-      output += chunk;
-      const match = output.match(/Now listening on:\s+(http:\/\/127\.0\.0\.1:\d+)/);
-      if (match) {
-        clearTimeout(timeout);
-        resolve(match[1]);
-      }
-    });
-  });
-  return { child, url };
-}
-
-async function killApi(api) {
-  if (api && api.child.exitCode === null && api.child.signalCode === null) {
-    const exited = once(api.child, 'exit');
-    api.child.kill('SIGKILL');
-    await exited;
-  }
-}
+const { startApi, killApi } = require('./helpers/api.cjs');
 
 test('a real API process crash releases ownership and the same persisted run completes after restart',
   { timeout: 60000 }, async () => {
@@ -91,8 +46,14 @@ test('a real API process crash releases ownership and the same persisted run com
     await once(provider, 'listening');
     const modelUrl = `http://127.0.0.1:${provider.address().port}/v1`;
     try {
-      api = await startApi(directory, modelUrl);
+      api = await startApi(directory, { 'AzureAI:LocalOpenAIEndpoint': modelUrl });
       const tenantPath = '/api/harness/tenants/contoso-legal';
+      const verification = await fetch(api.url + '/api/identity/csrf');
+      const csrf = (await verification.json()).token;
+      const cookie = verification.headers.get('set-cookie').split(';')[0];
+      const protectedHeaders = {
+        'Content-Type': 'application/json', 'X-DocIntel-CSRF': csrf, Cookie: cookie
+      };
       const tenantResponse = await fetch(api.url + tenantPath);
       assert.equal(tenantResponse.status, 200);
       const tenant = await tenantResponse.json();
@@ -100,10 +61,10 @@ test('a real API process crash releases ownership and the same persisted run com
       tenant.allowedModels = [...new Set([...tenant.allowedModels, 'foundry-local-phi4'])];
       tenant.capabilities.AskAi.modelIdOverride = 'foundry-local-phi4';
       assert.equal((await fetch(api.url + tenantPath, {
-        method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tenant)
+        method: 'PUT', headers: protectedHeaders, body: JSON.stringify(tenant)
       })).status, 200);
       const submitted = await fetch(api.url + tenantPath + '/ask/runs', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        method: 'POST', headers: protectedHeaders,
         body: JSON.stringify({ question: 'Hi' })
       });
       assert.equal(submitted.status, 202);
@@ -122,7 +83,7 @@ test('a real API process crash releases ownership and the same persisted run com
 
       await killApi(api);
       releaseResponses = true;
-      api = await startApi(directory, modelUrl);
+      api = await startApi(directory, { 'AzureAI:LocalOpenAIEndpoint': modelUrl });
       let recovered;
       for (let attempt = 0; attempt < 100; attempt++) {
         recovered = await (await fetch(api.url + accepted.statusUrl)).json();
