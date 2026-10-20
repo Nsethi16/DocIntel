@@ -312,7 +312,7 @@ resource identityEncryptionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
             timeAfterCreate: 'P90D'
           }
           action: {
-            type: 'Rotate'
+            type: 'rotate'
           }
         }
       ]
@@ -445,7 +445,7 @@ resource cae 'Microsoft.App/managedEnvironments@2024-03-01' = {
 }
 
 // 4. Azure Container App (DocIntel Agent Harness Studio + Async Worker)
-resource containerApp 'Microsoft.App/containerApps@2024-03-01' = if (deployApplication) {
+resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployApplication) {
   name: appName
   location: location
   identity: {
@@ -455,7 +455,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = if (deployAppli
     }
   }
   properties: {
-    managedEnvironmentId: cae.id
+    environmentId: cae.id
     configuration: {
       activeRevisionsMode: 'Single'
       ingress: {
@@ -630,9 +630,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = if (deployAppli
   dependsOn: [
     runContainer
     identityKeys
-    dispatchQueue
     poisonQueue
-    documentQueue
     documentPoisonQueue
     storageRoleAssignment
     storageQueueRole

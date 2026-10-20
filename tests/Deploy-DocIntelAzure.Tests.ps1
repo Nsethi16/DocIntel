@@ -64,4 +64,15 @@ if ($application.properties.template.PSObject.Properties['dependsOn']) {
 if (-not @($application.dependsOn | Where-Object { $_ -match "variables\('documentIntelligenceName'\)" })) {
     throw 'The conditional OCR role must be a resource-level dependency, safe when an existing endpoint is used.'
 }
+if ($application.apiVersion -ne '2025-07-01') {
+    throw 'Container Apps must use the verified API schema supporting managed-identity scale rules.'
+}
+$scalers = @($application.properties.template.scale.rules | Where-Object { $_.custom.type -eq 'azure-queue' })
+if ($scalers.Count -ne 2 -or @($scalers | Where-Object { -not $_.custom.identity }).Count -ne 0) {
+    throw 'Both document and Ask AI queues require managed-identity-backed scale rules.'
+}
+$keys = @($template.resources | Where-Object { $_.type -eq 'Microsoft.KeyVault/vaults/keys' })
+if ($keys.Count -ne 1 -or $keys[0].properties.rotationPolicy.lifetimeActions[0].action.type -cne 'rotate') {
+    throw 'The identity key must retain its schema-valid automatic rotation action.'
+}
 Write-Output 'Deployment parser, fail-fast preflight, and ARM dependency-shape tests passed without Azure calls.'
