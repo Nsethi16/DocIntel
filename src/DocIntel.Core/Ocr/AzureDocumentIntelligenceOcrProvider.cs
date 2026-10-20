@@ -7,9 +7,10 @@ using DocIntel.Core.Storage;
 namespace DocIntel.Core.Ocr;
 
 /// <summary>Uses native Azure prebuilt-read with selected original PDF pages and managed-identity credentials.</summary>
-public sealed class AzureDocumentIntelligenceOcrProvider(DocumentIntelligenceClient client) : IOcrProvider
+public sealed class AzureDocumentIntelligenceOcrProvider(DocumentIntelligenceClient client, Uri? endpoint = null) : IOcrProvider
 {
     public string Name => "AzureDocumentIntelligence:prebuilt-read";
+    public string? CacheIdentity => endpoint is null ? null : $"{Name}:2024-11-30:{endpoint.AbsoluteUri}";
 
     public async Task<IReadOnlyList<OcrPageResult>> RecognizeAsync(
         byte[] originalPdf, IReadOnlyList<int> pageNumbers, CancellationToken cancellationToken = default)

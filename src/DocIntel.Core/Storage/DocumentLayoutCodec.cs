@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using System.Text.Json;
 using DocIntel.Core.Evidence;
+using DocIntel.Core.Features.DocumentSplitting;
 
 namespace DocIntel.Core.Storage;
 
@@ -29,7 +30,7 @@ internal static class DocumentLayoutCodec
         while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
         {
             if (body.Length + read > MaxBytes)
-                throw new InvalidDataException("The persisted source layout exceeds its storage limit.");
+                throw new InvalidDataException("The persisted source evidence exceeds its storage limit.");
             await body.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
         }
         return body.ToArray();
@@ -62,24 +63,34 @@ internal static class DocumentLayoutCodec
         long textLength = 0;
         foreach (var page in layout.Pages)
         {
-            if (page.PageNumber != pageNumbers.Count + 1 || !pageNumbers.Add(page.PageNumber) ||
-                !Double.IsFinite(page.PageWidth) || page.PageWidth <= 0 ||
-                !Double.IsFinite(page.PageHeight) || page.PageHeight <= 0 ||
-                !Double.IsFinite(page.ImageAreaRatio) || page.ImageAreaRatio is < 0 or > 1 ||
-                page.Words is null || page.Words.Count > MaxWordsPerPage)
+            if (page.PageNumber != pageNumbers.Count + 1 || !pageNumbers.Add(page.PageNumber))
                 throw new InvalidDataException("The source layout has invalid page geometry or duplicate pages.");
+            ValidatePage(page, wordIds);
             textLength += page.BodyText?.Length ?? 0;
             textLength += page.Markdown?.Length ?? 0;
-            foreach (var word in page.Words)
-            {
-                if (word is null || String.IsNullOrWhiteSpace(word.Id) || !wordIds.Add(word.Id) ||
-                    String.IsNullOrEmpty(word.Text) || word.Box is null || word.Box.Page != page.PageNumber ||
-                    word.OcrConfidence is { } score && (!Double.IsFinite(score) || score is < 0 or > 1))
-                    throw new InvalidDataException("The source layout has invalid word identity, geometry, or confidence.");
-                textLength += word.Text.Length;
-            }
+            textLength += page.Words.Sum(word => (long)word.Text.Length);
             if (textLength > MaxBytes)
                 throw new InvalidDataException("The source layout text exceeds its storage limit.");
         }
+    }
+
+    public static void ValidatePage(PageLayout page, HashSet<string>? wordIds = null)
+    {
+        if (page.PageNumber is < 1 or > MaxPages || !Double.IsFinite(page.PageWidth) || page.PageWidth <= 0 ||
+            !Double.IsFinite(page.PageHeight) || page.PageHeight <= 0 ||
+            !Double.IsFinite(page.ImageAreaRatio) || page.ImageAreaRatio is < 0 or > 1 ||
+            page.Words is null || page.Words.Count > MaxWordsPerPage)
+            throw new InvalidDataException("The source evidence has invalid page geometry or too many words.");
+        wordIds ??= new HashSet<string>(StringComparer.Ordinal);
+        long length = 0;
+        foreach (var word in page.Words)
+        {
+            if (word is null || String.IsNullOrWhiteSpace(word.Id) || !wordIds.Add(word.Id) ||
+                String.IsNullOrEmpty(word.Text) || word.Box is null || word.Box.Page != page.PageNumber ||
+                word.OcrConfidence is { } score && (!Double.IsFinite(score) || score is < 0 or > 1))
+                throw new InvalidDataException("The source evidence has invalid word identity, geometry, or confidence.");
+            length += word.Text.Length;
+        }
+        if (length > MaxBytes) throw new InvalidDataException("The source evidence text exceeds its storage limit.");
     }
 }

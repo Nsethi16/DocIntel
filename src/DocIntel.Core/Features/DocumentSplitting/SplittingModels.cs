@@ -21,6 +21,8 @@ public sealed class PageLayout
 
     public string? TextProvider { get; set; }
 
+    public bool OcrCacheHit { get; set; }
+
     public IReadOnlyList<PageWord> Words { get; set; } = [];
 
     public int? SubDocPageNumber { get; set; }

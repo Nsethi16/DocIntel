@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Security.Cryptography;
+using System.Text;
 using DocIntel.Core.Evidence;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Harness;
@@ -9,7 +10,8 @@ using Microsoft.Extensions.Logging;
 namespace DocIntel.Core.Ocr;
 
 /// <summary>Recognizes only the pages required by the accepted policy, then stages validated source text.</summary>
-public sealed class OcrProcessor(ILogger<OcrProcessor> logger, IOcrProvider? provider = null)
+public sealed class OcrProcessor(
+    ILogger<OcrProcessor> logger, IOcrProvider? provider = null, IArtifactStore? artifacts = null)
 {
     public async Task EnrichAsync(SplittingState state, CancellationToken cancellationToken = default)
     {
@@ -26,8 +28,33 @@ public sealed class OcrProcessor(ILogger<OcrProcessor> logger, IOcrProvider? pro
             ?? throw new InvalidDataException("OCR requires the actual original PDF.");
         LocalFileArtifactStore.ValidateOriginal(original);
         var watch = Stopwatch.StartNew();
-        var results = await provider.RecognizeAsync(original,
-            selected.Select(page => page.PageNumber).ToList(), cancellationToken);
+        var originalSha256 = Convert.ToHexString(SHA256.HashData(original));
+        var fingerprint = artifacts is not null && !String.IsNullOrWhiteSpace(provider.CacheIdentity)
+            ? Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(provider.CacheIdentity))) : null;
+        var results = new List<OcrPageResult>();
+        var hits = new HashSet<int>();
+        if (fingerprint is not null)
+        {
+            foreach (var page in selected)
+            {
+                var cached = await artifacts!.GetOcrCacheAsync(state.Tenant.TenantId, originalSha256,
+                    fingerprint, page.PageNumber, cancellationToken);
+                if (cached is null) continue;
+                results.Add(cached);
+                hits.Add(page.PageNumber);
+            }
+        }
+        var requested = selected.Where(page => !hits.Contains(page.PageNumber)).Select(page => page.PageNumber).ToList();
+        IReadOnlyList<OcrPageResult> recognized = [];
+        if (requested.Count > 0)
+        {
+            recognized = await provider.RecognizeAsync(original, requested, cancellationToken);
+            if (recognized is null || recognized.Count != requested.Count || recognized.Any(result => result is null) ||
+                recognized.Select(result => result.PageNumber).Distinct().Count() != requested.Count ||
+                recognized.Any(result => !requested.Contains(result.PageNumber)))
+                throw new InvalidDataException("OCR did not return exactly the requested uncached source pages.");
+            results.AddRange(recognized);
+        }
         cancellationToken.ThrowIfCancellationRequested();
         if (results is null || results.Count != selected.Count || results.Any(result => result is null) ||
             results.Select(result => result.PageNumber).Distinct().Count() != selected.Count ||
@@ -51,6 +78,7 @@ public sealed class OcrProcessor(ILogger<OcrProcessor> logger, IOcrProvider? pro
                 ImageAreaRatio = source.ImageAreaRatio,
                 TextSource = "Ocr",
                 TextProvider = result.ProviderName,
+                OcrCacheHit = hits.Contains(result.PageNumber),
                 Words = result.Words,
                 IsAmendment = source.IsAmendment,
                 AmendmentId = source.AmendmentId
@@ -63,12 +91,19 @@ public sealed class OcrProcessor(ILogger<OcrProcessor> logger, IOcrProvider? pro
             staged.Add(page.PageNumber, page);
         }
         var pages = state.Pages.Select(page => staged.GetValueOrDefault(page.PageNumber) ?? page).ToList();
-        DocumentLayoutCodec.Validate(new DocumentLayout(state.Tenant.TenantId, state.DocumentId,
-            Convert.ToHexString(SHA256.HashData(original)), pages));
+        DocumentLayoutCodec.Validate(new DocumentLayout(state.Tenant.TenantId, state.DocumentId, originalSha256, pages));
+        if (fingerprint is not null)
+        {
+            foreach (var result in recognized)
+                await artifacts!.TrySaveOcrCacheAsync(new OcrCacheEntry(
+                    state.Tenant.TenantId, originalSha256, fingerprint, result), cancellationToken);
+        }
         cancellationToken.ThrowIfCancellationRequested();
         state.Pages = pages;
         state.ExecutionTrace.Add(new WorkflowStepTrace("RecognizeScannedPages", true, true, provider.Name,
-            watch.Elapsed.TotalMilliseconds, $"Recognized {selected.Count} source page(s) using the configured provider."));
-        logger.LogInformation("Recognized {PageCount} document pages using {OcrProvider}.", selected.Count, provider.Name);
+            watch.Elapsed.TotalMilliseconds,
+            $"Recognized {recognized.Count} source page(s); reused {hits.Count} cached page(s)."));
+        logger.LogInformation("Recognized {PageCount} pages using {OcrProvider}; reused {CachedPageCount} cached pages.",
+            recognized.Count, provider.Name, hits.Count);
     }
 }

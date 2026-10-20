@@ -10,6 +10,7 @@ using Azure.Storage.Blobs.Models;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Evidence;
+using DocIntel.Core.Ocr;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -22,6 +23,11 @@ namespace DocIntel.Core.Storage;
 /// </summary>
 public interface IArtifactStore
 {
+    Task<OcrPageResult?> GetOcrCacheAsync(string tenantId, string originalSha256, string providerFingerprint,
+        int pageNumber, CancellationToken cancellationToken = default);
+
+    Task<bool> TrySaveOcrCacheAsync(OcrCacheEntry entry, CancellationToken cancellationToken = default);
+
     /// <summary>Publishes immutable source-layout evidence and returns its SHA-256.</summary>
     Task<string> SaveLayoutAsync(DocumentLayout layout, CancellationToken cancellationToken = default);
 

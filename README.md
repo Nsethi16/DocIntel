@@ -108,9 +108,20 @@ rotation correction is guessed.
 Bicep provisions a passwordless Document Intelligence account and the application's data role,
 or accepts `documentIntelligenceEndpoint` for an existing account whose access must be configured
 separately. Tests verify the native SDK contract and an actual image-only PDF through a scripted
-recognizer; live recognition quality and permissions remain unverified here. Persistent OCR
-caching, monthly usage/budget enforcement, and an air-gapped Tesseract runtime are not implemented
-by this increment. Repeated analysis can therefore incur additional provider usage.
+recognizer; live recognition quality and permissions remain unverified here.
+
+Actual recognition results are cached immutably within each tenant, keyed by original-PDF SHA-256,
+original page number, and a hash of the provider/model/API/endpoint identity. Recreated workers
+reuse validated words and submit only missing pages; `Always` still permits valid cache reuse.
+The page evidence reports `ocrCacheHit`, and traces distinguish recognition from reuse. Cache
+entries include a checked content digest and input/provider/tenant identity; corruption is an
+explicit failure, not an unnoticed provider retry. Raw recognized words are cached, so a new job
+still applies its own accepted footer rules. Uncacheable custom providers run without persistent
+reuse rather than inheriting another provider's identity.
+
+Concurrent cache misses may both call the provider; immutable first-writer publication prevents
+overwrites, not duplicate billing. Monthly usage/budget enforcement and an air-gapped Tesseract
+runtime remain outstanding, and cache reuse is not an exactly-once usage guarantee.
 
 ## Identity and document access
 

@@ -252,9 +252,27 @@ native-text processing performs no OCR call.
 The Admin policy participates in dirty-state/save handling and is frozen with the accepted job
 harness. Bicep configures a separate passwordless Document Intelligence account/data role, with an
 optional existing endpoint. SDK mocks and a real image-only PDF test verify parser/pipeline/storage
-wiring, not live OCR accuracy. Persistent recognition caching, monthly budget/usage accounting,
-air-gapped Tesseract assets and live Azure verification remain outstanding; there is no claim of
-exactly-once OCR billing or offline recognition support.
+wiring, not live OCR accuracy.
+
+Persistent recognition reuse lives in each tenant's reserved `_ocr-cache` artifact namespace.
+Keys contain only hashes of the original PDF and provider/model/API/endpoint configuration plus
+the original page number. The native client explicitly selects API version `2024-11-30`.
+An entry's schema, content digest, tenant/input/provider identity, page geometry and actual word
+scores are validated before reuse. Corrupt or inaccessible cache data fails explicitly rather
+than silently billing another provider attempt. Cache writes use non-overwriting local publication
+or Blob `If-None-Match: *`; a racing loser validates the existing winner.
+
+Only uncached pages enter the native request. The recognition processor stages both cached and
+fresh pages, validates the whole result, saves validated fresh cache entries, then publishes the
+new state. Cached raw words are composed using the new job's accepted footer policy, not a prior
+job's derived body text. `OcrCacheHit` and trace counts distinguish reuse from actual recognition.
+Custom providers need a stable explicit cache identity; otherwise persistent reuse is disabled.
+Tests recreate local stores/processors, exercise partial hits and concurrent immutable writers,
+reject changed source/provider/tenant keys and corrupt entries, and check native Blob contracts.
+
+Monthly budget/usage accounting, air-gapped Tesseract assets and live Azure verification remain
+outstanding. Concurrent misses and interrupted provider/cache writes can repeat billable analysis;
+cache persistence is not an exactly-once OCR billing or offline recognition guarantee.
 
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).
 

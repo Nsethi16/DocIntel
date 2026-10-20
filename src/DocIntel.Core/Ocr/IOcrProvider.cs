@@ -6,6 +6,8 @@ namespace DocIntel.Core.Ocr;
 public interface IOcrProvider
 {
     string Name { get; }
+    /// <summary>Stable model/API/endpoint identity, or null when persistent reuse is unsupported.</summary>
+    string? CacheIdentity { get; }
     Task<IReadOnlyList<OcrPageResult>> RecognizeAsync(
         byte[] originalPdf, IReadOnlyList<int> pageNumbers, CancellationToken cancellationToken = default);
 }

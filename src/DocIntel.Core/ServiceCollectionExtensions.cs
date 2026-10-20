@@ -128,8 +128,10 @@ public static class ServiceCollectionExtensions
         var ocrUri = Endpoint(azureOptions.DocumentIntelligenceEndpoint);
         if (ocrUri is not null)
         {
-            services.TryAddSingleton(_ => new DocumentIntelligenceClient(ocrUri, credential));
-            services.TryAddSingleton<IOcrProvider, AzureDocumentIntelligenceOcrProvider>();
+            services.TryAddSingleton(_ => new DocumentIntelligenceClient(ocrUri, credential,
+                new DocumentIntelligenceClientOptions(DocumentIntelligenceClientOptions.ServiceVersion.V2024_11_30)));
+            services.TryAddSingleton<IOcrProvider>(sp => new AzureDocumentIntelligenceOcrProvider(
+                sp.GetRequiredService<DocumentIntelligenceClient>(), ocrUri));
         }
         services.TryAddSingleton<OcrProcessor>();
         var cosmosUri = Endpoint(azureOptions.CosmosEndpoint);
