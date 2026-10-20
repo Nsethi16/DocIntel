@@ -197,6 +197,37 @@ public sealed class AskAiRunTests
     }
 
     [Fact]
+    public async Task A_Worker_That_Loses_Ownership_Does_Not_Overwrite_Its_Replacement()
+    {
+        // Arrange
+        using var lost = new CancellationTokenSource();
+        var run = CreateRun();
+        var lease = new Mock<IAskAiRunLease>();
+        lease.SetupGet(l => l.Run).Returns(run);
+        lease.SetupGet(l => l.OwnershipLostToken).Returns(lost.Token);
+        lease.Setup(l => l.SaveAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+        var store = new Mock<IAskAiRunStore>();
+        store.Setup(s => s.TryAcquireAsync(run.TenantId, run.RunId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(lease.Object);
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetResponseAsync(
+                It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns((IEnumerable<ChatMessage> _, ChatOptions? _, CancellationToken ct) =>
+            {
+                lost.Cancel();
+                return Task.FromCanceled<ChatResponse>(ct);
+            });
+
+        // Act
+        await CreateProcessor(store.Object, client.Object).ProcessAsync(new AskAiQueueTicket(run.RunId, run.TenantId));
+
+        // Assert
+        lease.Verify(l => l.SaveAsync(It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Null(run.Answer);
+        Assert.Equal(JobStatus.Running, run.Status);
+    }
+
+    [Fact]
     public async Task Inline_Requests_Wait_When_A_Recovery_Worker_Already_Owns_The_Run()
     {
         // Arrange

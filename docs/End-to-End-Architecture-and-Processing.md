@@ -136,6 +136,39 @@ the web root.
 
 ## 1. High-Level System Architecture
 
+### Shared Ask AI execution
+
+When an Azure Blob endpoint is configured, DI selects `AzureBlobAskAiRunStore` and
+`AzureQueueAskAiQueue`, not a local fallback. Invalid cloud endpoints fail configuration. The queue
+endpoint can be explicit, or derived from the standard account Blob endpoint. Native storage
+uses managed identity; `AzureAI:DevelopmentStorageConnectionString` is restricted to a loopback
+Development emulator and is rejected for real remote endpoints.
+
+Run bodies are bounded snapshots under hashed tenant/run keys. Status and encoded identifiers
+are atomically written as Blob metadata so a bounded recovery sweep can rediscover queued or
+abandoned work. Snapshot ownership is a finite 60-second Blob lease, renewed every 20 seconds.
+Every owned write includes the storage lease ID. Renewal/fence loss cancels the old worker, which
+must not publish a terminal result over its replacement. Completed states are not replayed.
+
+Azure Queue messages contain bounded run/tenant tickets, not questions or document bodies.
+Visibility covers the configured execution budget; acknowledgement follows consumer processing.
+Malformed/repeated tickets go to a poison queue. Dispatch/ack failures are logged without raw
+payloads, and persisted snapshots remain the recovery source of truth. Discovery scans Blob
+metadata and is intended for the current pilot scale, not a claimed 100K-run query index.
+
+The Bicep path provisions run/key containers, dispatch/poison queues, managed-identity data roles,
+and a versionless rotating Key Vault key for the standard ASP.NET Core Blob key-ring provider.
+Production key blobs require Key Vault encryption. Role/registration setup must be validated in
+the actual target directory; local issuer tests do not validate a live Entra deployment.
+Readiness fails when run storage or either queue is missing/inaccessible. The deployment script
+is preview-first, requires explicit identity inputs, and never replaces the running app before
+its web registration/federation prerequisites are met.
+
+SDK-level tests cover fencing, renewal failure, tenant namespaces, acknowledgement ordering and
+quarantine. Live/emulator storage integration is not yet verified in this environment. The
+document-ingestion queue remains process-local and needs separate durable original-file/dispatch
+work before production rollout.
+
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).
 
 ```mermaid

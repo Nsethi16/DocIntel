@@ -117,17 +117,20 @@ public sealed class AskAiRunWorker : BackgroundService
     private readonly IAskAiQueue _askAiQueue;
     private readonly IAskAiRunStore _runStore;
     private readonly AskAiRunProcessor _processor;
+    private readonly AskAiExecutionOptions _options;
     private readonly ILogger<AskAiRunWorker> _logger;
 
     public AskAiRunWorker(
         IAskAiQueue askAiQueue,
         IAskAiRunStore runStore,
         AskAiRunProcessor processor,
+        AskAiExecutionOptions options,
         ILogger<AskAiRunWorker> logger)
     {
         _askAiQueue = askAiQueue ?? throw new ArgumentNullException(nameof(askAiQueue));
         _runStore = runStore ?? throw new ArgumentNullException(nameof(runStore));
         _processor = processor ?? throw new ArgumentNullException(nameof(processor));
+        _options = options;
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     }
 
@@ -138,7 +141,7 @@ public sealed class AskAiRunWorker : BackgroundService
 
     private async Task RecoverRunsAsync(CancellationToken stoppingToken)
     {
-        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(_options.RecoveryPollSeconds));
         do
         {
             try
@@ -146,15 +149,15 @@ public sealed class AskAiRunWorker : BackgroundService
                 var pending = await _runStore.ListUnfinishedRunsAsync(100, stoppingToken);
                 foreach (var ticket in pending)
                 {
-                    if (!_askAiQueue.TryEnqueue(ticket))
+                    if (!await _askAiQueue.TryEnqueueAsync(ticket, stoppingToken))
                     {
                         break;
                     }
                 }
             }
-            catch (Exception exception) when (exception is not OperationCanceledException)
+            catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
             {
-                _logger.LogError(exception, "Failed rediscovering persisted Ask AI runs.");
+                _logger.LogError("Could not rediscover Ask AI runs: {ErrorType}.", exception.GetType().Name);
             }
         }
         while (await timer.WaitForNextTickAsync(stoppingToken));
@@ -162,15 +165,27 @@ public sealed class AskAiRunWorker : BackgroundService
 
     private async Task ProcessQueueAsync(CancellationToken stoppingToken)
     {
-        await foreach (var ticket in _askAiQueue.ReadAllAsync(stoppingToken))
+        while (!stoppingToken.IsCancellationRequested)
         {
             try
             {
-                await _processor.ProcessAsync(ticket, stoppingToken);
+                await foreach (var ticket in _askAiQueue.ReadAllAsync(stoppingToken))
+                {
+                    try
+                    {
+                        await _processor.ProcessAsync(ticket, stoppingToken);
+                    }
+                    catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
+                    {
+                        _logger.LogError("Ask AI run {RunId} could not be processed: {ErrorType}.",
+                            ticket.RunId, exception.GetType().Name);
+                    }
+                }
             }
-            catch (Exception ex) when (ex is not OperationCanceledException)
+            catch (Exception exception) when (!stoppingToken.IsCancellationRequested)
             {
-                _logger.LogError(ex, "Failed processing AskAiRun '{RunId}' for tenant '{TenantId}'.", ticket.RunId, ticket.TenantId);
+                _logger.LogError("Ask AI dispatch receiver stopped unexpectedly: {ErrorType}.", exception.GetType().Name);
+                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
             }
         }
     }

@@ -70,6 +70,8 @@ Configure `Identity` through environment/configuration providers:
 | `ApiClientId` | Separate API application registration/audience |
 | `PublicOrigin` | Production HTTPS origin, without a path/query |
 | `DataProtectionDirectory` | Persistent, service-owned, protected key-ring directory outside the web root |
+| `DataProtectionBlobUri` | Alternative shared key-ring blob URI; production also requires Key Vault encryption |
+| `DataProtectionKeyIdentifier` | Versionless HTTPS Key Vault key URI for envelope encryption |
 | `ClientSecret` | Web credential from a secret provider, **never committed**; omit when using federation |
 | `UseManagedIdentityAssertion` | Use managed-identity token exchange instead of a web client secret |
 | `ManagedIdentityClientId` | Optional UAMI ID; otherwise `AZURE_CLIENT_ID` or system-assigned identity |
@@ -117,21 +119,41 @@ The UI reloads if another browser tab changes the signed-in account.
 
 ## Deploy to Azure
 
-**Deployment wiring is not complete for the hardened configuration.** Do not run the legacy
-deployment examples unchanged: configure Entra registrations/memberships and protected shared
-key storage first, and use a durable shared run store/broker for multiple Container Apps replicas.
-The default container filesystem and the local run store are not cloud durability.
-Live Entra/Azure verification requires an authorized deployment subscription; local identity tests
-use an isolated issuer and generated test keys, not a real directory.
+The PowerShell/Bicep path wires shared Ask AI Blob snapshots, renewable storage-enforced leases,
+durable Azure Queue dispatch/poison handling, Blob-backed session keys encrypted by a rotating
+Key Vault key, queue backlog scaling, and readiness/liveness probes. Storage and Key Vault access
+use managed identity. No connection strings or web client secrets are deployed.
+
+Pre-create separate web/API Entra registrations and the API `DocIntel.Access` delegated/application
+permissions. Provide a private JSON file containing the server-owned `Memberships` and
+`PlatformAdministrators` described above. The script validates explicit subscription/directory/app
+IDs and registration permissions before provisioning. Preview is the default; `-Apply` is explicit.
+`-ConfigureWebRegistration` additionally opts into adding the HTTPS redirect URI and the UAMI
+federated credential to the named web registration. It does not create registrations or grant
+directory consent. ACR tokens are held only in process environment during image publishing.
+
+Live Azure/Entra validation still requires an authorized target subscription. Native shared storage
+has SDK contract tests; this environment could not authenticate to the approved npm feed for the
+official Azurite emulator. Do not treat those tests as proof of a live cloud deployment. Document
+processing jobs still use their existing process-local dispatch queue; Ask AI's shared queue does
+not make document ingestion restart-safe. This remains a separate production rollout prerequisite.
 
 ```powershell
-# Option 1: Azure Developer CLI (azd)
-azd up
-
-# Option 2: PowerShell + Bicep (UAMI + Storage + Container App)
+# Preview against an existing resource group (no apply)
 .\Deploy-DocIntelAzure.ps1 `
   -SubscriptionId "<subscription-id>" `
+  -DirectoryTenantId "<directory-tenant-id>" `
+  -WebClientId "<web-registration-client-id>" `
+  -ApiClientId "<api-registration-client-id>" `
+  -IdentityGrantsPath "<private-server-grants-file>" `
   -ResourceGroup "rg-docintel-dev-westus2" `
-  -Location "westus2" `
-  -FoundryEndpoint "https://<foundry-name>.services.ai.azure.com/models"
+  -Location "westus2"
+
+# Apply after review; add -ConfigureWebRegistration only when authorizing that registration change.
+# The same parameters are required.
 ```
+
+The script bootstraps shared infrastructure before replacing the app, publishes a uniquely tagged
+image without Docker login credentials on disk, and claims readiness only after the health probe
+passes. It restores the prior Azure CLI subscription and transient registry credential environment.
+The Aspire/`azd` path is not yet equivalent to this hardened deployment path.

@@ -6,6 +6,24 @@ param location string = resourceGroup().location
 @description('Environment name suffix (e.g. dev, uat, prod).')
 param environmentName string = 'dev'
 
+@description('Provision shared infrastructure without replacing the app while preparing its image/identity.')
+param deployApplication bool = true
+
+@description('Entra directory ID for verified sign-in. Application memberships use separate tenant slugs.')
+param directoryTenantId string
+
+@description('Confidential web application registration ID with managed-identity federation configured.')
+param webClientId string
+
+@description('Separate API resource application registration ID.')
+param apiClientId string
+
+@description('Server-owned Memberships and PlatformAdministrators. No credentials belong in this object.')
+param identityGrants object = {
+  Memberships: []
+  PlatformAdministrators: []
+}
+
 @description('Container image to deploy (e.g. <acr>.azurecr.io/docintel-api:latest).')
 param containerImage string = 'mcr.microsoft.com/dotnet/samples:aspnetapp'
 
@@ -42,6 +60,7 @@ var storageName = take('sadocintel${environmentName}${uniqueSuffix}', 24)
 var cosmosAccountName = 'cosmos-docintel-${environmentName}-${uniqueSuffix}'
 var cosmosDatabaseName = 'DocIntel'
 var foundryName = 'aif-docintel-${environmentName}-${uniqueSuffix}'
+var keyVaultName = 'kv-di-${take(environmentName, 3)}-${uniqueSuffix}'
 var effectiveAcrName = !empty(acrName) ? acrName : take('acrdocintel${environmentName}${uniqueSuffix}', 50)
 var createFoundryResource = empty(foundryInferenceEndpoint)
 
@@ -173,6 +192,106 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource runContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'ask-ai-runs'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+resource identityKeys 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+  parent: blobService
+  name: 'identity-keys'
+  properties: {
+    publicAccess: 'None'
+  }
+}
+
+resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = {
+  parent: storage
+  name: 'default'
+}
+
+resource dispatchQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+  parent: queueService
+  name: 'ask-ai'
+}
+
+resource poisonQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+  parent: queueService
+  name: 'ask-ai-poison'
+}
+
+resource storageQueueRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(storage.id, uami.id, '974c5e8b-45b9-4653-ba55-5f855dd0fb88')
+  scope: storage
+  properties: {
+    principalId: uami.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')
+  }
+}
+
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+  name: keyVaultName
+  location: location
+  properties: {
+    tenantId: subscription().tenantId
+    sku: {
+      family: 'A'
+      name: 'standard'
+    }
+    enableRbacAuthorization: true
+    enableSoftDelete: true
+    enablePurgeProtection: true
+    softDeleteRetentionInDays: 90
+  }
+}
+
+resource identityEncryptionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
+  parent: keyVault
+  name: 'docintel-identity'
+  properties: {
+    kty: 'RSA'
+    keySize: 2048
+    keyOps: [
+      'wrapKey'
+      'unwrapKey'
+    ]
+    rotationPolicy: {
+      attributes: {
+        expiryTime: 'P180D'
+      }
+      lifetimeActions: [
+        {
+          trigger: {
+            timeAfterCreate: 'P90D'
+          }
+          action: {
+            type: 'Rotate'
+          }
+        }
+      ]
+    }
+  }
+}
+
+resource identityKeyRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(identityEncryptionKey.id, uami.id, 'e147488a-f6f5-4113-8e2d-b22465e65bf6')
+  scope: identityEncryptionKey
+  properties: {
+    principalId: uami.properties.principalId
+    principalType: 'ServicePrincipal'
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'e147488a-f6f5-4113-8e2d-b22465e65bf6')
+  }
+}
+
 // Storage Blob Data Contributor role for UAMI
 var storageBlobDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
 resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -288,7 +407,7 @@ resource cae 'Microsoft.App/managedEnvironments@2024-03-01' = {
 }
 
 // 4. Azure Container App (DocIntel Agent Harness Studio + Async Worker)
-resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
+resource containerApp 'Microsoft.App/containerApps@2024-03-01' = if (deployApplication) {
   name: appName
   location: location
   identity: {
@@ -303,6 +422,7 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
       activeRevisionsMode: 'Single'
       ingress: {
         external: true
+        allowInsecure: false
         targetPort: 8080
         transport: 'auto'
       }
@@ -323,6 +443,14 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
             memory: '2Gi'
           }
           env: [
+            {
+              name: 'DOTNET_ENVIRONMENT'
+              value: 'Production'
+            }
+            {
+              name: 'ASPNETCORE_ENVIRONMENT'
+              value: 'Production'
+            }
             {
               name: 'AZURE_CLIENT_ID'
               value: uami.properties.clientId
@@ -347,18 +475,111 @@ resource containerApp 'Microsoft.App/containerApps@2024-03-01' = {
               name: 'AzureAI__BlobEndpoint'
               value: storage.properties.primaryEndpoints.blob
             }
+            {
+              name: 'AzureAI__QueueEndpoint'
+              value: storage.properties.primaryEndpoints.queue
+            }
+            {
+              name: 'Identity__Mode'
+              value: 'Entra'
+            }
+            {
+              name: 'Identity__DirectoryTenantId'
+              value: directoryTenantId
+            }
+            {
+              name: 'Identity__ClientId'
+              value: webClientId
+            }
+            {
+              name: 'Identity__ApiClientId'
+              value: apiClientId
+            }
+            {
+              name: 'Identity__UseManagedIdentityAssertion'
+              value: 'true'
+            }
+            {
+              name: 'Identity__ManagedIdentityClientId'
+              value: uami.properties.clientId
+            }
+            {
+              name: 'Identity__PublicOrigin'
+              value: 'https://${appName}.${cae.properties.defaultDomain}'
+            }
+            {
+              name: 'Identity__DataProtectionBlobUri'
+              value: '${storage.properties.primaryEndpoints.blob}identity-keys/keyring.xml'
+            }
+            {
+              name: 'Identity__DataProtectionKeyIdentifier'
+              value: '${keyVault.properties.vaultUri}keys/${identityEncryptionKey.name}'
+            }
+            {
+              name: 'DOCINTEL_IDENTITY_GRANTS'
+              value: string(identityGrants)
+            }
+            {
+              name: 'AskAi__RecoveryPollSeconds'
+              value: '30'
+            }
+          ]
+          probes: [
+            {
+              type: 'Liveness'
+              httpGet: {
+                path: '/alive'
+                port: 8080
+              }
+              periodSeconds: 10
+              failureThreshold: 3
+            }
+            {
+              type: 'Readiness'
+              httpGet: {
+                path: '/health'
+                port: 8080
+              }
+              periodSeconds: 10
+              failureThreshold: 3
+              timeoutSeconds: 5
+            }
           ]
         }
       ]
       scale: {
         minReplicas: 1
         maxReplicas: 3
+        rules: [
+          {
+            name: 'ask-ai-backlog'
+            custom: {
+              type: 'azure-queue'
+              identity: uami.id
+              metadata: {
+                accountName: storage.name
+                queueName: dispatchQueue.name
+                queueLength: '5'
+              }
+            }
+          }
+        ]
       }
+      dependsOn: [
+        runContainer
+        identityKeys
+        dispatchQueue
+        poisonQueue
+        storageRoleAssignment
+        storageQueueRole
+        identityKeyRole
+        cosmosSqlRoleAssignment
+      ]
     }
   }
 }
 
-output containerAppFqdn string = 'https://${containerApp.properties.configuration.ingress.fqdn}'
+output containerAppFqdn string = 'https://${appName}.${cae.properties.defaultDomain}'
 output containerRegistryName string = acr.name
 output containerRegistryLoginServer string = acr.properties.loginServer
 output managedIdentityClientId string = uami.properties.clientId
@@ -366,3 +587,6 @@ output managedIdentityPrincipalId string = uami.properties.principalId
 output storageAccountName string = storage.name
 output cosmosAccountName string = cosmosAccount.name
 output foundryEndpoint string = effectiveFoundryEndpoint
+output identityKeyIdentifier string = '${keyVault.properties.vaultUri}keys/${identityEncryptionKey.name}'
+output requiredWebRedirectUri string = 'https://${appName}.${cae.properties.defaultDomain}/signin-oidc'
+output requiredFederationSubject string = uami.properties.principalId

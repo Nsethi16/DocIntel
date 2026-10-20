@@ -196,12 +196,12 @@ public sealed class FileAskAiRunStoreTests : IDisposable
         var store = new FileAskAiRunStore(_directory);
         for (var index = 0; index < 100; index++)
         {
-            Assert.True(queue.TryEnqueue(new AskAiQueueTicket($"other-{index}", "tenant")));
+            Assert.True(await queue.TryEnqueueAsync(new AskAiQueueTicket($"other-{index}", "tenant")));
         }
         await store.UpsertRunAsync(CreateRun());
 
         // Act
-        var acceptedHint = queue.TryEnqueue(new AskAiQueueTicket("one", "tenant"));
+        var acceptedHint = await queue.TryEnqueueAsync(new AskAiQueueTicket("one", "tenant"));
         var unfinished = await store.ListUnfinishedRunsAsync(100);
 
         // Assert

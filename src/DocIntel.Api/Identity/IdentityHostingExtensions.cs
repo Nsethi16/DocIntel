@@ -2,8 +2,10 @@ using System.Net;
 using System.Security.Claims;
 using System.Text.Encodings.Web;
 using System.Threading.RateLimiting;
+using System.Text.Json;
 using Azure.Core;
 using Azure.Identity;
+using Azure.Storage.Blobs;
 using DocIntel.Core.Authorization;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authentication;
@@ -28,6 +30,22 @@ public static class IdentityHostingExtensions
 
     public static void AddDocIntelIdentity(this WebApplicationBuilder builder)
     {
+        var grants = builder.Configuration["DOCINTEL_IDENTITY_GRANTS"];
+        if (!String.IsNullOrWhiteSpace(grants))
+        {
+            if (grants.Length > 65_536) throw new InvalidOperationException("Identity grants configuration is too large.");
+            using var document = JsonDocument.Parse(grants);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                document.RootElement.EnumerateObject().Any(property =>
+                    !String.Equals(property.Name, "Memberships", StringComparison.OrdinalIgnoreCase) &&
+                    !String.Equals(property.Name, "PlatformAdministrators", StringComparison.OrdinalIgnoreCase)))
+                throw new InvalidOperationException("Identity grant input may configure memberships and platform administrators only.");
+            var values = JsonSerializer.SerializeToUtf8Bytes(new Dictionary<string, JsonElement>
+            {
+                [IdentityOptions.SectionName] = document.RootElement.Clone()
+            });
+            builder.Configuration.AddJsonStream(new MemoryStream(values));
+        }
         var settings = new IdentityOptions();
         builder.Configuration.GetSection(IdentityOptions.SectionName).Bind(settings);
         settings.Validate(builder.Environment, builder.Configuration["urls"]);
@@ -38,6 +56,11 @@ public static class IdentityHostingExtensions
         {
             throw new InvalidOperationException("Development simulation requires an explicit loopback Development host.");
         }
+        if (!String.IsNullOrWhiteSpace(builder.Configuration["AzureAI:DevelopmentStorageConnectionString"]) &&
+            (!builder.Environment.IsDevelopment() || String.IsNullOrWhiteSpace(builder.Configuration["urls"]) ||
+             !builder.Configuration["urls"]!.Split(';', StringSplitOptions.RemoveEmptyEntries)
+                 .All(IdentityOptions.IsLoopbackUrl)))
+            throw new InvalidOperationException("Storage emulator connections require a loopback Development host.");
         builder.Logging.AddFilter("Microsoft.AspNetCore.Hosting.Diagnostics", LogLevel.Warning);
         builder.Services.AddSingleton(settings);
         var webRoot = builder.Environment.WebRootPath ?? Path.Combine(builder.Environment.ContentRootPath, "wwwroot");
@@ -55,9 +78,30 @@ public static class IdentityHostingExtensions
         builder.Services.AddSingleton<IAskAiAccessResolver>(sp => sp.GetRequiredService<IdentityAccessService>());
         var keyDirectory = settings.DataProtectionDirectory ??
             Path.Combine(builder.Environment.ContentRootPath, "App_Data", "identity-keys");
-        builder.Services.AddDataProtection()
-            .SetApplicationName($"DocIntel:{settings.ClientId}")
-            .PersistKeysToFileSystem(new DirectoryInfo(keyDirectory));
+        var protection = builder.Services.AddDataProtection().SetApplicationName($"DocIntel:{settings.ClientId}");
+        if (String.IsNullOrWhiteSpace(settings.DataProtectionBlobUri))
+        {
+            protection.PersistKeysToFileSystem(new DirectoryInfo(keyDirectory));
+        }
+        else
+        {
+            var uri = new Uri(settings.DataProtectionBlobUri);
+            protection.PersistKeysToAzureBlobStorage(services =>
+            {
+                if (uri.Scheme == Uri.UriSchemeHttps)
+                    return new BlobClient(uri, services.GetRequiredService<TokenCredential>());
+                var storage = services.GetRequiredService<BlobServiceClient>();
+                if (!storage.Uri.IsBaseOf(uri))
+                    throw new InvalidOperationException("The identity key emulator must match the configured storage account.");
+                var path = new BlobUriBuilder(uri);
+                return storage.GetBlobContainerClient(path.BlobContainerName).GetBlobClient(path.BlobName);
+            });
+        }
+        if (!String.IsNullOrWhiteSpace(settings.DataProtectionKeyIdentifier))
+        {
+            protection.ProtectKeysWithAzureKeyVault(new Uri(settings.DataProtectionKeyIdentifier),
+                services => services.GetRequiredService<TokenCredential>());
+        }
         var development = builder.Environment.IsDevelopment();
         builder.Services.AddAntiforgery(o =>
         {

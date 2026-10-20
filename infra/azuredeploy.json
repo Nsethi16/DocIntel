@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "7029744727021598106"
+      "templateHash": "8862711382566089627"
     }
   },
   "parameters": {
@@ -21,6 +21,41 @@
       "defaultValue": "dev",
       "metadata": {
         "description": "Environment name suffix (e.g. dev, uat, prod)."
+      }
+    },
+    "deployApplication": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Provision shared infrastructure without replacing the app while preparing its image/identity."
+      }
+    },
+    "directoryTenantId": {
+      "type": "string",
+      "metadata": {
+        "description": "Entra directory ID for verified sign-in. Application memberships use separate tenant slugs."
+      }
+    },
+    "webClientId": {
+      "type": "string",
+      "metadata": {
+        "description": "Confidential web application registration ID with managed-identity federation configured."
+      }
+    },
+    "apiClientId": {
+      "type": "string",
+      "metadata": {
+        "description": "Separate API resource application registration ID."
+      }
+    },
+    "identityGrants": {
+      "type": "object",
+      "defaultValue": {
+        "Memberships": [],
+        "PlatformAdministrators": []
+      },
+      "metadata": {
+        "description": "Server-owned Memberships and PlatformAdministrators. No credentials belong in this object."
       }
     },
     "containerImage": {
@@ -85,6 +120,7 @@
     "cosmosAccountName": "[format('cosmos-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix'))]",
     "cosmosDatabaseName": "DocIntel",
     "foundryName": "[format('aif-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix'))]",
+    "keyVaultName": "[format('kv-di-{0}-{1}', take(parameters('environmentName'), 3), variables('uniqueSuffix'))]",
     "effectiveAcrName": "[if(not(empty(parameters('acrName'))), parameters('acrName'), take(format('acrdocintel{0}{1}', parameters('environmentName'), variables('uniqueSuffix')), 50))]",
     "createFoundryResource": "[empty(parameters('foundryInferenceEndpoint'))]",
     "cognitiveServicesUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
@@ -246,6 +282,138 @@
       }
     },
     {
+      "type": "Microsoft.Storage/storageAccounts/blobServices",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'ask-ai-runs')]",
+      "properties": {
+        "publicAccess": "None"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'identity-keys')]",
+      "properties": {
+        "publicAccess": "None"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices', variables('storageName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/queueServices",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'ask-ai')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/queueServices', variables('storageName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
+      "apiVersion": "2023-05-01",
+      "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'ask-ai-poison')]",
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts/queueServices', variables('storageName'), 'default')]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+      "name": "[guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults",
+      "apiVersion": "2023-07-01",
+      "name": "[variables('keyVaultName')]",
+      "location": "[parameters('location')]",
+      "properties": {
+        "tenantId": "[subscription().tenantId]",
+        "sku": {
+          "family": "A",
+          "name": "standard"
+        },
+        "enableRbacAuthorization": true,
+        "enableSoftDelete": true,
+        "enablePurgeProtection": true,
+        "softDeleteRetentionInDays": 90
+      }
+    },
+    {
+      "type": "Microsoft.KeyVault/vaults/keys",
+      "apiVersion": "2023-07-01",
+      "name": "[format('{0}/{1}', variables('keyVaultName'), 'docintel-identity')]",
+      "properties": {
+        "kty": "RSA",
+        "keySize": 2048,
+        "keyOps": [
+          "wrapKey",
+          "unwrapKey"
+        ],
+        "rotationPolicy": {
+          "attributes": {
+            "expiryTime": "P180D"
+          },
+          "lifetimeActions": [
+            {
+              "trigger": {
+                "timeAfterCreate": "P90D"
+              },
+              "action": {
+                "type": "Rotate"
+              }
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]"
+      ]
+    },
+    {
+      "type": "Microsoft.Authorization/roleAssignments",
+      "apiVersion": "2022-04-01",
+      "scope": "[resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity')]",
+      "name": "[guid(resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), 'e147488a-f6f5-4113-8e2d-b22465e65bf6')]",
+      "properties": {
+        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').principalId]",
+        "principalType": "ServicePrincipal",
+        "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'e147488a-f6f5-4113-8e2d-b22465e65bf6')]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity')]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
+      ]
+    },
+    {
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
@@ -378,6 +546,7 @@
       ]
     },
     {
+      "condition": "[parameters('deployApplication')]",
       "type": "Microsoft.App/containerApps",
       "apiVersion": "2024-03-01",
       "name": "[variables('appName')]",
@@ -394,6 +563,7 @@
           "activeRevisionsMode": "Single",
           "ingress": {
             "external": true,
+            "allowInsecure": false,
             "targetPort": 8080,
             "transport": "auto"
           },
@@ -414,6 +584,14 @@
                 "memory": "2Gi"
               },
               "env": [
+                {
+                  "name": "DOTNET_ENVIRONMENT",
+                  "value": "Production"
+                },
+                {
+                  "name": "ASPNETCORE_ENVIRONMENT",
+                  "value": "Production"
+                },
                 {
                   "name": "AZURE_CLIENT_ID",
                   "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').clientId]"
@@ -437,21 +615,124 @@
                 {
                   "name": "AzureAI__BlobEndpoint",
                   "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob]"
+                },
+                {
+                  "name": "AzureAI__QueueEndpoint",
+                  "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.queue]"
+                },
+                {
+                  "name": "Identity__Mode",
+                  "value": "Entra"
+                },
+                {
+                  "name": "Identity__DirectoryTenantId",
+                  "value": "[parameters('directoryTenantId')]"
+                },
+                {
+                  "name": "Identity__ClientId",
+                  "value": "[parameters('webClientId')]"
+                },
+                {
+                  "name": "Identity__ApiClientId",
+                  "value": "[parameters('apiClientId')]"
+                },
+                {
+                  "name": "Identity__UseManagedIdentityAssertion",
+                  "value": "true"
+                },
+                {
+                  "name": "Identity__ManagedIdentityClientId",
+                  "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').clientId]"
+                },
+                {
+                  "name": "Identity__PublicOrigin",
+                  "value": "[format('https://{0}.{1}', variables('appName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('caeName')), '2024-03-01').defaultDomain)]"
+                },
+                {
+                  "name": "Identity__DataProtectionBlobUri",
+                  "value": "[format('{0}identity-keys/keyring.xml', reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob)]"
+                },
+                {
+                  "name": "Identity__DataProtectionKeyIdentifier",
+                  "value": "[format('{0}keys/{1}', reference(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), '2023-07-01').vaultUri, 'docintel-identity')]"
+                },
+                {
+                  "name": "DOCINTEL_IDENTITY_GRANTS",
+                  "value": "[string(parameters('identityGrants'))]"
+                },
+                {
+                  "name": "AskAi__RecoveryPollSeconds",
+                  "value": "30"
+                }
+              ],
+              "probes": [
+                {
+                  "type": "Liveness",
+                  "httpGet": {
+                    "path": "/alive",
+                    "port": 8080
+                  },
+                  "periodSeconds": 10,
+                  "failureThreshold": 3
+                },
+                {
+                  "type": "Readiness",
+                  "httpGet": {
+                    "path": "/health",
+                    "port": 8080
+                  },
+                  "periodSeconds": 10,
+                  "failureThreshold": 3,
+                  "timeoutSeconds": 5
                 }
               ]
             }
           ],
           "scale": {
             "minReplicas": 1,
-            "maxReplicas": 3
-          }
+            "maxReplicas": 3,
+            "rules": [
+              {
+                "name": "ask-ai-backlog",
+                "custom": {
+                  "type": "azure-queue",
+                  "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]",
+                  "metadata": {
+                    "accountName": "[variables('storageName')]",
+                    "queueName": "ask-ai",
+                    "queueLength": "5"
+                  }
+                }
+              }
+            ]
+          },
+          "dependsOn": [
+            "[reference(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'ask-ai-runs'), '2023-05-01', 'full')]",
+            "[reference(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'identity-keys'), '2023-05-01', 'full')]",
+            "[reference(resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'ask-ai'), '2023-05-01', 'full')]",
+            "[reference(resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'ask-ai-poison'), '2023-05-01', 'full')]",
+            "[reference(extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('storageBlobDataContributorRoleId'))), '2022-04-01', 'full')]",
+            "[reference(extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '974c5e8b-45b9-4653-ba55-5f855dd0fb88')), '2022-04-01', 'full')]",
+            "[reference(extensionResourceId(resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity'), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), 'e147488a-f6f5-4113-8e2d-b22465e65bf6')), '2022-04-01', 'full')]",
+            "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments', variables('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '00000000-0000-0000-0000-000000000002')), '2024-05-15', 'full')]"
+          ]
         }
       },
       "dependsOn": [
         "[resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName'))]",
         "[resourceId('Microsoft.App/managedEnvironments', variables('caeName'))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName'))]",
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments', variables('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '00000000-0000-0000-0000-000000000002'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'ask-ai')]",
+        "[resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity')]",
+        "[extensionResourceId(resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity'), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), 'e147488a-f6f5-4113-8e2d-b22465e65bf6'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'identity-keys')]",
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'ask-ai-poison')]",
+        "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'ask-ai-runs')]",
         "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '974c5e8b-45b9-4653-ba55-5f855dd0fb88'))]",
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('storageBlobDataContributorRoleId')))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
       ]
     }
@@ -459,7 +740,7 @@
   "outputs": {
     "containerAppFqdn": {
       "type": "string",
-      "value": "[format('https://{0}', reference(resourceId('Microsoft.App/containerApps', variables('appName')), '2024-03-01').configuration.ingress.fqdn)]"
+      "value": "[format('https://{0}.{1}', variables('appName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('caeName')), '2024-03-01').defaultDomain)]"
     },
     "containerRegistryName": {
       "type": "string",
@@ -488,6 +769,18 @@
     "foundryEndpoint": {
       "type": "string",
       "value": "[variables('effectiveFoundryEndpoint')]"
+    },
+    "identityKeyIdentifier": {
+      "type": "string",
+      "value": "[format('{0}keys/{1}', reference(resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName')), '2023-07-01').vaultUri, 'docintel-identity')]"
+    },
+    "requiredWebRedirectUri": {
+      "type": "string",
+      "value": "[format('https://{0}.{1}/signin-oidc', variables('appName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('caeName')), '2024-03-01').defaultDomain)]"
+    },
+    "requiredFederationSubject": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').principalId]"
     }
   }
 }

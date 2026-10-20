@@ -33,12 +33,28 @@ public sealed class AskAiExecutionOptions
 
     public string? RunStorageDirectory { get; set; }
 
+    public string RunContainerName { get; set; } = "ask-ai-runs";
+
+    public string DispatchQueueName { get; set; } = "ask-ai";
+
+    public string PoisonQueueName { get; set; } = "ask-ai-poison";
+
+    public int RecoveryPollSeconds { get; set; } = 5;
+
     public void Validate()
     {
         if (MaxRunSeconds is < 1 or > 3_600)
         {
             throw new ArgumentOutOfRangeException(nameof(MaxRunSeconds),
                 "Ask AI execution time must be between 1 and 3,600 seconds.");
+        }
+        if (RecoveryPollSeconds is < 1 or > 300 ||
+            new[] { RunContainerName, DispatchQueueName, PoisonQueueName }.Any(name =>
+                String.IsNullOrWhiteSpace(name) || name.Length is < 3 or > 63 ||
+                name[0] == '-' || name[^1] == '-' || name.Contains("--", StringComparison.Ordinal) ||
+                name.Any(c => c is not (>= 'a' and <= 'z' or >= '0' and <= '9' or '-'))))
+        {
+            throw new ArgumentException("Invalid Ask AI storage names or recovery interval.");
         }
     }
 }
@@ -108,7 +124,7 @@ public sealed class AskAiRunProcessor(
         }
         run.ExecutionAttempts++;
 
-        using var executionToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken);
+        using var executionToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, lease.OwnershipLostToken);
         executionToken.CancelAfter(TimeSpan.FromSeconds(options.MaxRunSeconds));
         try
         {
@@ -127,6 +143,11 @@ public sealed class AskAiRunProcessor(
                 run, (_, ct) => lease.SaveAsync(ct), executionToken.Token);
             executionToken.Token.ThrowIfCancellationRequested();
             await lease.SaveAsync(executionToken.Token);
+            return;
+        }
+        catch (OperationCanceledException) when (lease.OwnershipLostToken.IsCancellationRequested)
+        {
+            logger.LogWarning("Ask AI run {RunId} lost ownership; its replacement owner must recover it.", run.RunId);
             return;
         }
         catch (OperationCanceledException) when (executionToken.IsCancellationRequested)

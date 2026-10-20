@@ -1,6 +1,7 @@
 using Azure.Core;
 using Azure.Identity;
 using Azure.Storage.Blobs;
+using Azure.Storage.Queues;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Features.DocumentTranslation;
@@ -58,6 +59,11 @@ public sealed class AzureIntegrationOptions
     /// </summary>
     public string? BlobEndpoint { get; set; }
 
+    public string? QueueEndpoint { get; set; }
+
+    /// <summary>Only loopback storage emulators may use this setting; production uses managed identity.</summary>
+    public string? DevelopmentStorageConnectionString { get; set; }
+
     /// <summary>
     /// Resolves the Azure Translator endpoint, automatically deriving the built-in Foundry AI Services
     /// cognitive endpoint (<c>https://&lt;foundry&gt;.cognitiveservices.azure.com/</c>) when no separate Translator resource is set.
@@ -101,15 +107,25 @@ public static class ServiceCollectionExtensions
         var azureOptions = new AzureIntegrationOptions();
         configuration?.GetSection(AzureIntegrationOptions.SectionName).Bind(azureOptions);
         services.TryAddSingleton(azureOptions);
+        var askAiOptions = new AskAiExecutionOptions();
+        configuration?.GetSection(AskAiExecutionOptions.SectionName).Bind(askAiOptions);
+        askAiOptions.Validate();
+        services.TryAddSingleton(askAiOptions);
 
         var managedIdentityClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
         TokenCredential credential = !string.IsNullOrWhiteSpace(managedIdentityClientId)
             ? new ManagedIdentityCredential(ManagedIdentityId.FromUserAssignedClientId(managedIdentityClientId))
             : new DefaultAzureCredential();
+        services.TryAddSingleton(credential);
+        var cosmosUri = Endpoint(azureOptions.CosmosEndpoint);
+        var blobUri = Endpoint(azureOptions.BlobEndpoint);
+        var queueUri = Endpoint(azureOptions.QueueEndpoint);
+        if (queueUri is not null && blobUri is null &&
+            String.IsNullOrWhiteSpace(azureOptions.DevelopmentStorageConnectionString))
+            throw new InvalidOperationException("A durable dispatch endpoint requires shared run Blob storage.");
 
         // 1. Cosmos DB (shared 'harnesses' and 'jobs' containers partitioned by /tenantId) vs Local Fallback
-        if (!string.IsNullOrWhiteSpace(azureOptions.CosmosEndpoint) &&
-            Uri.TryCreate(azureOptions.CosmosEndpoint, UriKind.Absolute, out var cosmosUri))
+        if (cosmosUri is not null)
         {
             var cosmosClient = new CosmosClient(
                 cosmosUri.ToString(),
@@ -140,12 +156,47 @@ public static class ServiceCollectionExtensions
         }
 
         // 2. Azure Blob Storage (per-tenant 'tenant-{tenantId}' containers) vs Local File Artifact Fallback
-        if (!string.IsNullOrWhiteSpace(azureOptions.BlobEndpoint) &&
-            Uri.TryCreate(azureOptions.BlobEndpoint, UriKind.Absolute, out var blobUri))
+        BlobServiceClient? sharedBlobs = null;
+        QueueServiceClient? sharedQueues = null;
+        if (!String.IsNullOrWhiteSpace(azureOptions.DevelopmentStorageConnectionString))
         {
-            var blobServiceClient = new BlobServiceClient(blobUri, credential);
-            services.TryAddSingleton(blobServiceClient);
-            services.TryAddSingleton<IArtifactStore>(_ => new BlobArtifactStore(blobServiceClient));
+            sharedBlobs = new BlobServiceClient(azureOptions.DevelopmentStorageConnectionString);
+            sharedQueues = new QueueServiceClient(azureOptions.DevelopmentStorageConnectionString,
+                new QueueClientOptions { MessageEncoding = QueueMessageEncoding.None });
+            if (!sharedBlobs.Uri.IsLoopback || !sharedQueues.Uri.IsLoopback)
+            {
+                throw new InvalidOperationException("Development storage connections must use loopback endpoints.");
+            }
+        }
+        else if (blobUri is not null)
+        {
+            sharedBlobs = new BlobServiceClient(blobUri, credential);
+            if (queueUri is null)
+            {
+                var host = blobUri.Host.Replace(".blob.", ".queue.", StringComparison.OrdinalIgnoreCase);
+                if (host == blobUri.Host)
+                    throw new InvalidOperationException("Configure QueueEndpoint for a nonstandard BlobEndpoint.");
+                queueUri = new UriBuilder(blobUri) { Host = host }.Uri;
+            }
+            sharedQueues = new QueueServiceClient(queueUri, credential,
+                new QueueClientOptions { MessageEncoding = QueueMessageEncoding.None });
+        }
+        if (sharedBlobs is not null && sharedQueues is not null)
+        {
+            if (!String.IsNullOrWhiteSpace(askAiOptions.RunStorageDirectory))
+                throw new InvalidOperationException("Shared storage cannot be combined with a local run directory.");
+            services.TryAddSingleton(sharedBlobs);
+            services.TryAddSingleton(sharedQueues);
+            services.TryAddSingleton<IArtifactStore>(_ => new BlobArtifactStore(sharedBlobs));
+            var clients = new CloudAskAiClients(sharedBlobs.GetBlobContainerClient(askAiOptions.RunContainerName),
+                sharedQueues.GetQueueClient(askAiOptions.DispatchQueueName),
+                sharedQueues.GetQueueClient(askAiOptions.PoisonQueueName));
+            services.TryAddSingleton(clients);
+            services.TryAddSingleton<IAskAiRunStore>(sp => new AzureBlobAskAiRunStore(
+                clients.Runs, sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<AzureBlobAskAiRunStore>>()));
+            services.TryAddSingleton<IAskAiQueue>(sp => new AzureQueueAskAiQueue(
+                clients.Dispatch, clients.Poison, askAiOptions,
+                sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<AzureQueueAskAiQueue>>()));
         }
         else if (!string.IsNullOrWhiteSpace(harnessFilePath))
         {
@@ -171,10 +222,6 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IJobQueue, ChannelJobQueue>();
         services.TryAddSingleton<IAskAiQueue, ChannelAskAiQueue>();
         services.TryAddSingleton<AskAiOrchestrator>();
-        var askAiOptions = new AskAiExecutionOptions();
-        configuration?.GetSection(AskAiExecutionOptions.SectionName).Bind(askAiOptions);
-        askAiOptions.Validate();
-        services.TryAddSingleton(askAiOptions);
         var runDirectory = askAiOptions.RunStorageDirectory;
         if (String.IsNullOrWhiteSpace(runDirectory) && !String.IsNullOrWhiteSpace(harnessFilePath))
         {
@@ -192,5 +239,17 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<AskAiRunProcessor>();
 
         return services;
+    }
+
+    private static Uri? Endpoint(string? value)
+    {
+        if (String.IsNullOrWhiteSpace(value)) return null;
+        if (!Uri.TryCreate(value, UriKind.Absolute, out var uri) || uri.Scheme != Uri.UriSchemeHttps ||
+            !String.IsNullOrEmpty(uri.UserInfo) || !String.IsNullOrEmpty(uri.Query) ||
+            !String.IsNullOrEmpty(uri.Fragment))
+        {
+            throw new InvalidOperationException("Configured Azure data endpoints must use HTTPS without embedded credentials.");
+        }
+        return uri;
     }
 }

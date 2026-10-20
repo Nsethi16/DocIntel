@@ -170,6 +170,8 @@ public interface IAskAiRunLease : IAsyncDisposable
 {
     AskAiRun Run { get; }
 
+    CancellationToken OwnershipLostToken => CancellationToken.None;
+
     Task SaveAsync(CancellationToken cancellationToken = default);
 }
 
@@ -279,7 +281,7 @@ public sealed record AskAiQueueTicket(string RunId, string TenantId);
 
 public interface IAskAiQueue
 {
-    bool TryEnqueue(AskAiQueueTicket ticket);
+    ValueTask<bool> TryEnqueueAsync(AskAiQueueTicket ticket, CancellationToken cancellationToken = default);
 
     IAsyncEnumerable<AskAiQueueTicket> ReadAllAsync(CancellationToken cancellationToken = default);
 }
@@ -291,15 +293,16 @@ public sealed class ChannelAskAiQueue : IAskAiQueue
 
     public ChannelAskAiQueue(ILogger<ChannelAskAiQueue> logger) => _logger = logger;
 
-    public bool TryEnqueue(AskAiQueueTicket ticket)
+    public ValueTask<bool> TryEnqueueAsync(AskAiQueueTicket ticket, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(ticket);
+        cancellationToken.ThrowIfCancellationRequested();
         if (_channel.Writer.TryWrite(ticket))
         {
-            return true;
+            return ValueTask.FromResult(true);
         }
         _logger.LogDebug("Ask AI dispatch hints are full; persisted run {RunId} will be rediscovered.", ticket.RunId);
-        return false;
+        return ValueTask.FromResult(false);
     }
 
     public IAsyncEnumerable<AskAiQueueTicket> ReadAllAsync(CancellationToken cancellationToken = default) =>

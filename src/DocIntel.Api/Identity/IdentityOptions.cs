@@ -33,6 +33,8 @@ public sealed class IdentityOptions
     public string? ManagedIdentityClientId { get; set; }
     public string? PublicOrigin { get; set; }
     public string? DataProtectionDirectory { get; set; }
+    public string? DataProtectionBlobUri { get; set; }
+    public string? DataProtectionKeyIdentifier { get; set; }
     public string ApiAccessPermission { get; set; } = "DocIntel.Access";
     public List<TenantMembership> Memberships { get; set; } = [];
     public List<ActorIdentity> PlatformAdministrators { get; set; } = [];
@@ -82,11 +84,24 @@ public sealed class IdentityOptions
             throw new InvalidOperationException(
                 "Configure an Entra web application credential using a secret provider or managed identity federation.");
         }
+        if (!String.IsNullOrWhiteSpace(DataProtectionDirectory) && !String.IsNullOrWhiteSpace(DataProtectionBlobUri))
+            throw new InvalidOperationException("Select one identity key-ring storage location.");
+        if (!String.IsNullOrWhiteSpace(DataProtectionBlobUri) &&
+            (!Uri.TryCreate(DataProtectionBlobUri, UriKind.Absolute, out var keyBlob) ||
+             !String.IsNullOrEmpty(keyBlob.UserInfo) || !String.IsNullOrEmpty(keyBlob.Query) ||
+             !String.IsNullOrEmpty(keyBlob.Fragment) ||
+             (keyBlob.Scheme != Uri.UriSchemeHttps &&
+              !(environment.IsDevelopment() && IsLoopbackUrl(DataProtectionBlobUri)))))
+            throw new InvalidOperationException("Identity key blobs require HTTPS, except a loopback Development emulator.");
+        if (!String.IsNullOrWhiteSpace(DataProtectionKeyIdentifier) && !IsVersionlessKey(DataProtectionKeyIdentifier))
+            throw new InvalidOperationException("Identity key encryption requires a versionless HTTPS Key Vault key identifier.");
         if (!environment.IsDevelopment() &&
-            (!IsHttpsOrigin(PublicOrigin) || String.IsNullOrWhiteSpace(DataProtectionDirectory)))
+            (!IsHttpsOrigin(PublicOrigin) ||
+             (String.IsNullOrWhiteSpace(DataProtectionDirectory) &&
+              (String.IsNullOrWhiteSpace(DataProtectionBlobUri) || String.IsNullOrWhiteSpace(DataProtectionKeyIdentifier)))))
         {
             throw new InvalidOperationException(
-                "Production identity requires an HTTPS PublicOrigin and a persistent, protected DataProtectionDirectory.");
+                "Production identity requires HTTPS PublicOrigin and protected persistent directory or Blob/Key Vault keys.");
         }
         if (AllowLoopbackAuthority && (!environment.IsDevelopment() || !IsLoopbackUrl(LoopbackAuthority) ||
             String.IsNullOrWhiteSpace(urls) ||
@@ -106,4 +121,10 @@ public sealed class IdentityOptions
         Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps &&
         String.IsNullOrEmpty(uri.UserInfo) && uri.AbsolutePath == "/" &&
         String.IsNullOrEmpty(uri.Query) && String.IsNullOrEmpty(uri.Fragment);
+
+    private static bool IsVersionlessKey(string value) =>
+        Uri.TryCreate(value, UriKind.Absolute, out var uri) && uri.Scheme == Uri.UriSchemeHttps &&
+        String.IsNullOrEmpty(uri.UserInfo) && String.IsNullOrEmpty(uri.Query) && String.IsNullOrEmpty(uri.Fragment) &&
+        uri.AbsolutePath.Split('/', StringSplitOptions.RemoveEmptyEntries) is ["keys", var name] &&
+        !String.IsNullOrWhiteSpace(name);
 }
