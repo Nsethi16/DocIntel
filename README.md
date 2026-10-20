@@ -120,8 +120,32 @@ still applies its own accepted footer rules. Uncacheable custom providers run wi
 reuse rather than inheriting another provider's identity.
 
 Concurrent cache misses may both call the provider; immutable first-writer publication prevents
-overwrites, not duplicate billing. Monthly usage/budget enforcement and an air-gapped Tesseract
-runtime remain outstanding, and cache reuse is not an exactly-once usage guarantee.
+overwrites, not duplicate billing. An air-gapped Tesseract runtime remains outstanding, and cache
+reuse is not an exactly-once usage guarantee.
+
+### Live OCR allowances
+
+Each tenant defaults to 100,000 reserved pages per UTC month with an 80% warning threshold.
+Administrators can change the live allowance under **Live OCR allowance** in the splitting
+settings, independently of the harness save/version. Zero blocks new recognition, not valid
+cache reuse. A policy revision prevents concurrent administrators from silently overwriting edits.
+
+Before a provider call, the service atomically reserves every uncached requested page against
+the current live limit. Local deployment uses transactions in the private SQLite database;
+shared deployment uses a separate `ocr-usage` Cosmos container with same-partition conditional
+transactions covering the budget, month counter and unique request record. Retries do not
+double-reserve the same request. Old frozen document settings cannot restore an older budget.
+
+Reserved counts are conservative: failed/interrupted or ambiguous provider calls retain their
+allowance because the provider may already have performed billable analysis. SDK/network retries
+can also differ from invoiced usage; these are not price estimates or Azure billing totals.
+Cached pages consume no new allowance. Crossing the warning percentage or exhausting a budget
+emits a structured warning. Actual Azure Monitor alert rules are not provisioned by this change.
+
+Tenant-wide administrators can use `GET/PUT .../tenants/{tenantId}/ocr-budget` and
+`GET .../tenants/{tenantId}/ocr-usage?period=yyyy-MM` under `/api/harness`. Writes require the current
+policy `version` and browser CSRF protection; stale edits return 409. Readers, processors and
+document-restricted administrators cannot inspect or change tenant-wide usage controls.
 
 ## Identity and document access
 

@@ -3,6 +3,7 @@ using DocIntel.Core.Authorization;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Storage;
+using DocIntel.Core.Ocr;
 using Microsoft.Extensions.Logging;
 
 namespace DocIntel.Core.Jobs;
@@ -108,9 +109,12 @@ public sealed class DocumentJobProcessor(
                 job.JobId, cause.GetType().Name, cause.HResult & 0xffff,
                 cause.TargetSite?.DeclaringType?.Name + "." + cause.TargetSite?.Name);
             job.Status = JobStatus.Failed;
-            job.ErrorMessage = exception is UnauthorizedAccessException
-                ? "Document processing access was revoked."
-                : "Document processing failed. Check the provider configuration or source PDF and retry.";
+            job.ErrorMessage = exception switch
+            {
+                UnauthorizedAccessException => "Document processing access was revoked.",
+                OcrBudgetExceededException => "The monthly OCR page allowance is exhausted. An administrator must review the budget.",
+                _ => "Document processing failed. Check the provider configuration or source PDF and retry."
+            };
             job.CompletedAtUtc = DateTimeOffset.UtcNow;
         }
         using var persistence = new CancellationTokenSource(TimeSpan.FromSeconds(10));

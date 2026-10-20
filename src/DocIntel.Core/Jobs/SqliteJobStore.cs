@@ -6,7 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace DocIntel.Core.Jobs;
 
 /// <summary>Transactional single-host job metadata, with expiring owner tokens and version-fenced writes.</summary>
-public sealed class SqliteJobStore : IJobStore
+public sealed partial class SqliteJobStore : IJobStore
 {
     private readonly string _connectionString;
     private readonly TimeProvider _clock;
@@ -50,6 +50,15 @@ public sealed class SqliteJobStore : IJobStore
                             owner TEXT NULL, expires INTEGER NULL, attempts INTEGER NOT NULL DEFAULT 0,
                             PRIMARY KEY (tenant, id));
                         CREATE INDEX IF NOT EXISTS document_jobs_pending ON document_jobs(status, expires);
+                        CREATE TABLE IF NOT EXISTS ocr_budgets (
+                            tenant TEXT PRIMARY KEY, page_limit INTEGER NOT NULL, warning INTEGER NOT NULL,
+                            version INTEGER NOT NULL);
+                        CREATE TABLE IF NOT EXISTS ocr_months (
+                            tenant TEXT NOT NULL, period TEXT NOT NULL, pages INTEGER NOT NULL, requests INTEGER NOT NULL,
+                            PRIMARY KEY(tenant,period));
+                        CREATE TABLE IF NOT EXISTS ocr_requests (
+                            tenant TEXT NOT NULL, id TEXT NOT NULL, period TEXT NOT NULL, pages INTEGER NOT NULL,
+                            provider TEXT NOT NULL, document_id TEXT NOT NULL, PRIMARY KEY(tenant,id));
                         """;
                     await schema.ExecuteNonQueryAsync(ct);
                     _initialized = true;

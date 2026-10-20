@@ -39,6 +39,7 @@ public sealed class CloudAskAiStorageTests
         Assert.IsType<AzureQueueAskAiQueue>(provider.GetRequiredService<IAskAiQueue>());
         Assert.IsType<AzureQueueJobQueue>(provider.GetRequiredService<IJobQueue>());
         Assert.IsType<CosmosJobStore>(provider.GetRequiredService<IJobStore>());
+        Assert.IsType<CosmosOcrUsageStore>(provider.GetRequiredService<DocIntel.Core.Ocr.IOcrUsageStore>());
     }
 
     [Theory]

@@ -2054,6 +2054,20 @@
                 <option value="Never">Use the PDF text layer only</option>
               </select>
             </div>
+            <details>
+              <summary>Live OCR allowance</summary>
+              <p id="ocrUsageStatus" role="status">Load the current monthly allowance and reserved request pages.</p>
+              <div class="drawer-row">
+                <label for="ocrPageLimit">Monthly pages</label>
+                <input class="clean-input" id="ocrPageLimit" type="number" min="0" max="10000000" disabled />
+                <label for="ocrWarningPercent">Warn at (%)</label>
+                <input class="clean-input" id="ocrWarningPercent" type="number" min="1" max="100" disabled />
+                <button type="button" class="btn-mini" onclick="loadOcrUsage()">Load / refresh</button>
+                <button type="button" class="btn-mini" id="ocrBudgetSave" onclick="saveOcrBudget()" disabled>Save live allowance</button>
+              </div>
+              <p>Separate from the harness version. Zero blocks fresh OCR, not validated cache reuse.
+                Failed or interrupted provider requests retain their reserved pages; these counts are not an invoice.</p>
+            </details>
             <div class="drawer-row">
               <div style="display:flex;align-items:center;gap:8px;flex:1;">
                 <span class="drawer-label">Footers to ignore</span>
@@ -2449,6 +2463,81 @@
   <script>
     let tenants = [];
     let currentTenant = null;
+    let ocrBudgetSnapshot = null;
+    let ocrBudgetTenantId = null;
+    let ocrBudgetRevision = 0;
+    let ocrBudgetSaving = false;
+
+    async function loadOcrUsage() {
+      const tenantId = currentTenant?.tenantId;
+      if (!tenantId) return;
+      const revision = ++ocrBudgetRevision;
+      ocrBudgetSnapshot = null;
+      document.getElementById('ocrBudgetSave').disabled = true;
+      document.getElementById('ocrPageLimit').disabled = true;
+      document.getElementById('ocrWarningPercent').disabled = true;
+      document.getElementById('ocrUsageStatus').textContent = 'Loading live OCR allowance...';
+      try {
+        const response = await fetch(`/api/harness/tenants/${encodeURIComponent(tenantId)}/ocr-usage`);
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.title || result.error || 'OCR allowance could not be loaded.');
+        if (currentTenant?.tenantId !== tenantId || revision !== ocrBudgetRevision) return;
+        ocrBudgetSnapshot = result.budget;
+        ocrBudgetTenantId = tenantId;
+        document.getElementById('ocrPageLimit').value = result.budget.monthlyPageLimit;
+        document.getElementById('ocrWarningPercent').value = result.budget.warningPercent;
+        document.getElementById('ocrPageLimit').disabled = false;
+        document.getElementById('ocrWarningPercent').disabled = false;
+        document.getElementById('ocrBudgetSave').disabled = false;
+        document.getElementById('ocrUsageStatus').textContent =
+          `${result.period} UTC: ${result.reservedPages} reserved pages across ${result.requestCount} requests; ` +
+          `${result.remainingPages} pages remain.`;
+      } catch (error) {
+        if (currentTenant?.tenantId === tenantId && revision === ocrBudgetRevision)
+          document.getElementById('ocrUsageStatus').textContent = error.message;
+      }
+    }
+
+    async function saveOcrBudget() {
+      if (ocrBudgetSaving) {
+        document.getElementById('ocrUsageStatus').textContent = 'An allowance save is still in progress.';
+        return;
+      }
+      const tenantId = currentTenant?.tenantId;
+      if (!ocrBudgetSnapshot || tenantId !== ocrBudgetTenantId) {
+        document.getElementById('ocrUsageStatus').textContent = 'Load the current tenant allowance before saving.';
+        return;
+      }
+      const limitText = String(document.getElementById('ocrPageLimit').value).trim();
+      const warningText = String(document.getElementById('ocrWarningPercent').value).trim();
+      const monthlyPageLimit = Number(limitText);
+      const warningPercent = Number(warningText);
+      if (!limitText || !warningText || !Number.isInteger(monthlyPageLimit) ||
+          monthlyPageLimit < 0 || monthlyPageLimit > 10000000 ||
+          !Number.isInteger(warningPercent) || warningPercent < 1 || warningPercent > 100) {
+        document.getElementById('ocrUsageStatus').textContent = 'Enter a whole-page limit and a warning percentage from 1 to 100.';
+        return;
+      }
+      const version = ocrBudgetSnapshot.version;
+      const revision = ++ocrBudgetRevision;
+      ocrBudgetSnapshot = null;
+      ocrBudgetSaving = true;
+      document.getElementById('ocrBudgetSave').disabled = true;
+      try {
+        const response = await fetch(`/api/harness/tenants/${encodeURIComponent(tenantId)}/ocr-budget`, {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ monthlyPageLimit, warningPercent, version })
+        });
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.title || result.error || 'Could not confirm the budget save. Reload before retrying.');
+        if (currentTenant?.tenantId === tenantId && revision === ocrBudgetRevision) await loadOcrUsage();
+      } catch (error) {
+        if (currentTenant?.tenantId === tenantId && revision === ocrBudgetRevision)
+          document.getElementById('ocrUsageStatus').textContent = `${error.message} Reload before saving again.`;
+      } finally {
+        ocrBudgetSaving = false;
+      }
+    }
 
     async function init() {
       const urlTenant = new URLSearchParams(window.location.search).get('tenant');
@@ -2869,6 +2958,13 @@
 
     function renderMainCanvas() {
       if (!currentTenant) return;
+      ocrBudgetRevision++;
+      ocrBudgetSnapshot = null;
+      ocrBudgetTenantId = null;
+      document.getElementById('ocrBudgetSave').disabled = true;
+      document.getElementById('ocrPageLimit').disabled = true;
+      document.getElementById('ocrWarningPercent').disabled = true;
+      document.getElementById('ocrUsageStatus').textContent = 'Load the current monthly allowance and reserved request pages.';
 
       document.getElementById('harnessVersionChip').textContent = `Harness v${currentTenant.harnessVersion || 1}`;
       document.getElementById('tenantHeading').textContent = `${currentTenant.displayName}`;

@@ -63,6 +63,10 @@ internal sealed class TenantAccessHandler(
                 return 404;
             }
             var ask = pattern.Contains("/ask", StringComparison.Ordinal);
+            var usageOperation = pattern.EndsWith("/ocr-budget", StringComparison.Ordinal) ||
+                pattern.EndsWith("/ocr-usage", StringComparison.Ordinal);
+            if (usageOperation && (!scope.CanAdmin || scope.AllowedJobIds is not null))
+                return Denied(pattern, context);
             if (!scope.CanRead || (!read && !ask && !scope.CanProcess && !scope.CanAdmin) ||
                 (!read && pattern.EndsWith("/tenants/{tenantId}", StringComparison.Ordinal) && !scope.CanAdmin) ||
                 (!read && pattern.EndsWith("/jobs", StringComparison.Ordinal) && !scope.CanProcess) ||

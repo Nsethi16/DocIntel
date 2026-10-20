@@ -53,6 +53,15 @@ test('an uploaded document survives an API crash and resumes under a new fenced 
       const protectedHeaders = {
         'Content-Type': 'application/json', 'X-DocIntel-CSRF': csrf, Cookie: cookie
       };
+      const initialBudget = await (await fetch(api.url + tenantPath + '/ocr-budget')).json();
+      assert.equal((await fetch(api.url + tenantPath + '/ocr-budget', {
+        method: 'PUT', headers: { 'Content-Type': 'application/json', Cookie: cookie },
+        body: JSON.stringify({ ...initialBudget, monthlyPageLimit: 750 })
+      })).status, 400);
+      assert.equal((await fetch(api.url + tenantPath + '/ocr-budget', {
+        method: 'PUT', headers: protectedHeaders,
+        body: JSON.stringify({ ...initialBudget, monthlyPageLimit: 750 })
+      })).status, 200);
       assert.equal((await fetch(api.url + tenantPath + '/seed-examples', {
         method: 'POST', headers: protectedHeaders, body: '{}'
       })).status, 200);
@@ -106,6 +115,7 @@ test('an uploaded document survives an API crash and resumes under a new fenced 
       await killApi(api);
       releaseResponses = true;
       api = await startApi(directory, settings);
+      assert.equal((await (await fetch(api.url + tenantPath + '/ocr-budget')).json()).monthlyPageLimit, 750);
       let recovered;
       for (let attempt = 0; attempt < 180; attempt++) {
         const polled = await fetch(api.url + accepted.statusUrl);

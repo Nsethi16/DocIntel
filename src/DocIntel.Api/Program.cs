@@ -4,6 +4,7 @@ using DocIntel.Api.Endpoints;
 using DocIntel.Api.Identity;
 using DocIntel.Api.Workers;
 using DocIntel.Core;
+using DocIntel.Core.Ocr;
 using DocIntel.ServiceDefaults;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -28,8 +29,12 @@ var app = builder.Build();
 
 app.UseExceptionHandler(new ExceptionHandlerOptions
 {
-    StatusCodeSelector = exception => exception is BadHttpRequestException request
-        ? request.StatusCode : StatusCodes.Status500InternalServerError
+    StatusCodeSelector = exception => exception switch
+    {
+        BadHttpRequestException request => request.StatusCode,
+        OcrBudgetExceededException => StatusCodes.Status429TooManyRequests,
+        _ => StatusCodes.Status500InternalServerError
+    }
 });
 app.Use(async (context, next) =>
 {
@@ -71,6 +76,7 @@ app.MapGet("/admin", () => Results.Redirect("/admin.html"));
 app.MapDefaultEndpoints();
 app.MapDocIntelIdentity();
 app.MapHarnessEndpoints();
+app.MapOcrUsageEndpoints();
 
 app.Run();
 

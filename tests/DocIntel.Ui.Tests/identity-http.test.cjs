@@ -271,6 +271,31 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         assert.equal((await request(tenantPath, administrator, 'PUT', {})).status, 400);
       });
       let tenant = await (await request(tenantPath, administrator)).json();
+      await t.test('live OCR allowance reads and edits require tenant-wide administration with version checks', async () => {
+        assert.equal((await request(tenantPath + '/ocr-budget')).status, 401);
+        assert.equal((await request(tenantPath + '/ocr-usage', reader)).status, 403);
+        assert.equal((await request(tenantPath + '/ocr-budget', processor)).status, 403);
+        assert.equal((await request(tenantPath + '/ocr-budget', processor, 'PUT', {})).status, 403);
+        const budgetResponse = await request(tenantPath + '/ocr-budget', administrator);
+        assert.equal(budgetResponse.status, 200);
+        const budget = await budgetResponse.json();
+        assert.equal(budget.monthlyPageLimit, 100000);
+        const saved = await request(tenantPath + '/ocr-budget', administrator, 'PUT',
+          { ...budget, monthlyPageLimit: 100, warningPercent: 75 });
+        assert.equal(saved.status, 200);
+        const current = await saved.json();
+        assert.notEqual(current.version, budget.version);
+        assert.equal((await request(tenantPath + '/ocr-budget', administrator, 'PUT', budget)).status, 409);
+        assert.equal((await request(tenantPath + '/ocr-budget', administrator, 'PUT',
+          { ...current, monthlyPageLimit: -1 })).status, 400);
+        const usage = await request(tenantPath + '/ocr-usage?period=2026-10', administrator);
+        assert.equal(usage.status, 200);
+        const accounting = await usage.json();
+        assert.equal(accounting.reservedPages, 0);
+        assert.equal(accounting.budget.monthlyPageLimit, 100);
+        assert.match(accounting.accounting, /not an Azure invoice/);
+        assert.equal((await request(tenantPath + '/ocr-usage?period=invalid', administrator)).status, 400);
+      });
       tenant.defaultModelId = 'foundry-local-phi4';
       tenant.allowedModels = [...new Set([...tenant.allowedModels, 'foundry-local-phi4'])];
       tenant.capabilities.AskAi.modelIdOverride = 'foundry-local-phi4';

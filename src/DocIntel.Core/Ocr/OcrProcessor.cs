@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using DocIntel.Core.Evidence;
@@ -11,8 +12,12 @@ namespace DocIntel.Core.Ocr;
 
 /// <summary>Recognizes only the pages required by the accepted policy, then stages validated source text.</summary>
 public sealed class OcrProcessor(
-    ILogger<OcrProcessor> logger, IOcrProvider? provider = null, IArtifactStore? artifacts = null)
+    ILogger<OcrProcessor> logger, IOcrProvider? provider = null, IArtifactStore? artifacts = null,
+    IOcrUsageStore? usage = null, TimeProvider? clock = null)
 {
+    private readonly IOcrUsageStore _usage = usage ?? new InMemoryOcrUsageStore();
+    private readonly TimeProvider _clock = clock ?? TimeProvider.System;
+
     public async Task EnrichAsync(SplittingState state, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -48,6 +53,23 @@ public sealed class OcrProcessor(
         IReadOnlyList<OcrPageResult> recognized = [];
         if (requested.Count > 0)
         {
+            OcrAllowance allowance;
+            try
+            {
+                allowance = await _usage.ReserveAsync(state.Tenant.TenantId,
+                    _clock.GetUtcNow().ToString("yyyy-MM", CultureInfo.InvariantCulture), Guid.NewGuid().ToString("N"),
+                    requested.Count, provider.Name, state.DocumentId, cancellationToken);
+            }
+            catch (OcrBudgetExceededException)
+            {
+                logger.LogWarning("OCR request rejected because the tenant's monthly page allowance is exhausted.");
+                throw;
+            }
+            var threshold = (long)allowance.Budget.MonthlyPageLimit * allowance.Budget.WarningPercent;
+            if (allowance.Usage.ReservedPages * 100 >= threshold &&
+                (allowance.Usage.ReservedPages - requested.Count) * 100 < threshold)
+                logger.LogWarning("OCR usage crossed its configured {WarningPercent} percent monthly warning threshold.",
+                    allowance.Budget.WarningPercent);
             recognized = await provider.RecognizeAsync(original, requested, cancellationToken);
             if (recognized is null || recognized.Count != requested.Count || recognized.Any(result => result is null) ||
                 recognized.Select(result => result.PageNumber).Distinct().Count() != requested.Count ||

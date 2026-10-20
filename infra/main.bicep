@@ -407,6 +407,22 @@ resource jobsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/conta
 }
 
 // Cosmos DB Built-in Data Contributor Role Assignment for UAMI
+resource ocrUsageContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = {
+  parent: cosmosDatabase
+  name: 'ocr-usage'
+  properties: {
+    resource: {
+      id: 'ocr-usage'
+      partitionKey: {
+        paths: [
+          '/tenantId'
+        ]
+        kind: 'Hash'
+      }
+    }
+  }
+}
+
 var cosmosDataContributorRoleId = '${cosmosAccount.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
 resource cosmosSqlRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {
   parent: cosmosAccount
@@ -636,6 +652,7 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
     storageQueueRole
     identityKeyRole
     cosmosSqlRoleAssignment
+    ocrUsageContainer
     documentIntelligenceUserRole
   ]
 }

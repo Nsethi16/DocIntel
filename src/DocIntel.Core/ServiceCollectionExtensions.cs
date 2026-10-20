@@ -165,6 +165,8 @@ public static class ServiceCollectionExtensions
                 azureOptions.CosmosDatabaseName,
                 azureOptions.CosmosJobsContainer,
                 logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CosmosJobStore>>()));
+            services.TryAddSingleton<IOcrUsageStore>(_ => new CosmosOcrUsageStore(
+                cosmosClient.GetContainer(azureOptions.CosmosDatabaseName, "ocr-usage")));
         }
         else
         {
@@ -179,9 +181,12 @@ public static class ServiceCollectionExtensions
                     Path.GetDirectoryName(Path.GetFullPath(harnessFilePath!))!, "document-jobs.sqlite");
                 services.TryAddSingleton<IJobStore>(sp => new SqliteJobStore(
                     database, logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SqliteJobStore>>()));
+                services.TryAddSingleton<IOcrUsageStore>(sp => new SqliteJobStore(
+                    database, logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<SqliteJobStore>>()));
             }
             else services.TryAddSingleton<IJobStore, InMemoryJobStore>();
         }
+        services.TryAddSingleton<IOcrUsageStore, InMemoryOcrUsageStore>();
 
         // 2. Azure Blob Storage (per-tenant 'tenant-{tenantId}' containers) vs Local File Artifact Fallback
         BlobServiceClient? sharedBlobs = null;

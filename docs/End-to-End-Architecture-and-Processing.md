@@ -270,9 +270,33 @@ Custom providers need a stable explicit cache identity; otherwise persistent reu
 Tests recreate local stores/processors, exercise partial hits and concurrent immutable writers,
 reject changed source/provider/tenant keys and corrupt entries, and check native Blob contracts.
 
-Monthly budget/usage accounting, air-gapped Tesseract assets and live Azure verification remain
-outstanding. Concurrent misses and interrupted provider/cache writes can repeat billable analysis;
-cache persistence is not an exactly-once OCR billing or offline recognition guarantee.
+Air-gapped Tesseract assets and live Azure verification remain outstanding. Concurrent misses and
+interrupted provider/cache writes can repeat billable analysis; cache persistence is not an
+exactly-once OCR billing or offline recognition guarantee.
+
+### Live OCR cost controls
+
+OCR operational limits are separate from accepted/frozen processing harnesses. Defaults are
+100,000 request pages per tenant/UTC month and an 80% warning threshold; zero disallows fresh
+provider work while preserving cached reuse. Every fresh provider invocation first reserves its
+uncached pages under a server-generated request identifier. SQLite serializes budget/counter/
+request writes in one transaction. Cosmos uses the separate tenant-partitioned `ocr-usage`
+container and a transactional batch with specific budget/month ETags plus a new request record.
+A concurrent live budget edit or allocation rejects the stale batch and triggers a bounded reread;
+storage/authentication errors never become an in-memory authorization fallback.
+
+Reservation replay must match tenant, period, page count, provider and document attempt. It does
+not allocate again. Counters and policy revisions persist across process restarts. Reservations
+are retained after failures and timeouts, conservatively accounting for possibly completed
+provider work rather than refunding an uncertain outcome. These counters are reserved request
+pages, not confirmed Azure charges, token usage or currency-valued cost estimates.
+
+Tenant-wide Admin authorization precedes binding for usage/budget endpoints. Reads support a
+validated `yyyy-MM` period; edits use a separate policy revision and return 409 on a stale edit.
+Budget edits do not change document harness versions. The Admin panel ignores stale tenant loads,
+does not automatically retry unconfirmed mutations and requires reload after an edit conflict.
+Cookie writes require the normal CSRF token. Threshold crossings and rejections generate
+structured warnings; live monitoring alert provisioning and invoice reconciliation are separate.
 
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).
 
