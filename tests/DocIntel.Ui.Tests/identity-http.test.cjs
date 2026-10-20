@@ -223,6 +223,7 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         'Identity:Mode': 'Entra', 'Identity:DirectoryTenantId': directoryId,
         'Identity:ClientId': webClientId, 'Identity:ApiClientId': apiClientId,
         'Identity:AllowLoopbackAuthority': true, 'Identity:LoopbackAuthority': issuer,
+        'Identity:WriteRequestsPerMinute': 100,
         'AzureAI:LocalOpenAIEndpoint': `${issuer}/model/v1`
       }, { env: { Identity__ClientSecret: crypto.randomBytes(48).toString('base64url') } });
       const reader = signToken(issuer, apiClientId, { scp: 'DocIntel.Access' });
@@ -445,6 +446,11 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         assert.equal(started.status, 200, await started.clone().text());
         const original = await started.json();
         assert.ok(original.fields.length > 0);
+        const exportPath = `${tenantPath}/jobs/${allowedDocumentId}/export`;
+        assert.equal((await request(exportPath + '?format=json', reader)).status, 409);
+        assert.equal((await request(exportPath + '?view=original&format=json', reader)).status, 403);
+        assert.equal((await request(exportPath + '?view=original&format=json', processor)).status, 200);
+        assert.equal((await request(`${tenantPath}/jobs/${forbiddenDocumentId}/export`, reviewer)).status, 404);
         const read = await request(reviewPath, reader);
         assert.equal(read.status, 200);
         assert.equal(read.headers.get('X-DocIntel-Can-Review'), 'false');
@@ -478,6 +484,47 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         const unchanged = await (await request(`/api/harness/jobs/${allowedDocumentId}`, reader)).json();
         assert.equal(unchanged.segments[0].extractedEntities[0].value, original.fields[0].originalValue);
         assert.equal((await action('release', corrected.headers.get('ETag'))).status, 200);
+        let currentResponse = await request(reviewPath, reviewer);
+        let currentReview = await currentResponse.json();
+        currentResponse = await action('claim', currentResponse.headers.get('ETag'));
+        currentReview = await currentResponse.json();
+        let currentTag = currentResponse.headers.get('ETag');
+        for (const field of currentReview.fields.filter(field => field.outcome === 'Pending' || field.outcome === 'Rejected')) {
+          currentResponse = await action('field', currentTag, { fieldId: field.id, outcome: 'Approved' });
+          assert.equal(currentResponse.status, 200);
+          currentTag = currentResponse.headers.get('ETag');
+        }
+        const submitted = await action('submit', currentTag);
+        assert.equal(submitted.status, 200);
+        assert.equal((await submitted.json()).status, 'Approved');
+        for (const format of ['csv', 'xlsx', 'json']) {
+          const exported = await request(exportPath + '?format=' + format, reader);
+          assert.equal(exported.status, 200, exported.ok ? '' : await exported.clone().text());
+          assert.match(exported.headers.get('content-disposition'), /attachment/);
+          const bytes = Buffer.from(await exported.arrayBuffer());
+          assert.ok(bytes.length > 0);
+          const exportedId = exported.headers.get('X-DocIntel-Export-Id');
+          assert.match(exportedId, /^[a-f0-9]{32}$/);
+          const recorded = JSON.parse(await fs.readFile(path.join(directory, 'App_Data', 'blobs',
+            'tenant-contoso-legal', allowedDocumentId, `export-event-${exportedId}.json`), 'utf8'));
+          assert.equal(recorded.contentSha256, crypto.createHash('sha256').update(bytes).digest('hex').toUpperCase());
+          if (format === 'json') {
+            const data = JSON.parse(bytes.toString('utf8'));
+            assert.equal(data.view, 'HumanReviewed');
+            assert.equal(data.fields[0].effectiveValue, 'Human verified value');
+            assert.equal(data.fields[0].originalValue, original.fields[0].originalValue);
+          }
+          if (format === 'xlsx') assert.equal(bytes.subarray(0, 2).toString('ascii'), 'PK');
+        }
+        const exportDirectory = path.join(directory, 'App_Data', 'blobs', 'tenant-contoso-legal', allowedDocumentId);
+        const exportAudits = (await fs.readdir(exportDirectory)).filter(name => /^export-event-.*\.json$/.test(name));
+        assert.equal(exportAudits.length, 4);
+        const auditBodies = await Promise.all(exportAudits.map(async name =>
+          JSON.parse(await fs.readFile(path.join(exportDirectory, name), 'utf8'))));
+        const exportAudit = auditBodies.find(audit => audit.view === 'OriginalUnreviewed');
+        assert.ok(exportAudit);
+        assert.ok(exportAudit.contentSha256);
+        assert.equal(exportAudit.actor.objectId, processorId);
       });
       await t.test('model arguments cannot broaden the server-owned document search scope', async () => {
         const response = await request(tenantPath + '/ask', reader, 'POST', {

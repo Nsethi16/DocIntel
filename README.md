@@ -204,6 +204,33 @@ refactoring, business-calendar SLA computation, leaderboard metrics and model-sc
 approval are not claimed. The review page has a focused CSP; existing legacy SPAs are not
 silently broken by applying an incompatible CSP to their inline scripts.
 
+## Reviewed exports
+
+The review workspace exposes CSV, Excel and JSON downloads after explicit human approval.
+`GET /api/harness/tenants/{tenantId}/jobs/{jobId}/export?format=csv|xlsx|json` checks current
+document permissions, the approved source-matching review and its audit continuity. Pending,
+rejected, missing or stale review never silently falls back to model values. Corrections are
+exported as effective human values alongside original values, review outcomes/version, original
+source evidence status/pages, source hash and development-provenance markers.
+
+These are normalized field rows, including entity, structured-field and table-cell identities;
+they are not a fabricated wide schema across unlike document types. Original model scores are
+explicitly uncalibrated and are not scores for human corrections. Processor/Admin callers may
+request `view=original` explicitly; those artifacts are labeled `OriginalUnreviewed`, and this mode
+is forbidden to Readers/Reviewers even when they can read the approved document.
+
+CSV quotes every cell and neutralizes formula-leading values, including whitespace/control
+prefixes. Excel uses the approved Open XML SDK with inline-string cells and no formulas/macros.
+Values beyond Excel's cell limit are rejected rather than truncated; JSON retains exact values.
+Exports have bounded row/text/output sizes and direct authenticated downloads, not long-lived
+bearer SAS links that survive permission revocation.
+
+An immutable reference-only export event is persisted before bytes are released. The
+`X-DocIntel-Export-Id` response correlates format, actor, review/source version and content SHA-256;
+it does not log raw field values or prove that the client received every byte. This is application
+audit evidence, not immutable regulatory archival. Parquet, bulk/background exports, arbitrary
+webhooks, and SharePoint/Power Automate delivery remain subsequent connector work.
+
 ## Identity and document access
 
 Production defaults to **Entra** and fails startup when identity configuration is incomplete.

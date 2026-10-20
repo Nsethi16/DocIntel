@@ -232,7 +232,7 @@ Both local and Blob writes are non-overwriting; local publication uses the same 
 flush / atomic-move helper as immutable originals. Blob uses `If-None-Match: *`. The process-crash
 regression verifies word IDs survive restart and stale-attempt layout changes cannot change the
 public route. Storage integrity does not by itself prove OCR accuracy or field-value entailment.
-Export/delivery and global audit archival remain subsequent work; human review is described below.
+Connector delivery and global audit archival remain subsequent work; human review/exports are described below.
 
 The extraction stage now applies the accepted `Ocr.Mode` before publishing layout evidence and
 before boundary detection. `Auto` selects pages with fewer than 50 body characters and image
@@ -368,6 +368,34 @@ to finalize/reject; the admitted field count has sufficient ordinary and dual-re
 Audit reads verify the prefix ending at their captured state version, not a later concurrent edit.
 Shared chrome deduplication and global immutable audit infrastructure are not part of this
 increment; neither are advertised as completed production controls.
+
+### Human-reviewed export release
+
+The export endpoint returns direct authenticated CSV/XLSX/JSON downloads, defaulting to approved
+effective values. Source fingerprint, review/job identity, final approval and review audit prefix
+must match before serialization. Current document grants, tenant activation and source snapshot
+are rechecked before release. There is no silent original/unreviewed downgrade. A separate
+explicit `view=original` is restricted to Processor/Admin roles and prominently labels its rows
+as unreviewed source data.
+
+Rows use stable server field identities for entities, structured fields and table cells. Both
+original and human-effective values are retained. Source occurrence and uncalibrated score
+metadata refer to the original model value, not a claim that a corrected value is grounded at
+the old coordinates. Source/harness/review versions and development markers remain visible.
+The normalized row contract avoids inventing common wide columns across incompatible schemas.
+
+CSV strings are quoted and formula/control prefixes are apostrophe-neutralized. The approved
+Open XML SDK produces inline-string Excel cells with no formula elements; SDK validation and
+round-trip tests cover the actual workbook shape. Excel text/XML limits and 16-MiB output limits
+produce explicit failures rather than silent truncation. JSON preserves exact field strings.
+
+An immutable tenant/job export event is stored before sending bytes, with verified actor
+reference, mode/format, source/review metadata, field count and generated-content hash. Events
+contain no raw field values. Their correlation ID is returned in `X-DocIntel-Export-Id`.
+Audit persistence failure prevents release, but a persisted event is not proof that an
+interrupted client completed its download. Local/Blob application-level non-overwriting writes
+are not regulatory retention/legal hold. This path deliberately avoids bearer SAS URLs and
+untrusted outbound destinations. Bulk/Parquet exports and external delivery are separate.
 
 **DocIntel** is built on **.NET 10**, **.NET Aspire** (`DocIntel.AppHost` + `DocIntel.ServiceDefaults`), and the **Microsoft Agent Framework** (`Microsoft.Agents.AI` + `Microsoft.Agents.AI.Workflows`).
 

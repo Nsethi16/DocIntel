@@ -11,6 +11,7 @@ using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Evidence;
 using DocIntel.Core.Ocr;
+using DocIntel.Core.Export;
 using Microsoft.Azure.Cosmos;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -23,6 +24,9 @@ namespace DocIntel.Core.Storage;
 /// </summary>
 public interface IArtifactStore
 {
+    /// <summary>Publishes an immutable, reference-only export record before bytes are released to the caller.</summary>
+    Task SaveExportAuditAsync(ExportAuditEvent audit, CancellationToken cancellationToken = default);
+
     Task<OcrPageResult?> GetOcrCacheAsync(string tenantId, string originalSha256, string providerFingerprint,
         int pageNumber, CancellationToken cancellationToken = default);
 

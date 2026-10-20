@@ -24,6 +24,14 @@
 
   function controls() {
     const final = ['Approved', 'Rejected'].includes(state.session?.status);
+    for (const format of ['csv', 'xlsx', 'json']) {
+      const link = el('export' + format[0].toUpperCase() + format.slice(1));
+      const enabled = !state.busy && state.session?.status === 'Approved' && state.job && state.tenant;
+      link.setAttribute('aria-disabled', enabled ? 'false' : 'true');
+      link.tabIndex = enabled ? 0 : -1;
+      if (enabled) link.href = `${base()}/jobs/${encodeURIComponent(state.job)}/export?format=${format}`;
+      else link.removeAttribute('href');
+    }
     for (const id of ['claim', 'release', 'approve', 'correct', 'rejectField', 'submit', 'rejectDocument'])
       el(id).disabled = state.busy || !state.session || !state.canReview || final ||
         (id !== 'claim' && !state.claimed);

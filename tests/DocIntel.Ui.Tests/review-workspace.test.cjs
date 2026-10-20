@@ -16,6 +16,7 @@ function runtime() {
     const handlers = new Map();
     return { value: '', textContent: '', hidden: false, readOnly: false, disabled: false, children: [],
       classList: { toggle() {}, add() {}, remove() {} }, scrollIntoView() {}, focus() {},
+      setAttribute(name, value) { this[name] = value; }, removeAttribute(name) { delete this[name]; },
       addEventListener(name, action) { handlers.set(name, action); },
       append(...children) { this.children.push(...children); },
       replaceChildren(...children) { this.children = children; },
@@ -89,4 +90,17 @@ test('switching documents clears field and document-level drafts rather than reu
   assert.equal(app.element('reason').value, '');
   assert.equal(app.element('documentReason').value, '');
   assert.equal(app.api.state.job, 'second');
+});
+
+test('download links expose reviewed artifacts only after explicit human approval', () => {
+  const app = runtime();
+  assert.equal(app.element('exportCsv')['aria-disabled'], 'true');
+  assert.equal(app.element('exportCsv').href, undefined);
+  app.api.state.session.status = 'Approved';
+  app.api.renderFields();
+  assert.equal(app.element('exportXlsx')['aria-disabled'], 'false');
+  assert.equal(app.element('exportXlsx').href, '/api/harness/tenants/tenant/jobs/one/export?format=xlsx');
+  app.api.state.session.status = 'Rejected';
+  app.api.renderFields();
+  assert.equal(app.element('exportJson').href, undefined);
 });

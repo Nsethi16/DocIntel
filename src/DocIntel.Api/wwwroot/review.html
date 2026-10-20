@@ -55,6 +55,10 @@
       <textarea id="documentReason" maxlength="2000" readonly></textarea>
       <div class="toolbar final"><button id="submit" disabled>Submit human review</button>
         <button id="rejectDocument" disabled>Reject document</button></div>
+      <div class="toolbar final" aria-label="Human-reviewed exports">
+        <span>Reviewed values:</span><a id="exportCsv" aria-disabled="true">CSV</a>
+        <a id="exportXlsx" aria-disabled="true">Excel</a><a id="exportJson" aria-disabled="true">JSON</a>
+      </div>
       <pre id="auditText" hidden></pre>
     </section>
   </main>

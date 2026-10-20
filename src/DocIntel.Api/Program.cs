@@ -88,6 +88,7 @@ app.MapDocIntelIdentity();
 app.MapHarnessEndpoints();
 app.MapOcrUsageEndpoints();
 app.MapReviewEndpoints();
+app.MapExportEndpoints();
 app.MapGet("/review", (HttpRequest request) => Results.Redirect(
     "/review.html?tenant=" + Uri.EscapeDataString(request.Query["tenant"].ToString()) +
     "&job=" + Uri.EscapeDataString(request.Query["job"].ToString())));

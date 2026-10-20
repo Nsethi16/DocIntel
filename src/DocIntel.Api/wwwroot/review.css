@@ -9,6 +9,7 @@ h2 { font-size: 1.1rem; }
 button, select, textarea { font: inherit; border: 1px solid #aaa; border-radius: .3rem; padding: .45rem; }
 button { background: white; cursor: pointer; }
 button:disabled { cursor: default; opacity: .5; }
+a[aria-disabled="true"] { pointer-events: none; color: #777; text-decoration: none; }
 button:focus-visible, a:focus-visible { outline: 3px solid #3769bc; outline-offset: 2px; }
 main { display: grid; grid-template-columns: minmax(120px, 16%) minmax(250px, 50%) minmax(270px, 34%); height: calc(100vh - 110px); }
 nav, .review { overflow: auto; padding: .8rem; }
