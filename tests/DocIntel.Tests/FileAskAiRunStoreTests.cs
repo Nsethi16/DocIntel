@@ -171,6 +171,33 @@ public sealed class FileAskAiRunStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task A_Brief_External_Reader_Does_Not_Fail_Snapshot_Replacement()
+    {
+        // Arrange
+        var store = new FileAskAiRunStore(_directory);
+        await store.UpsertRunAsync(CreateRun());
+        await using var lease = await store.TryAcquireAsync("tenant", "one");
+        var path = Assert.Single(Directory.GetFiles(_directory, "*.json", SearchOption.AllDirectories));
+        var reader = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+        lease!.Run.Answer = "Committed after the external reader closes.";
+
+        // Act
+        var save = lease.SaveAsync();
+        try
+        {
+            await Task.Delay(TimeSpan.FromMilliseconds(100));
+        }
+        finally
+        {
+            await reader.DisposeAsync();
+        }
+        await save;
+
+        // Assert
+        Assert.Equal(lease.Run.Answer, (await store.GetRunAsync("tenant", "one"))?.Answer);
+    }
+
+    [Fact]
     public async Task A_Corrupt_Snapshot_Does_Not_Prevent_Other_Runs_From_Being_Discovered()
     {
         // Arrange

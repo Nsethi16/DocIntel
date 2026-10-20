@@ -314,7 +314,7 @@ public sealed class FileAskAiRunStore : IAskAiRunStore
                     break;
                 }
                 catch (IOException exception) when (
-                    (exception.HResult & 0xffff) is 11 or 32 or 33 && attempt < 6)
+                    (exception.HResult & 0xffff) is 11 or 32 or 33 or 1175 && attempt < 8)
                 {
                     await Task.Delay(TimeSpan.FromMilliseconds(10 * (1 << attempt)), cancellationToken);
                 }
