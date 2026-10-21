@@ -418,6 +418,8 @@ public sealed class SimulatedSliceChatClient : IChatClient
             ?? list.FirstOrDefault(m => m.Role == ChatRole.System)?.Text
             ?? string.Empty;
         var userText = list.LastOrDefault(m => m.Role == ChatRole.User)?.Text ?? string.Empty;
+        // The development fixture treats the final instruction line as the admin's summary focus.
+        systemPrompt = systemPrompt.Replace(DocumentPromptBoundary.Policy, String.Empty, StringComparison.Ordinal);
         const string sourceTag = "<untrusted_document_content>";
         const string endSourceTag = "</untrusted_document_content>";
         if (userText.StartsWith(sourceTag, StringComparison.Ordinal))
