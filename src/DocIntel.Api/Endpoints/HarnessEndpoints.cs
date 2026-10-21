@@ -678,6 +678,17 @@ public static class HarnessEndpoints
             return layout is null ? Results.NotFound() : Results.Ok(layout);
         });
 
+        group.MapGet("/tenants/{tenantId}/jobs/{jobId}/processing-result", async (
+            string tenantId, string jobId, IJobStore store, IArtifactStore artifacts, CancellationToken ct) =>
+        {
+            var job = await store.GetJobAsync(jobId, ct, tenantId);
+            if (job is not { Status: JobStatus.Completed, ProcessingResultSha256: not null })
+                return Results.NotFound();
+            var bytes = await artifacts.GetProcessingResultAsync(job, ct);
+            return bytes is null ? Results.NotFound() : Results.File(bytes, "application/json",
+                fileDownloadName: "processing-result.json");
+        });
+
         // Poll Async Job Status
         group.MapGet("/jobs/{jobId}", async (
             string jobId, HttpContext context, IdentityAccessService access,
@@ -764,6 +775,7 @@ public static class HarnessEndpoints
                         TenantId = tenant.TenantId,
                         TenantDisplayName = tenant.DisplayName,
                         AppliedHarnessVersion = tenant.HarnessVersion,
+                        ProcessingHarness = tenant,
                         FileName = fileName,
                         Status = JobStatus.Completed,
                         TotalPages = completed.Pages.Count,
@@ -783,6 +795,7 @@ public static class HarnessEndpoints
                     job.OriginalPdfLocation = await artifactStore.SaveOriginalPdfAsync(
                         tenantId, jobId, pdfBytes, token);
                     job.OriginalSha256 = Convert.ToHexString(SHA256.HashData(pdfBytes));
+                    job.ProcessingResultSha256 = await artifactStore.SaveProcessingResultAsync(job, token);
                     await jobStore.UpsertJobAsync(job, token);
                     seededIds.Add(jobId);
                 });
@@ -1042,6 +1055,9 @@ public static class HarnessEndpoints
         job.ModelIdUsed,
         job.HasDevelopmentResults,
         job.OriginalSha256,
+        job.ProcessingResultSha256,
+        processingResultUrl = job.ProcessingResultSha256 is null ? null :
+            $"/api/harness/tenants/{Uri.EscapeDataString(job.TenantId)}/jobs/{Uri.EscapeDataString(job.JobId)}/processing-result",
         job.ReviewId,
         layoutAvailable = job.LayoutSha256 is not null,
         layoutUrl = job.LayoutSha256 is null ? null :

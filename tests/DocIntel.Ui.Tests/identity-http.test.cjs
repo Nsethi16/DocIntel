@@ -410,6 +410,17 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
           assert.match(stored.headers.get('content-security-policy'), /frame-ancestors 'self'/);
           assert.deepEqual(Buffer.from(await stored.arrayBuffer()), Buffer.from(pdf));
           assert.equal((await request(original, reader)).status, 404);
+          assert.equal(job.processingResultSha256.length, 64);
+          const processing = await request(job.processingResultUrl, processor);
+          assert.equal(processing.status, 200);
+          const processingBytes = Buffer.from(await processing.arrayBuffer());
+          assert.equal(crypto.createHash('sha256').update(processingBytes).digest('hex').toUpperCase(),
+            job.processingResultSha256);
+          const snapshot = JSON.parse(processingBytes.toString('utf8'));
+          assert.equal(snapshot.snapshotKind, 'InitialProcessing');
+          assert.equal(snapshot.jobId, job.jobId);
+          assert.equal(snapshot.originalSha256, job.originalSha256);
+          assert.equal((await request(job.processingResultUrl, reader)).status, 404);
           assert.equal(job.layoutAvailable, true);
           const layoutResponse = await request(job.layoutUrl, processor);
           assert.equal(layoutResponse.status, 200);

@@ -52,6 +52,7 @@ public sealed class DocumentJobProcessor(
             job.ExecutionTrace = [];
             job.Segments = [];
             job.LayoutSha256 = null;
+            job.ProcessingResultSha256 = null;
             job.ReviewId = null;
             job.ArtifactDocumentId = $"{job.JobId}-a{job.ExecutionAttempts}";
             await lease.SaveAsync(execution.Token);
@@ -89,6 +90,11 @@ public sealed class DocumentJobProcessor(
                 if (reviews is null) throw new InvalidOperationException("Human review storage is not configured.");
                 job.ReviewId = await reviews.CreateAsync(job, tenant.ReviewPolicy, execution.Token);
             }
+            job.ProcessingResultSha256 = await artifacts.SaveProcessingResultAsync(job, execution.Token);
+            if (job.ProcessingResultSha256 is not { Length: 64 } ||
+                !job.ProcessingResultSha256.All(Char.IsAsciiHexDigit))
+                throw new InvalidDataException("The completed processing snapshot was not acknowledged.");
+            await CheckAccessAsync(execution.Token);
             await lease.SaveAsync(execution.Token);
             return;
         }
@@ -126,6 +132,7 @@ public sealed class DocumentJobProcessor(
             job.CompletedAtUtc = DateTimeOffset.UtcNow;
         }
         using var persistence = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        job.ProcessingResultSha256 = null;
         await lease.SaveAsync(persistence.Token);
     }
 

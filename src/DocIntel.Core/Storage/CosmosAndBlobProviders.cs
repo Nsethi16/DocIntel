@@ -24,6 +24,12 @@ namespace DocIntel.Core.Storage;
 /// </summary>
 public interface IArtifactStore
 {
+    /// <summary>Archives the completed initial processing result independently of the job database.</summary>
+    Task<string> SaveProcessingResultAsync(DocumentJob job, CancellationToken cancellationToken = default);
+
+    /// <summary>Retrieves only the active attempt's source-bound, content-verified processing snapshot.</summary>
+    Task<byte[]?> GetProcessingResultAsync(DocumentJob job, CancellationToken cancellationToken = default);
+
     /// <summary>Publishes an immutable, reference-only export record before bytes are released to the caller.</summary>
     Task SaveExportAuditAsync(ExportAuditEvent audit, CancellationToken cancellationToken = default);
 

@@ -74,6 +74,17 @@ job is recorded/enqueued. The accepted SHA-256 is stored with the job; processin
 that persisted source, not PDF bytes in a queue ticket. Authorized clients can retrieve it at
 `/api/harness/tenants/{tenantId}/jobs/{jobId}/original`.
 
+Before a durable document worker publishes `Completed`, it writes an immutable `result.json`
+under the active attempt's artifact ID and stores its SHA-256 in the fenced job record. The
+snapshot includes the accepted harness, source/layout identities and processing results, without
+PDF byte arrays, internal leases or database ETags. Authorized callers can download it through
+`.../jobs/{jobId}/processing-result`; reads verify the hash, tenant, source, harness and attempt.
+An archive write failure fails the job instead of reporting a completed result with no snapshot.
+Development seeding also archives its explicitly labeled results. Existing jobs are not silently
+backfilled. `InitialProcessing` is a historical processing snapshot, not a human-approved export:
+later prompt re-evaluation and human-review corrections remain separate records. This is not a
+claim of immutable-storage/legal-hold compliance or a complete backup/restore system.
+
 Document jobs persist locally in a sibling `document-jobs.sqlite` database (SQLite WAL); override
 the private file using `DocumentJobs:DatabasePath`. Azure uses Cosmos metadata and distinct
 `document-jobs` / `document-jobs-poison` queues. Shared execution refuses local metadata or queue

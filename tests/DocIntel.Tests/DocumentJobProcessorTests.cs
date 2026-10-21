@@ -147,6 +147,29 @@ public sealed class DocumentJobProcessorTests
             It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
+    [Fact]
+    public async Task A_Completed_Job_Is_Not_Published_Unless_Its_Processing_Json_Is_Durably_Acknowledged()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        await fixture.CreateAsync();
+        fixture.Artifacts.Setup(a => a.SaveProcessingResultAsync(It.IsAny<DocumentJob>(), It.IsAny<CancellationToken>()))
+            .Returns<DocumentJob, CancellationToken>(async (snapshot, _) =>
+            {
+                Assert.Equal(JobStatus.Completed, snapshot.Status);
+                Assert.Equal(JobStatus.Running, (await fixture.ReadAsync()).Status);
+                throw new IOException("Archive unavailable");
+            });
+
+        // Act
+        await fixture.Processor.ProcessAsync(fixture.Ticket);
+
+        // Assert
+        var job = await fixture.ReadAsync();
+        Assert.Equal(JobStatus.Failed, job.Status);
+        Assert.Null(job.ProcessingResultSha256);
+    }
+
     private sealed class Fixture : IDisposable
     {
         private readonly string _directory = Path.Combine(Path.GetTempPath(), "DocIntel.Processor.Tests",
@@ -172,6 +195,8 @@ public sealed class DocumentJobProcessorTests
             var harnesses = new Mock<IHarnessStore>();
             harnesses.Setup(h => h.GetTenantAsync("tenant", It.IsAny<CancellationToken>())).ReturnsAsync(_tenant);
             Artifacts.Setup(a => a.GetOriginalPdfAsync("tenant", "one", It.IsAny<CancellationToken>())).ReturnsAsync(Source);
+            Artifacts.Setup(a => a.SaveProcessingResultAsync(It.IsAny<DocumentJob>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new string('A', 64));
             Access.Setup(a => a.ResolveAsync(It.IsAny<ActorIdentity?>(), "tenant", It.IsAny<CancellationToken>()))
                 .ReturnsAsync(DocumentAccessScope.Unrestricted);
             var services = new ServiceCollection();

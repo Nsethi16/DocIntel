@@ -134,6 +134,15 @@ test('an uploaded document survives an API crash and resumes under a new fenced 
       assert.equal(recovered.hasDevelopmentResults, false);
       assert.equal(recovered.originalSha256, crypto.createHash('sha256').update(pdf).digest('hex').toUpperCase());
       assert.equal(recovered.layoutAvailable, true);
+      const archivedResponse = await fetch(api.url + recovered.processingResultUrl);
+      assert.equal(archivedResponse.status, 200);
+      const archivedBytes = Buffer.from(await archivedResponse.arrayBuffer());
+      assert.equal(crypto.createHash('sha256').update(archivedBytes).digest('hex').toUpperCase(),
+        recovered.processingResultSha256);
+      const archived = JSON.parse(archivedBytes.toString('utf8'));
+      assert.equal(archived.artifactDocumentId, `${recovered.jobId}-a2`);
+      assert.equal(archived.processingHarness.harnessVersion, accepted.appliedHarnessVersion);
+      assert.equal(archived.processingHarness.capabilities.IdentifyDocuments.enabled, true);
       const layoutResponse = await fetch(api.url + recovered.layoutUrl);
       assert.equal(layoutResponse.status, 200);
       const layout = await layoutResponse.json();
@@ -150,10 +159,13 @@ test('an uploaded document survives an API crash and resumes under a new fenced 
       const currentSlice = await fs.readFile(path.join(artifactDirectory, `${accepted.jobId}-a2`, 'slice-1.pdf'));
       await fs.writeFile(oldSlice, '%PDF-stale-owner');
       await fs.writeFile(path.join(artifactDirectory, `${accepted.jobId}-a1`, 'layout.json'), '{"stale":true}');
+      await fs.writeFile(path.join(artifactDirectory, `${accepted.jobId}-a1`, 'result.json'), '{"stale":true}');
       const slice = await fetch(api.url + tenantPath + `/jobs/${accepted.jobId}/slices/0/pdf`);
       assert.equal(slice.status, 200);
       assert.deepEqual(Buffer.from(await slice.arrayBuffer()), currentSlice);
       assert.deepEqual(await (await fetch(api.url + recovered.layoutUrl)).json(), layout);
+      assert.deepEqual(Buffer.from(await (await fetch(api.url + recovered.processingResultUrl)).arrayBuffer()),
+        archivedBytes);
       assert.equal(recovered.processingOwner, undefined);
       assert.equal(recovered._etag, undefined);
     } finally {

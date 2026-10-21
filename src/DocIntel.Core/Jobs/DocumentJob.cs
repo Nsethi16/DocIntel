@@ -58,6 +58,8 @@ public sealed class DocumentJob
 
     public string? LayoutSha256 { get; set; }
 
+    public string? ProcessingResultSha256 { get; set; }
+
     public string? ReviewId { get; set; }
 
     public ActorIdentity? SubmittedBy { get; init; }
