@@ -34,6 +34,14 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 
 var harnessFilePath = Path.Combine(builder.Environment.ContentRootPath, "App_Data", "agent-harness-settings.json");
 builder.Services.AddDocIntelCore(configuration: builder.Configuration, harnessFilePath: harnessFilePath);
+var startupReadiness = new StartupReadinessOptions();
+builder.Configuration.GetSection("Readiness").Bind(startupReadiness);
+if (startupReadiness.TimeoutSeconds is < 1 or > 300)
+    throw new InvalidOperationException("Startup readiness timeout must be between 1 and 300 seconds.");
+builder.Services.AddSingleton(startupReadiness);
+builder.Services.AddSingleton<ProviderStartupCheck>();
+builder.Services.AddHostedService(services => services.GetRequiredService<ProviderStartupCheck>());
+builder.Services.AddHealthChecks().AddCheck<ProviderStartupCheck>("providers", tags: ["ready"]);
 builder.Services.AddHostedService<DocumentJobWorker>();
 builder.Services.AddHostedService<AskAiRunWorker>();
 builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);

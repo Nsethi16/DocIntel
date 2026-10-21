@@ -1,6 +1,7 @@
 using Azure.Monitor.OpenTelemetry.AspNetCore;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Hosting;
@@ -94,6 +95,24 @@ public static class ServiceDefaultsExtensions
         app.MapHealthChecks(AlivePath, new HealthCheckOptions
         {
             Predicate = r => r.Tags.Contains("live")
+        });
+        app.MapHealthChecks("/health/live", new HealthCheckOptions
+        {
+            Predicate = registration => registration.Tags.Contains("live")
+        });
+        app.MapHealthChecks("/health/ready", new HealthCheckOptions
+        {
+            Predicate = registration => registration.Tags.Contains("ready"),
+            ResponseWriter = (context, report) => context.Response.WriteAsJsonAsync(new
+            {
+                status = report.Status.ToString(),
+                checks = report.Entries.Select(entry => new
+                {
+                    name = entry.Key,
+                    status = entry.Value.Status.ToString(),
+                    description = entry.Value.Description
+                })
+            }, context.RequestAborted)
         });
 
         return app;

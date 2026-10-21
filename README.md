@@ -97,6 +97,20 @@ exceptions. Measured active/completed counts and duration metrics use bounded op
 dimensions, not per-document or per-tenant metric labels. Token counts are emitted only when
 reported by the provider; no estimated costs, fabricated counts or document content are emitted.
 
+`/health/live` (and legacy `/alive`) checks process liveness independently of dependencies.
+`/health/ready` combines authenticated shared-storage probes with cached startup verification of
+active harness/provider routing, required OCR/translation configuration and PDF-capable prompt
+columns. Misconfiguration keeps readiness at 503 without crashing the UI or exposing provider
+diagnostics. The existing `/health` aggregate remains available.
+
+Set `Readiness:ProbeModelsOnStartup=true` to verify actual model access with one bounded, one-output-token
+request per configured model at startup. This can incur provider usage and is **off by default**:
+the readiness description explicitly distinguishes configuration-only checks from live inference.
+Repeated health polling never generates model calls. `Readiness:TimeoutSeconds` bounds the whole
+startup verification (default 60, range 1-300); restart after provider/harness changes to re-run it.
+Live OCR/translation content requests are not issued by readiness checks. A disconnected local
+preview may be live but not ready for its enabled AI/OCR features.
+
 Classification, insights (including explicit re-evaluation), entity/data extraction and prompt
 columns separate document text/metadata from operator instructions using a shared escaped
 `untrusted_document_content` envelope and system-level data-only policy. Prompt templates refer
