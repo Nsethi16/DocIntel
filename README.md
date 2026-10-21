@@ -38,6 +38,36 @@ node --test tests\DocIntel.Ui.Tests\ask-ai.test.cjs tests\DocIntel.Ui.Tests\iden
   tests\DocIntel.Ui.Tests\evidence.test.cjs tests\DocIntel.Ui.Tests\review-client.test.cjs
 ```
 
+### Reproducible container builds and CI
+
+NuGet remains restricted to the approved internal feed, with package-source mapping and checked-in
+content-hashed lockfiles for every project. CI and container restore use `--locked-mode`; package
+changes require intentionally regenerating and reviewing the affected locks from that same feed.
+The Dockerfile no longer removes `NuGet.config` or falls back to nuget.org. Its build context excludes
+local job/artifact data, editor metadata and common credential files, and the runtime uses the .NET
+non-root application user with a writable `App_Data` directory.
+
+Container builds require BuildKit and a read-only feed credential supplied as a secret, never a
+Docker build argument or committed file. Set `DOCINTEL_NUGET_CREDENTIALS` privately to the NuGet
+credential value `Username=<feed-user>;Password=<read-only-credential>;ValidAuthenticationTypes=Basic`,
+then use:
+
+```powershell
+docker buildx build --secret id=nuget_credentials,env=DOCINTEL_NUGET_CREDENTIALS -t docintel:local .
+```
+
+The GitHub workflow validates all Release projects, .NET/browser/recovery tests and infrastructure
+before deployment. Documentation-only pushes do not deploy. Deployment requires `main`, an explicit
+repository variable `DOCINTEL_DEPLOY_ENABLED=true`, and the `docintel-dev` environment. It retains
+the existing Entra federation identifiers, uses `az acr login` instead of registry passwords, and
+passes `DOCINTEL_NUGET_CREDENTIALS` as a BuildKit secret. Configure those secrets/environment approvals
+outside Git; the federated identity needs registry `AcrPush` and appropriate Container App permissions.
+No directory grants, repository secrets or deployment-enable variable are created by this code.
+Untrusted fork PRs receive no secrets and cannot restore private packages without an approved trusted
+validation environment; do not switch to `pull_request_target` or a public package feed to bypass this.
+Local locked restore/publish and workflow syntax can be checked without cloud mutation; an actual
+Linux image build/deployment still requires Docker and authorized registry/feed access.
+
 Local development uses explicit loopback-only access. It is not an authentication mode for a
 publicly exposed service: `LocalDevelopment` is refused outside `Development` or when listening
 on wildcard/non-loopback addresses. Ask AI separately requires a real configured tool-calling

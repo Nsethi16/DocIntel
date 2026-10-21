@@ -1,49 +1,120 @@
-name: Trigger auto deployment for ca-docintel-dev
+name: Validate and deploy DocIntel
 
-# When this action will be executed
 on:
-  # Automatically trigger it when detected changes in repo
   push:
-    branches: 
-      [ main ]
+    branches: [main]
     paths:
-    - '**'
-    - '.github/workflows/ca-docintel-dev-AutoDeployTrigger-aecf934f-2618-4144-b094-760dd25b50b2.yml'
+      - 'src/**'
+      - 'tests/**'
+      - 'infra/**'
+      - 'Directory.*.props'
+      - 'DocIntel.slnx'
+      - 'NuGet.config'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'Deploy-DocIntelAzure.ps1'
+      - '.github/workflows/ca-docintel-dev-AutoDeployTrigger-aecf934f-2618-4144-b094-760dd25b50b2.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'infra/**'
+      - 'Directory.*.props'
+      - 'DocIntel.slnx'
+      - 'NuGet.config'
+      - 'Dockerfile'
+      - '.dockerignore'
+      - 'Deploy-DocIntelAzure.ps1'
+      - '.github/workflows/ca-docintel-dev-AutoDeployTrigger-aecf934f-2618-4144-b094-760dd25b50b2.yml'
+  workflow_dispatch:
 
-  # Allow manual trigger 
-  workflow_dispatch:      
+permissions:
+  contents: read
+
+concurrency:
+  group: docintel-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build-and-deploy:
+  validate:
     runs-on: ubuntu-latest
-    permissions: 
-      id-token: write #This is required for requesting the OIDC JWT Token
-      contents: read #Required when GH token is used to authenticate with private repo
-
+    timeout-minutes: 25
     steps:
-      - name: Checkout to the branch
-        uses: actions/checkout@v2
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.402'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Restore locked dependencies from the approved feed
+        shell: pwsh
+        env:
+          NuGetPackageSourceCredentials_IDE-BOC-RevenueProcessingforComOps: ${{ secrets.DOCINTEL_NUGET_CREDENTIALS }}
+        run: |
+          $credential = [Environment]::GetEnvironmentVariable('NuGetPackageSourceCredentials_IDE-BOC-RevenueProcessingforComOps')
+          if ([String]::IsNullOrWhiteSpace($credential)) {
+            throw 'Configure a read-only approved-feed credential; public-feed fallback is not permitted.'
+          }
+          dotnet restore DocIntel.slnx --configfile NuGet.config --locked-mode
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Build every project with warnings as errors
+        shell: pwsh
+        run: |
+          $projects = Get-ChildItem -Recurse -Filter '*.csproj' |
+            Where-Object { $_.FullName -notmatch '[/\\](bin|obj)[/\\]' }
+          foreach ($project in $projects) {
+            dotnet build $project.FullName -c Release --no-restore --nologo -warnaserror -p:ContinuousIntegrationBuild=true
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+      - name: Run .NET and browser/HTTP/recovery tests
+        shell: pwsh
+        run: |
+          dotnet test tests/DocIntel.Tests/DocIntel.Tests.csproj -c Release --no-build --no-restore --nologo
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $tests = Get-ChildItem tests/DocIntel.Ui.Tests -Filter '*.test.cjs' | Select-Object -ExpandProperty FullName
+          node --test $tests
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Validate infrastructure and deployment guards without deployment
+        shell: pwsh
+        run: |
+          az bicep build --file infra/main.bicep --outfile infra/azuredeploy.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./tests/Deploy-DocIntelAzure.Tests.ps1
 
-      - name: Azure Login
+  deploy:
+    needs: validate
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DOCINTEL_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: docintel-dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Sign in to Azure using federation
         uses: azure/login@v2
         with:
           client-id: ${{ secrets.CADOCINTELDEV_AZURE_CLIENT_ID }}
           tenant-id: ${{ secrets.CADOCINTELDEV_AZURE_TENANT_ID }}
           subscription-id: ${{ secrets.CADOCINTELDEV_AZURE_SUBSCRIPTION_ID }}
-
-      - name: Build and push container image to registry
-        uses: azure/container-apps-deploy-action@v2
+      - name: Authenticate to the registry with the federated identity
+        run: az acr login --name acrdocinteldevokjs3fevazuto
+      - uses: docker/setup-buildx-action@v3
+      - name: Build and push with an ephemeral approved-feed credential
+        uses: docker/build-push-action@v6
         with:
-          appSourcePath: ${{ github.workspace }}
-          _dockerfilePathKey_: _dockerfilePath_
-          _targetLabelKey_: _targetLabel_
-          registryUrl: acrdocinteldevokjs3fevazuto.azurecr.io
-          registryUsername: ${{ secrets.CADOCINTELDEV_REGISTRY_USERNAME }}
-          registryPassword: ${{ secrets.CADOCINTELDEV_REGISTRY_PASSWORD }}
-          containerAppName: ca-docintel-dev
-          resourceGroup: Docintel
-          imageToBuild: acrdocinteldevokjs3fevazuto.azurecr.io/ca-docintel-dev:${{ github.sha }}
-          _buildArgumentsKey_: |
-            _buildArgumentsValues_
-
-
+          context: .
+          file: Dockerfile
+          push: true
+          tags: acrdocinteldevokjs3fevazuto.azurecr.io/ca-docintel-dev:${{ github.sha }}
+          secrets: |
+            nuget_credentials=${{ secrets.DOCINTEL_NUGET_CREDENTIALS }}
+      - name: Deploy the validated image
+        run: >-
+          az containerapp update
+          --name ca-docintel-dev
+          --resource-group Docintel
+          --image acrdocinteldevokjs3fevazuto.azurecr.io/ca-docintel-dev:${{ github.sha }}
