@@ -346,6 +346,14 @@ registration changes require restart.
 
 Reads no longer evaluate missing prompt columns or rewrite document results. After changing
 definitions, use the existing explicit prompt-evaluation action with processing/admin permissions.
+Harness saves must carry the `harnessVersion` returned by the last read; new tenants use version
+zero as create-only intent. A stale/missing tenant version or competing creation returns HTTP 409
+with the current configuration, rather than retrying an overwrite. Cosmos replacements use the
+read ETag; local files use an inter-instance OS lock and atomic whole-file replacement. Local reads
+reload the shared file rather than retaining a stale process cache. Admin Studio preserves the
+unsaved draft on conflicts or unknown network outcomes, offers a draft/server comparison and
+requires explicit reload before another save. Edits typed during a successful save remain unsaved
+against the newly acknowledged version.
 Browser mutations require a request-verification token, acquired automatically by the bundled UI.
 The default per-identity request limits are 300 reads and 20 mutations per minute, configurable
 through `Identity:ReadRequestsPerMinute` and `Identity:WriteRequestsPerMinute`.

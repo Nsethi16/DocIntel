@@ -124,9 +124,21 @@ public static class HarnessEndpoints
                 return Results.BadRequest(new { error = "A review policy with bounded UTC due hours is required." });
             updated.TenantId = tenantId;
             TenantHarness.EnsureDefaultCapabilities(updated);
-            var saved = await store.UpsertTenantAsync(updated, ct);
-
-            return Results.Ok(saved);
+            if (updated.HarnessVersion < 0)
+                return Results.BadRequest(new { error = "A nonnegative expected harness version is required." });
+            try
+            {
+                var saved = await store.UpsertTenantAsync(updated, ct);
+                return Results.Ok(saved);
+            }
+            catch (HarnessConflictException exception)
+            {
+                return Results.Conflict(new
+                {
+                    error = exception.Message,
+                    current = await store.GetTenantAsync(tenantId, ct)
+                });
+            }
         });
 
         // Lightweight Server-Side Graph Projection API (scalable for 100K+ documents — returns only nodes, edges, and facets)

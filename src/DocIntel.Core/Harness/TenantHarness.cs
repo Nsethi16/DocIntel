@@ -553,6 +553,7 @@ public interface IHarnessStore
 
     Task<IReadOnlyList<TenantHarness>> ListTenantsAsync(CancellationToken cancellationToken = default);
 
+    /// <summary>Saves the expected HarnessVersion, or version zero to create without overwriting an existing tenant.</summary>
     Task<TenantHarness> UpsertTenantAsync(TenantHarness harness, CancellationToken cancellationToken = default);
 }
 
@@ -570,12 +571,11 @@ public sealed class FileHarnessStore : IHarnessStore
 
     private readonly string _filePath;
     private readonly SemaphoreSlim _gate = new(1, 1);
-    private Dictionary<string, TenantHarness>? _cache;
 
     public FileHarnessStore(string filePath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
-        _filePath = filePath;
+        _filePath = Path.GetFullPath(filePath);
     }
 
     public string StorageFilePath => _filePath;
@@ -587,6 +587,7 @@ public sealed class FileHarnessStore : IHarnessStore
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            await using var fileLock = await AcquireFileLockAsync(cancellationToken);
             var map = await EnsureLoadedAsync(cancellationToken);
             return map.TryGetValue(tenantId, out var found) ? Clone(found) : null;
         }
@@ -601,6 +602,7 @@ public sealed class FileHarnessStore : IHarnessStore
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            await using var fileLock = await AcquireFileLockAsync(cancellationToken);
             var map = await EnsureLoadedAsync(cancellationToken);
             return map.Values
                 .OrderBy(t => t.DisplayName, StringComparer.OrdinalIgnoreCase)
@@ -621,18 +623,21 @@ public sealed class FileHarnessStore : IHarnessStore
         await _gate.WaitAsync(cancellationToken);
         try
         {
+            await using var fileLock = await AcquireFileLockAsync(cancellationToken);
             var map = await EnsureLoadedAsync(cancellationToken);
+            var saved = Clone(harness);
             if (map.TryGetValue(harness.TenantId, out var existing))
             {
-                harness.HarnessVersion = existing.HarnessVersion + 1;
+                if (harness.HarnessVersion != existing.HarnessVersion) throw new HarnessConflictException();
+                saved.HarnessVersion = checked(existing.HarnessVersion + 1);
             }
-            else if (harness.HarnessVersion < 1)
+            else
             {
-                harness.HarnessVersion = 1;
+                if (harness.HarnessVersion != 0) throw new HarnessConflictException();
+                saved.HarnessVersion = 1;
             }
 
-            harness.UpdatedAtUtc = DateTimeOffset.UtcNow;
-            var saved = Clone(harness);
+            saved.UpdatedAtUtc = DateTimeOffset.UtcNow;
             map[harness.TenantId] = saved;
 
             await FlushAsync(map, cancellationToken);
@@ -646,11 +651,6 @@ public sealed class FileHarnessStore : IHarnessStore
 
     private async Task<Dictionary<string, TenantHarness>> EnsureLoadedAsync(CancellationToken cancellationToken)
     {
-        if (_cache is not null)
-        {
-            return _cache;
-        }
-
         if (File.Exists(_filePath))
         {
             await using var stream = File.OpenRead(_filePath);
@@ -694,17 +694,17 @@ public sealed class FileHarnessStore : IHarnessStore
                 }
             }
 
-            _cache = list.ToDictionary(t => t.TenantId, t => t, StringComparer.OrdinalIgnoreCase);
-            if (_cache.Count > 0)
+            var loaded = list.ToDictionary(t => t.TenantId, t => t, StringComparer.OrdinalIgnoreCase);
+            if (loaded.Count > 0)
             {
-                return _cache;
+                return loaded;
             }
         }
 
         var defaults = CreateDefaultTenants();
-        _cache = defaults.ToDictionary(t => t.TenantId, t => t, StringComparer.OrdinalIgnoreCase);
-        await FlushAsync(_cache, cancellationToken);
-        return _cache;
+        var created = defaults.ToDictionary(t => t.TenantId, t => t, StringComparer.OrdinalIgnoreCase);
+        await FlushAsync(created, cancellationToken);
+        return created;
     }
 
     private async Task FlushAsync(Dictionary<string, TenantHarness> map, CancellationToken cancellationToken)
@@ -717,7 +717,48 @@ public sealed class FileHarnessStore : IHarnessStore
 
         var list = map.Values.OrderBy(t => t.TenantId, StringComparer.OrdinalIgnoreCase).ToList();
         var json = JsonSerializer.Serialize(list, JsonOptions);
-        await File.WriteAllTextAsync(_filePath, json, cancellationToken);
+        var temporaryPath = _filePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
+        try
+        {
+            await File.WriteAllTextAsync(temporaryPath, json, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            for (var attempt = 0; ; attempt++)
+            {
+                try
+                {
+                    File.Move(temporaryPath, _filePath, overwrite: true);
+                    break;
+                }
+                catch (IOException exception) when (
+                    (exception.HResult & 0xffff) is 11 or 32 or 33 or 1175 && attempt < 8)
+                {
+                    await Task.Delay(TimeSpan.FromMilliseconds(10 * (1 << attempt)), cancellationToken);
+                }
+            }
+        }
+        finally
+        {
+            File.Delete(temporaryPath);
+        }
+    }
+
+    private async Task<FileStream> AcquireFileLockAsync(CancellationToken cancellationToken)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_filePath)!);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+        while (true)
+        {
+            deadline.Token.ThrowIfCancellationRequested();
+            try
+            {
+                return new FileStream(_filePath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException exception) when ((exception.HResult & 0xffff) is 11 or 32 or 33)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(25), deadline.Token);
+            }
+        }
     }
 
     private static TenantHarness Clone(TenantHarness source)

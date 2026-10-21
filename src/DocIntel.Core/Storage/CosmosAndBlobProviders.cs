@@ -364,25 +364,32 @@ public sealed class CosmosHarnessStore : IHarnessStore
         ArgumentNullException.ThrowIfNull(harness);
         ArgumentException.ThrowIfNullOrWhiteSpace(harness.TenantId);
 
-        var existing = await GetTenantWithoutSeedCheckAsync(harness.TenantId, cancellationToken).ConfigureAwait(false);
-        if (existing is not null)
+        var saved = JsonSerializer.Deserialize<TenantHarness>(JsonSerializer.Serialize(harness))!;
+        var existing = await GetTenantWithoutSeedCheckAsync(harness.TenantId, cancellationToken);
+        saved.UpdatedAtUtc = DateTimeOffset.UtcNow;
+        try
         {
-            harness.HarnessVersion = existing.HarnessVersion + 1;
+            if (existing is null)
+            {
+                if (harness.HarnessVersion != 0) throw new HarnessConflictException();
+                saved.HarnessVersion = 1;
+                var created = await _container.CreateItemAsync(saved, new PartitionKey(saved.TenantId),
+                    cancellationToken: cancellationToken);
+                return created.Resource;
+            }
+            if (harness.HarnessVersion != existing.Resource.HarnessVersion) throw new HarnessConflictException();
+            if (String.IsNullOrWhiteSpace(existing.ETag) || existing.ETag == "*")
+                throw new InvalidDataException("The stored harness has no usable concurrency version.");
+            saved.HarnessVersion = checked(existing.Resource.HarnessVersion + 1);
+            var replaced = await _container.ReplaceItemAsync(saved, saved.TenantId, new PartitionKey(saved.TenantId),
+                new ItemRequestOptions { IfMatchEtag = existing.ETag }, cancellationToken);
+            return replaced.Resource;
         }
-        else if (harness.HarnessVersion < 1)
+        catch (CosmosException exception) when (exception.StatusCode is
+            HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed or HttpStatusCode.NotFound)
         {
-            harness.HarnessVersion = 1;
+            throw new HarnessConflictException();
         }
-
-        harness.Id = harness.TenantId;
-        harness.UpdatedAtUtc = DateTimeOffset.UtcNow;
-
-        var response = await _container.UpsertItemAsync(
-            harness,
-            new PartitionKey(harness.TenantId),
-            cancellationToken: cancellationToken).ConfigureAwait(false);
-
-        return response.Resource;
     }
 
     private async Task EnsureSeededAsync(CancellationToken cancellationToken)
@@ -403,17 +410,23 @@ public sealed class CosmosHarnessStore : IHarnessStore
             foreach (var tenant in FileHarnessStore.CreateDefaultTenants())
             {
                 tenant.Id = tenant.TenantId;
-                await _container.UpsertItemAsync(
-                    tenant,
-                    new PartitionKey(tenant.TenantId),
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    await _container.CreateItemAsync(tenant, new PartitionKey(tenant.TenantId),
+                        cancellationToken: cancellationToken);
+                }
+                catch (CosmosException exception) when (exception.StatusCode == HttpStatusCode.Conflict)
+                {
+                    // Another replica has already initialized this tenant; never reset its configuration.
+                }
             }
         }
 
         _seeded = true;
     }
 
-    private async Task<TenantHarness?> GetTenantWithoutSeedCheckAsync(string tenantId, CancellationToken cancellationToken)
+    private async Task<ItemResponse<TenantHarness>?> GetTenantWithoutSeedCheckAsync(
+        string tenantId, CancellationToken cancellationToken)
     {
         try
         {
@@ -421,7 +434,7 @@ public sealed class CosmosHarnessStore : IHarnessStore
                 tenantId,
                 new PartitionKey(tenantId),
                 cancellationToken: cancellationToken).ConfigureAwait(false);
-            return response.Resource;
+            return response;
         }
         catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
         {

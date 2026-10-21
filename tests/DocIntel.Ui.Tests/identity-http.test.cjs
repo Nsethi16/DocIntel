@@ -278,6 +278,23 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         assert.equal((await request(tenantPath, administrator, 'PUT', {})).status, 400);
       });
       let tenant = await (await request(tenantPath, administrator)).json();
+      await t.test('stale harness drafts return a visible conflict without overwriting another administrator', async () => {
+        const stale = structuredClone(tenant);
+        const edited = { ...tenant, displayName: 'Concurrently saved tenant' };
+        const saved = await request(tenantPath, administrator, 'PUT', edited);
+        assert.equal(saved.status, 200);
+        const server = await saved.json();
+        assert.equal(server.harnessVersion, stale.harnessVersion + 1);
+        const rejected = await request(tenantPath, administrator, 'PUT',
+          { ...stale, displayName: 'Lost update attempt' });
+        assert.equal(rejected.status, 409);
+        const conflict = await rejected.json();
+        assert.equal(conflict.current.displayName, 'Concurrently saved tenant');
+        assert.equal(conflict.current.harnessVersion, server.harnessVersion);
+        assert.equal((await request(tenantPath, administrator, 'PUT',
+          { ...stale, harnessVersion: 0 })).status, 409);
+        tenant = server;
+      });
       await t.test('live OCR allowance reads and edits require tenant-wide administration with version checks', async () => {
         assert.equal((await request(tenantPath + '/ocr-budget')).status, 401);
         assert.equal((await request(tenantPath + '/ocr-usage', reader)).status, 403);
@@ -399,7 +416,9 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
           assert.ok(layout.pages.some(page => page.words.length > 0));
           assert.equal((await request(job.layoutUrl, reader)).status, 404);
         } finally {
-          assert.equal((await request(tenantPath, administrator, 'PUT', original)).status, 200);
+          const latest = await (await request(tenantPath, administrator)).json();
+          assert.equal((await request(tenantPath, administrator, 'PUT',
+            { ...original, harnessVersion: latest.harnessVersion })).status, 200);
         }
       });
 

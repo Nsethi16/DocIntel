@@ -76,9 +76,11 @@ test('an uploaded document survives an API crash and resumes under a new fenced 
       for (const [name, capability] of Object.entries(tenant.capabilities)) {
         capability.enabled = name === 'SplitAndGroup' || name === 'IdentifyDocuments';
       }
-      assert.equal((await fetch(api.url + tenantPath, {
+      const configured = await fetch(api.url + tenantPath, {
         method: 'PUT', headers: protectedHeaders, body: JSON.stringify(tenant)
-      })).status, 200);
+      });
+      assert.equal(configured.status, 200);
+      Object.assign(tenant, await configured.json());
       const form = new FormData();
       form.set('file', new Blob([pdf], { type: 'application/pdf' }), 'persisted-source.pdf');
       const submitted = await fetch(api.url + tenantPath + '/jobs', {

@@ -1956,6 +1956,15 @@
         </div>
       </div>
 
+      <section id="harnessSaveNotice" role="status" hidden>
+        <p id="harnessSaveMessage"></p>
+        <details><summary>Compare unsaved draft and server configuration</summary>
+          <h3>Your draft</h3><pre id="harnessDraft" style="max-height:300px;overflow:auto;white-space:pre-wrap;"></pre>
+          <h3>Server configuration at conflict</h3><pre id="harnessServer" style="max-height:300px;overflow:auto;white-space:pre-wrap;"></pre>
+        </details>
+        <button type="button" class="btn-action" onclick="reloadHarnessAfterConflict()">Reload latest configuration</button>
+      </section>
+
       <!-- Harness-Level Model Selection (Stacked One After Another Above Features) -->
       <div class="section-bar">
         <span class="section-bar-title">Models</span>
@@ -2612,6 +2621,8 @@
     }
 
     let savedSnapshotJson = '';
+    let harnessSaveInFlight = false;
+    let harnessSaveBlocked = false;
 
     function selectTenant(tenantId) {
       currentTenant = tenants.find(t => t.tenantId === tenantId) || null;
@@ -2943,7 +2954,7 @@
       const dirty = currentTenant ? (currentJson !== savedSnapshotJson) : false;
 
       document.getElementById('btnCancelHarness').disabled = !dirty;
-      document.getElementById('btnSaveHarness').disabled = !dirty;
+      document.getElementById('btnSaveHarness').disabled = !dirty || harnessSaveInFlight || harnessSaveBlocked;
       document.getElementById('unsavedBadge').classList.toggle('visible', dirty);
     }
 
@@ -2972,6 +2983,10 @@
 
     function renderMainCanvas() {
       if (!currentTenant) return;
+      harnessSaveBlocked = false;
+      document.getElementById('harnessSaveNotice').hidden = true;
+      document.getElementById('harnessDraft').textContent = '';
+      document.getElementById('harnessServer').textContent = '';
       ocrBudgetRevision++;
       ocrBudgetSnapshot = null;
       ocrBudgetTenantId = null;
@@ -3328,20 +3343,75 @@
     }
 
     async function saveTenantHarness() {
-      if (!currentTenant) return;
-
+      if (!currentTenant || harnessSaveInFlight || harnessSaveBlocked) return;
+      const startedTenant = currentTenant;
       const updated = buildPayloadFromUi();
-
-      const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(updated)
-      });
-
-      if (resp.ok) {
+      harnessSaveInFlight = true;
+      updateDirtyState();
+      try {
+        const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(updated.tenantId)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updated)
+        });
+        if (currentTenant !== startedTenant) return;
+        if (!resp.ok) {
+          const conflict = resp.status === 409 ? await resp.json() : null;
+          if (currentTenant !== startedTenant) return;
+          showHarnessSaveFailure(conflict?.current, resp.status === 409
+            ? 'Another administrator saved this harness. Your draft is preserved. Compare the configurations, copy any changes you need, then reload.'
+            : 'The save was not confirmed. Your draft is preserved. Reload the server configuration before saving again.');
+          return;
+        }
         const saved = await resp.json();
-        await loadTenants(saved.tenantId);
+        if (currentTenant !== startedTenant) return;
+        const editedDuringSave = JSON.stringify(buildPayloadFromUi()) !== JSON.stringify(updated);
+        currentTenant = saved;
+        tenants = tenants.map(tenant => tenant.tenantId === saved.tenantId ? saved : tenant);
+        renderSidebarTenants();
+        if (editedDuringSave) {
+          savedSnapshotJson = JSON.stringify({
+            decisionModelId: updated.decisionModelId, defaultModelId: updated.defaultModelId,
+            ocr: updated.ocr, reviewPolicy: updated.reviewPolicy, capabilities: updated.capabilities
+          });
+          document.getElementById('harnessVersionChip').textContent = `Harness v${saved.harnessVersion}`;
+        } else {
+          renderMainCanvas();
+        }
         showToast(`Saved ${saved.displayName} (v${saved.harnessVersion})`);
+      } catch {
+        if (currentTenant === startedTenant) showHarnessSaveFailure(null,
+          'The save outcome is unknown. Your draft is preserved. Reload the server configuration; do not repeat the save blindly.');
+      } finally {
+        harnessSaveInFlight = false;
+        updateDirtyState();
+      }
+    }
+
+    function showHarnessSaveFailure(server, message) {
+      harnessSaveBlocked = true;
+      document.getElementById('harnessSaveNotice').hidden = false;
+      document.getElementById('harnessSaveMessage').textContent = message;
+      document.getElementById('harnessDraft').textContent = JSON.stringify(buildPayloadFromUi(), null, 2);
+      document.getElementById('harnessServer').textContent = server
+        ? JSON.stringify(server, null, 2) : 'Reload to retrieve the current server configuration.';
+    }
+
+    async function reloadHarnessAfterConflict() {
+      if (!currentTenant || harnessSaveInFlight ||
+          !window.confirm('Discard the unsaved draft and load the latest server configuration? Copy any needed changes first.')) return;
+      const selected = currentTenant;
+      try {
+        const response = await fetch(`/api/harness/tenants/${encodeURIComponent(selected.tenantId)}`);
+        if (!response.ok) throw new Error('Reload failed');
+        const server = await response.json();
+        if (currentTenant !== selected) return;
+        currentTenant = server;
+        tenants = tenants.map(tenant => tenant.tenantId === server.tenantId ? server : tenant);
+        renderSidebarTenants();
+        renderMainCanvas();
+      } catch {
+        if (currentTenant === selected) showHarnessSaveFailure(null, 'Reload failed. Your draft is still preserved.');
       }
     }
 
@@ -3371,6 +3441,7 @@
       const payload = {
         tenantId,
         displayName,
+        harnessVersion: 0,
         isActive: true,
         defaultModelId: 'gpt-5-mini',
         allowedModels: ['gpt-5-mini', 'gpt-4o', 'o3-mini'],
@@ -3399,6 +3470,9 @@
         toggleNewTenantPopover(false);
         await loadTenants(tenantId);
         showToast(`Created ${displayName}`);
+      } else {
+        showToast(resp.status === 409 ? 'This tenant already exists. Choose another ID or open the existing tenant.'
+          : 'Tenant creation was not confirmed. Check the tenant list before retrying.');
       }
     }
 
