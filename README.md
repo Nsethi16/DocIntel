@@ -60,6 +60,13 @@ are separately bounded. Unexpected errors return sanitized `application/problem+
 generated `traceId`, also sent as `X-DocIntel-Correlation-Id`; safe server diagnostics record the
 error type/code/site rather than raw provider messages, document values or credentials.
 
+The existing OpenTelemetry listener now receives `DocIntel.Agent` activities for document/Ask AI
+runs, every workflow executor (including explicit skips) and model calls. Stage logs carry tenant,
+opaque job and harness-version scope, never filenames, source text, question text or raw provider
+exceptions. Measured active/completed counts and duration metrics use bounded operation/outcome
+dimensions, not per-document or per-tenant metric labels. Token counts are emitted only when
+reported by the provider; no estimated costs, fabricated counts or document content are emitted.
+
 Classification, insights (including explicit re-evaluation), entity/data extraction and prompt
 columns separate document text/metadata from operator instructions using a shared escaped
 `untrusted_document_content` envelope and system-level data-only policy. Prompt templates refer

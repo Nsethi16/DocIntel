@@ -1,5 +1,6 @@
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Channels;
+using DocIntel.Core.Telemetry;
 using Microsoft.Extensions.Logging;
 
 namespace DocIntel.Core.Features.AskAi;
@@ -132,6 +133,7 @@ public sealed class AskAiRunProcessor(
             return;
         }
         run.ExecutionAttempts++;
+        using var operation = AgentDiagnostics.Begin("ask.run", logger, run.TenantId, run.RunId);
 
         using var executionToken = CancellationTokenSource.CreateLinkedTokenSource(stoppingToken, lease.OwnershipLostToken);
         executionToken.CancelAfter(TimeSpan.FromSeconds(options.MaxRunSeconds));
@@ -152,15 +154,18 @@ public sealed class AskAiRunProcessor(
                 run, (_, ct) => lease.SaveAsync(ct), executionToken.Token);
             executionToken.Token.ThrowIfCancellationRequested();
             await lease.SaveAsync(executionToken.Token);
+            operation.Complete();
             return;
         }
         catch (OperationCanceledException) when (lease.OwnershipLostToken.IsCancellationRequested)
         {
+            operation.Cancel();
             logger.LogWarning("Ask AI run {RunId} lost ownership; its replacement owner must recover it.", run.RunId);
             return;
         }
         catch (OperationCanceledException) when (executionToken.IsCancellationRequested)
         {
+            operation.Cancel();
             run.ErrorCode = stoppingToken.IsCancellationRequested ? "Interrupted" : "TimedOut";
             run.ErrorMessage = stoppingToken.IsCancellationRequested
                 ? "Ask AI processing paused while the service restarts. The same run will be checked again."
@@ -175,6 +180,7 @@ public sealed class AskAiRunProcessor(
         }
         catch (Exception exception)
         {
+            operation.Fail(exception);
             run.ErrorCode = "ExecutionFailed";
             run.ErrorMessage = "Ask AI could not complete this request. Check the model configuration or try again.";
             var cause = exception.GetBaseException();

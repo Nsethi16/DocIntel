@@ -7,6 +7,7 @@ using Azure.Core;
 using Azure.Core.Pipeline;
 using Azure.Identity;
 using DocIntel.Core.Harness;
+using DocIntel.Core.Telemetry;
 using Microsoft.Extensions.AI;
 using OpenAI;
 using ChatRole = Microsoft.Extensions.AI.ChatRole;
@@ -328,7 +329,23 @@ public sealed class ReasoningCleanupChatClient : DelegatingChatClient
         ChatOptions? options = null,
         CancellationToken cancellationToken = default)
     {
-        var response = await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+        using var operation = AgentDiagnostics.Begin("model.request");
+        ChatResponse response;
+        try
+        {
+            response = await base.GetResponseAsync(messages, options, cancellationToken).ConfigureAwait(false);
+            AgentDiagnostics.RecordTokens(response.Usage?.InputTokenCount, response.Usage?.OutputTokenCount);
+        }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            operation.Cancel();
+            throw;
+        }
+        catch (Exception exception)
+        {
+            operation.Fail(exception);
+            throw;
+        }
 
         foreach (var message in response.Messages)
         {
@@ -338,6 +355,7 @@ public sealed class ReasoningCleanupChatClient : DelegatingChatClient
             }
         }
 
+        operation.Complete();
         return response;
     }
 

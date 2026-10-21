@@ -11,6 +11,7 @@ using DocIntel.Core.Harness;
 using DocIntel.Core.Models;
 using DocIntel.Core.Ocr;
 using DocIntel.Core.Storage;
+using DocIntel.Core.Telemetry;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.Logging;
 
@@ -93,16 +94,18 @@ public sealed class DocumentSplittingWorkflow
             return state;
         }
 
-        var extractExecutor = new ExtractPageLayoutsExecutor(_layoutExtractor, _artifactStore, _ocr);
-        var detectExecutor = new DetectSliceBoundariesExecutor();
-        var slicePdfExecutor = new WritePdfSlicesExecutor(_pdfSlicer, _artifactStore);
-        var identifyExecutor = new IdentifyDocumentsExecutor(_modelCatalog);
-        var translateExecutor = new TranslateDocumentsExecutor(_translationService, _azureOptions.ResolveEffectiveTranslatorEndpoint(), _artifactStore);
-        var insightExecutor = new GenerateDocumentInsightsExecutor(_modelCatalog);
-        var entityExecutor = new ExtractEntitiesExecutor(_modelCatalog);
-        var dataExtractionExecutor = new ExtractDocumentDataExecutor(_modelCatalog);
-        var promptColumnsExecutor = new EvaluatePromptColumnsExecutor(_modelCatalog, _artifactStore);
-        var groundingExecutor = new GroundExtractedValuesExecutor();
+        ObservedDocumentExecutor Observe(Executor<SplittingState, SplittingState> executor) => new(executor, _logger);
+        var extractExecutor = Observe(new ExtractPageLayoutsExecutor(_layoutExtractor, _artifactStore, _ocr));
+        var detectExecutor = Observe(new DetectSliceBoundariesExecutor());
+        var slicePdfExecutor = Observe(new WritePdfSlicesExecutor(_pdfSlicer, _artifactStore));
+        var identifyExecutor = Observe(new IdentifyDocumentsExecutor(_modelCatalog));
+        var translateExecutor = Observe(new TranslateDocumentsExecutor(
+            _translationService, _azureOptions.ResolveEffectiveTranslatorEndpoint(), _artifactStore));
+        var insightExecutor = Observe(new GenerateDocumentInsightsExecutor(_modelCatalog));
+        var entityExecutor = Observe(new ExtractEntitiesExecutor(_modelCatalog));
+        var dataExtractionExecutor = Observe(new ExtractDocumentDataExecutor(_modelCatalog));
+        var promptColumnsExecutor = Observe(new EvaluatePromptColumnsExecutor(_modelCatalog, _artifactStore));
+        var groundingExecutor = Observe(new GroundExtractedValuesExecutor());
 
         var workflow = new WorkflowBuilder(extractExecutor)
             .AddEdge(extractExecutor, detectExecutor)

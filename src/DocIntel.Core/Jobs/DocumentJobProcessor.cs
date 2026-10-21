@@ -5,6 +5,7 @@ using DocIntel.Core.Harness;
 using DocIntel.Core.Storage;
 using DocIntel.Core.Ocr;
 using DocIntel.Core.Review;
+using DocIntel.Core.Telemetry;
 using Microsoft.Extensions.Logging;
 
 namespace DocIntel.Core.Jobs;
@@ -25,6 +26,8 @@ public sealed class DocumentJobProcessor(
         await using var lease = await jobs.TryAcquireJobAsync(ticket.TenantId, ticket.JobId, stoppingToken);
         if (lease is null) return;
         var job = lease.Job;
+        using var operation = AgentDiagnostics.Begin("document.run", logger,
+            job.TenantId, job.JobId, job.AppliedHarnessVersion);
         if (job.ExecutionAttempts > 3)
         {
             job.Status = JobStatus.Failed;
@@ -96,28 +99,33 @@ public sealed class DocumentJobProcessor(
                 throw new InvalidDataException("The completed processing snapshot was not acknowledged.");
             await CheckAccessAsync(execution.Token);
             await lease.SaveAsync(execution.Token);
+            operation.Complete();
             return;
         }
         catch (Exception exception) when (lease.OwnershipLostToken.IsCancellationRequested)
         {
+            operation.Cancel();
             logger.LogWarning("Document {JobId} lost processing ownership after {ErrorType}; no stale state was published.",
                 job.JobId, exception.GetType().Name);
             return;
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
         {
+            operation.Cancel();
             job.Status = JobStatus.Queued;
             job.ErrorMessage = "Processing paused while the service restarts.";
             job.CompletedAtUtc = null;
         }
         catch (OperationCanceledException) when (execution.IsCancellationRequested)
         {
+            operation.Cancel();
             job.Status = JobStatus.Failed;
             job.ErrorMessage = "Document processing exceeded its time limit.";
             job.CompletedAtUtc = DateTimeOffset.UtcNow;
         }
         catch (Exception exception)
         {
+            operation.Fail(exception);
             var cause = exception.GetBaseException();
             logger.LogError("Document {JobId} failed with {ErrorType}; code {Code}; site {Site}.",
                 job.JobId, cause.GetType().Name, cause.HResult & 0xffff,
