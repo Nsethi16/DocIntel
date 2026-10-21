@@ -311,11 +311,16 @@ refactoring, business-calendar SLA computation, leaderboard metrics and model-sc
 approval are not claimed. All responses have MIME sniffing, referrer, permissions and frame
 policies, including errors and static files. Production advertises a one-year HSTS policy;
 HTTPS ingress is still required, and unrelated subdomains are not opted in. Review and question
-pages use strict script policies; legacy workspace/Admin pages temporarily permit their existing
-inline scripts/styles, without `unsafe-eval`, until the event handlers are migrated. Policies
+pages use strict script policies. Workspace/Admin scripts and styles are external assets with
+shared theme/base rules, safe text/clipboard helpers and a whitelisted action dispatcher.
+Static and dynamically rendered controls use primitive JSON data arguments, never inline
+handlers or runtime expression evaluation. Their script policy is now `script-src 'self'` with
+`script-src-attr 'none'`, without `unsafe-inline` or `unsafe-eval`. Existing dynamic style attributes
+still require a documented style-only `unsafe-inline` exception. Shared JS/CSS assets revalidate
+on navigation so updates do not silently mix stale scripts with new markup. Policies
 allow only their existing font providers and same-origin/blob PDF frames. Original/slice PDFs
 are embeddable by this application only (`SAMEORIGIN`), not blocked by the HTML page anti-framing
-policy. This CSP compatibility exception is not a claim of complete XSS prevention.
+policy. The remaining style compatibility exception is not a claim of complete XSS prevention.
 
 ## Reviewed exports
 

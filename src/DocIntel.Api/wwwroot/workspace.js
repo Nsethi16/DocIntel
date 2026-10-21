@@ -1,0 +1,2329 @@
+let tenants = [];
+    let currentTenant = null;
+    let tenantJobs = [];
+    let selectedJobId = null;
+    let selectedSliceIndex = -1; // -1 = All Slices
+    let workspaceMode = 'documents'; // 'documents' | 'graph' (Cross-document tenant-level graph)
+    let docResultTab = 'insights'; // 'insights' | 'document' | 'entities' | 'structured' | 'metadata' | 'prompt:<id>'
+    let selectedEntityCategory = 'ALL';
+    let selectedPromptFilterView = 'ALL'; // 'ALL' | 'MATCHED' | 'SKIPPED'
+    let graphSelectedEntityNames = new Set(); // empty = All entity names
+    let graphSelectedEntityValues = new Set(); // Set of 'EntityName||EntityValue' pairs (multi-select!)
+    let graphSelectedEntityValuePair = 'ALL';
+    let graphEntityDropdownOpen = false;
+    let graphEntityDropdownSearch = '';
+    let graphEntitySearchQuery = '';
+    let graphFocusedNodeId = null;
+    let graphHoveredNodeId = null;
+    let graphDepthMode = 'GLOBAL'; // 'GLOBAL' | 'HOP1' | 'HOP2'
+    let graphZoom = 1;
+    let graphPanX = 0;
+    let graphPanY = 0;
+    let graphSimNodes = [];
+    let graphSimEdges = [];
+    let graphSimAnimFrame = null;
+    let graphCustomNodePositions = {};
+    let askAiQuestionInput = '';
+    let askAiLoading = false;
+    let askAiLoadingChatId = null;
+    let askAiLoadingTenantId = null;
+    let askAiProgressText = '';
+    let tenantChats = [];
+    let loadedChatStorageKey = null;
+    let activeChatId = null;
+    let askInnerSidebarCollapsed = false;
+    let askChatSearchQuery = '';
+    let jobPollTimer = null;
+
+    function onAskChatSearchInput(val) {
+      askChatSearchQuery = val || '';
+      renderSelectedDocument();
+      const inp = document.getElementById('askChatSearchInput');
+      if (inp) {
+        inp.focus();
+        inp.setSelectionRange(inp.value.length, inp.value.length);
+      }
+    }
+
+    function toggleAskInnerSidebar() {
+      askInnerSidebarCollapsed = !askInnerSidebarCollapsed;
+      const el = document.getElementById('askInnerSidebar');
+      const expandBtn = document.getElementById('btnExpandAskSidebar');
+      if (el) el.classList.toggle('collapsed', askInnerSidebarCollapsed);
+      if (expandBtn) expandBtn.style.display = askInnerSidebarCollapsed ? 'inline-flex' : 'none';
+    }
+
+    function getChatsStorageKey(tenantId = currentTenant?.tenantId || 'default',
+      partition = globalThis.DocIntelIdentity?.chatPartition) {
+      if (!partition) throw new Error('A verified chat identity is required.');
+      return `docintel_chats_v2_${partition}_${tenantId}`;
+    }
+
+    function loadTenantChats(forceReload = false) {
+      const storageKey = getChatsStorageKey();
+      if (loadedChatStorageKey !== storageKey) {
+        tenantChats = [];
+        activeChatId = null;
+      }
+      loadedChatStorageKey = storageKey;
+      if (!forceReload && Array.isArray(tenantChats) && tenantChats.length > 0) {
+        if (!activeChatId || !tenantChats.some(c => c.id === activeChatId)) {
+          activeChatId = tenantChats[0].id;
+        }
+        return;
+      }
+      try {
+        const raw = localStorage.getItem(storageKey);
+        tenantChats = raw ? JSON.parse(raw) : [];
+      } catch {
+        console.error('Unable to read browser chat history.');
+        showToast('Chat history could not be loaded on this device.');
+        tenantChats = [];
+      }
+      if (!Array.isArray(tenantChats)) tenantChats = [];
+      if (tenantChats.length === 0) {
+        const initialChat = {
+          id: 'chat-' + Date.now(),
+          title: 'New chat',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messages: []
+        };
+        tenantChats.push(initialChat);
+        activeChatId = initialChat.id;
+        saveTenantChats();
+      } else if (!activeChatId || !tenantChats.some(c => c.id === activeChatId)) {
+        activeChatId = tenantChats[0].id;
+      }
+    }
+
+    function saveTenantChats() {
+      try {
+        localStorage.setItem(getChatsStorageKey(), JSON.stringify(tenantChats));
+      } catch {
+        console.error('Unable to save browser chat history.');
+        showToast('Chat history could not be saved. Keep this tab open while your question is processing.');
+      }
+    }
+
+    function getActiveChat() {
+      if (!activeChatId || !tenantChats.some(c => c.id === activeChatId)) {
+        loadTenantChats();
+      }
+      return tenantChats.find(c => c.id === activeChatId) || tenantChats[0];
+    }
+
+    function startNewAskAiChat() {
+      loadTenantChats();
+      // Reuse existing empty chat if the top chat has 0 messages
+      const existingEmpty = tenantChats.find(c => (c.messages || []).length === 0);
+      if (existingEmpty) {
+        activeChatId = existingEmpty.id;
+      } else {
+        const newChat = {
+          id: 'chat-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6),
+          title: 'New chat',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messages: []
+        };
+        tenantChats.unshift(newChat);
+        activeChatId = newChat.id;
+        saveTenantChats();
+      }
+      askAiQuestionInput = '';
+      renderDocumentList();
+      renderSelectedDocument();
+      const inp = document.getElementById('askAiMainInputEl');
+      if (inp) inp.focus();
+    }
+
+    function startNewAskAiChatAndOpen() {
+      workspaceMode = 'ask';
+      startNewAskAiChat();
+      setWorkspaceMode('ask');
+    }
+
+    function selectAskAiChat(chatId) {
+      activeChatId = chatId;
+      askAiQuestionInput = '';
+      if (workspaceMode !== 'ask') {
+        setWorkspaceMode('ask');
+        return;
+      }
+      renderDocumentList();
+      renderSelectedDocument();
+
+      const chat = getActiveChat();
+      if (!askAiLoading && chat?.pendingAskAi?.runId) {
+        runCrossDocumentAskAi(null, true);
+      }
+    }
+
+    function deleteAskAiChat(chatId, evt) {
+      if (evt) evt.stopPropagation();
+      tenantChats = tenantChats.filter(c => c.id !== chatId);
+      if (tenantChats.length === 0) {
+        const fresh = {
+          id: 'chat-' + Date.now(),
+          title: 'New chat',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messages: []
+        };
+        tenantChats.push(fresh);
+        activeChatId = fresh.id;
+      } else if (activeChatId === chatId) {
+        activeChatId = tenantChats[0].id;
+      }
+      saveTenantChats();
+      renderDocumentList();
+      renderSelectedDocument();
+    }
+
+    function isGraphCapabilityEnabled() {
+      return currentTenant?.capabilities?.DocumentGraph?.enabled !== false;
+    }
+
+    function isAskAiCapabilityEnabled() {
+      return currentTenant?.capabilities?.AskAi?.enabled !== false;
+    }
+
+    function syncTenantWorkspaceCapabilities() {
+      const graphOn = isGraphCapabilityEnabled();
+      const askOn = isAskAiCapabilityEnabled();
+      const switcher = document.querySelector('#docListPane .workspace-mode-switcher');
+      const btnDocs = document.getElementById('btnModeDocuments');
+      const btnGraph = document.getElementById('btnModeGraph');
+      const btnAsk = document.getElementById('btnModeAsk');
+
+      if (btnGraph) btnGraph.style.display = graphOn ? 'inline-flex' : 'none';
+      if (btnAsk) btnAsk.style.display = askOn ? 'inline-flex' : 'none';
+
+      const visibleCount = 1 + (graphOn ? 1 : 0) + (askOn ? 1 : 0);
+      if (switcher) {
+        switcher.style.display = visibleCount > 1 ? 'grid' : 'none';
+        switcher.style.gridTemplateColumns = `repeat(${visibleCount}, 1fr)`;
+      }
+
+      if ((workspaceMode === 'graph' && !graphOn) || (workspaceMode === 'ask' && !askOn)) {
+        workspaceMode = 'documents';
+      }
+
+      if (btnDocs) btnDocs.classList.toggle('active', workspaceMode === 'documents');
+      if (btnGraph) btnGraph.classList.toggle('active', workspaceMode === 'graph');
+      if (btnAsk) btnAsk.classList.toggle('active', workspaceMode === 'ask');
+    }
+
+    function setWorkspaceMode(mode) {
+      if (mode === 'graph' && !isGraphCapabilityEnabled()) mode = 'documents';
+      if (mode === 'ask' && !isAskAiCapabilityEnabled()) mode = 'documents';
+      workspaceMode = mode;
+      syncTenantWorkspaceCapabilities();
+
+      if (mode === 'ask') {
+        loadTenantChats();
+        const chat = getActiveChat();
+        if (!askAiLoading && chat?.pendingAskAi?.runId) {
+          runCrossDocumentAskAi(null, true);
+        }
+      }
+      renderDocumentList();
+      renderSelectedDocument();
+    }
+
+    function getMonogram(name) {
+      return String(name || 'DI')
+        .split(/[\s&-]+/)
+        .filter(Boolean)
+        .map(w => w[0])
+        .join('')
+        .substring(0, 2)
+        .toUpperCase() || 'DI';
+    }
+
+    function cleanInsightText(raw) {
+      if (!raw) return '';
+      return String(raw)
+        .replace(/^\[[^\]]*Insight\]\s*/i, '')
+        .replace(/\s*\(Guided by:[^)]*\)\s*$/i, '')
+        .trim();
+    }
+
+
+
+    function formatModelScore(value, scale) {
+      const info = DocIntelEvidence.describe(value, scale);
+      return info.modelPercent === null ? 'Unknown model score' : `Model score ${info.modelPercent}%`;
+    }
+
+    function renderValueProvenance(value, job, scale) {
+      const info = DocIntelEvidence.describe(value, scale);
+      const source = job?.tenantId && job?.jobId
+        ? `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/original`
+        : null;
+      const links = source ? info.pages.map(page =>
+        `<a class="text-link-btn" href="${escapeHtml(source)}#page=${page}" target="_blank" rel="noopener noreferrer">Original p.${page}</a>`
+      ).join(' ') : '';
+      return `<div style="font-size:11px;color:var(--text-muted);" title="${escapeHtml(info.tooltip)}">${escapeHtml(info.status)}${links ? ' · ' + links : ''}</div>`;
+    }
+
+
+    function toggleDocListPane() {
+      const pane = document.getElementById('docListPane');
+      const expandBtn = document.getElementById('btnHeaderExpandDocList');
+      if (!pane) return;
+      const isCollapsed = pane.classList.toggle('collapsed');
+      if (expandBtn) {
+        expandBtn.style.display = isCollapsed ? 'inline-flex' : 'none';
+      }
+      if (workspaceMode === 'ask') {
+        renderSelectedDocument();
+      }
+    }
+
+    async function init() {
+      const resp = await fetch('/api/harness/tenants');
+      tenants = await resp.json();
+      const urlTenant = new URLSearchParams(window.location.search).get('tenant');
+      currentTenant = tenants.find(t => t.tenantId === urlTenant) || tenants[0] || null;
+      renderTenantSelect();
+      await loadTenantJobs();
+    }
+
+    function renderTenantSelect() {
+      const sel = document.getElementById('tenantSelectDropdown');
+      sel.innerHTML = '';
+      tenants.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.tenantId;
+        opt.textContent = t.displayName;
+        if (currentTenant && currentTenant.tenantId === t.tenantId) opt.selected = true;
+        sel.appendChild(opt);
+      });
+      syncTenantWorkspaceCapabilities();
+    }
+
+    async function onTenantSwitched(tenantId) {
+      currentTenant = tenants.find(t => t.tenantId === tenantId) || tenants[0] || null;
+      selectedJobId = null;
+      selectedSliceIndex = -1;
+      activeChatId = null;
+      loadTenantChats(true);
+      renderTenantSelect();
+      await loadTenantJobs();
+    }
+
+    async function loadTenantJobs(preferredJobId) {
+      if (!currentTenant) return;
+      const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/jobs`);
+      if (!resp.ok) return;
+      tenantJobs = await resp.json();
+
+      if (preferredJobId) {
+        selectedJobId = preferredJobId;
+      } else if (!selectedJobId || !tenantJobs.some(j => j.jobId === selectedJobId)) {
+        selectedJobId = tenantJobs.length > 0 ? tenantJobs[0].jobId : null;
+        selectedSliceIndex = -1;
+      }
+
+      renderDocumentList();
+      renderSelectedDocument();
+      scheduleJobPollingIfNeeded();
+    }
+
+    function scheduleJobPollingIfNeeded() {
+      if (jobPollTimer) {
+        clearTimeout(jobPollTimer);
+        jobPollTimer = null;
+      }
+      if (tenantJobs.some(j => j.status === 'Queued' || j.status === 'Running')) {
+        jobPollTimer = setTimeout(() => loadTenantJobs(selectedJobId), 2000);
+      }
+    }
+
+    function buildJobSearchCorpus(job) {
+      const segs = job.segments || [];
+      const markdownAndContent = segs.map(s => [
+        s.identifiedDocumentName || '',
+        s.documentTypeName || '',
+        s.markdown || '',
+        s.bodyText || '',
+        s.translatedText || '',
+        s.insightSummary || '',
+        (s.footers || []).join(' ')
+      ].join('\n')).join('\n');
+
+      const entitiesText = (job.extractedEntities || [])
+        .map(e => `${e.name || ''} ${e.value || ''}`)
+        .join(' ');
+
+      return `${job.fileName || ''}\n${job.jobId || ''}\n${job.packetSummary || ''}\n${entitiesText}\n${markdownAndContent}`;
+    }
+
+    function extractContentMatchSnippet(job, rawQuery) {
+      if (!rawQuery) return '';
+      const q = rawQuery.toLowerCase();
+      if ((job.fileName || '').toLowerCase().includes(q)) return '';
+
+      for (const s of (job.segments || [])) {
+        const md = String(s.markdown || s.bodyText || s.translatedText || '')
+          .replace(/<!--[\s\S]*?-->/g, ' ')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const idx = md.toLowerCase().indexOf(q);
+        if (idx >= 0) {
+          const start = Math.max(0, idx - 22);
+          const end = Math.min(md.length, idx + rawQuery.length + 34);
+          const prefix = start > 0 ? '…' : '';
+          const suffix = end < md.length ? '…' : '';
+          return `p.${s.startPage}: "${prefix}${md.slice(start, end)}${suffix}"`;
+        }
+      }
+      return '';
+    }
+
+    function renderDocumentList() {
+      const container = document.getElementById('docItemsList');
+      const rawQuery = (document.getElementById('docSearchInput').value || '').trim();
+      const query = rawQuery.toLowerCase();
+
+      const filtered = tenantJobs.filter(j => {
+        if (!query) return true;
+        const hay = buildJobSearchCorpus(j).toLowerCase();
+        return hay.includes(query);
+      });
+
+      document.getElementById('docListCountLabel').textContent = `${filtered.length} document${filtered.length === 1 ? '' : 's'}`;
+      container.innerHTML = '';
+
+      if (filtered.length === 0) {
+        container.innerHTML = `
+          <div style="padding:28px 12px;text-align:center;color:var(--text-secondary);font-size:12.5px;line-height:1.5;">
+            No documents found.<br/>Upload a PDF below to get started.
+          </div>
+        `;
+        return;
+      }
+
+      filtered.forEach(job => {
+        const isSelected = job.jobId === selectedJobId;
+        const dt = job.createdAtUtc ? new Date(job.createdAtUtc) : new Date();
+        const dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        const segs = job.segments || [];
+        const dotCls = job.status === 'Completed' ? '' : (job.status === 'Failed' ? 'failed' : 'running');
+        const snippet = extractContentMatchSnippet(job, rawQuery);
+
+        const row = document.createElement('div');
+        row.className = 'doc-row' + (isSelected ? ' selected' : '');
+        row.title = `${job.fileName} (${job.status})`;
+        row.onclick = () => {
+          selectedJobId = job.jobId;
+          selectedSliceIndex = -1;
+          if (workspaceMode !== 'documents') {
+            setWorkspaceMode('documents');
+            return;
+          }
+          renderDocumentList();
+          renderSelectedDocument();
+        };
+
+        row.innerHTML = `
+          <div class="doc-row-main">
+            <div class="doc-row-name">${escapeHtml(job.fileName)}</div>
+            <div class="doc-row-meta">${escapeHtml(dateStr)} · ${job.totalPages || 0} pp${segs.length > 1 ? ` · ${segs.length} slices` : ''}</div>
+            ${snippet ? `<div style="font-size:11px;color:var(--accent-ink);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(snippet)}</div>` : ''}
+          </div>
+          <span class="status-dot ${dotCls}" title="${escapeHtml(job.status)}"></span>
+        `;
+        container.appendChild(row);
+      });
+    }
+
+    async function uploadAndRunTenantDocument(inputEl) {
+      if (!currentTenant || !inputEl.files || !inputEl.files[0]) return;
+      const file = inputEl.files[0];
+      const lbl = document.getElementById('uploadBtnLabel');
+      lbl.textContent = 'Uploading...';
+
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/jobs`, {
+          method: 'POST',
+          body: fd
+        });
+        if (resp.ok) {
+          const accepted = await resp.json();
+          showToast(`Submitted ${file.name}`);
+          await loadTenantJobs(accepted.jobId);
+        } else {
+          showToast('Upload failed');
+        }
+      } finally {
+        lbl.textContent = 'Upload PDF';
+        inputEl.value = '';
+      }
+    }
+
+    function setDocResultTab(tab) {
+      docResultTab = tab;
+      document.querySelectorAll('#insightsTabBar .meridian-tab').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tab);
+      });
+      renderSelectedDocument();
+    }
+
+    function jumpToSlicePdf(sliceIndex, evt) {
+      if (evt) evt.stopPropagation();
+      selectedSliceIndex = sliceIndex;
+      setDocResultTab('document');
+    }
+
+    function toggleSliceCard(headEl) {
+      const card = headEl.closest('.slice-section');
+      if (card) {
+        card.classList.toggle('expanded');
+      }
+    }
+
+    function setEntityCategoryFilter(cat) {
+      selectedEntityCategory = cat;
+      renderSelectedDocument();
+    }
+
+    function setPromptFilterView(mode) {
+      selectedPromptFilterView = mode;
+      renderSelectedDocument();
+    }
+
+    function toggleGraphEntityNameFilter(entityName, evt) {
+      if (evt) evt.stopPropagation();
+      if (entityName === 'ALL') {
+        graphSelectedEntityNames.clear();
+        graphSelectedEntityValues.clear();
+      } else {
+        if (graphSelectedEntityNames.has(entityName)) {
+          graphSelectedEntityNames.delete(entityName);
+        } else {
+          graphSelectedEntityNames.add(entityName);
+        }
+      }
+      graphFocusedNodeId = null;
+      renderSelectedDocument();
+    }
+
+    function toggleGraphEntityValueSelection(pairKey, evt) {
+      if (evt) evt.stopPropagation();
+      if (graphSelectedEntityValues.has(pairKey)) {
+        graphSelectedEntityValues.delete(pairKey);
+      } else {
+        graphSelectedEntityValues.add(pairKey);
+      }
+      graphFocusedNodeId = null;
+      renderSelectedDocument();
+    }
+
+    function toggleEntityMultiSelectDropdown(evt) {
+      if (evt) evt.stopPropagation();
+      graphEntityDropdownOpen = !graphEntityDropdownOpen;
+      const pop = document.getElementById('entityMultiSelectPopover');
+      const box = document.getElementById('entityMultiSelectBox');
+      if (pop) pop.classList.toggle('open', graphEntityDropdownOpen);
+      if (box) box.classList.toggle('open', graphEntityDropdownOpen);
+      if (graphEntityDropdownOpen) {
+        const inp = document.getElementById('entityPopoverSearchInput');
+        if (inp) inp.focus();
+      }
+    }
+
+    function filterEntityPopoverOptions(query) {
+      graphEntityDropdownSearch = query || '';
+      const q = graphEntityDropdownSearch.trim().toLowerCase();
+      document.querySelectorAll('#entityPopoverList .entity-group-col').forEach(col => {
+        const groupName = (col.getAttribute('data-group') || '').toLowerCase();
+        let anyVisible = false;
+        col.querySelectorAll('.entity-value-option').forEach(opt => {
+          const text = (opt.getAttribute('data-search') || '').toLowerCase();
+          const show = !q || groupName.includes(q) || text.includes(q);
+          opt.style.display = show ? 'flex' : 'none';
+          if (show) anyVisible = true;
+        });
+        col.style.display = anyVisible ? 'flex' : 'none';
+      });
+    }
+
+    function onGraphEntityValueFilterChanged(val) {
+      if (!val || val === 'ALL') {
+        graphSelectedEntityValues.clear();
+      } else {
+        if (graphSelectedEntityValues.has(val)) {
+          graphSelectedEntityValues.delete(val);
+        } else {
+          graphSelectedEntityValues.add(val);
+        }
+      }
+      graphFocusedNodeId = null;
+      renderSelectedDocument();
+    }
+
+    function onGraphSearchInputChanged(val) {
+      graphEntitySearchQuery = val || '';
+      renderDocumentGraphCanvasOnly();
+    }
+
+    function setGraphScope(scope) {
+      graphScope = scope;
+      graphFocusedNodeId = null;
+      graphCustomNodePositions = {};
+      renderSelectedDocument();
+    }
+
+    function resetGraphFilters(evt) {
+      if (evt) evt.stopPropagation();
+      graphSelectedEntityNames.clear();
+      graphSelectedEntityValues.clear();
+      graphSelectedEntityValuePair = 'ALL';
+      graphEntityDropdownSearch = '';
+      graphEntitySearchQuery = '';
+      graphFocusedNodeId = null;
+      graphDepthMode = 'GLOBAL';
+      graphZoom = 1;
+      graphPanX = 0;
+      graphPanY = 0;
+      graphCustomNodePositions = {};
+      renderSelectedDocument();
+    }
+
+    function zoomGraphBy(delta) {
+      if (delta === 0) {
+        graphZoom = 1;
+        graphPanX = 0;
+        graphPanY = 0;
+        graphCustomNodePositions = {};
+      } else {
+        graphZoom = Math.min(2.4, Math.max(0.55, +(graphZoom + delta).toFixed(2)));
+      }
+      renderDocumentGraphCanvasOnly();
+    }
+
+    function focusGraphNode(nodeId) {
+      graphFocusedNodeId = (graphFocusedNodeId === nodeId) ? null : nodeId;
+      renderDocumentGraphCanvasOnly();
+    }
+
+    function jumpFromGraphToSlice(jobId, sliceIdx) {
+      selectedJobId = jobId;
+      selectedSliceIndex = sliceIdx;
+      docResultTab = sliceIdx === -1 ? 'insights' : 'document';
+      setWorkspaceMode('documents');
+    }
+
+    async function reevaluateSelectedJobPrompts() {
+      const job = tenantJobs.find(j => j.jobId === selectedJobId);
+      if (!job || !currentTenant) return;
+      showToast('Evaluating Prompt Columns on PDF/Base64...');
+      const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/evaluate-prompts`, {
+        method: 'POST'
+      });
+      if (resp.ok) {
+        const updatedJob = await resp.json();
+        const idx = tenantJobs.findIndex(j => j.jobId === updatedJob.jobId);
+        if (idx >= 0) tenantJobs[idx] = updatedJob;
+        renderSelectedDocument();
+        showToast('Prompt Columns updated');
+      } else {
+        showToast('Failed to evaluate prompts');
+      }
+    }
+
+
+    function exportSelectedJobJson() {
+      const job = tenantJobs.find(j => j.jobId === selectedJobId);
+      if (!job) return;
+      const blob = new Blob([JSON.stringify(job, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${(job.fileName || 'document').replace(/\.pdf$/i, '')}-docintel-result.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      showToast('Exported JSON');
+    }
+
+    function renderSelectedDocument() {
+      const body = document.getElementById('docCenterBody');
+      const sliceRow = document.getElementById('sliceSelectorRow');
+      const navRow = document.getElementById('meridianNavRow');
+      const exportBtn = document.getElementById('btnHeaderExportJson');
+      const headerEl = document.querySelector('.meridian-header');
+
+      if (workspaceMode === 'ask') {
+        body.dataset.tab = 'ask';
+        if (headerEl) headerEl.style.display = 'none';
+        renderCrossDocumentAskTab(body);
+        return;
+      }
+
+      if (headerEl) headerEl.style.display = '';
+
+      if (workspaceMode === 'graph') {
+        body.dataset.tab = 'graph';
+        if (navRow) navRow.style.display = 'none';
+        if (exportBtn) exportBtn.style.display = 'none';
+        sliceRow.innerHTML = '';
+        const completedCount = tenantJobs.filter(j => j.status === 'Completed').length;
+        document.getElementById('selectedDocTitle').textContent = currentTenant ? `${currentTenant.displayName} — Document Graph` : 'Document Graph';
+        document.getElementById('selectedDocMetaText').textContent = `${completedCount} document${completedCount === 1 ? '' : 's'}`;
+        renderDocumentGraphTab(body);
+        return;
+      }
+
+      if (navRow) navRow.style.display = '';
+      if (exportBtn) exportBtn.style.display = '';
+      body.dataset.tab = docResultTab;
+
+      const job = tenantJobs.find(j => j.jobId === selectedJobId);
+
+      if (!job) {
+        document.getElementById('selectedDocTitle').textContent = currentTenant ? currentTenant.displayName : 'Document Intelligence';
+        document.getElementById('selectedDocMetaText').textContent = currentTenant ? currentTenant.tenantId : 'Idle';
+        sliceRow.innerHTML = '';
+        body.innerHTML = `
+          <div class="content-column" style="padding:48px 0;color:var(--text-secondary);font-size:14px;">
+            Select a document from the left drawer or upload a PDF to inspect results.
+          </div>
+        `;
+        return;
+      }
+
+      const segs = job.segments || [];
+      const cleanTitle = (job.fileName || 'Document').replace(/\.pdf$/i, '');
+      document.getElementById('selectedDocTitle').textContent = cleanTitle;
+      document.getElementById('selectedDocTitle').title = job.fileName;
+      const provenance = job.status !== 'Completed' ? '' : job.hasDevelopmentResults === true
+        ? ' · Development/simulated results' : job.hasDevelopmentResults == null ? ' · Legacy results: verify source' : '';
+      document.getElementById('selectedDocMetaText').textContent = `${job.totalPages || 0} pp${provenance}`;
+
+      const totalEntitiesCount = segs.reduce((acc, s) => acc + ((s.extractedEntities || []).length), 0);
+      const totalStructuredCount = segs.reduce((acc, s) => {
+        const de = s.dataExtraction;
+        if (!de) return acc;
+        return acc + ((de.fields || []).length) + ((de.tables || []).length);
+      }, 0);
+
+      const activeSegs = selectedSliceIndex === -1
+        ? segs
+        : segs.filter(s => s.segmentIndex === selectedSliceIndex);
+
+      const caps = currentTenant?.capabilities || {};
+      const insightEnabled = caps.DocumentInsight?.enabled !== false;
+      const entityEnabled = caps.EntityExtraction?.enabled !== false;
+      const dataExtEnabled = caps.DataExtraction?.enabled !== false;
+      const promptColsEnabled = caps.PromptColumns?.enabled !== false;
+
+      // Collect distinct Prompt Columns that matched the entity filter on the active document / slice selection
+      const activePromptResults = promptColsEnabled
+        ? activeSegs.flatMap(s =>
+            (s.promptColumnResults && s.promptColumnResults.length > 0)
+              ? s.promptColumnResults
+              : (job.promptColumnResults || []).filter(r => r.segmentIndex === s.segmentIndex)
+          )
+        : [];
+      const matchedPromptColumnsMap = new Map();
+      activePromptResults.forEach(r => {
+        if (r && r.filterMatched && r.columnId && !matchedPromptColumnsMap.has(r.columnId)) {
+          matchedPromptColumnsMap.set(r.columnId, {
+            columnId: r.columnId,
+            columnName: r.columnName || r.columnId
+          });
+        }
+      });
+      const matchedPromptColumns = [...matchedPromptColumnsMap.values()];
+
+      // Build visible core tabs governed by Admin Studio feature toggles
+      const coreTabsList = [
+        ...(insightEnabled ? [{ id: 'insights', label: 'Insights' }] : []),
+        { id: 'document', label: 'View Document' },
+        ...(entityEnabled ? [{ id: 'entities', label: `Entities${totalEntitiesCount > 0 ? ` <span class="tab-count">${totalEntitiesCount}</span>` : ''}` }] : []),
+        ...(dataExtEnabled ? [{ id: 'structured', label: `Structured Data${totalStructuredCount > 0 ? ` <span class="tab-count">${totalStructuredCount}</span>` : ''}` }] : []),
+        { id: 'metadata', label: 'Metadata' }
+      ];
+
+      // Ensure docResultTab is valid for the enabled tabs on this tenant/document
+      const validCoreIds = new Set(coreTabsList.map(t => t.id));
+      if (docResultTab.startsWith('prompt:')) {
+        const activeColId = docResultTab.substring('prompt:'.length);
+        if (!promptColsEnabled || !matchedPromptColumnsMap.has(activeColId)) {
+          docResultTab = coreTabsList[0].id;
+          body.dataset.tab = docResultTab;
+        }
+      } else if (!validCoreIds.has(docResultTab)) {
+        docResultTab = coreTabsList[0].id;
+        body.dataset.tab = docResultTab;
+      }
+
+      // Render core tabs + one individual tab per matched Prompt Column (e.g. ✨ Summary, ✨ Highlights)
+      const tabBar = document.getElementById('insightsTabBar');
+      const coreTabsHtml = coreTabsList.map(t => `
+        <button type="button" class="meridian-tab ${docResultTab === t.id ? 'active' : ''}" data-tab="${t.id}" data-click="setDocResultTab_arg" data-args="[${escapeJsArg(t.id)}]">${t.label}</button>
+      `).join('');
+
+      const promptTabsHtml = matchedPromptColumns.map(col => {
+        const tabId = `prompt:${col.columnId}`;
+        const isActive = docResultTab === tabId;
+        return `
+          <button type="button" class="meridian-tab ${isActive ? 'active' : ''}" data-tab="${escapeHtml(tabId)}" data-click="setDocResultTab_arg" data-args="[${escapeJsArg(tabId)}]" title="Prompt Column: ${escapeHtml(col.columnName)}">
+            <span style="color:var(--accent);margin-right:4px;">✦</span>${escapeHtml(col.columnName)}
+          </button>
+        `;
+      }).join('');
+
+      tabBar.innerHTML = coreTabsHtml + promptTabsHtml;
+
+      // Single clean slice dropdown on the right of the tab bar
+      sliceRow.innerHTML = '';
+      if (segs.length > 1) {
+        const select = document.createElement('select');
+        select.className = 'meridian-slice-select';
+        if (docResultTab !== 'document') {
+          const allOpt = document.createElement('option');
+          allOpt.value = '-1';
+          allOpt.textContent = `All slices (${segs.length})`;
+          if (selectedSliceIndex === -1) allOpt.selected = true;
+          select.appendChild(allOpt);
+        }
+
+        const activePdfSliceIdx = (docResultTab === 'document' && selectedSliceIndex === -1) ? 0 : selectedSliceIndex;
+
+        segs.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = String(s.segmentIndex);
+          const labelName = s.identifiedDocumentName || s.documentTypeName || `Slice ${s.segmentIndex + 1}`;
+          opt.textContent = `Slice ${s.segmentIndex + 1}: ${labelName} (p.${s.startPage}–${s.endPage})`;
+          if (activePdfSliceIdx === s.segmentIndex) opt.selected = true;
+          select.appendChild(opt);
+        });
+
+        select.onchange = (e) => {
+          selectedSliceIndex = parseInt(e.target.value, 10);
+          renderSelectedDocument();
+        };
+        sliceRow.appendChild(select);
+      }
+
+      if (docResultTab === 'document' && segs.length > 0) {
+        const focusedSeg = (selectedSliceIndex >= 0 ? segs.find(s => s.segmentIndex === selectedSliceIndex) : segs[0]) || segs[0];
+        const origPdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf`;
+        if (!focusedSeg.wasTranslated) {
+          const openLink = document.createElement('a');
+          openLink.href = origPdfUrl;
+          openLink.target = '_blank';
+          openLink.className = 'ghost-action-btn';
+          openLink.textContent = 'Open PDF ↗';
+          sliceRow.appendChild(openLink);
+        }
+      }
+
+      if (job.status === 'Queued' || job.status === 'Running') {
+        body.innerHTML = `
+          <div class="content-column" style="padding:36px 0;color:var(--text-secondary);font-size:14px;">
+            Processing document through Agent Harness (${(job.executionTrace || []).length} steps completed)...
+          </div>
+        `;
+        return;
+      }
+
+      if (job.status === 'Failed') {
+        body.innerHTML = `
+          <div class="content-column" style="padding:24px 0;color:var(--status-err);font-size:14px;">
+            <strong>Processing failed:</strong> ${escapeHtml(job.errorMessage || 'Unknown error')}
+          </div>
+        `;
+        return;
+      }
+
+      // 1. View Document Tab — Side-by-Side (Original PDF + Translated PDF) when translated, or single full-bleed PDF
+      if (docResultTab === 'document') {
+        if (segs.length === 0) {
+          body.innerHTML = `<div class="content-column">No PDF available.</div>`;
+          return;
+        }
+        const focusedSeg = (selectedSliceIndex >= 0 ? segs.find(s => s.segmentIndex === selectedSliceIndex) : segs[0]) || segs[0];
+        const origPdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf`;
+        const transPdfUrl = `${origPdfUrl}?translated=true`;
+
+        if (focusedSeg.wasTranslated) {
+          const splitKey = `${job.jobId}:${focusedSeg.segmentIndex}:side-by-side`;
+          const existingSplit = body.querySelector('.pdf-side-by-side');
+          if (existingSplit && existingSplit.dataset.splitKey === splitKey) {
+            return;
+          }
+          const srcLang = (focusedSeg.detectedLanguage || 'es').toUpperCase();
+          const tgtLang = (focusedSeg.targetLanguage || 'en').toUpperCase();
+          body.innerHTML = `
+            <div class="pdf-side-by-side" data-split-key="${escapeHtml(splitKey)}">
+              <div class="pdf-pane">
+                <div class="pdf-pane-bar">
+                  <span><strong>Original Document (${escapeHtml(srcLang)})</strong> · Pages ${focusedSeg.startPage}–${focusedSeg.endPage}</span>
+                  <a href="${origPdfUrl}" target="_blank" class="text-link-btn">Open ↗</a>
+                </div>
+                <iframe class="pdf-full-frame" src="${origPdfUrl}" title="Original PDF Preview"></iframe>
+              </div>
+              <div class="pdf-pane">
+                <div class="pdf-pane-bar">
+                  <span><strong>Translated Document (${escapeHtml(tgtLang)})</strong> · Azure Document Translation</span>
+                  <a href="${transPdfUrl}" target="_blank" class="text-link-btn">Open ↗</a>
+                </div>
+                <iframe class="pdf-full-frame" src="${transPdfUrl}" title="Translated PDF Preview"></iframe>
+              </div>
+            </div>
+          `;
+          return;
+        }
+
+        const existingIframe = body.querySelector('iframe.pdf-full-frame:not(.pdf-side-by-side iframe)');
+        if (existingIframe && existingIframe.getAttribute('src') === origPdfUrl && !body.querySelector('.pdf-side-by-side')) {
+          return;
+        }
+        body.innerHTML = `<iframe class="pdf-full-frame" src="${origPdfUrl}" title="PDF Preview"></iframe>`;
+        return;
+      }
+
+      // 2. Insights Tab — Calm Editorial Prose, Zero Nested Boxes
+      if (docResultTab === 'insights') {
+        const distinctLangs = [...new Set(segs.map(s => (s.detectedLanguage || 'en').toUpperCase()))];
+        const anyTranslated = segs.some(s => s.wasTranslated);
+
+        const summaryLineHtml = `
+          <div class="packet-summary-line">
+            <span>${job.totalPages || 0} pages · ${segs.length} slice${segs.length === 1 ? '' : 's'} · ${escapeHtml(distinctLangs.join(', '))}${anyTranslated ? ' → EN translated' : ''} · ${totalEntitiesCount} entities extracted</span>
+            <span>Harness v${job.appliedHarnessVersion || 1}</span>
+          </div>
+        `;
+
+        const sectionsHtml = activeSegs.map((s, idx) => {
+          const docName = s.identifiedDocumentName || s.documentTypeName || `Slice ${s.segmentIndex + 1}`;
+          const prose = cleanInsightText(s.insightSummary) || 'No insight summary generated for this slice.';
+          const langNote = s.wasTranslated
+            ? ` · Translated ${(s.detectedLanguage || '').toUpperCase()} → ${(s.targetLanguage || 'en').toUpperCase()}`
+            : '';
+          const isExpanded = idx === 0;
+
+          return `
+            <article class="slice-section ${isExpanded ? 'expanded' : ''}">
+              <div class="slice-section-head" data-click="toggleSliceCard_self">
+                <div>
+                  <h3 class="slice-section-title">${escapeHtml(docName)}</h3>
+                  <div class="slice-section-sub">Slice ${s.segmentIndex + 1} · Pages ${s.startPage}–${s.endPage}${escapeHtml(langNote)}</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button type="button" class="text-link-btn" data-click="jumpToSlicePdf_arg_event" data-args="[${s.segmentIndex}]">Pages ${s.startPage}–${s.endPage} ↗</button>
+                  <button type="button" class="slice-chevron-btn" aria-label="Expand or collapse slice">
+                    <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="slice-card-body">
+                <p class="insight-prose" style="margin:0;">${escapeHtml(prose)}</p>
+              </div>
+            </article>
+          `;
+        }).join('');
+
+        body.innerHTML = `<div class="content-column">${summaryLineHtml}<div class="slices-wide-grid">${sectionsHtml}</div></div>`;
+        return;
+      }
+
+      // 3. Entities Tab — Clean Scannable Table + Project Meridian Filter Pills
+      if (docResultTab === 'entities') {
+        const allEntities = activeSegs.flatMap(s => (s.extractedEntities || []).map(e => ({
+          ...e,
+          sliceIndex: s.segmentIndex,
+          sliceNum: s.segmentIndex + 1,
+          pageRange: `${s.startPage}–${s.endPage}`,
+          docType: s.identifiedDocumentName || s.documentTypeName
+        })));
+
+        if (allEntities.length === 0) {
+          body.innerHTML = `<div class="content-column" style="color:var(--text-secondary);font-size:14px;">No extracted entities for this selection.</div>`;
+          return;
+        }
+
+        const categories = ['ALL', ...new Set(allEntities.map(e => (e.category || 'Entity').toUpperCase()))];
+        if (!categories.includes(selectedEntityCategory)) selectedEntityCategory = 'ALL';
+        const filteredEntities = selectedEntityCategory === 'ALL'
+          ? allEntities
+          : allEntities.filter(e => (e.category || 'Entity').toUpperCase() === selectedEntityCategory);
+
+        body.innerHTML = `
+          <div class="content-column">
+            <div class="filter-pill-bar">
+              ${categories.map(cat => `
+                <button type="button" class="filter-pill-btn ${selectedEntityCategory === cat ? 'active' : ''}" data-click="setEntityCategoryFilter_arg" data-args="[${escapeJsArg(cat)}]">
+                  ${cat === 'ALL' ? `All (${allEntities.length})` : escapeHtml(cat.charAt(0) + cat.slice(1).toLowerCase())}
+                </button>
+              `).join('')}
+            </div>
+
+            <table class="clean-table">
+              <thead>
+                <tr>
+                  <th>Entity</th>
+                  <th>Value</th>
+                  <th>Category</th>
+                  <th>Source</th>
+                  <th>Model score</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                ${filteredEntities.map(e => {
+                  const info = DocIntelEvidence.describe(e, 1);
+                  return `
+                    <tr>
+                      <td style="color:var(--text-secondary);">${escapeHtml(e.name)}</td>
+                      <td style="font-weight:600;color:var(--text-primary);">${escapeHtml(e.value)}</td>
+                      <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(e.category || 'Entity')}</td>
+                      <td><button type="button" class="text-link-btn" data-click="jumpToSlicePdf_arg" data-args="[${e.sliceIndex}]">Slice ${e.sliceNum} (p.${escapeHtml(e.pageRange)}) ↗</button>${renderValueProvenance(e, job, 1)}</td>
+                      <td title="${escapeHtml(info.tooltip)}" style="color:var(--text-secondary);font-size:12.5px;">${info.modelPercent === null ? 'Unknown' : info.modelPercent + '%'}</td>
+                      <td style="text-align:right;"><button type="button" class="text-link-btn" data-click="copyTextValue_arg" data-args="[${escapeJsArg(e.value)}]">Copy</button></td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `;
+        return;
+      }
+
+      // 3b. Document Graph by Entities Tab — Interactive Entity-Filtered Knowledge Graph
+      if (docResultTab === 'graph') {
+        renderDocumentGraphTab(body, job);
+        return;
+      }
+
+      // 4. Structured Data Tab — Clean Definition List + Tables
+      if (docResultTab === 'structured') {
+        const slicesWithData = activeSegs.filter(s => s.dataExtraction && ((s.dataExtraction.fields && s.dataExtraction.fields.length > 0) || (s.dataExtraction.tables && s.dataExtraction.tables.length > 0)));
+        if (slicesWithData.length === 0) {
+          body.innerHTML = `
+            <div class="content-column" style="color:var(--text-secondary);font-size:14px;">
+              No structured key-value fields or tables configured for this document type. Configure schemas in <a href="/admin.html" style="color:var(--text-primary);">Admin Studio ↗</a>.
+            </div>
+          `;
+          return;
+        }
+
+        body.innerHTML = `<div class="content-column"><div class="slices-wide-grid">` + slicesWithData.map((s, idx) => {
+          const de = s.dataExtraction;
+          const isExpanded = idx === 0;
+          const fieldsHtml = (de.fields && de.fields.length > 0) ? `
+            <dl class="kv-grid">
+              ${de.fields.map(f => `
+                <div class="kv-item">
+                  <dt>${escapeHtml(f.fieldName)} <span style="color:var(--text-muted);" title="${escapeHtml(DocIntelEvidence.describe(f, 100).tooltip)}">(${formatModelScore(f, 100)})</span></dt>
+                  <dd>${escapeHtml(f.fieldValue || '—')}${renderValueProvenance(f, job, 100)}</dd>
+                </div>
+              `).join('')}
+            </dl>
+          ` : '';
+
+          const tablesHtml = (de.tables || []).map(t => {
+            const rows = t.rows || [];
+            const colNames = rows.length > 0 ? (rows[0].fields || []).map(c => c.fieldName) : [];
+            return `
+              <div style="margin-top:16px;overflow-x:auto;">
+                <div style="font-size:13px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">${escapeHtml(t.tableName)}</div>
+                ${rows.length > 0 ? `
+                  <table class="clean-table">
+                    <thead>
+                      <tr>${colNames.map(cn => `<th>${escapeHtml(cn)}</th>`).join('')}</tr>
+                    </thead>
+                    <tbody>
+                      ${rows.map(r => `
+                        <tr>${(r.fields || []).map(cell => `<td title="${escapeHtml(DocIntelEvidence.describe(cell, 100).tooltip)}">${escapeHtml(cell.fieldValue)}${renderValueProvenance(cell, job, 100)}</td>`).join('')}</tr>
+                      `).join('')}
+                    </tbody>
+                  </table>
+                ` : '<div style="font-size:12.5px;color:var(--text-muted);">No rows matched in this slice.</div>'}
+              </div>
+            `;
+          }).join('');
+
+          return `
+            <section class="slice-section ${isExpanded ? 'expanded' : ''}">
+              <div class="slice-section-head" data-click="toggleSliceCard_self">
+                <div>
+                  <h3 class="slice-section-title">${escapeHtml(de.documentName)}</h3>
+                  <div class="slice-section-sub">Slice ${s.segmentIndex + 1} · Pages ${escapeHtml(de.pageRange)}</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button type="button" class="text-link-btn" data-click="jumpToSlicePdf_arg_event" data-args="[${s.segmentIndex}]">View PDF ↗</button>
+                  <button type="button" class="slice-chevron-btn" aria-label="Expand or collapse slice">
+                    <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="slice-card-body">
+                ${fieldsHtml}
+                ${tablesHtml}
+              </div>
+            </section>
+          `;
+        }).join('') + `</div></div>`;
+        return;
+      }
+
+      // 5. Individual Prompt Column Tab (`prompt:<columnId>`) — Clean Outcome Only
+      if (docResultTab.startsWith('prompt:')) {
+        const targetColumnId = docResultTab.substring('prompt:'.length);
+        const matchingSliceEntries = activeSegs.map(s => {
+          const sliceResults = (s.promptColumnResults && s.promptColumnResults.length > 0)
+            ? s.promptColumnResults
+            : (job.promptColumnResults || []).filter(r => r.segmentIndex === s.segmentIndex);
+          const colResult = sliceResults.find(r => r.columnId === targetColumnId && r.filterMatched);
+          return colResult ? { slice: s, result: colResult } : null;
+        }).filter(Boolean);
+
+        const sliceCardsHtml = matchingSliceEntries.map(({ slice, result }, idx) => {
+          const docName = slice.identifiedDocumentName || slice.documentTypeName || `Slice ${slice.segmentIndex + 1}`;
+          const cleanedOutcome = String(result.resultText || '')
+            .replace(/^Summary\s*\([^)]*\):\s*/i, '')
+            .replace(/^(?:Summarize the contents of|Extract the most important[^'\n]*from|Verify contract identifiers[^'\n]*in)\s+/i, '')
+            .replace(/\s*in a clear and concise manner\.?\s*Focus on key points, main arguments, and important conclusions\.?/gi, '')
+            .replace(/\s*as concise bullet points\.?/gi, '')
+            .trim();
+          const isExpanded = idx === 0;
+
+          return `
+            <article class="slice-section ${isExpanded ? 'expanded' : ''}">
+              <div class="slice-section-head" data-click="toggleSliceCard_self">
+                <div>
+                  <h3 class="slice-section-title">${escapeHtml(docName)}</h3>
+                  <div class="slice-section-sub">Pages ${slice.startPage}–${slice.endPage}</div>
+                </div>
+                <div style="display:flex;align-items:center;gap:8px;">
+                  <button type="button" class="text-link-btn" data-click="jumpToSlicePdf_arg_event" data-args="[${slice.segmentIndex}]">Pages ${slice.startPage}–${slice.endPage} ↗</button>
+                  <button type="button" class="slice-chevron-btn" aria-label="Expand or collapse slice">
+                    <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                      <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                  </button>
+                </div>
+              </div>
+              <div class="slice-card-body">
+                <p class="insight-prose" style="margin:0;">${escapeHtml(cleanedOutcome)}</p>
+              </div>
+            </article>
+          `;
+        }).join('');
+
+        body.innerHTML = `<div class="content-column"><div class="slices-wide-grid">${sliceCardsHtml}</div></div>`;
+        return;
+      }
+
+      // 6. Metadata Tab — Clean Provenance Table + Collapsible Engineering Trace
+      if (docResultTab === 'metadata') {
+        const trace = job.executionTrace || [];
+        body.innerHTML = `
+          <div class="content-column">
+            <dl class="kv-grid" style="padding-bottom:20px;border-bottom:1px solid var(--line);">
+              <div class="kv-item"><dt>Job ID</dt><dd style="font-family:monospace;font-size:12.5px;">${escapeHtml(job.jobId)}</dd></div>
+              <div class="kv-item"><dt>Tenant</dt><dd>${escapeHtml(job.tenantId)}</dd></div>
+              <div class="kv-item"><dt>Harness Version</dt><dd>v${job.appliedHarnessVersion || 1}</dd></div>
+              <div class="kv-item"><dt>Language Model</dt><dd>${escapeHtml(job.modelIdUsed || 'gpt-5-mini')}</dd></div>
+            </dl>
+
+            <h3 class="slice-section-title" style="margin:24px 0 12px 0;">Document Slices</h3>
+            <table class="clean-table" style="margin-bottom:28px;">
+              <thead>
+                <tr><th>Slice</th><th>Pages</th><th>Identified Document</th><th>Matched Rule</th><th>Footer Signature</th><th>PDF</th></tr>
+              </thead>
+              <tbody>
+                ${activeSegs.map(s => `
+                  <tr>
+                    <td>#${s.segmentIndex + 1}</td>
+                    <td>${s.startPage}–${s.endPage}</td>
+                    <td style="font-weight:600;">${escapeHtml(s.identifiedDocumentName || s.documentTypeName || 'Undefined')}</td>
+                    <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(s.matchedIdentificationRule || '—')}</td>
+                    <td style="font-family:monospace;font-size:12px;color:var(--text-secondary);">${escapeHtml((s.footers || []).join(', ') || '—')}</td>
+                    <td><a href="/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${s.segmentIndex}/pdf" target="_blank" class="text-link-btn">Open ↗</a></td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+
+            <details>
+              <summary style="cursor:pointer;font-size:13px;font-weight:600;color:var(--text-secondary);user-select:none;">Pipeline Execution Trace (${trace.length} steps)</summary>
+              <table class="clean-table" style="margin-top:12px;">
+                <thead>
+                  <tr><th>Executor Step</th><th>Status</th><th>Model / Service</th><th>Duration</th><th>Notes</th></tr>
+                </thead>
+                <tbody>
+                  ${trace.map(t => `
+                    <tr>
+                      <td style="font-weight:500;">${escapeHtml(t.executorName)}</td>
+                      <td>${t.executed ? 'Executed' : 'Skipped'}</td>
+                      <td style="color:var(--text-secondary);">${escapeHtml(t.modelIdUsed || 'Deterministic')}</td>
+                      <td style="font-family:monospace;font-size:12px;">${t.durationMs ? t.durationMs.toFixed(1) + ' ms' : '0 ms'}</td>
+                      <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(t.notes || '')}</td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </details>
+          </div>
+        `;
+      }
+    }
+
+    function computeFilteredGraphData() {
+      const completedJobs = tenantJobs.filter(j => j.status === 'Completed');
+
+      const allEntityNamesMap = new Map();
+      const allEntityValuePairsMap = new Map();
+
+      completedJobs.forEach(j => {
+        const seenInJob = new Set();
+        (j.segments || []).forEach(s => {
+          (s.extractedEntities || []).forEach(e => {
+            if (!e || !e.name || !e.value) return;
+            const eName = e.name.trim();
+            const eVal = e.value.trim();
+            const pairKey = `${eName}||${eVal}`;
+            if (seenInJob.has(pairKey)) return;
+            seenInJob.add(pairKey);
+
+            allEntityNamesMap.set(eName, (allEntityNamesMap.get(eName) || 0) + 1);
+            if (!allEntityValuePairsMap.has(pairKey)) {
+              allEntityValuePairsMap.set(pairKey, { name: eName, value: eVal, category: e.category || 'Entity', count: 0 });
+            }
+            allEntityValuePairsMap.get(pairKey).count++;
+          });
+        });
+      });
+
+      const docNodes = [];
+      const entityNodesMap = new Map();
+      const edges = [];
+      const q = (graphEntitySearchQuery || '').trim().toLowerCase();
+
+      completedJobs.forEach(j => {
+        const docNodeId = `doc:${j.jobId}`;
+        const cleanFileName = (j.fileName || 'Document').replace(/\.pdf$/i, '');
+        const segs = j.segments || [];
+        const docTypesSummary = [...new Set(segs.map(s => s.identifiedDocumentName || s.documentTypeName).filter(Boolean))].join(', ');
+
+        // Collect all entities present on this document
+        const docEntities = [];
+        const docEntityNamesSet = new Set();
+        const docEntityPairsSet = new Set();
+
+        segs.forEach(s => {
+          (s.extractedEntities || []).forEach(e => {
+            if (!e || !e.name || !e.value) return;
+            const eName = e.name.trim();
+            const eVal = e.value.trim();
+            const pairKey = `${eName}||${eVal}`;
+            docEntityNamesSet.add(eName);
+            docEntityPairsSet.add(pairKey);
+            docEntities.push({ eName, eVal, pairKey, category: (e.category || 'Entity').toUpperCase() });
+          });
+        });
+
+        // Evaluate strict AND condition across all selected Entity Types and Entity Values
+        for (const reqName of graphSelectedEntityNames) {
+          if (!docEntityNamesSet.has(reqName)) return;
+        }
+        for (const reqPair of graphSelectedEntityValues) {
+          if (!docEntityPairsSet.has(reqPair)) return;
+        }
+
+        const hasAnyFilter = graphSelectedEntityNames.size > 0 || graphSelectedEntityValues.size > 0;
+        const matchingEntitiesForDoc = [];
+
+        docEntities.forEach(({ eName, eVal, pairKey, category }) => {
+          if (hasAnyFilter) {
+            const matchedByType = graphSelectedEntityNames.has(eName);
+            const matchedByValue = graphSelectedEntityValues.has(pairKey);
+            if (!matchedByType && !matchedByValue) {
+              return;
+            }
+          }
+
+          const entNodeId = `ent:${pairKey}`;
+          if (!entityNodesMap.has(entNodeId)) {
+            entityNodesMap.set(entNodeId, {
+              id: entNodeId,
+              type: 'entity',
+              pairKey,
+              entityName: eName,
+              entityValue: eVal,
+              category,
+              connectedDocs: []
+            });
+          }
+
+          matchingEntitiesForDoc.push(entNodeId);
+        });
+
+        const uniqEntIds = [...new Set(matchingEntitiesForDoc)];
+        if (uniqEntIds.length > 0) {
+          const docNode = {
+            id: docNodeId,
+            type: 'doc',
+            jobId: j.jobId,
+            fileName: cleanFileName,
+            sliceIndex: 0,
+            docName: cleanFileName,
+            pageRange: `${j.totalPages || segs.length} pp · ${segs.length} slice${segs.length === 1 ? '' : 's'}`,
+            docTypesSummary,
+            entityIds: uniqEntIds,
+            isCurrentJob: j.jobId === selectedJobId
+          };
+          docNodes.push(docNode);
+
+          uniqEntIds.forEach(entNodeId => {
+            edges.push({ source: docNodeId, target: entNodeId });
+            const entNode = entityNodesMap.get(entNodeId);
+            if (entNode) {
+              entNode.connectedDocs.push(docNode);
+            }
+          });
+        }
+      });
+
+      // Sort entities so shared cross-document entities appear first
+      const sortedEntities = [...entityNodesMap.values()].sort((a, b) => b.connectedDocs.length - a.connectedDocs.length);
+      const sortedPairs = [...allEntityValuePairsMap.entries()]
+        .map(([pairKey, info]) => ({ pairKey, ...info }))
+        .sort((a, b) => b.count - a.count);
+
+      return {
+        allEntityNames: [...allEntityNamesMap.entries()].map(([name, count]) => ({ name, count })),
+        allEntityValuePairs: sortedPairs,
+        docNodes,
+        entityNodes: sortedEntities,
+        edges
+      };
+    }
+
+    function getEntityCategoryColor(cat) {
+      const c = String(cat || '').toUpperCase();
+      if (c.includes('IDENTIFIER')) return { bg: '#f2f4ff', border: '#c5cffc', text: '#3b4fc4', dot: '#5d74ec' };
+      if (c.includes('PARTY') || c.includes('CUSTOMER')) return { bg: '#effaf7', border: '#bce3dc', text: '#246b60', dot: '#388e80' };
+      if (c.includes('FINANCIAL')) return { bg: '#fdf8f0', border: '#ebd4b5', text: '#8f5b22', dot: '#c2853c' };
+      return { bg: '#f6f4fc', border: '#d8d0f2', text: '#5c48a8', dot: '#8470cf' };
+    }
+
+    function renderDocumentGraphTab(body) {
+      const data = computeFilteredGraphData();
+      const totalSelected = graphSelectedEntityNames.size + graphSelectedEntityValues.size;
+
+      // Group all available entity values by Entity Name for the single multi-select picker
+      const groupedByType = new Map();
+      data.allEntityValuePairs.forEach(p => {
+        if (!groupedByType.has(p.name)) groupedByType.set(p.name, []);
+        groupedByType.get(p.name).push(p);
+      });
+
+      const selectedTagsList = [
+        ...[...graphSelectedEntityNames].map(name => `
+          <span class="entity-selected-tag" data-click="stopPropagation">
+            <span>Has ${escapeHtml(name)}</span>
+            <button type="button" title="Remove" data-click="toggleGraphEntityNameFilter_arg_event" data-args="[${escapeJsArg(name)}]">✕</button>
+          </span>
+        `),
+        ...[...graphSelectedEntityValues].map(pk => {
+          const [eName, eVal] = pk.split('||');
+          return `
+            <span class="entity-selected-tag" data-click="stopPropagation">
+              <span><strong>${escapeHtml(eName)}:</strong> ${escapeHtml(eVal)}</span>
+              <button type="button" title="Remove" data-click="toggleGraphEntityValueSelection_arg_event" data-args="[${escapeJsArg(pk)}]">✕</button>
+            </span>
+          `;
+        })
+      ];
+      const selectedTagsHtml = selectedTagsList.join('<span style="font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--text-secondary);">AND</span>');
+
+      const groupsHtml = [...groupedByType.entries()].map(([groupName, items]) => {
+        const isTypeSelected = graphSelectedEntityNames.has(groupName);
+        return `
+          <div class="entity-group-col" data-group="${escapeHtml(groupName)}">
+            <div class="entity-group-header" data-click="toggleGraphEntityNameFilter_arg_event" data-args="[${escapeJsArg(groupName)}]">
+              <span>${isTypeSelected ? '☑' : '☐'} ${escapeHtml(groupName)}</span>
+              <span style="opacity:0.65;">${items.length}</span>
+            </div>
+            ${items.map(item => {
+              const isValChecked = isTypeSelected || graphSelectedEntityValues.has(item.pairKey);
+              return `
+                <div class="entity-value-option ${isValChecked ? 'checked' : ''}" data-search="${escapeHtml(item.value)}" data-click="toggleGraphEntityValueSelection_arg_event" data-args="[${escapeJsArg(item.pairKey)}]">
+                  <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${isValChecked ? '✓ ' : ''}${escapeHtml(item.value)}</span>
+                  <span style="font-family:var(--font-mono);font-size:10.5px;opacity:0.65;flex-shrink:0;">${item.count} doc${item.count === 1 ? '' : 's'}</span>
+                </div>
+              `;
+            }).join('')}
+          </div>
+        `;
+      }).join('');
+
+      body.innerHTML = `
+        <div class="graph-shell" data-click="closeGraphDropdown">
+          <div class="entity-multiselect-wrap" data-click="stopPropagation">
+            <div class="entity-multiselect-box ${graphEntityDropdownOpen ? 'open' : ''}" id="entityMultiSelectBox" data-click="toggleEntityMultiSelectDropdown_event">
+              <div class="entity-tags-flow">
+                <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);margin-right:4px;">Entities:</span>
+                ${totalSelected === 0
+                  ? `<span style="color:var(--text-secondary);font-size:13px;">All Entities (${data.allEntityValuePairs.length} values across ${data.allEntityNames.length} types) — click to select one or multiple entities</span>`
+                  : selectedTagsHtml}
+              </div>
+              <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+                ${totalSelected > 0 ? `<button type="button" class="ghost-action-btn" data-click="resetGraphFilters_event">Clear (${totalSelected})</button>` : ''}
+                <span style="font-size:12px;color:var(--text-secondary);padding:0 4px;">▾</span>
+              </div>
+            </div>
+
+            <div class="entity-multiselect-popover ${graphEntityDropdownOpen ? 'open' : ''}" id="entityMultiSelectPopover">
+              <div class="entity-popover-search">
+                <input type="text" id="entityPopoverSearchInput" placeholder="Filter entity types or values (e.g. Woodgrove, OXXO, USD, U4565450)..." value="${escapeHtml(graphEntityDropdownSearch)}" data-input="filterEntityPopoverOptions_value" />
+                ${totalSelected > 0 ? `<button type="button" class="ghost-action-btn" data-click="resetGraphFilters_event">Select All</button>` : ''}
+              </div>
+              <div class="entity-popover-list" id="entityPopoverList">
+                ${groupsHtml}
+              </div>
+            </div>
+          </div>
+
+          <div class="graph-info-strip" id="graphInfoStripContainer"></div>
+
+          <div class="graph-workbench" id="graphWorkbenchContainer"></div>
+        </div>
+      `;
+
+      if (graphEntityDropdownSearch) {
+        filterEntityPopoverOptions(graphEntityDropdownSearch);
+      }
+      renderDocumentGraphCanvasOnly();
+    }
+
+    function setGraphDepthMode(mode) {
+      graphDepthMode = mode;
+      if (mode !== 'GLOBAL' && !graphFocusedNodeId && selectedJobId) {
+        graphFocusedNodeId = `doc:${selectedJobId}`;
+      }
+      renderSelectedDocument();
+    }
+
+    function renderDocumentGraphCanvasOnly() {
+      const container = document.getElementById('graphWorkbenchContainer');
+      if (!container) return;
+
+      if (graphSimAnimFrame) {
+        cancelAnimationFrame(graphSimAnimFrame);
+        graphSimAnimFrame = null;
+      }
+
+      const rawData = computeFilteredGraphData();
+      let { docNodes, entityNodes, edges } = rawData;
+
+      // Apply Obsidian-style Local Graph Depth (1-Hop or 2-Hop neighborhood around focused node)
+      if (graphDepthMode !== 'GLOBAL' && graphFocusedNodeId) {
+        const allowed = new Set([graphFocusedNodeId]);
+        edges.forEach(ed => {
+          if (ed.source === graphFocusedNodeId) allowed.add(ed.target);
+          if (ed.target === graphFocusedNodeId) allowed.add(ed.source);
+        });
+        if (graphDepthMode === 'HOP2') {
+          const hop1 = new Set(allowed);
+          edges.forEach(ed => {
+            if (hop1.has(ed.source)) allowed.add(ed.target);
+            if (hop1.has(ed.target)) allowed.add(ed.source);
+          });
+        }
+        docNodes = docNodes.filter(d => allowed.has(d.id));
+        entityNodes = entityNodes.filter(e => allowed.has(e.id));
+        edges = edges.filter(ed => allowed.has(ed.source) && allowed.has(ed.target));
+      }
+
+      const nodeById = new Map();
+      docNodes.forEach(d => nodeById.set(d.id, d));
+      entityNodes.forEach(e => nodeById.set(e.id, e));
+
+      const focusedNode = graphFocusedNodeId ? nodeById.get(graphFocusedNodeId) : null;
+
+      // Determine the subset of jobs represented by the current selection (focused node or filtered graph)
+      let activeDocIdsSet = new Set(docNodes.map(d => d.jobId));
+      if (focusedNode && focusedNode.type === 'entity') {
+        activeDocIdsSet = new Set(focusedNode.connectedDocs.map(d => d.jobId));
+      } else if (focusedNode && focusedNode.type === 'doc') {
+        activeDocIdsSet = new Set([focusedNode.jobId]);
+      }
+
+      const activeJobs = tenantJobs.filter(j => activeDocIdsSet.has(j.jobId));
+      const totalPagesInSelection = activeJobs.reduce((acc, j) => acc + (j.totalPages || 0), 0);
+      const totalSlicesInSelection = activeJobs.reduce((acc, j) => acc + ((j.segments || []).length), 0);
+
+      const selectionEntities = activeJobs.flatMap(j => (j.segments || []).flatMap(s => s.extractedEntities || []));
+      const customerSet = [...new Set(selectionEntities.filter(e => e.name === 'Customer Name').map(e => e.value))];
+      const mbsaSet = [...new Set(selectionEntities.filter(e => e.name === 'MBA/MBSA Number').map(e => e.value))];
+      const currencySet = [...new Set(selectionEntities.filter(e => e.name === 'Billing Currency').map(e => e.value))];
+
+      let dealValueSum = 0;
+      const seenDealJobs = new Set();
+      activeJobs.forEach(j => {
+        if (seenDealJobs.has(j.jobId)) return;
+        const dvEnt = (j.segments || []).flatMap(s => s.extractedEntities || []).find(e => e.name === 'Total Deal Value');
+        if (dvEnt && dvEnt.value) {
+          const parsed = parseFloat(String(dvEnt.value).replace(/[^0-9.]/g, ''));
+          if (!isNaN(parsed)) {
+            dealValueSum += parsed;
+            seenDealJobs.add(j.jobId);
+          }
+        }
+      });
+
+      const infoStrip = document.getElementById('graphInfoStripContainer');
+      if (infoStrip) {
+        const selectedValLabels = [
+          ...[...graphSelectedEntityNames].map(n => `All ${n}`),
+          ...[...graphSelectedEntityValues].map(pk => pk.split('||')[1])
+        ];
+        const focusTitle = focusedNode
+          ? (focusedNode.type === 'entity' ? `${focusedNode.entityValue}` : focusedNode.docName)
+          : (selectedValLabels.length > 0 ? selectedValLabels.join(', ') : 'All Tenant Documents');
+        const focusSub = focusedNode
+          ? (focusedNode.type === 'entity' ? `Entity Hub · ${focusedNode.entityName}` : `Selected Document · ${focusedNode.pageRange}`)
+          : `${edges.length} entity connection${edges.length === 1 ? '' : 's'} active`;
+
+        infoStrip.innerHTML = `
+          <div class="graph-info-card">
+            <span class="graph-info-label">Active Selection</span>
+            <span class="graph-info-value" title="${escapeHtml(focusTitle)}">${escapeHtml(focusTitle)}</span>
+            <span class="graph-info-sub">${escapeHtml(focusSub)}</span>
+          </div>
+          <div class="graph-info-card">
+            <span class="graph-info-label">Document Coverage</span>
+            <span class="graph-info-value">${activeJobs.length} Document${activeJobs.length === 1 ? '' : 's'}</span>
+            <span class="graph-info-sub">${totalPagesInSelection} pages · ${totalSlicesInSelection} identified slices</span>
+          </div>
+          <div class="graph-info-card">
+            <span class="graph-info-label">Counterparties &amp; Agreements</span>
+            <span class="graph-info-value" title="${escapeHtml(customerSet.join(', '))}">${customerSet.length > 0 ? escapeHtml(customerSet.slice(0, 2).join(', ') + (customerSet.length > 2 ? ` +${customerSet.length - 2}` : '')) : '—'}</span>
+            <span class="graph-info-sub">${mbsaSet.length} MBA/MBSA agreement${mbsaSet.length === 1 ? '' : 's'} (${escapeHtml(mbsaSet.slice(0, 2).join(', ') || 'None')})</span>
+          </div>
+          <div class="graph-info-card">
+            <span class="graph-info-label">Commercial Exposure</span>
+            <span class="graph-info-value">${dealValueSum > 0 ? '$' + dealValueSum.toLocaleString('en-US', { maximumFractionDigits: 0 }) : `${entityNodes.length} Entity Hubs`}</span>
+            <span class="graph-info-sub">${currencySet.length > 0 ? `Currencies: ${escapeHtml(currencySet.join(' · '))}` : 'Across matched agreements'}</span>
+          </div>
+        `;
+      }
+
+      let inspectorHtml = '';
+
+      if (focusedNode && focusedNode.type === 'entity') {
+        // Compute co-occurring entities across the documents connected to this entity hub
+        const coEntitiesMap = new Map();
+        focusedNode.connectedDocs.forEach(d => {
+          const jobObj = tenantJobs.find(j => j.jobId === d.jobId);
+          if (!jobObj) return;
+          (jobObj.segments || []).forEach(s => {
+            (s.extractedEntities || []).forEach(ent => {
+              const pk = `${ent.name}||${ent.value}`;
+              if (pk === focusedNode.pairKey || ent.name === 'Document Heading') return;
+              if (!coEntitiesMap.has(pk)) {
+                coEntitiesMap.set(pk, { pairKey: pk, name: ent.name, value: ent.value, count: 0 });
+              }
+              coEntitiesMap.get(pk).count++;
+            });
+          });
+        });
+        const coEntities = [...coEntitiesMap.values()].sort((a, b) => b.count - a.count).slice(0, 5);
+
+        inspectorHtml = `
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Entity Hub Dossier</span>
+            <button type="button" class="text-link-btn" data-click="focusGraphNode_arg" data-args="[null]">Clear</button>
+          </div>
+          <div style="padding:10px 12px;border-radius:9px;background:var(--bg);border:1px solid var(--line);">
+            <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(focusedNode.entityName)}</div>
+            <div style="font-size:15.5px;font-weight:600;color:var(--text-primary);margin-top:2px;">${escapeHtml(focusedNode.entityValue)}</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Shared across <strong>${focusedNode.connectedDocs.length}</strong> document${focusedNode.connectedDocs.length === 1 ? '' : 's'} in this tenant.</div>
+          </div>
+
+          ${coEntities.length > 0 ? `
+            <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;margin-top:2px;">
+              Co-Occurring Entities (${coEntities.length})
+            </div>
+            <div style="display:flex;flex-wrap:wrap;gap:5px;">
+              ${coEntities.map(ce => `
+                <button type="button" class="text-link-btn" style="font-size:10.5px;" data-click="focusGraphNode_arg" data-args="[${escapeJsArg('ent:' + ce.pairKey)}]" title="${escapeHtml(ce.name)}: ${escapeHtml(ce.value)}">
+                  ${escapeHtml(ce.name)}: ${escapeHtml(ce.value)}
+                </button>
+              `).join('')}
+            </div>
+          ` : ''}
+
+          <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;margin-top:2px;">
+            Connected Documents (${focusedNode.connectedDocs.length})
+          </div>
+          ${focusedNode.connectedDocs.map(d => {
+            const jobObj = tenantJobs.find(j => j.jobId === d.jobId);
+            const firstInsight = jobObj && jobObj.segments && jobObj.segments[0] ? cleanInsightText(jobObj.segments[0].insightSummary) : '';
+            return `
+              <div class="graph-inspector-item" data-click="jumpFromGraphToSlice_arg_arg" data-args="[${escapeJsArg(d.jobId)},-1]">
+                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                  <div style="font-weight:600;font-size:13px;color:var(--text-primary);">${escapeHtml(d.docName)}</div>
+                  <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);">Open ↗</span>
+                </div>
+                <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);">${escapeHtml(d.pageRange)}${d.docTypesSummary ? ' · ' + escapeHtml(d.docTypesSummary) : ''}</div>
+                ${firstInsight ? `<div style="font-size:11.5px;color:var(--text-secondary);margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(firstInsight)}</div>` : ''}
+              </div>
+            `;
+          }).join('')}
+        `;
+      } else if (focusedNode && focusedNode.type === 'doc') {
+        const connectedEntities = focusedNode.entityIds.map(id => nodeById.get(id)).filter(Boolean);
+        const jobObj = tenantJobs.find(j => j.jobId === focusedNode.jobId);
+        const firstInsight = jobObj && jobObj.segments && jobObj.segments[0] ? cleanInsightText(jobObj.segments[0].insightSummary) : '';
+
+        inspectorHtml = `
+          <div style="display:flex;align-items:center;justify-content:space-between;">
+            <span style="font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Document Dossier</span>
+            <button type="button" class="text-link-btn" data-click="focusGraphNode_arg" data-args="[null]">Clear</button>
+          </div>
+          <div style="padding:10px 12px;border-radius:9px;background:var(--bg);border:1px solid var(--line);display:flex;flex-direction:column;gap:6px;">
+            <div style="font-size:15px;font-weight:600;color:var(--text-primary);">${escapeHtml(focusedNode.docName)}</div>
+            <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);">${escapeHtml(focusedNode.pageRange)}</div>
+            ${firstInsight ? `<div style="font-size:12px;color:var(--text-body);line-height:1.45;">${escapeHtml(firstInsight)}</div>` : ''}
+            <div style="display:flex;gap:6px;margin-top:2px;">
+              <button type="button" class="text-link-btn" data-click="jumpFromGraphToSlice_arg_arg" data-args="[${escapeJsArg(focusedNode.jobId)},-1]">Open Document ↗</button>
+            </div>
+          </div>
+          <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;margin-top:2px;">
+            Extracted Entities (${connectedEntities.length})
+          </div>
+          ${connectedEntities.map(e => `
+            <div class="graph-inspector-item" data-click="focusGraphNode_arg" data-args="[${escapeJsArg(e.id)}]">
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(e.entityName)}</span>
+                <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent-ink);">${e.connectedDocs.length} doc${e.connectedDocs.length === 1 ? '' : 's'}</span>
+              </div>
+              <div style="font-weight:600;font-size:13px;color:var(--text-primary);">${escapeHtml(e.entityValue)}</div>
+            </div>
+          `).join('')}
+        `;
+      } else {
+        inspectorHtml = `
+          <div>
+            <div style="font-size:14px;font-weight:600;color:var(--text-primary);">Matched Documents (${docNodes.length})</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
+              Documents matching the active entity filters. Click any document to open it or click a node on the graph to inspect its dossier.
+            </div>
+          </div>
+          ${docNodes.map(d => `
+            <div class="graph-inspector-item" data-click="jumpFromGraphToSlice_arg_arg" data-args="[${escapeJsArg(d.jobId)},-1]">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
+                <span style="font-weight:600;font-size:13px;color:var(--text-primary);">${escapeHtml(d.docName)}</span>
+                <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);">Open ↗</span>
+              </div>
+              <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);">${escapeHtml(d.pageRange)}${d.docTypesSummary ? ' · ' + escapeHtml(d.docTypesSummary) : ''}</div>
+            </div>
+          `).join('')}
+        `;
+      }
+
+      container.innerHTML = `
+        <div class="graph-canvas-card" style="overflow:hidden;background-color:#fafafc;">
+          ${docNodes.length === 0 ? `
+            <div style="margin:auto;text-align:center;color:var(--text-secondary);padding:32px;">
+              No documents or entities match the current entity filters.<br/><br/>
+              <button type="button" class="ghost-action-btn" data-click="resetGraphFilters">Reset Entity Filters</button>
+            </div>
+          ` : `
+            <canvas id="obsidianGraphCanvas" style="width:100%;height:100%;display:block;cursor:grab;"></canvas>
+          `}
+
+          <div class="graph-floating-hud">
+            <div class="graph-legend">
+              <span><i class="legend-dot" style="background:#16161d;"></i>Document (${docNodes.length})</span>
+              <span><i class="legend-dot" style="background:#4b72fe;"></i>Identifier</span>
+              <span><i class="legend-dot" style="background:#0d9488;"></i>Party / Customer</span>
+              <span><i class="legend-dot" style="background:#d97706;"></i>Financial</span>
+              <span><i class="legend-dot" style="background:#7c3aed;"></i>Metadata</span>
+            </div>
+            <div class="graph-zoom-bar">
+              <button type="button" class="text-link-btn" data-click="zoomGraphBy_arg" data-args="[-0.2]">−</button>
+              <span id="graphZoomLabel">${Math.round(graphZoom * 100)}%</span>
+              <button type="button" class="text-link-btn" data-click="zoomGraphBy_arg" data-args="[0.2]">+</button>
+              <button type="button" class="text-link-btn" data-click="zoomGraphBy_arg" data-args="[0]">Re-layout</button>
+            </div>
+          </div>
+        </div>
+
+        <aside class="graph-inspector-card" id="graphInspectorAside">
+          ${inspectorHtml}
+        </aside>
+      `;
+
+      if (docNodes.length > 0) {
+        initObsidianForceCanvas(docNodes, entityNodes, edges);
+      }
+    }
+
+    function initObsidianForceCanvas(docNodes, entityNodes, edges) {
+      const canvas = document.getElementById('obsidianGraphCanvas');
+      if (!canvas) return;
+      const rect = canvas.parentElement.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const width = Math.max(640, rect.width || 880);
+      const height = Math.max(460, rect.height || 560);
+      canvas.width = width * dpr;
+      canvas.height = height * dpr;
+      const ctx = canvas.getContext('2d');
+
+      const cx = width / 2;
+      const cy = height / 2;
+
+      const simNodes = [];
+      const simNodeMap = new Map();
+
+      // Seed entity hubs in an inner ring and documents around their primary entity hub
+      entityNodes.forEach((e, i) => {
+        const angle = (2 * Math.PI * i) / Math.max(1, entityNodes.length);
+        const ringR = Math.min(width, height) * 0.24;
+        const saved = graphCustomNodePositions[e.id];
+        const degree = e.connectedDocs.length;
+        const colors = getEntityCategoryColor(e.category);
+        const node = {
+          id: e.id,
+          type: 'entity',
+          label: e.entityValue,
+          subLabel: e.entityName,
+          degree,
+          radius: Math.min(13.5, 4.8 + Math.sqrt(degree) * 2.2),
+          color: colors.dot,
+          bgColor: colors.bg,
+          x: saved ? saved.x : cx + Math.cos(angle) * ringR + ((i % 3) - 1) * 18,
+          y: saved ? saved.y : cy + Math.sin(angle) * ringR + ((i % 2) - 0.5) * 18,
+          vx: 0,
+          vy: 0,
+          raw: e
+        };
+        simNodes.push(node);
+        simNodeMap.set(node.id, node);
+      });
+
+      docNodes.forEach((d, i) => {
+        const angle = (2 * Math.PI * i) / Math.max(1, docNodes.length);
+        const outerR = Math.min(width, height) * 0.37;
+        const saved = graphCustomNodePositions[d.id];
+        const degree = d.entityIds.length;
+        const node = {
+          id: d.id,
+          type: 'doc',
+          label: d.docName,
+          subLabel: d.pageRange,
+          degree,
+          radius: d.isCurrentJob ? 5.6 : 4.4,
+          color: d.isCurrentJob ? '#4b72fe' : '#64697d',
+          bgColor: '#ffffff',
+          x: saved ? saved.x : cx + Math.cos(angle) * outerR,
+          y: saved ? saved.y : cy + Math.sin(angle) * outerR,
+          vx: 0,
+          vy: 0,
+          raw: d
+        };
+        simNodes.push(node);
+        simNodeMap.set(node.id, node);
+      });
+
+      const simEdges = edges
+        .map(ed => ({
+          source: simNodeMap.get(ed.source),
+          target: simNodeMap.get(ed.target)
+        }))
+        .filter(ed => ed.source && ed.target);
+
+      let alpha = 1.0;
+      let draggedNode = null;
+      let isPanning = false;
+      let startMouseX = 0;
+      let startMouseY = 0;
+      let pointerMoved = false;
+
+      function screenToWorld(sx, sy) {
+        return {
+          x: (sx - cx - graphPanX) / graphZoom + cx,
+          y: (sy - cy - graphPanY) / graphZoom + cy
+        };
+      }
+
+      function findNodeAt(sx, sy) {
+        const pt = screenToWorld(sx, sy);
+        for (let i = simNodes.length - 1; i >= 0; i--) {
+          const n = simNodes[i];
+          const hitR = (n.radius + 5) / Math.sqrt(graphZoom);
+          const dx = pt.x - n.x;
+          const dy = pt.y - n.y;
+          if (dx * dx + dy * dy <= hitR * hitR) {
+            return n;
+          }
+        }
+        return null;
+      }
+
+      function stepPhysics() {
+        if (alpha < 0.008 && !draggedNode) return;
+
+        // 1. Repulsion between nodes
+        const repulsion = 1450;
+        for (let i = 0; i < simNodes.length; i++) {
+          const a = simNodes[i];
+          for (let j = i + 1; j < simNodes.length; j++) {
+            const b = simNodes[j];
+            let dx = b.x - a.x;
+            let dy = b.y - a.y;
+            let distSq = dx * dx + dy * dy;
+            if (distSq < 9) {
+              dx = (Math.random() - 0.5) * 2;
+              dy = (Math.random() - 0.5) * 2;
+              distSq = 9;
+            }
+            if (distSq > 95000) continue; // spatial cutoff
+            const dist = Math.sqrt(distSq);
+            const force = (repulsion * alpha) / distSq;
+            const fx = (dx / dist) * force;
+            const fy = (dy / dist) * force;
+            a.vx -= fx;
+            a.vy -= fy;
+            b.vx += fx;
+            b.vy += fy;
+          }
+        }
+
+        // 2. Link spring attraction
+        const targetDist = 92;
+        const springK = 0.048 * alpha;
+        for (let i = 0; i < simEdges.length; i++) {
+          const e = simEdges[i];
+          const dx = e.target.x - e.source.x;
+          const dy = e.target.y - e.source.y;
+          const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+          const delta = (dist - targetDist) * springK;
+          const fx = (dx / dist) * delta;
+          const fy = (dy / dist) * delta;
+          e.source.vx += fx;
+          e.source.vy += fy;
+          e.target.vx -= fx;
+          e.target.vy -= fy;
+        }
+
+        // 3. Center gravity + integration
+        const centerK = 0.014 * alpha;
+        for (let i = 0; i < simNodes.length; i++) {
+          const n = simNodes[i];
+          if (n === draggedNode) {
+            n.vx = 0;
+            n.vy = 0;
+            continue;
+          }
+          n.vx += (cx - n.x) * centerK;
+          n.vy += (cy - n.y) * centerK;
+          n.vx *= 0.78;
+          n.vy *= 0.78;
+          n.x += n.vx;
+          n.y += n.vy;
+          graphCustomNodePositions[n.id] = { x: n.x, y: n.y };
+        }
+
+        alpha *= 0.965;
+      }
+
+      function drawFrame() {
+        stepPhysics();
+
+        ctx.save();
+        ctx.scale(dpr, dpr);
+        ctx.clearRect(0, 0, width, height);
+
+        ctx.translate(cx + graphPanX, cy + graphPanY);
+        ctx.scale(graphZoom, graphZoom);
+        ctx.translate(-cx, -cy);
+
+        const activeAnchorId = graphHoveredNodeId || graphFocusedNodeId;
+        const neighborSet = new Set();
+        if (activeAnchorId) {
+          neighborSet.add(activeAnchorId);
+          for (let i = 0; i < simEdges.length; i++) {
+            const ed = simEdges[i];
+            if (ed.source.id === activeAnchorId) neighborSet.add(ed.target.id);
+            if (ed.target.id === activeAnchorId) neighborSet.add(ed.source.id);
+          }
+        }
+
+        // Draw edges
+        for (let i = 0; i < simEdges.length; i++) {
+          const ed = simEdges[i];
+          const isHigh = activeAnchorId && (ed.source.id === activeAnchorId || ed.target.id === activeAnchorId);
+          ctx.beginPath();
+          ctx.moveTo(ed.source.x, ed.source.y);
+          ctx.lineTo(ed.target.x, ed.target.y);
+          if (isHigh) {
+            ctx.strokeStyle = 'rgba(75, 114, 254, 0.65)';
+            ctx.lineWidth = 1.35 / Math.sqrt(graphZoom);
+          } else if (activeAnchorId) {
+            ctx.strokeStyle = 'rgba(200, 202, 218, 0.11)';
+            ctx.lineWidth = 0.75 / Math.sqrt(graphZoom);
+          } else {
+            ctx.strokeStyle = 'rgba(182, 185, 204, 0.32)';
+            ctx.lineWidth = 0.85 / Math.sqrt(graphZoom);
+          }
+          ctx.stroke();
+        }
+
+        // Draw nodes & subtle semantic-zoom labels
+        for (let i = 0; i < simNodes.length; i++) {
+          const n = simNodes[i];
+          const isDimmed = activeAnchorId && !neighborSet.has(n.id);
+          const isFocusedOrHovered = n.id === activeAnchorId;
+
+          ctx.save();
+          ctx.globalAlpha = isDimmed ? 0.14 : 0.92;
+
+          // Subtle halo on entity hubs or active nodes
+          if (isFocusedOrHovered || (n.type === 'entity' && n.degree >= 3)) {
+            ctx.beginPath();
+            ctx.arc(n.x, n.y, n.radius + (isFocusedOrHovered ? 4 : 2.5), 0, Math.PI * 2);
+            ctx.fillStyle = isFocusedOrHovered ? 'rgba(75, 114, 254, 0.16)' : 'rgba(93, 116, 236, 0.06)';
+            ctx.fill();
+          }
+
+          ctx.beginPath();
+          ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
+          ctx.fillStyle = n.color;
+          ctx.fill();
+          ctx.lineWidth = isFocusedOrHovered ? 1.8 : 1.0;
+          ctx.strokeStyle = '#ffffff';
+          ctx.stroke();
+
+          // Subtle Obsidian LOD Label Rule: at rest only label shared hubs (degree >= 3); reveal neighbor labels on hover/focus or zoom
+          const showLabel = isFocusedOrHovered ||
+            (activeAnchorId && neighborSet.has(n.id)) ||
+            (n.type === 'entity' && n.degree >= 3) ||
+            graphZoom >= 1.25 ||
+            simNodes.length <= 20;
+
+          if (showLabel) {
+            const fontSize = Math.max(9.5, Math.min(11.5, (n.type === 'entity' ? 11 : 10) / Math.pow(graphZoom, 0.25)));
+            ctx.font = `${isFocusedOrHovered ? '600' : '500'} ${fontSize}px "Overused Grotesk", sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            const text = n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label;
+            const labelY = n.y + n.radius + 3.5;
+
+            if (isFocusedOrHovered) {
+              const tw = ctx.measureText(text).width + 8;
+              ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+              ctx.fillRect(n.x - tw / 2, labelY - 1.5, tw, fontSize + 4);
+            }
+
+            ctx.fillStyle = isFocusedOrHovered ? '#16161d' : (n.type === 'entity' ? '#454859' : '#6c7086');
+            ctx.fillText(text, n.x, labelY);
+          }
+
+          ctx.restore();
+        }
+
+        ctx.restore();
+        graphSimAnimFrame = requestAnimationFrame(drawFrame);
+      }
+
+      canvas.onmousedown = (e) => {
+        const b = canvas.getBoundingClientRect();
+        const sx = e.clientX - b.left;
+        const sy = e.clientY - b.top;
+        startMouseX = e.clientX;
+        startMouseY = e.clientY;
+        pointerMoved = false;
+
+        const hit = findNodeAt(sx, sy);
+        if (hit) {
+          draggedNode = hit;
+          alpha = Math.max(alpha, 0.35);
+          canvas.style.cursor = 'grabbing';
+        } else {
+          isPanning = true;
+          canvas.style.cursor = 'grabbing';
+        }
+      };
+
+      canvas.onmousemove = (e) => {
+        const b = canvas.getBoundingClientRect();
+        const sx = e.clientX - b.left;
+        const sy = e.clientY - b.top;
+        const dx = e.clientX - startMouseX;
+        const dy = e.clientY - startMouseY;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) pointerMoved = true;
+
+        if (draggedNode) {
+          const pt = screenToWorld(sx, sy);
+          draggedNode.x = pt.x;
+          draggedNode.y = pt.y;
+          graphCustomNodePositions[draggedNode.id] = { x: pt.x, y: pt.y };
+          alpha = Math.max(alpha, 0.25);
+        } else if (isPanning) {
+          graphPanX += dx;
+          graphPanY += dy;
+          startMouseX = e.clientX;
+          startMouseY = e.clientY;
+        } else {
+          const hit = findNodeAt(sx, sy);
+          graphHoveredNodeId = hit ? hit.id : null;
+          canvas.style.cursor = hit ? 'pointer' : 'grab';
+        }
+      };
+
+      window.onmouseup = () => {
+        if (!pointerMoved && draggedNode) {
+          focusGraphNode(draggedNode.id);
+        }
+        draggedNode = null;
+        isPanning = false;
+      };
+
+      canvas.onwheel = (e) => {
+        e.preventDefault();
+        const delta = e.deltaY < 0 ? 0.12 : -0.12;
+        graphZoom = Math.min(2.6, Math.max(0.45, +(graphZoom + delta).toFixed(2)));
+        const lbl = document.getElementById('graphZoomLabel');
+        if (lbl) lbl.textContent = `${Math.round(graphZoom * 100)}%`;
+      };
+
+      drawFrame();
+    }
+
+    function saveAskAiChatForTenant(tenantId, chat, partition) {
+      if (currentTenant?.tenantId === tenantId && globalThis.DocIntelIdentity?.chatPartition === partition) {
+        const index = tenantChats.findIndex(c => c.id === chat.id);
+        if (index < 0) return;
+        tenantChats[index] = chat;
+        saveTenantChats();
+        return;
+      }
+      try {
+        const key = getChatsStorageKey(tenantId, partition);
+        const chats = JSON.parse(localStorage.getItem(key) || '[]');
+        const index = chats.findIndex(c => c.id === chat.id);
+        if (index < 0) return;
+        chats[index] = chat;
+        localStorage.setItem(key, JSON.stringify(chats));
+      } catch {
+        console.error('Unable to save Ask AI chat state for its original tenant.');
+      }
+    }
+
+    async function runCrossDocumentAskAi(customQuestion, resume = false) {
+      if (!currentTenant || askAiLoading) return;
+      loadTenantChats();
+      const tenantId = currentTenant.tenantId;
+      const chatPartition = globalThis.DocIntelIdentity?.chatPartition;
+      const chat = getActiveChat();
+      const inputEl = document.getElementById('askAiMainInputEl');
+      const q = resume ? chat.pendingAskAi?.question
+        : (customQuestion != null ? customQuestion : (inputEl ? inputEl.value : askAiQuestionInput)).trim();
+      if (!q || (resume && !chat.pendingAskAi?.runId)) return;
+      if (!resume && chat.pendingAskAi?.runId) {
+        showToast('Check the pending response or start a new chat before asking another question.');
+        return;
+      }
+
+      if (!chat.messages) chat.messages = [];
+      if (!resume && (chat.messages.length === 0 || chat.title === 'New chat')) {
+        chat.title = q.length > 42 ? q.slice(0, 41) + '…' : q;
+      }
+      if (!resume) {
+        chat.messages.push({ role: 'user', text: q, timestamp: new Date().toISOString() });
+        chat.pendingAskAi = { question: q, runId: null };
+      }
+      chat.updatedAt = new Date().toISOString();
+      saveAskAiChatForTenant(tenantId, chat, chatPartition);
+
+      askAiQuestionInput = '';
+      askAiLoading = true;
+      askAiLoadingChatId = chat.id;
+      askAiLoadingTenantId = tenantId;
+      askAiProgressText = resume ? 'Reconnecting to your question...' : 'Submitting your question...';
+      renderDocumentList();
+      renderSelectedDocument();
+
+      try {
+        if (!resume) {
+          chat.pendingAskAi.runId = await DocIntelAskAi.submit(tenantId, q);
+          saveAskAiChatForTenant(tenantId, chat, chatPartition);
+        }
+        const finalData = await DocIntelAskAi.waitForRun(tenantId, chat.pendingAskAi.runId, run => {
+          askAiProgressText = run.status === 'Queued' ? 'Your question is queued...'
+            : (run.steps?.length ? 'Reviewing document evidence...' : 'Working on your question...');
+          if (currentTenant?.tenantId === tenantId && activeChatId === chat.id) {
+            const progress = document.getElementById('askAiProgress');
+            if (progress) progress.textContent = askAiProgressText;
+          }
+        });
+        delete chat.pendingAskAi;
+        chat.messages.push({
+          role: 'assistant',
+          text: finalData.status === 'Failed' ? finalData.errorMessage || 'Ask AI could not complete this request.'
+            : finalData.answer,
+          isError: finalData.status === 'Failed',
+          citations: finalData.status === 'Completed' ? finalData.citations || [] : [],
+          executedCosmosQueries: finalData.executedCosmosQueries || [],
+          timestamp: new Date().toISOString()
+        });
+        chat.updatedAt = new Date().toISOString();
+        saveAskAiChatForTenant(tenantId, chat, chatPartition);
+      } catch (err) {
+        if (!err.resumable || !chat.pendingAskAi?.runId) delete chat.pendingAskAi;
+        chat.messages.push({
+          role: 'assistant',
+          text: err.message || 'Unable to connect to Ask AI. The question was not automatically resubmitted.',
+          isError: true,
+          citations: [],
+          timestamp: new Date().toISOString()
+        });
+        saveAskAiChatForTenant(tenantId, chat, chatPartition);
+      } finally {
+        askAiLoading = false;
+        askAiLoadingChatId = null;
+        askAiLoadingTenantId = null;
+        askAiProgressText = '';
+        renderDocumentList();
+        renderSelectedDocument();
+      }
+    }
+
+    function jumpToHumanReview(jobId) {
+      window.location.href = '/review.html?tenant=' + encodeURIComponent(currentTenant?.tenantId || '') +
+        '&job=' + encodeURIComponent(jobId);
+    }
+
+    function citationAction(citation) {
+      const reviewed = ['HumanReviewStatus', 'HumanReviewedField'].includes(citation.evidenceKind);
+      const action = reviewed ? 'jumpToHumanReview_arg' : 'jumpFromGraphToSlice_arg_arg';
+      const args = reviewed ? [String(citation.jobId)] :
+        [String(citation.jobId), Number.isSafeInteger(citation.sliceIndex) ? citation.sliceIndex : 0];
+      return `data-click="${action}" data-args="${escapeHtml(JSON.stringify(args))}"`;
+    }
+
+    function formatMarkdownBold(text, citations) {
+      let html = escapeHtml(text || '')
+        .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+        .replace(/\*([^*]+)\*/g, '<em>$1</em>');
+
+      if (Array.isArray(citations) && citations.length > 0) {
+        html = html.replace(/\[(\d+)\]/g, (match, numStr) => {
+          const num = parseInt(numStr, 10);
+          const cite = citations.find(c => c.citationNumber === num);
+          if (!cite) return match;
+          return `<button type="button" class="text-link-btn" style="padding:1px 6px;font-size:10.5px;margin:0 2px;" title="${escapeHtml(cite.cleanName)} (${escapeHtml(cite.pageRange)})" ${citationAction(cite)}>[${num}]</button>`;
+        });
+      }
+      return html;
+    }
+
+    function renderCrossDocumentAskTab(body) {
+      loadTenantChats();
+      const chat = getActiveChat();
+      const messages = chat?.messages || [];
+      const chatIsLoading = askAiLoading && askAiLoadingChatId === chat?.id &&
+        askAiLoadingTenantId === currentTenant?.tenantId;
+      const isEmptyChat = messages.length === 0 && !chatIsLoading;
+      const isDocDrawerCollapsed = document.getElementById('docListPane')?.classList.contains('collapsed');
+
+      // Only list chats that have at least 1 message so "New chat" is never duplicated under Chats
+      const savedChats = tenantChats.filter(c => (c.messages || []).length > 0);
+
+      const chatListHtml = savedChats.map(c => {
+        const isSelected = c.id === activeChatId && !isEmptyChat;
+        return `
+          <div class="chat-history-item ${isSelected ? 'selected' : ''}" title="${escapeHtml(c.title || 'Chat')}" data-click="selectAskAiChat_arg" data-args="[${escapeJsArg(c.id)}]">
+            <span class="chat-history-title">${escapeHtml(c.title || 'Chat')}</span>
+            <button type="button" class="chat-delete-btn" title="Delete chat" data-click="deleteAskAiChat_arg_event" data-args="[${escapeJsArg(c.id)}]">✕</button>
+          </div>
+        `;
+      }).join('');
+
+      const leftChatRailHtml = `
+        <aside class="ask-inner-sidebar ${askInnerSidebarCollapsed ? 'collapsed' : ''}" id="askInnerSidebar">
+          <div class="drawer-top" style="border-bottom:none;padding-bottom:6px;">
+            <div class="drawer-brand-row" style="height:28px;">
+              <div style="display:flex;align-items:center;gap:6px;min-width:0;">
+                ${isDocDrawerCollapsed ? `
+                  <button type="button" class="icon-toggle-btn" title="Expand Documents panel" data-click="toggleDocListPane">
+                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                      <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
+                      <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
+                    </svg>
+                  </button>
+                ` : ''}
+                <span class="ask-panel-title">Ask AI</span>
+              </div>
+              <button type="button" class="icon-toggle-btn" title="Collapse Ask AI panel" data-click="toggleAskInnerSidebar">
+                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+                  <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
+                  <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
+                </svg>
+              </button>
+            </div>
+
+            ${isDocDrawerCollapsed ? `
+              <div class="workspace-mode-switcher">
+                <button type="button" class="workspace-mode-btn" data-click="setWorkspaceMode_arg" data-args="[&quot;documents&quot;]">Documents</button>
+                <button type="button" class="workspace-mode-btn" data-click="setWorkspaceMode_arg" data-args="[&quot;graph&quot;]">Graph</button>
+                <button type="button" class="workspace-mode-btn active" data-click="setWorkspaceMode_arg" data-args="[&quot;ask&quot;]">✦ Ask AI</button>
+              </div>
+            ` : ''}
+
+            <button type="button" class="ask-new-chat-pill" data-click="startNewAskAiChat">
+              <svg viewBox="0 0 20 20" fill="currentColor">
+                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
+              </svg>
+              <span>New chat</span>
+            </button>
+          </div>
+
+          <div class="drawer-subbar">
+            <span>Chats</span>
+          </div>
+
+          <div class="doc-items-scroll">
+            ${chatListHtml}
+          </div>
+        </aside>
+      `;
+
+      const floatingExpandBtnHtml = `
+        <button type="button" class="icon-toggle-btn" id="btnExpandAskSidebar" style="position:absolute;top:12px;left:12px;display:${askInnerSidebarCollapsed ? 'inline-flex' : 'none'};" title="Expand Ask AI panel" data-click="toggleAskInnerSidebar">
+          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
+            <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
+            <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
+          </svg>
+        </button>
+      `;
+
+      if (isEmptyChat) {
+        body.innerHTML = `
+          ${leftChatRailHtml}
+          <div class="ask-main-pane">
+            ${floatingExpandBtnHtml}
+            <div class="ask-minimal-stage">
+              <h2 class="ask-minimal-heading">Hi, I can help you explore and answer questions across your documents</h2>
+
+              <div class="ask-pill-bar">
+                <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Message Copilot" data-enter="runCrossDocumentAskAi_value" />
+                <button type="button" class="ask-pill-send" title="Send message" data-click="submitAskInput">
+                  <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                    <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </div>
+        `;
+        return;
+      }
+
+      const threadHtml = messages.map(m => {
+        if (m.role === 'user') {
+          return `
+            <div style="align-self:flex-end;background:#f3f3f8;color:var(--text-primary);padding:10px 16px;border-radius:18px;font-size:14px;font-weight:500;max-width:82%;">
+              ${escapeHtml(m.text)}
+            </div>
+          `;
+        }
+        const cites = m.citations || [];
+        return `
+          <div style="align-self:stretch;display:flex;flex-direction:column;gap:10px;padding:4px 0 12px 0;border-bottom:1px solid var(--line);">
+            <div class="insight-prose" ${m.isError ? 'role="alert"' : ''} style="margin:0;font-size:14px;line-height:1.65;">${formatMarkdownBold(m.text, cites)}</div>
+            ${cites.length > 0 ? `
+              <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+                ${cites.map(c => `
+                  <button type="button" class="text-link-btn" ${citationAction(c)} title="${escapeHtml(c.documentName)} · ${escapeHtml(c.customerName || '')}">
+                    [${c.citationNumber || ''}] ${escapeHtml(c.cleanName)} (${escapeHtml(c.pageRange)}) ↗
+                  </button>
+                `).join('')}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+
+      body.innerHTML = `
+        ${leftChatRailHtml}
+        <div class="ask-main-pane" style="justify-content:flex-start;">
+          ${floatingExpandBtnHtml}
+          <div class="ask-minimal-stage" style="justify-content:space-between;min-height:100%;margin:0 auto;">
+            <div style="width:100%;display:flex;flex-direction:column;gap:18px;padding-bottom:28px;">
+              ${threadHtml}
+              ${chatIsLoading ? `<div id="askAiProgress" role="status" style="color:var(--text-secondary);font-size:13.5px;">${escapeHtml(askAiProgressText)}</div>` : ''}
+              ${!chatIsLoading && chat?.pendingAskAi?.runId ? '<button type="button" class="text-link-btn" data-click="runCrossDocumentAskAi_arg_arg" data-args="[null,true]">Check pending response</button>' : ''}
+              ${!chatIsLoading && !chat?.pendingAskAi?.runId && messages.at(-1)?.role === 'user' ? '<div role="status">No confirmed run is linked to this question. It was not automatically submitted again.</div>' : ''}
+            </div>
+
+            <div class="ask-pill-bar" style="position:sticky;bottom:8px;">
+              <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Message Copilot" data-enter="runCrossDocumentAskAi_value" />
+              <button type="button" class="ask-pill-send" title="Send message" data-click="submitAskInput">
+                <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    DocIntelActions.register({
+      closeGraphDropdown: { arity: 0, run: function(args, event) { if(graphEntityDropdownOpen){ graphEntityDropdownOpen=false; document.getElementById('entityMultiSelectPopover')?.classList.remove('open'); document.getElementById('entityMultiSelectBox')?.classList.remove('open'); } } },
+      copyTextValue_arg: { arity: 1, run: function(args, event) { return copyTextValue(args[0]); } },
+      deleteAskAiChat_arg_event: { arity: 1, run: function(args, event) { return deleteAskAiChat(args[0], event); } },
+      exportSelectedJobJson: { arity: 0, run: function(args, event) { return exportSelectedJobJson(); } },
+      filterEntityPopoverOptions_value: { arity: 0, run: function(args, event) { return filterEntityPopoverOptions(this.value); } },
+      focusGraphNode_arg: { arity: 1, run: function(args, event) { return focusGraphNode(args[0]); } },
+      jumpFromGraphToSlice_arg_arg: { arity: 2, run: function(args, event) { return jumpFromGraphToSlice(args[0], args[1]); } },
+      jumpToHumanReview_arg: { arity: 1, run: function(args, event) { return jumpToHumanReview(args[0]); } },
+      jumpToSlicePdf_arg: { arity: 1, run: function(args, event) { return jumpToSlicePdf(args[0]); } },
+      jumpToSlicePdf_arg_event: { arity: 1, run: function(args, event) { return jumpToSlicePdf(args[0], event); } },
+      onTenantSwitched_value: { arity: 0, run: function(args, event) { return onTenantSwitched(this.value); } },
+      openAdminForTenant: { arity: 0, run: function(args, event) { this.href='/admin.html?tenant=' + encodeURIComponent(currentTenant ? currentTenant.tenantId : ''); } },
+      openReviewForTenant: { arity: 0, run: function(args, event) { this.href='/review.html?tenant=' + encodeURIComponent(currentTenant ? currentTenant.tenantId : ''); } },
+      renderDocumentList: { arity: 0, run: function(args, event) { return renderDocumentList(); } },
+      resetGraphFilters: { arity: 0, run: function(args, event) { return resetGraphFilters(); } },
+      resetGraphFilters_event: { arity: 0, run: function(args, event) { return resetGraphFilters(event); } },
+      runCrossDocumentAskAi_arg_arg: { arity: 2, run: function(args, event) { return runCrossDocumentAskAi(args[0], args[1]); } },
+      runCrossDocumentAskAi_value: { arity: 0, run: function(args, event) { return runCrossDocumentAskAi(this.value); } },
+      selectAskAiChat_arg: { arity: 1, run: function(args, event) { return selectAskAiChat(args[0]); } },
+      setDocResultTab_arg: { arity: 1, run: function(args, event) { return setDocResultTab(args[0]); } },
+      setEntityCategoryFilter_arg: { arity: 1, run: function(args, event) { return setEntityCategoryFilter(args[0]); } },
+      setWorkspaceMode_arg: { arity: 1, run: function(args, event) { return setWorkspaceMode(args[0]); } },
+      signOut: { arity: 0, run: function(args, event) { return DocIntelIdentity.signOut(); } },
+      startNewAskAiChat: { arity: 0, run: function(args, event) { return startNewAskAiChat(); } },
+      stopPropagation: { arity: 0, run: function(args, event) { event.stopPropagation(); } },
+      submitAskInput: { arity: 0, run: function(args, event) { return runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value); } },
+      toggleAskInnerSidebar: { arity: 0, run: function(args, event) { return toggleAskInnerSidebar(); } },
+      toggleDocListPane: { arity: 0, run: function(args, event) { return toggleDocListPane(); } },
+      toggleEntityMultiSelectDropdown_event: { arity: 0, run: function(args, event) { return toggleEntityMultiSelectDropdown(event); } },
+      toggleGraphEntityNameFilter_arg_event: { arity: 1, run: function(args, event) { return toggleGraphEntityNameFilter(args[0], event); } },
+      toggleGraphEntityValueSelection_arg_event: { arity: 1, run: function(args, event) { return toggleGraphEntityValueSelection(args[0], event); } },
+      toggleSliceCard_self: { arity: 0, run: function(args, event) { return toggleSliceCard(this); } },
+      uploadAndRunTenantDocument_self: { arity: 0, run: function(args, event) { return uploadAndRunTenantDocument(this); } },
+      zoomGraphBy_arg: { arity: 1, run: function(args, event) { return zoomGraphBy(args[0]); } }
+    });
+
+    init();

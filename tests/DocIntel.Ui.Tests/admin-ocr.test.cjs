@@ -1,12 +1,9 @@
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
 const test = require('node:test');
 const vm = require('node:vm');
 
-const html = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'DocIntel.Api', 'wwwroot', 'admin.html'), 'utf8');
-const script = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)]
-  .map(match => match[1]).join('\n').replace(/\n\s*init\(\);\s*$/, '');
+const { loadApplication } = require('./helpers/application.cjs');
+const script = loadApplication('admin');
 
 function runtime(responses = []) {
   const elements = new Map();

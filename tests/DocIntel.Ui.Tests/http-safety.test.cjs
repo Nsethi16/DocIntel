@@ -9,11 +9,8 @@ const { startApi, killApi } = require('./helpers/api.cjs');
 
 async function copyPages(directory) {
   const root = path.join(directory, 'wwwroot');
-  await fs.mkdir(root);
   const source = path.join(__dirname, '..', '..', 'src', 'DocIntel.Api', 'wwwroot');
-  for (const name of ['index.html', 'admin.html', 'review.html', 'ask-run.html', 'identity.js']) {
-    await fs.copyFile(path.join(source, name), path.join(root, name));
-  }
+  await fs.cp(source, root, { recursive: true });
 }
 
 function assertHeaders(response) {
@@ -62,7 +59,8 @@ test('browser policies cover static pages, API results and missing resources wit
         assert.equal(response.headers.get('strict-transport-security'), null);
         const policy = response.headers.get('content-security-policy');
         if (['/', '/index.html', '/admin.html'].includes(route)) {
-          assert.match(policy, /script-src 'self' 'unsafe-inline'/);
+          assert.match(policy, /script-src 'self'; script-src-attr 'none'/);
+          assert.doesNotMatch(policy, /script-src[^;]*unsafe-inline/);
           assert.match(policy, /frame-src 'self' blob:/);
           assert.match(policy, /https:\/\/fonts\.googleapis\.com/);
         } else {
@@ -71,6 +69,15 @@ test('browser policies cover static pages, API results and missing resources wit
         if (route === '/review.html') {
           assert.match(policy, /script-src 'self' https:\/\/cdnjs\.cloudflare\.com/);
           assert.match(policy, /worker-src 'self' blob: https:\/\/cdnjs\.cloudflare\.com/);
+        }
+        if (['/', '/index.html', '/admin.html'].includes(route)) {
+          const html = await response.text();
+          for (const match of html.matchAll(/(?:src|href)="(\/[^"]+\.(?:js|css))"/g)) {
+            const asset = await fetch(api.url + match[1]);
+            assert.equal(asset.status, 200, match[1]);
+            assert.equal(asset.headers.get('x-content-type-options'), 'nosniff');
+            assert.equal(asset.headers.get('cache-control'), 'no-cache');
+          }
         }
       }
     } finally {

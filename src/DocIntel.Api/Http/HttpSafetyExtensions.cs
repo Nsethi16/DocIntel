@@ -29,12 +29,11 @@ public static class HttpSafetyExtensions
                     var path = context.Request.Path;
                     var legacy = path == "/" || path == "/index.html" || path == "/admin" || path == "/admin.html";
                     var review = path == "/review" || path == "/review.html";
-                    var script = legacy ? "'self' 'unsafe-inline'" :
-                        review ? "'self' https://cdnjs.cloudflare.com" : "'self'";
+                    var script = review ? "'self' https://cdnjs.cloudflare.com" : "'self'";
                     var style = legacy
                         ? "'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.cdnfonts.com" : "'self'";
                     headers["Content-Security-Policy"] =
-                        $"default-src 'self'; script-src {script}; style-src {style}; " +
+                        $"default-src 'self'; script-src {script}; script-src-attr 'none'; style-src {style}; " +
                         "font-src 'self' https://fonts.gstatic.com https://fonts.cdnfonts.com; " +
                         "img-src 'self' data: blob:; connect-src 'self'; frame-src 'self' blob:; " +
                         (review ? "worker-src 'self' blob: https://cdnjs.cloudflare.com; " : "worker-src 'self'; ") +

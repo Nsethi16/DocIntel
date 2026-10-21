@@ -79,6 +79,11 @@ app.UseStaticFiles(new StaticFileOptions
             ctx.Context.Response.Headers.Pragma = "no-cache";
             ctx.Context.Response.Headers.Expires = "0";
         }
+        else if (ctx.File.Name.EndsWith(".js", StringComparison.OrdinalIgnoreCase) ||
+                 ctx.File.Name.EndsWith(".css", StringComparison.OrdinalIgnoreCase))
+        {
+            ctx.Context.Response.Headers.CacheControl = "no-cache";
+        }
     }
 });
 

@@ -6,9 +6,8 @@ const vm = require('node:vm');
 
 const webRoot = path.join(__dirname, '..', '..', 'src', 'DocIntel.Api', 'wwwroot');
 const clientScript = fs.readFileSync(path.join(webRoot, 'ask-ai.js'), 'utf8');
-const html = fs.readFileSync(path.join(webRoot, 'index.html'), 'utf8');
-const pageScript = [...html.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/g)]
-  .map(match => match[1]).join('\n').replace(/\n\s*init\(\);\s*$/, '');
+const { loadApplication } = require('./helpers/application.cjs');
+const pageScript = loadApplication('index');
 
 function runtime(responses = []) {
   let elapsedMs = 0;
@@ -63,18 +62,18 @@ test('human-reviewed citations route to review evidence rather than pretending t
   loadPage(app);
   app.context.citation = { jobId: 'reviewed-job', sliceIndex: 0, evidenceKind: 'HumanReviewedField' };
   const action = vm.runInContext('citationAction(citation)', app.context);
-  assert.match(action, /^jumpToHumanReview/);
+  assert.match(action, /data-click="jumpToHumanReview_arg"/);
   app.context.citation = { jobId: 'source-job', sliceIndex: 2, evidenceKind: 'OriginalSourceText' };
-  assert.match(vm.runInContext('citationAction(citation)', app.context), /^jumpFromGraphToSlice/);
+  assert.match(vm.runInContext('citationAction(citation)', app.context), /data-click="jumpFromGraphToSlice_arg_arg"/);
 });
 
-test('untrusted cached citation indices cannot become inline JavaScript', () => {
+test('untrusted cached citation indices cannot become executable actions', () => {
   const app = runtime();
   loadPage(app);
   app.context.citation = { jobId: 'source-job', sliceIndex: '0);alert(1)//' };
   const action = vm.runInContext('citationAction(citation)', app.context);
   assert.ok(!action.includes('alert'));
-  assert.match(action, /, 0\)$/);
+  assert.match(action, /,0\]"/);
 });
 
 test('one async submission is polled beyond the old 14-second limit', async () => {
@@ -252,7 +251,7 @@ test('legacy unscoped browser history is not silently assigned to a newly signed
   assert.equal(current[0].messages.length, 0);
 });
 
-test('inline handler arguments remain data after browser entity decoding', () => {
+test('action arguments remain JSON data after browser entity decoding', () => {
   const app = runtime();
   loadPage(app);
   const payloads = [
@@ -266,7 +265,7 @@ test('inline handler arguments remain data after browser entity decoding', () =>
     app.context.inputValue = payload;
     const escaped = vm.runInContext('escapeJsArg(inputValue)', app.context);
     const decoded = escaped.replace(/&(?:amp|lt|gt|quot|#39);/g, entity => entities[entity]);
-    const result = vm.runInContext(`(${decoded})`, app.context);
+    const result = JSON.parse(decoded);
     assert.equal(result, payload);
     assert.equal(app.context.injected, undefined);
   }
