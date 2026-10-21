@@ -211,6 +211,8 @@ public sealed record WorkflowStepTrace(
 /// </summary>
 public sealed class SplittingState
 {
+    internal SemaphoreSlim ExecutionGate { get; } = new(1, 1);
+
     public bool HasDevelopmentResults { get; set; }
 
     public required TenantHarness Tenant { get; init; }

@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Text.Json;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Harness;
@@ -139,6 +140,40 @@ public sealed class AgentDiagnosticsTests
 
         // Assert
         Assert.Equal(new[] { (7L, "input"), (3L, "output") }, values);
+    }
+
+    [Fact]
+    public async Task Progress_Persistence_Sees_Stable_Lists_While_Later_Executors_Are_Ready_To_Run()
+    {
+        // Arrange
+        var extractor = new PdfPigLayoutExtractor();
+        var tenant = new TenantHarness { TenantId = "tenant", DisplayName = "Tenant" };
+        foreach (var (name, feature) in tenant.Capabilities) feature.Enabled = name == FeatureHarness.SplitAndGroupKey;
+        var workflow = new DocumentSplittingWorkflow(extractor, extractor,
+            new ModelCatalog(allowDevelopmentSimulation: true), new AzureDocumentTranslationService(),
+            NullLogger<DocumentSplittingWorkflow>.Instance);
+        var observations = 0;
+
+        // Act
+        await workflow.ExecuteAsync(new SplittingState
+        {
+            Tenant = tenant,
+            FileName = "source.pdf",
+            SourcePdfBytes = PdfPigLayoutExtractor.CreateSamplePdf([("Source text", "Footer")])
+        }, async (state, cancellationToken) =>
+        {
+            var count = state.ExecutionTrace.Count;
+            await Task.Delay(5, cancellationToken);
+            var snapshot = JsonSerializer.Serialize(state);
+            Assert.Equal(count, state.ExecutionTrace.Count);
+            Assert.Equal(count, state.ExecutionTrace.ToList().Count);
+            using var parsed = JsonDocument.Parse(snapshot);
+            Assert.Equal(count, parsed.RootElement.GetProperty("ExecutionTrace").GetArrayLength());
+            observations++;
+        });
+
+        // Assert
+        Assert.Equal(10, observations);
     }
 
     private static ActivityListener Listener(Action<Activity> stopped)

@@ -127,7 +127,15 @@ public sealed class DocumentSplittingWorkflow
             {
                 if (onStepCompleted is not null)
                 {
-                    await onStepCompleted(stepState, cancellationToken);
+                    await stepState.ExecutionGate.WaitAsync(cancellationToken);
+                    try
+                    {
+                        await onStepCompleted(stepState, cancellationToken);
+                    }
+                    finally
+                    {
+                        stepState.ExecutionGate.Release();
+                    }
                 }
             }
             else if (evt is WorkflowOutputEvent output && output.Data is SplittingState finalState)

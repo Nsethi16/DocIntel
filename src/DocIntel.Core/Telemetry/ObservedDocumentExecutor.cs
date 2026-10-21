@@ -12,6 +12,20 @@ internal sealed class ObservedDocumentExecutor(
     public override async ValueTask<SplittingState> HandleAsync(
         SplittingState message, IWorkflowContext context, CancellationToken cancellationToken = default)
     {
+        await message.ExecutionGate.WaitAsync(cancellationToken);
+        try
+        {
+            return await ExecuteAsync(message, context, cancellationToken);
+        }
+        finally
+        {
+            message.ExecutionGate.Release();
+        }
+    }
+
+    private async ValueTask<SplittingState> ExecuteAsync(
+        SplittingState message, IWorkflowContext context, CancellationToken cancellationToken)
+    {
         using var operation = AgentDiagnostics.Begin("Executor." + inner.Id, logger,
             message.Tenant.TenantId, message.DocumentId, message.Tenant.HarnessVersion);
         var previousSteps = message.ExecutionTrace.Count;
