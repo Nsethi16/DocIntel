@@ -4,15 +4,25 @@ using DocIntel.Api.Endpoints;
 using DocIntel.Api.Identity;
 using DocIntel.Api.Workers;
 using DocIntel.Api.Channels;
+using DocIntel.Api.Http;
 using DocIntel.Core;
-using DocIntel.Core.Ocr;
-using DocIntel.Core.Review;
 using DocIntel.ServiceDefaults;
+using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
-builder.Services.AddProblemDetails();
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = HttpSafetyExtensions.MaximumRequestBodyBytes);
+builder.Services.Configure<FormOptions>(options =>
+{
+    options.MultipartBodyLengthLimit = HttpSafetyExtensions.MaximumRequestBodyBytes;
+    options.ValueLengthLimit = 64 * 1024;
+    options.ValueCountLimit = 16;
+});
+builder.Services.Configure<RouteHandlerOptions>(options => options.ThrowOnBadRequest = true);
+builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = context =>
+    context.ProblemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier);
+builder.Services.AddExceptionHandler<DocIntelExceptionHandler>();
 builder.AddDocIntelIdentity();
 builder.AddDocIntelTeams();
 
@@ -30,41 +40,14 @@ builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution
 
 var app = builder.Build();
 
+app.UseDocIntelResponseHeaders();
 app.UseExceptionHandler(new ExceptionHandlerOptions
 {
-    StatusCodeSelector = exception => exception switch
-    {
-        BadHttpRequestException request => request.StatusCode,
-        OcrBudgetExceededException => StatusCodes.Status429TooManyRequests,
-        ReviewConflictException => StatusCodes.Status409Conflict,
-        _ => StatusCodes.Status500InternalServerError
-    }
+    SuppressDiagnosticsCallback = _ => true
 });
-app.Use(async (context, next) =>
-{
-    context.Response.Headers["Referrer-Policy"] = "no-referrer";
-    if (context.Request.Path == "/ask-run.html")
-    {
-        context.Response.Headers["Content-Security-Policy"] =
-            "default-src 'self'; script-src 'self'; style-src 'self'; frame-ancestors 'none'; " +
-            "base-uri 'self'; object-src 'none'";
-        context.Response.Headers["X-Frame-Options"] = "DENY";
-    }
-    if (context.Request.Path == "/review" || context.Request.Path == "/review.html")
-    {
-        context.Response.Headers["Content-Security-Policy"] =
-            "default-src 'self'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self'; " +
-            "img-src 'self' data: blob:; connect-src 'self'; worker-src 'self' blob: https://cdnjs.cloudflare.com; " +
-            "frame-ancestors 'none'; base-uri 'self'; object-src 'none'";
-        context.Response.Headers["X-Frame-Options"] = "DENY";
-    }
-    if (context.Request.Path.StartsWithSegments("/api") || context.Request.Path.StartsWithSegments("/auth") ||
-        context.Request.Path.StartsWithSegments("/signin-oidc"))
-    {
-        context.Response.Headers.CacheControl = "no-store";
-    }
-    await next();
-});
+app.UseStatusCodePages(async status =>
+    await DocIntelExceptionHandler.CreateProblem(status.HttpContext, status.HttpContext.Response.StatusCode)
+        .ExecuteAsync(status.HttpContext));
 app.UseAuthentication();
 app.Use(async (context, next) =>
 {

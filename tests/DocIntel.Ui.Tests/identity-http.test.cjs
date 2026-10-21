@@ -405,6 +405,9 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
           const original = `${tenantPath}/jobs/${job.jobId}/original`;
           const stored = await request(original, processor);
           assert.equal(stored.status, 200);
+          assert.equal(stored.headers.get('x-content-type-options'), 'nosniff');
+          assert.equal(stored.headers.get('x-frame-options'), 'SAMEORIGIN');
+          assert.match(stored.headers.get('content-security-policy'), /frame-ancestors 'self'/);
           assert.deepEqual(Buffer.from(await stored.arrayBuffer()), Buffer.from(pdf));
           assert.equal((await request(original, reader)).status, 404);
           assert.equal(job.layoutAvailable, true);

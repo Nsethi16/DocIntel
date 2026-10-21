@@ -54,6 +54,11 @@ legacy provenance is unknown. The workspace labels these cases and Ask AI is tol
 against original source text rather than trust unverified derived results. The explicit
 `seed-examples` adapter is available only in loopback development with simulation enabled.
 Uploads always require an actual PDF, with a 25 MiB limit; an empty request never creates a sample.
+Kestrel and multipart parsing have an explicit 26 MiB total request limit (including multipart
+overhead), so oversized bodies are rejected before full application-level buffering. Form values
+are separately bounded. Unexpected errors return sanitized `application/problem+json` with a
+generated `traceId`, also sent as `X-DocIntel-Correlation-Id`; safe server diagnostics record the
+error type/code/site rather than raw provider messages, document values or credentials.
 
 Classification, insights (including explicit re-evaluation), entity/data extraction and prompt
 columns separate document text/metadata from operator instructions using a shared escaped
@@ -217,8 +222,14 @@ invalidate old snapshots. This accommodates individual decisions for all 2,000 a
 This is application-level append-only review history, **not** immutable/legal-hold archival,
 global endpoint audit coverage, SOC 2 certification or calibrated accuracy. Broad shared-chrome
 refactoring, business-calendar SLA computation, leaderboard metrics and model-score bulk
-approval are not claimed. The review page has a focused CSP; existing legacy SPAs are not
-silently broken by applying an incompatible CSP to their inline scripts.
+approval are not claimed. All responses have MIME sniffing, referrer, permissions and frame
+policies, including errors and static files. Production advertises a one-year HSTS policy;
+HTTPS ingress is still required, and unrelated subdomains are not opted in. Review and question
+pages use strict script policies; legacy workspace/Admin pages temporarily permit their existing
+inline scripts/styles, without `unsafe-eval`, until the event handlers are migrated. Policies
+allow only their existing font providers and same-origin/blob PDF frames. Original/slice PDFs
+are embeddable by this application only (`SAMEORIGIN`), not blocked by the HTML page anti-framing
+policy. This CSP compatibility exception is not a claim of complete XSS prevention.
 
 ## Reviewed exports
 
