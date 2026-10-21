@@ -400,6 +400,14 @@ public sealed class SimulatedSliceChatClient : IChatClient
             ?? list.FirstOrDefault(m => m.Role == ChatRole.System)?.Text
             ?? string.Empty;
         var userText = list.LastOrDefault(m => m.Role == ChatRole.User)?.Text ?? string.Empty;
+        const string sourceTag = "<untrusted_document_content>";
+        const string endSourceTag = "</untrusted_document_content>";
+        if (userText.StartsWith(sourceTag, StringComparison.Ordinal))
+        {
+            var end = userText.IndexOf(endSourceTag, StringComparison.Ordinal);
+            if (end < 0) throw new InvalidDataException("The development document envelope is incomplete.");
+            userText = System.Xml.Linq.XElement.Parse(userText[..(end + endSourceTag.Length)]).Value.Trim('\r', '\n');
+        }
 
         if (systemPrompt.Contains("[TASK:IDENTIFY_DOCUMENT]", StringComparison.OrdinalIgnoreCase))
         {

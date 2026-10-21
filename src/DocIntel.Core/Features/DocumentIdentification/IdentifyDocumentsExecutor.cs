@@ -118,7 +118,8 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
                 {string.Join(Environment.NewLine, topLines)}
                 """;
 
-            var response = await decisionAgent.RunAsync(slicePrompt, cancellationToken: cancellationToken);
+            var response = await decisionAgent.RunAsync(
+                DocumentPromptBoundary.Wrap(slicePrompt), cancellationToken: cancellationToken);
             var cleanedJson = ReasoningCleanupChatClient.CleanModelText(response.Text ?? string.Empty);
 
             DecisionClassificationDto? decision = null;
@@ -185,6 +186,7 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
             sb.Append("RULE|").Append(rule.DocumentName.Trim()).Append('|').AppendLine(rule.IdentificationPrompt.Trim());
         }
         sb.AppendLine($"Allowed values for identifiedDocumentName: [{string.Join(", ", activeRules.Select(r => $"\"{r.DocumentName}\""))}, \"{UndefinedDocumentName}\"]");
+        sb.AppendLine(DocumentPromptBoundary.Policy);
         return sb.ToString();
     }
 

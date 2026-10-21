@@ -55,6 +55,15 @@ against original source text rather than trust unverified derived results. The e
 `seed-examples` adapter is available only in loopback development with simulation enabled.
 Uploads always require an actual PDF, with a 25 MiB limit; an empty request never creates a sample.
 
+Classification, insights (including explicit re-evaluation), entity/data extraction and prompt
+columns separate document text/metadata from operator instructions using a shared escaped
+`untrusted_document_content` envelope and system-level data-only policy. Prompt templates refer
+to source text rather than substituting document content into instruction text; attached PDFs
+are covered by the same policy. Prompt-column input fingerprints invalidate pre-boundary caches
+on explicit evaluation, never on a read. These are prompt-injection defenses, not a guarantee
+that a model cannot be influenced: closed-set/schema validation, authorization and human review
+remain independent controls. Ask AI tool results stay structured data with the same data-only rule.
+
 Accepted uploads persist an immutable `original.pdf` in the tenant artifact namespace before the
 job is recorded/enqueued. The accepted SHA-256 is stored with the job; processing reads and verifies
 that persisted source, not PDF bytes in a queue ticket. Authorized clients can retrieve it at

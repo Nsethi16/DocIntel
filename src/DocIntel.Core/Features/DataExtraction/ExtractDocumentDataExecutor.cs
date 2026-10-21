@@ -102,7 +102,8 @@ public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, Split
                 ? slice.TranslatedText!
                 : slice.BodyText;
 
-            var response = await agent.RunAsync(sourceContent, cancellationToken: cancellationToken);
+            var response = await agent.RunAsync(
+                DocumentPromptBoundary.Wrap(sourceContent), cancellationToken: cancellationToken);
             var cleanedJson = ReasoningCleanupChatClient.CleanModelText(response.Text ?? string.Empty);
 
             DataExtractionResponseDto? parsed = null;
@@ -206,6 +207,7 @@ public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, Split
             }
         }
 
+        sb.AppendLine(DocumentPromptBoundary.Policy);
         return sb.ToString();
     }
 

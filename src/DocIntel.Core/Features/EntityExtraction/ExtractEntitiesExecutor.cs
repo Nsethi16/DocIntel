@@ -57,7 +57,8 @@ public sealed class ExtractEntitiesExecutor : Executor<SplittingState, Splitting
 
         var chatOptions = new ChatOptions
         {
-            Instructions = $"[TASK:ENTITY_EXTRACTION]\nYou are a structured entity extraction specialist.\n{extractionPrompt}",
+            Instructions = $"[TASK:ENTITY_EXTRACTION]\nYou are a structured entity extraction specialist.\n" +
+                $"{extractionPrompt}\n{DocumentPromptBoundary.Policy}",
             ResponseFormat = ChatResponseFormat.ForJsonSchema<EntityExtractionEnvelopeDto>(
                 schemaName: "extracted_entities_response",
                 schemaDescription: "Structured list of entities extracted from the document slice")
@@ -82,7 +83,8 @@ public sealed class ExtractEntitiesExecutor : Executor<SplittingState, Splitting
                 ? slice.TranslatedText!
                 : slice.BodyText;
 
-            var response = await extractionAgent.RunAsync(sourceContent, cancellationToken: cancellationToken);
+            var response = await extractionAgent.RunAsync(
+                DocumentPromptBoundary.Wrap(sourceContent), cancellationToken: cancellationToken);
             var cleanedJson = ReasoningCleanupChatClient.CleanModelText(response.Text ?? string.Empty);
 
             EntityExtractionEnvelopeDto? parsed = null;

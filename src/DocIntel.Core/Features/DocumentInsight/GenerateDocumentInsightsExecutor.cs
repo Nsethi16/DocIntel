@@ -58,7 +58,8 @@ public sealed class GenerateDocumentInsightsExecutor : Executor<SplittingState, 
 
         var chatOptions = new ChatOptions
         {
-            Instructions = $"[TASK:DOCUMENT_INSIGHT]\nYou are an enterprise document insight assistant.\n{summaryInstructions}",
+            Instructions = $"[TASK:DOCUMENT_INSIGHT]\nYou are an enterprise document insight assistant.\n" +
+                $"{summaryInstructions}\n{DocumentPromptBoundary.Policy}",
             ResponseFormat = ChatResponseFormat.ForJsonSchema<InsightResponseDto>(
                 schemaName: "document_insight_summary",
                 schemaDescription: "Structured document insight summary")
@@ -83,7 +84,8 @@ public sealed class GenerateDocumentInsightsExecutor : Executor<SplittingState, 
                 ? slice.TranslatedText!
                 : slice.BodyText;
 
-            var response = await insightAgent.RunAsync(sourceContent, cancellationToken: cancellationToken);
+            var response = await insightAgent.RunAsync(
+                DocumentPromptBoundary.Wrap(sourceContent), cancellationToken: cancellationToken);
             var cleanedJson = ReasoningCleanupChatClient.CleanModelText(response.Text ?? string.Empty);
 
             InsightResponseDto? parsed = null;
@@ -149,7 +151,8 @@ public sealed class GenerateDocumentInsightsExecutor : Executor<SplittingState, 
         if (modelCatalog.UsesDevelopmentSimulation(tenant, feature.ModelIdOverride)) job.HasDevelopmentResults = true;
         var chatOptions = new ChatOptions
         {
-            Instructions = $"[TASK:DOCUMENT_INSIGHT]\nYou are an enterprise document insight assistant.\n{summaryInstructions}",
+            Instructions = $"[TASK:DOCUMENT_INSIGHT]\nYou are an enterprise document insight assistant.\n" +
+                $"{summaryInstructions}\n{DocumentPromptBoundary.Policy}",
             ResponseFormat = ChatResponseFormat.ForJsonSchema<InsightResponseDto>(
                 schemaName: "document_insight_summary",
                 schemaDescription: "Structured document insight summary")
@@ -172,7 +175,8 @@ public sealed class GenerateDocumentInsightsExecutor : Executor<SplittingState, 
                 ? slice.TranslatedText!
                 : slice.BodyText;
 
-            var response = await insightAgent.RunAsync(sourceContent, cancellationToken: cancellationToken);
+            var response = await insightAgent.RunAsync(
+                DocumentPromptBoundary.Wrap(sourceContent), cancellationToken: cancellationToken);
             var cleanedJson = ReasoningCleanupChatClient.CleanModelText(response.Text ?? string.Empty);
 
             InsightResponseDto? parsed = null;
