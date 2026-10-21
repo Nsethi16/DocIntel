@@ -2,6 +2,8 @@ using System.Net;
 using System.Text.Json;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Storage;
+using DocIntel.Core.Authorization;
+using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Azure.Cosmos;
 using Moq;
 using Xunit;
@@ -10,6 +12,30 @@ namespace DocIntel.Tests;
 
 public sealed class CosmosDocumentJobTests
 {
+    [Fact]
+    public async Task Cosmos_Soft_Deletion_Is_Fenced_And_Cannot_Be_Resurrected_By_A_Stale_Save()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Persisted.Status = JobStatus.Completed;
+        fixture.Persisted.PacketSummary = "Retained processing result";
+        var previous = await fixture.Store.GetJobAsync("one", tenantId: "tenant");
+        var actor = new ActorIdentity(Guid.NewGuid(), Guid.NewGuid());
+        var lifecycle = new DocumentLifecycleService(fixture.Store, NullLogger<DocumentLifecycleService>.Instance);
+
+        // Act
+        await lifecycle.SoftDeleteAsync("tenant", "one", actor, development: false);
+
+        // Assert
+        Assert.Equal(JobStatus.Deleted, fixture.Persisted.Status);
+        Assert.Equal(actor, fixture.Persisted.DeletedBy);
+        Assert.Equal("Retained processing result", fixture.Persisted.PacketSummary);
+        Assert.Null(await fixture.Store.GetJobAsync("one", tenantId: "tenant"));
+        Assert.Null(await fixture.Store.TryAcquireJobAsync("tenant", "one"));
+        await Assert.ThrowsAsync<CosmosException>(() => fixture.Store.UpsertJobAsync(previous!));
+        Assert.Equal(JobStatus.Deleted, fixture.Persisted.Status);
+    }
+
     [Theory]
     [InlineData(null)]
     [InlineData("")]

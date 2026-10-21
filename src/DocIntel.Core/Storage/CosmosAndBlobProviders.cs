@@ -517,7 +517,7 @@ public sealed partial class CosmosJobStore : IJobStore
                 if (ptResponse.Resource.TenantId != tenantId || ptResponse.Resource.JobId != jobId)
                     throw new InvalidDataException("Stored document identity does not match its partition key.");
                 ptResponse.Resource.ETag = RequireETag(ptResponse.ETag);
-                return ptResponse.Resource;
+                return ptResponse.Resource.Status == JobStatus.Deleted ? null : ptResponse.Resource;
             }
             catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
             {
@@ -525,8 +525,8 @@ public sealed partial class CosmosJobStore : IJobStore
             }
         }
 
-        var query = new QueryDefinition("SELECT TOP 2 * FROM c WHERE c.id = @jobId")
-            .WithParameter("@jobId", jobId);
+        var query = new QueryDefinition("SELECT TOP 2 * FROM c WHERE c.id = @jobId AND c.status != @deleted")
+            .WithParameter("@jobId", jobId).WithParameter("@deleted", nameof(JobStatus.Deleted));
 
         using var iterator = _container.GetItemQueryIterator<DocumentJob>(query);
         var matches = new List<DocumentJob>();
@@ -536,7 +536,7 @@ public sealed partial class CosmosJobStore : IJobStore
             matches.AddRange(page.Take(2 - matches.Count));
         }
         if (matches.Count > 1) throw new InvalidOperationException("A tenant ID is required for this document ID.");
-        return matches.FirstOrDefault();
+        return matches.FirstOrDefault(job => job.Status != JobStatus.Deleted);
     }
 
     private static string RequireETag(string? etag) =>
@@ -547,8 +547,8 @@ public sealed partial class CosmosJobStore : IJobStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
 
-        var query = new QueryDefinition("SELECT * FROM c WHERE c.tenantId = @tenantId")
-            .WithParameter("@tenantId", tenantId);
+        var query = new QueryDefinition("SELECT * FROM c WHERE c.tenantId = @tenantId AND c.status != @deleted")
+            .WithParameter("@tenantId", tenantId).WithParameter("@deleted", nameof(JobStatus.Deleted));
 
         using var iterator = _container.GetItemQueryIterator<DocumentJob>(
             query,

@@ -1,5 +1,6 @@
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Harness;
+using DocIntel.Core.Jobs;
 using Microsoft.AspNetCore.Antiforgery;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authorization.Policy;
@@ -15,6 +16,7 @@ internal sealed class TenantAccessHandler(
     IdentityAccessService access,
     IHarnessStore harnessStore,
     IAskAiRunStore runStore,
+    IJobStore jobs,
     ILogger<TenantAccessHandler> logger) : AuthorizationHandler<TenantAccessRequirement>
 {
     internal static object DeniedStatusKey { get; } = new();
@@ -68,6 +70,9 @@ internal sealed class TenantAccessHandler(
                 pattern.EndsWith("/ocr-usage", StringComparison.Ordinal);
             if (usageOperation && (!scope.CanAdmin || scope.AllowedJobIds is not null))
                 return Denied(pattern, context);
+            if (HttpMethods.IsDelete(context.Request.Method) &&
+                (!scope.CanAdmin || context.Request.RouteValues["jobId"] is null && scope.AllowedJobIds is not null))
+                return Denied(pattern, context);
             if (review && !read && !scope.CanReview) return Denied(pattern, context);
             if (!scope.CanRead || (!read && !ask && !review && !scope.CanProcess && !scope.CanAdmin) ||
                 (!read && pattern.EndsWith("/tenants/{tenantId}", StringComparison.Ordinal) && !scope.CanAdmin) ||
@@ -91,6 +96,17 @@ internal sealed class TenantAccessHandler(
                     run.Citations.Any(c => !scope.CanReadDocument(c.JobId)))
                 {
                     return 404;
+                }
+                if (run.Status == JobStatus.Completed || !String.IsNullOrEmpty(run.Answer) || run.Citations.Count > 0)
+                {
+                    var referenced = run.ReferencedJobIds.Concat(run.Citations.Select(citation => citation.JobId))
+                        .Distinct(StringComparer.Ordinal);
+                    foreach (var id in referenced)
+                        if (!scope.CanReadDocument(id) ||
+                            await jobs.GetJobAsync(id, context.RequestAborted, tenantId) is not { Status: JobStatus.Completed })
+                            return 404;
+                    if (run.DocumentsEvaluated > 0 && run.ReferencedJobIds.Count == 0)
+                        return 404;
                 }
             }
         }

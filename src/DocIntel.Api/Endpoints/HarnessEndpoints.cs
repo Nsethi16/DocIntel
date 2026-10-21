@@ -99,7 +99,8 @@ public static class HarnessEndpoints
             foreach (var id in ids)
             {
                 var tenant = await store.GetTenantAsync(id, ct);
-                if (tenant is not null) tenants.Add(tenant);
+                if (tenant is not null && (tenant.IsActive || access.GetAccess(context.User, id).CanAdmin))
+                    tenants.Add(tenant);
             }
             return Results.Ok(tenants);
         });
@@ -122,7 +123,13 @@ public static class HarnessEndpoints
                 return Results.BadRequest(new { error = "A supported OCR policy is required." });
             if (updated.ReviewPolicy is null || updated.ReviewPolicy.DueHours is < 1 or > 720)
                 return Results.BadRequest(new { error = "A review policy with bounded UTC due hours is required." });
+            if (updated.Retention?.IsValid != true)
+                return Results.BadRequest(new { error = "Retention days must be unset or 1-36,500; permanent purge is unavailable." });
             updated.TenantId = tenantId;
+            var previous = await store.GetTenantAsync(tenantId, ct);
+            updated.DeactivatedAtUtc = previous?.DeactivatedAtUtc;
+            updated.DeactivatedBy = previous?.DeactivatedBy;
+            updated.DeactivationInDevelopment = previous?.DeactivationInDevelopment ?? false;
             TenantHarness.EnsureDefaultCapabilities(updated);
             if (updated.HarnessVersion < 0)
                 return Results.BadRequest(new { error = "A nonnegative expected harness version is required." });
@@ -656,6 +663,13 @@ public static class HarnessEndpoints
             });
         });
 
+        group.MapGet("/tenants/{tenantId}/jobs/{jobId}", async (
+            string tenantId, string jobId, IJobStore store, CancellationToken ct) =>
+        {
+            var job = await store.GetJobAsync(jobId, ct, tenantId);
+            return job is null ? Results.NotFound() : Results.Ok(FormatJobResponse(job));
+        });
+
         group.MapGet("/tenants/{tenantId}/jobs/{jobId}/original", async (
             string tenantId, string jobId, IJobStore store, IArtifactStore artifacts, CancellationToken ct) =>
         {
@@ -698,7 +712,8 @@ public static class HarnessEndpoints
                 (await harnessStore.ListTenantsAsync(ct)).Select(t => t.TenantId).ToHashSet(StringComparer.Ordinal);
             foreach (var tenantId in tenantIds)
             {
-                if (!access.GetAccess(context.User, tenantId).CanReadDocument(jobId))
+                var scope = await access.ResolveAsync(IdentityAccessService.GetActor(context.User), tenantId, ct);
+                if (!scope.CanReadDocument(jobId))
                 {
                     continue;
                 }

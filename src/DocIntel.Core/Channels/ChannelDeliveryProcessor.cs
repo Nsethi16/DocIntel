@@ -54,6 +54,26 @@ public sealed class ChannelDeliveryProcessor(
             await lease.SaveAsync(cancellationToken);
             return;
         }
+        foreach (var id in run.ReferencedJobIds.Concat(run.Citations.Select(citation => citation.JobId))
+            .Distinct(StringComparer.Ordinal))
+        {
+            if (jobs is null) throw new InvalidOperationException("Answer delivery requires document availability checks.");
+            if (!scope.CanReadDocument(id) ||
+                await jobs.GetJobAsync(id, cancellationToken, run.TenantId) is not { Status: JobStatus.Completed })
+            {
+                target.Status = ChannelDeliveryStatus.Failed;
+                target.ErrorCode = "DeliveryEvidenceChanged";
+                await lease.SaveAsync(cancellationToken);
+                return;
+            }
+        }
+        if (run.DocumentsEvaluated > 0 && run.ReferencedJobIds.Count == 0)
+        {
+            target.Status = ChannelDeliveryStatus.Failed;
+            target.ErrorCode = "LegacyEvidenceRequiresRefresh";
+            await lease.SaveAsync(cancellationToken);
+            return;
+        }
         foreach (var citation in run.Citations.Where(citation => citation.EvidenceKind != "OriginalSourceText"))
         {
             if (jobs is null || reviews is null)

@@ -148,6 +148,7 @@ public sealed class AskAiRunProcessor(
             run.ExecutedCosmosQueries.Clear();
             run.Steps.Clear();
             run.DocumentsEvaluated = 0;
+            run.ReferencedJobIds.Clear();
             run.CompletedAtUtc = null;
             await lease.SaveAsync(executionToken.Token);
             await orchestrator.ExecuteRunAsync(

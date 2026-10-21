@@ -57,6 +57,20 @@ public sealed class AskAiAgentTests
         store.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task A_Document_Removed_After_Search_Cannot_Contribute_To_An_Uncited_Final_Answer()
+    {
+        // Arrange
+        var store = new Mock<IJobStore>();
+        store.Setup(s => s.SearchDocumentsAsync("tenant-one", It.IsAny<DocumentQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DocumentQueryPage([new DocumentReference("deleted", "file.pdf", 1, 1)], null));
+        var orchestrator = CreateOrchestrator(store.Object,
+            SearchCall(), Final("NoEvidence", "An uncited conclusion based on the search."));
+
+        // Act / Assert
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() => orchestrator.ExecuteRunAsync(CreateRun()));
+    }
+
     [Theory]
     [InlineData("Missing [1].", "invented-source")]
     [InlineData("Wrong marker [2].", "e1")]

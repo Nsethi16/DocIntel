@@ -89,6 +89,7 @@ app.MapDocIntelTeams();
 app.MapHarnessEndpoints();
 app.MapOcrUsageEndpoints();
 app.MapReviewEndpoints();
+app.MapLifecycleEndpoints();
 app.MapExportEndpoints();
 app.MapGet("/review", (HttpRequest request) => Results.Redirect(
     "/review.html?tenant=" + Uri.EscapeDataString(request.Query["tenant"].ToString()) +

@@ -195,6 +195,7 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IOcrUsageStore, InMemoryOcrUsageStore>();
         services.TryAddSingleton<IReviewStore, InMemoryReviewStore>();
         services.TryAddSingleton<ReviewService>();
+        services.TryAddSingleton<DocumentLifecycleService>();
         services.TryAddSingleton<ChannelDeliveryProcessor>();
 
         // 2. Azure Blob Storage (per-tenant 'tenant-{tenantId}' containers) vs Local File Artifact Fallback

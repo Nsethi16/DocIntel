@@ -135,6 +135,7 @@ public sealed class ChannelDeliveryTests
                 TenantDisplayName = "Tenant",
                 AppliedHarnessVersion = 1,
                 FileName = "file.pdf",
+                Status = JobStatus.Completed,
                 ReviewId = Guid.NewGuid().ToString("N")
             });
 
@@ -144,6 +145,23 @@ public sealed class ChannelDeliveryTests
         // Assert
         Assert.Equal(ChannelDeliveryStatus.Failed, fixture.Run.ChannelDelivery!.Status);
         Assert.Equal("DeliveryEvidenceChanged", fixture.Run.ChannelDelivery.ErrorCode);
+        fixture.Transport.Verify(t => t.SendAsync(It.IsAny<AskAiRun>(), It.IsAny<ChannelDelivery>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_Deleted_Referenced_Document_Blocks_Delivery_Even_If_The_Model_Did_Not_Cite_It()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Run.ReferencedJobIds = ["deleted-document"];
+        fixture.Run.DocumentsEvaluated = 1;
+
+        // Act
+        await fixture.Processor.ProcessAsync(fixture.Lease.Object);
+
+        // Assert
+        Assert.Equal("DeliveryEvidenceChanged", fixture.Run.ChannelDelivery!.ErrorCode);
         fixture.Transport.Verify(t => t.SendAsync(It.IsAny<AskAiRun>(), It.IsAny<ChannelDelivery>(),
             It.IsAny<CancellationToken>()), Times.Never);
     }

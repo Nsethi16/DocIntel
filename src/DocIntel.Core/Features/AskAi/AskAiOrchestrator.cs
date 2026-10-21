@@ -118,6 +118,9 @@ public sealed class AskAiRun
     [JsonPropertyName("documentsEvaluated")]
     public int DocumentsEvaluated { get; set; }
 
+    [JsonPropertyName("referencedJobIds")]
+    public List<string> ReferencedJobIds { get; set; } = [];
+
     [JsonPropertyName("citations")]
     public List<AskAiCitation> Citations { get; set; } = [];
 
@@ -569,6 +572,7 @@ public sealed class AskAiOrchestrator
 
                 run.ExecutedCosmosQueries.Add(compiled.Sql);
                 run.DocumentsEvaluated = allowedJobIds.Count;
+                run.ReferencedJobIds = allowedJobIds.Order(StringComparer.Ordinal).ToList();
                 await RecordStepAsync("search_documents", timer, ct);
                 return page;
             }
@@ -851,6 +855,10 @@ public sealed class AskAiOrchestrator
         }
 
         var finalAccess = await ResolveAccessAsync(cancellationToken);
+        foreach (var id in allowedJobIds)
+            if (!finalAccess.CanReadDocument(id) ||
+                await _jobStore.GetJobAsync(id, cancellationToken, tenant.TenantId) is not { Status: JobStatus.Completed })
+                throw new UnauthorizedAccessException("A document used by this answer is no longer available.");
         if (run.ChannelDelivery is not null &&
             ChannelDelivery.GetAccessFingerprint(initialAccess) != ChannelDelivery.GetAccessFingerprint(finalAccess))
             throw new UnauthorizedAccessException("Permissions changed before the channel answer completed.");

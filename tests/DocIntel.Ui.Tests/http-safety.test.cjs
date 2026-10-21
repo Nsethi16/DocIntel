@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs/promises');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
@@ -22,6 +23,29 @@ function assertHeaders(response) {
   assert.match(response.headers.get('permissions-policy'), /camera=\(\)/);
   assert.match(response.headers.get('content-security-policy'), /frame-ancestors 'none'/);
   assert.ok(response.headers.get('x-docintel-correlation-id'));
+}
+
+function oversizedHeaders(endpoint, headers) {
+  return new Promise((resolve, reject) => {
+    const request = http.request(endpoint, { method: 'POST', headers: {
+      ...headers, 'Content-Length': 26 * 1024 * 1024 + 1, Expect: '100-continue', Connection: 'close'
+    } });
+    request.on('error', reject);
+    request.setTimeout(10000, () => request.destroy(new Error('Oversized request was not rejected promptly.')));
+    request.on('continue', () =>
+      request.destroy(new Error('The server accepted an oversized body before enforcing its limit.')));
+    request.on('response', response => {
+      const chunks = [];
+      response.on('data', chunk => chunks.push(chunk));
+      response.on('error', reject);
+      response.on('end', () => {
+        resolve({ status: response.statusCode, headers: new Headers(response.headers),
+          body: Buffer.concat(chunks).toString('utf8') });
+        request.destroy();
+      });
+    });
+    request.flushHeaders();
+  });
 }
 
 test('browser policies cover static pages, API results and missing resources without breaking legacy scripts',
@@ -94,6 +118,11 @@ test('malformed JSON and oversized request bodies are rejected without provider 
       const csrf = (await verification.json()).token;
       const cookie = verification.headers.get('set-cookie').split(';')[0];
       const headers = { 'Content-Type': 'application/json', Cookie: cookie, 'X-DocIntel-CSRF': csrf };
+      const csrfDeletion = await fetch(api.url + '/api/harness/tenants/contoso-legal/jobs/not-created', {
+        method: 'DELETE', headers: { Cookie: cookie, 'X-DocIntel-Confirm-Delete': 'not-created' }
+      });
+      assert.equal(csrfDeletion.status, 400);
+      assert.match((await csrfDeletion.json()).error, /verification token/);
       const endpoint = api.url + '/api/harness/tenants/contoso-legal/ask/runs';
       const invalid = await fetch(endpoint, {
         method: 'POST', headers, body: '{"question": "PRIVATE_REQUEST_MARKER",'
@@ -101,12 +130,10 @@ test('malformed JSON and oversized request bodies are rejected without provider 
       assert.equal(invalid.status, 400);
       assertHeaders(invalid);
       assert.doesNotMatch(await invalid.text(), /PRIVATE_REQUEST_MARKER|JsonException|BytePosition|StackTrace/);
-      const large = await fetch(endpoint, {
-        method: 'POST', headers, body: '{"question":"' + 'x'.repeat(26 * 1024 * 1024) + '"}'
-      });
+      const large = await oversizedHeaders(endpoint, headers);
       assert.equal(large.status, 413);
       assertHeaders(large);
-      assert.equal((await large.json()).status, 413);
+      assert.equal(JSON.parse(large.body).status, 413);
       const snapshots = await fs.readdir(path.join(directory, 'App_Data', 'ask-ai-runs'), { recursive: true })
         .catch(error => { if (error.code === 'ENOENT') return []; throw error; });
       assert.equal(snapshots.filter(name => name.endsWith('.json')).length, 0);

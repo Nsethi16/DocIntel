@@ -36,14 +36,15 @@ function cookies(response) {
     : (response.headers.get('set-cookie') || '').split(/,(?=\s*[^;,]+=)/).filter(Boolean);
 }
 
-async function writeRun(directory, id, actor, citations = []) {
+async function writeRun(directory, id, actor, citations = [], referencedJobIds = []) {
   const hash = value => crypto.createHash('sha256').update(value).digest('hex').toUpperCase();
   const folder = path.join(directory, 'App_Data', 'ask-ai-runs', hash('contoso-legal'));
   await fs.mkdir(folder, { recursive: true });
   await fs.writeFile(path.join(folder, `${hash(id)}.json`), JSON.stringify({
     schemaVersion: 1, tenantId: 'contoso-legal', runId: id, question: 'Test question',
     actor: { directoryTenantId: directoryId, objectId: actor },
-    status: 'Completed', answer: 'A test-only answer.', citations,
+    status: 'Completed', answer: 'A test-only answer.', citations, referencedJobIds,
+    documentsEvaluated: referencedJobIds.length,
     createdAtUtc: new Date().toISOString()
   }));
 }
@@ -669,6 +670,63 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         const after = await (await request(tenantPath + '/jobs', processor)).json();
         assert.ok(after.every(job => !(job.promptColumnResults || [])
           .some(result => result.columnId === 'must-not-run-on-read')));
+      });
+      await t.test('admin-confirmed soft deletion hides artifacts and prior answers without erasing retained source data', async () => {
+        const target = jobs[1];
+        const url = `${tenantPath}/jobs/${target.jobId}`;
+        const remove = (pathname, token, confirmation) => fetch(api.url + pathname, {
+          method: 'DELETE', headers: {
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(confirmation ? { 'X-DocIntel-Confirm-Delete': confirmation } : {})
+          }
+        });
+        assert.equal((await remove(url, reader, target.jobId)).status, 403);
+        assert.equal((await remove(url, processor, target.jobId)).status, 403);
+        assert.equal((await remove(url, administrator)).status, 400);
+        assert.equal((await remove(url, administrator, 'wrong-document')).status, 400);
+        await writeRun(directory, 'referenced-before-delete', administratorId, [], [target.jobId]);
+        await writeRun(directory, 'cited-before-delete', administratorId, [{ jobId: target.jobId }]);
+        assert.equal((await request(tenantPath + '/ask/runs/referenced-before-delete', administrator)).status, 200);
+        assert.equal((await request(tenantPath + '/ask/runs/cited-before-delete', administrator)).status, 200);
+        const deleted = await remove(url, administrator, target.jobId);
+        assert.equal(deleted.status, 200);
+        const receipt = await deleted.json();
+        assert.equal(receipt.status, 'Deleted');
+        assert.equal(receipt.dataRetained, true);
+        assert.equal(receipt.permanentErasure, false);
+        assert.ok(receipt.deletedAtUtc);
+        for (const suffix of ['', '/original', '/layout', '/processing-result', '/slices/0/pdf',
+          '/review', '/review/audit', '/export?format=json']) {
+          assert.equal((await request(url + suffix, administrator)).status, 404, suffix);
+        }
+        const remaining = await (await request(tenantPath + '/jobs', administrator)).json();
+        assert.ok(!remaining.some(job => job.jobId === target.jobId));
+        assert.equal((await request(tenantPath + '/ask/runs/referenced-before-delete', administrator)).status, 404);
+        assert.equal((await request(tenantPath + '/ask/runs/cited-before-delete', administrator)).status, 404);
+        assert.equal((await remove(url, administrator, target.jobId)).status, 404);
+        const retained = path.join(directory, 'App_Data', 'blobs', 'tenant-contoso-legal',
+          target.jobId, 'original.pdf');
+        assert.ok((await fs.stat(retained)).size > 0);
+        const current = await (await request(tenantPath, administrator)).json();
+        assert.equal((await request(tenantPath, administrator, 'PUT',
+          { ...current, retention: { permanentPurgeEnabled: true } })).status, 400);
+        assert.equal((await request(tenantPath, administrator, 'PUT',
+          { ...current, retention: { documentDays: 0 } })).status, 400);
+        assert.equal((await remove(tenantPath, processor, 'contoso-legal')).status, 403);
+        assert.equal((await remove(tenantPath, administrator)).status, 400);
+        const deactivated = await remove(tenantPath, administrator, 'contoso-legal');
+        assert.equal(deactivated.status, 200);
+        const result = await deactivated.json();
+        assert.equal(result.status, 'Deactivated');
+        assert.equal(result.permanentErasure, false);
+        assert.equal(result.automaticPurgeEnabled, false);
+        assert.equal((await request(tenantPath + '/jobs', administrator)).status, 404);
+        assert.equal((await request(tenantPath, reader)).status, 404);
+        assert.equal((await request(`/api/harness/jobs/${allowedDocumentId}`, reader)).status, 404);
+        assert.equal((await request(`/api/harness/jobs/${allowedDocumentId}`, administrator)).status, 404);
+        assert.deepEqual(await (await request('/api/harness/tenants', reader)).json(), []);
+        assert.equal((await request(tenantPath, administrator)).status, 200);
+        assert.ok((await fs.stat(retained)).size > 0);
       });
       const workerFailures = api.getLogs().split('\n')
         .filter(line => line.includes('failed with') || line.includes('could not be processed:'));

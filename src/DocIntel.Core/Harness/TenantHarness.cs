@@ -277,6 +277,11 @@ public sealed class TenantHarness
 
     public DocIntel.Core.Review.ReviewPolicy ReviewPolicy { get; set; } = new();
 
+    public DocIntel.Core.Jobs.DataRetentionPolicy Retention { get; set; } = new();
+    public DateTimeOffset? DeactivatedAtUtc { get; set; }
+    public DocIntel.Core.Authorization.ActorIdentity? DeactivatedBy { get; set; }
+    public bool DeactivationInDevelopment { get; set; }
+
     public bool IsActive { get; set; } = true;
 
     /// <summary>

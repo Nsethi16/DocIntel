@@ -14,7 +14,8 @@ public enum JobStatus
     Queued,
     Running,
     Completed,
-    Failed
+    Failed,
+    Deleted
 }
 
 /// <summary>
@@ -59,6 +60,10 @@ public sealed class DocumentJob
     public string? LayoutSha256 { get; set; }
 
     public string? ProcessingResultSha256 { get; set; }
+
+    public DateTimeOffset? DeletedAtUtc { get; set; }
+    public ActorIdentity? DeletedBy { get; set; }
+    public bool DeletionInDevelopment { get; set; }
 
     public string? ReviewId { get; set; }
 
@@ -167,7 +172,13 @@ public sealed class InMemoryJobStore : IJobStore
         var key = (job.TenantId, job.JobId);
         var gate = _processing.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         if (!gate.Wait(0)) throw new InvalidOperationException("Save an owned document through its lease.");
-        try { _jobs[key] = job; }
+        try
+        {
+            if (_jobs.TryGetValue(key, out var existing) && existing.Status == JobStatus.Deleted &&
+                job.Status != JobStatus.Deleted)
+                throw new InvalidOperationException("A deleted document cannot be overwritten by an earlier result.");
+            _jobs[key] = job;
+        }
         finally { gate.Release(); }
         return Task.CompletedTask;
     }
@@ -188,14 +199,14 @@ public sealed class InMemoryJobStore : IJobStore
         {
             return Task.FromResult<DocumentJob?>(null);
         }
-        return Task.FromResult(job);
+        return Task.FromResult(job?.Status == JobStatus.Deleted ? null : job);
     }
 
     public Task<IReadOnlyList<DocumentJob>> ListJobsByTenantAsync(string tenantId, CancellationToken cancellationToken = default)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         IReadOnlyList<DocumentJob> list = _jobs.Values
-            .Where(j => string.Equals(j.TenantId, tenantId, StringComparison.Ordinal))
+            .Where(j => j.Status != JobStatus.Deleted && string.Equals(j.TenantId, tenantId, StringComparison.Ordinal))
             .OrderByDescending(j => j.CreatedAtUtc)
             .ToList();
         return Task.FromResult(list);
@@ -207,7 +218,7 @@ public sealed class InMemoryJobStore : IJobStore
         var key = (tenantId, jobId);
         var gate = _processing.GetOrAdd(key, _ => new SemaphoreSlim(1, 1));
         if (!await gate.WaitAsync(0, cancellationToken)) return null;
-        if (!_jobs.TryGetValue(key, out var job) || job.Status is JobStatus.Completed or JobStatus.Failed)
+        if (!_jobs.TryGetValue(key, out var job) || job.Status is not (JobStatus.Queued or JobStatus.Running))
         {
             gate.Release();
             return null;

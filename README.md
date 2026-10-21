@@ -2,6 +2,30 @@
 
 A modern **.NET 10 + .NET Aspire + Microsoft Agent Framework (`Microsoft.Agents.AI.Workflows`)** multi-tenant Document Intelligence solution with a clean **Agent Harness Studio** Admin UI.
 
+## Conservative lifecycle controls
+
+`DELETE /api/harness/tenants/{tenantId}/jobs/{jobId}` soft-deletes an available document.
+`DELETE /api/harness/tenants/{tenantId}` deactivates a tenant. Both require the server-assigned
+Admin role, an `X-DocIntel-Confirm-Delete` header exactly matching the target document/tenant ID,
+and browser CSRF verification when using a session cookie. Whole-tenant deactivation requires
+tenant-wide administration. Active worker ownership/version fences prevent deleting over an
+in-flight result; conflicts are explicit rather than replayed.
+
+Responses explicitly say `dataRetained: true` and `permanentErasure: false`. These operations
+are **not physical erasure**: originals, archived JSON, OCR cache, review/audit history and
+stored conversations are retained. Deleted documents cannot be read, searched, reviewed,
+exported or downloaded normally. Ask AI tracks all retrieved document IDs, not just citations,
+and rechecks availability before final answers, polling and channel delivery. Legacy
+document-based runs without that complete reference inventory require a fresh question.
+Previously downloaded files, external messages and offline browser copies cannot be recalled.
+
+Tenant `retention` metadata supports optional `documentDays`, `conversationDays`, `auditDays`
+(1-36,500) and `legalHold`; no retention periods are guessed. Automated permanent purge is
+not implemented or enabled, and attempts to set `permanentPurgeEnabled: true` are rejected.
+Configuring retention metadata does not start a deletion scheduler. Production erasure,
+user-forgetting, legal holds and archival guarantees require an explicitly approved lifecycle
+design and end-to-end purge verification; no GDPR/HIPAA/SOC 2 compliance is claimed.
+
 ## Features
 
 Admins can manage isolated **Tenants** and configure each tenant's **Agent Harness** at runtime:

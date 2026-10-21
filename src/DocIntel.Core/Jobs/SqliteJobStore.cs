@@ -116,7 +116,7 @@ public sealed partial class SqliteJobStore : IJobStore
         var job = Read(reader);
         if (tenantId is null && await reader.ReadAsync(cancellationToken))
             throw new InvalidOperationException("A tenant ID is required for an ambiguous document ID.");
-        return job;
+        return job.Status == JobStatus.Deleted ? null : job;
     }
 
     public async Task<IReadOnlyList<DocumentJob>> ListJobsByTenantAsync(
@@ -126,9 +126,11 @@ public sealed partial class SqliteJobStore : IJobStore
         await using var connection = await OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT body,version,attempts,tenant,id FROM document_jobs WHERE tenant=@tenant ORDER BY created DESC,id
+            SELECT body,version,attempts,tenant,id FROM document_jobs
+            WHERE tenant=@tenant AND status<>@deleted ORDER BY created DESC,id
             """;
         command.Parameters.AddWithValue("@tenant", tenantId);
+        command.Parameters.AddWithValue("@deleted", (int)JobStatus.Deleted);
         await using var reader = await command.ExecuteReaderAsync(cancellationToken);
         var jobs = new List<DocumentJob>();
         while (await reader.ReadAsync(cancellationToken)) jobs.Add(Read(reader));
