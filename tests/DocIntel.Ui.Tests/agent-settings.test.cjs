@@ -29,6 +29,26 @@ test('the real Admin markup does not hide the settings navigation inside the con
   assert.equal(seen.size, 3);
 });
 
+test('compact profile fields retain associated labels, limits and the existing edit actions', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'DocIntel.Api', 'wwwroot', 'admin.html'), 'utf8');
+  const fields = [...html.matchAll(/<div class="agent-profile-field">([\s\S]*?)<\/div>/g)].map(match => match[1]);
+  assert.equal(fields.length, 4);
+  for (const [index, [id, action, limit]] of [
+    ['agentDisplayName', 'data-input="onAgentProfileChanged"', 64],
+    ['agentTone', 'data-change="onAgentProfileChanged"'],
+    ['agentPurpose', 'data-input="onAgentProfileChanged"', 500],
+    ['agentInstructions', 'data-input="onAgentProfileChanged"', 4000]
+  ].entries()) {
+    assert.ok(fields[index].includes(`for="${id}"`));
+    assert.ok(fields[index].includes(`id="${id}"`));
+    assert.ok(fields[index].includes(action));
+    if (limit) assert.ok(fields[index].includes(`maxlength="${limit}"`));
+  }
+  assert.match(fields[0], /aria-describedby="agentIdentityNote"/);
+  assert.match(html, /class="agent-safety-note agent-profile-note" id="agentIdentityNote"/);
+  assert.equal([...html.matchAll(/class="agent-channel-header"/g)].length, 2);
+});
+
 function runtime() {
   const elements = new Map();
   const element = id => {

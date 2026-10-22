@@ -212,24 +212,33 @@
           <p>Choose how your agent introduces itself and responds, wherever people ask.</p>
         </div>
         <div class="agent-identity-grid">
-          <section class="agent-settings-card" aria-label="Agent personality">
-            <label for="agentDisplayName">Agent name</label>
-            <input id="agentDisplayName" maxlength="64" class="clean-input" placeholder="e.g. Meridian"
-              data-input="onAgentProfileChanged">
-            <p class="agent-safety-note">Used in replies. The mailbox address and installed Teams app mention name are configured separately.</p>
-            <label for="agentPurpose">What does your agent help with?</label>
-            <textarea id="agentPurpose" maxlength="500" class="clean-textarea" rows="3"
-              placeholder="Describe its purpose and audience." data-input="onAgentProfileChanged"></textarea>
-            <label for="agentTone">Conversation style</label>
-            <select id="agentTone" class="clean-select" data-change="onAgentProfileChanged">
-              <option>Professional</option><option>Friendly</option><option>Concise</option>
-            </select>
-            <label for="agentInstructions">Response guidance <span>Optional</span></label>
-            <textarea id="agentInstructions" maxlength="4000" class="clean-textarea" rows="5"
-              placeholder="For example: use plain English, lead with the answer, explain unfamiliar contract terms."
-              data-input="onAgentProfileChanged"></textarea>
-            <p class="agent-safety-note">Personality shapes wording, not permissions. Answers still respect document
-              access, cite evidence and disclose uncertainty. Never enter passwords or tokens here.</p>
+          <section class="agent-settings-card agent-profile-grid" aria-label="Agent personality">
+            <div class="agent-profile-field">
+              <label for="agentDisplayName">Agent name</label>
+              <input id="agentDisplayName" maxlength="64" class="clean-input" placeholder="e.g. Meridian"
+                aria-describedby="agentIdentityNote" data-input="onAgentProfileChanged">
+            </div>
+            <div class="agent-profile-field">
+              <label for="agentTone">Conversation style</label>
+              <select id="agentTone" class="clean-select" data-change="onAgentProfileChanged">
+                <option>Professional</option><option>Friendly</option><option>Concise</option>
+              </select>
+            </div>
+            <p class="agent-safety-note agent-profile-note" id="agentIdentityNote">Used in replies.
+              Mailbox addresses and the installed Teams app name are configured separately.</p>
+            <div class="agent-profile-field">
+              <label for="agentPurpose">Agent purpose</label>
+              <textarea id="agentPurpose" maxlength="500" class="clean-textarea" rows="5"
+                placeholder="Describe its purpose and audience." data-input="onAgentProfileChanged"></textarea>
+            </div>
+            <div class="agent-profile-field">
+              <label for="agentInstructions">Response guidance <span>Optional</span></label>
+              <textarea id="agentInstructions" maxlength="4000" class="clean-textarea" rows="5"
+                placeholder="For example: use plain English, lead with the answer, explain unfamiliar contract terms."
+                data-input="onAgentProfileChanged"></textarea>
+            </div>
+            <p class="agent-safety-note agent-profile-note">Personality shapes wording, not permissions.
+              Answers respect document access, cite evidence and disclose uncertainty. Never enter passwords or tokens here.</p>
           </section>
           <aside class="agent-settings-card agent-preview" aria-label="Personality preview">
             <span class="agent-eyebrow">STYLE PREVIEW</span>
@@ -243,14 +252,16 @@
         </div>
         <h3 class="agent-channel-heading">Meet people where they work</h3>
         <div class="agent-channel-grid">
-          <section class="agent-settings-card agent-channel-card"><div><span class="agent-channel-icon">@</span>
-            <h3>Email</h3><p>Receive a question by email and return a cited answer to a verified sender.</p></div>
+          <section class="agent-settings-card agent-channel-card">
+            <div class="agent-channel-header"><span class="agent-channel-icon" aria-hidden="true">@</span>
+              <div><h3>Email</h3><p>Receive a question by email and return a cited answer to a verified sender.</p></div></div>
             <label class="agent-channel-toggle"><input type="checkbox" id="agentEmailEnabled" data-change="onAgentProfileChanged">
               Enable for this tenant</label><p class="agent-connection-state" id="agentEmailStatus">Checking connection...</p>
             <p class="agent-safety-note">Mailbox connection and permissions are configured securely by the operator.</p>
           </section>
-          <section class="agent-settings-card agent-channel-card"><div><span class="agent-channel-icon">#</span>
-            <h3>Microsoft Teams</h3><p>Ask in a personal chat or mention the agent. Shared-chat requests keep document answers private.</p></div>
+          <section class="agent-settings-card agent-channel-card">
+            <div class="agent-channel-header"><span class="agent-channel-icon" aria-hidden="true">#</span>
+              <div><h3>Microsoft Teams</h3><p>Ask in a personal chat or mention the agent. Shared-chat requests keep document answers private.</p></div></div>
             <label class="agent-channel-toggle"><input type="checkbox" id="agentTeamsEnabled" data-change="onAgentProfileChanged">
               Enable for this tenant</label><p class="agent-connection-state" id="agentTeamsStatus">Checking connection...</p>
             <p class="agent-safety-note">Enabling a channel does not create a bot, grant access or send a test message.</p>

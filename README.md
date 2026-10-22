@@ -362,6 +362,8 @@ authorization, evidence, citation and tool policies always remain in force. Each
 captures its agent profile and harness version for consistent web/email/Teams responses.
 The icon-labeled section tabs support arrow/Home/End navigation. Switching to Users & access
 hides harness-only controls without collapsing the header or shifting the section navigation.
+The settings canvas is capped at 1,440px for readable wide-screen layouts. Personality fields,
+preview and channel cards share aligned columns and collapse into stacked sections on smaller screens.
 
 ### Enterprise users and unified access
 
