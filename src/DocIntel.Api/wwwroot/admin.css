@@ -412,10 +412,10 @@
 
     .features-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(450px, 1fr));
-      gap: 14px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
       width: 100%;
-      align-items: start;
+      align-items: stretch;
     }
 
     .feature-tile:has(.feature-drawer.open) {
@@ -426,7 +426,7 @@
       width: 100%;
       border: 1px solid var(--card-border);
       border-radius: 16px;
-      padding: 16px 20px;
+      padding: 20px;
       background: #ffffff;
       display: flex;
       flex-direction: column;
@@ -442,14 +442,14 @@
     .feature-tile-header {
       width: 100%;
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: space-between;
       gap: 16px;
     }
 
     .feature-tile-left {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 14px;
       min-width: 0;
       cursor: pointer;
@@ -461,6 +461,8 @@
       align-items: center;
       gap: 12px;
       flex-shrink: 0;
+      min-height: 56px;
+      align-self: flex-start;
     }
 
     .chevron-btn {
@@ -566,35 +568,41 @@
     /* Prompt Configuration Studio (Matches Screenshot + Entity Filter Builder) */
     .prompt-studio-grid {
       display: grid;
-      grid-template-columns: minmax(420px, 1.05fr) minmax(380px, 0.95fr);
-      gap: 18px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
       margin-top: 10px;
       margin-bottom: 32px;
-      align-items: start;
-    }
-
-    @media (max-width: 1024px) {
-      .prompt-studio-grid {
-        grid-template-columns: 1fr;
-      }
     }
 
     .prompt-studio-card {
       background: #ffffff;
       border: 1px solid var(--card-border);
       border-radius: 16px;
-      padding: 20px 22px;
-      display: flex;
-      flex-direction: column;
+      padding: 20px;
+      min-width: 0;
+      display: grid;
+      grid-row: span 2;
+      grid-template-rows: subgrid;
       gap: 14px;
       box-shadow: 0 2px 8px rgba(15, 23, 42, 0.02);
     }
 
     .prompt-card-title-row {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       justify-content: space-between;
       gap: 10px;
+    }
+
+    .prompt-card-title-row > div {
+      min-width: 0;
+    }
+
+    .prompt-editor-body {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      min-width: 0;
     }
 
     .prompt-card-title {
@@ -605,12 +613,15 @@
       display: flex;
       align-items: center;
       gap: 8px;
+      overflow-wrap: anywhere;
     }
 
     .prompt-card-sub {
       font-size: 12.5px;
       color: var(--text-secondary);
       margin: 2px 0 0 0;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
     }
 
     .prompt-field-group {
@@ -675,6 +686,7 @@
       align-items: center;
       gap: 10px;
       padding-top: 4px;
+      margin-top: auto;
     }
 
     .btn-save-prompt {
@@ -720,6 +732,7 @@
       flex-direction: column;
       gap: 10px;
       max-height: 520px;
+      min-height: 0;
       overflow-y: auto;
     }
 
@@ -731,6 +744,7 @@
       display: flex;
       flex-direction: column;
       gap: 7px;
+      flex: 1 0 auto;
       transition: border-color 0.12s ease;
     }
 
@@ -743,6 +757,7 @@
       align-items: center;
       justify-content: space-between;
       gap: 8px;
+      flex-wrap: wrap;
     }
 
     .saved-prompt-name {
@@ -752,6 +767,8 @@
       display: flex;
       align-items: center;
       gap: 7px;
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
 
     .prompt-filter-badge {
@@ -766,6 +783,8 @@
       color: #3444b5;
       border: 1px solid #d5dafc;
       width: fit-content;
+      max-width: 100%;
+      overflow-wrap: anywhere;
     }
 
     .saved-prompt-instr {
@@ -773,6 +792,7 @@
       color: var(--text-secondary);
       line-height: 1.45;
       white-space: pre-wrap;
+      overflow-wrap: anywhere;
     }
 
     .sub-section-header {
@@ -784,8 +804,8 @@
 
     .models-harness-bar {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
-      gap: 14px;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 20px;
       margin-bottom: 24px;
       width: 100%;
     }
@@ -794,11 +814,12 @@
       width: 100%;
       border: 1px solid var(--card-border);
       border-radius: 16px;
-      padding: 16px 20px;
+      padding: 20px;
       background: #ffffff;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      min-width: 0;
+      display: grid;
+      grid-row: span 2;
+      grid-template-rows: subgrid;
       gap: 16px;
       transition: border-color 0.15s ease, box-shadow 0.15s ease;
     }
@@ -810,7 +831,7 @@
 
     .model-card-left {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 14px;
       min-width: 0;
     }
@@ -831,6 +852,8 @@
       display: flex;
       flex-direction: column;
       gap: 3px;
+      min-width: 0;
+      overflow-wrap: anywhere;
     }
 
     .model-harness-label strong {
@@ -842,11 +865,13 @@
     .model-harness-label span {
       font-size: 12px;
       color: var(--text-secondary);
+      line-height: 1.5;
     }
 
     .modern-model-pill {
-      width: 225px;
-      height: 36px;
+      width: 100%;
+      min-width: 0;
+      height: 40px;
       flex-shrink: 0;
       appearance: none;
       -webkit-appearance: none;
@@ -855,7 +880,7 @@
       background-repeat: no-repeat;
       background-position: right 13px center;
       border: 1px solid #e2ded8;
-      border-radius: 999px;
+      border-radius: 10px;
       padding: 0 36px 0 15px;
       font-size: 12.5px;
       font-weight: 600;
@@ -876,9 +901,15 @@
       background-color: #ffffff;
     }
 
+    @media (max-width: 1050px) {
+      .models-harness-bar, .features-grid, .prompt-studio-grid {
+        grid-template-columns: minmax(0, 1fr);
+      }
+    }
+
     .feature-tile-left {
       display: flex;
-      align-items: center;
+      align-items: flex-start;
       gap: 14px;
       min-width: 0;
     }
@@ -916,13 +947,15 @@
       font-weight: 600;
       color: var(--text-primary);
       margin: 0 0 3px 0;
+      line-height: 1.5;
     }
 
     .feature-desc {
       font-size: 12px;
       color: var(--text-secondary);
       margin: 0;
-      line-height: 1.35;
+      line-height: 1.5;
+      overflow-wrap: anywhere;
     }
 
     /* Minimal Pill Switch */

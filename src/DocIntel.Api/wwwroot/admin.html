@@ -290,7 +290,8 @@
               <span>Classifies and routes PDF slices into defined document types</span>
             </div>
           </div>
-          <select class="modern-model-pill" id="harnessDecisionModelSelect" data-change="onHarnessChanged">
+          <select class="modern-model-pill" id="harnessDecisionModelSelect" aria-label="Decision model"
+            data-change="onHarnessChanged">
             <option value="decision-1">Microsoft Decision 1</option>
           </select>
         </div>
@@ -308,7 +309,8 @@
               <span>Powers Document Insights, Entity Extraction, and Data Extraction</span>
             </div>
           </div>
-          <select class="modern-model-pill" id="harnessLanguageModelSelect" data-change="onHarnessChanged">
+          <select class="modern-model-pill" id="harnessLanguageModelSelect" aria-label="Language model"
+            data-change="onHarnessChanged">
             <option value="phi-4">Microsoft Phi-4</option>
             <option value="mai-reasoning">Microsoft MAI-Reasoning</option>
             <option value="llama-3.3-70b">Meta Llama 3.3 70B</option>
@@ -695,62 +697,64 @@
             <p class="prompt-card-sub">Define a custom prompt column for document analysis. Matching documents are processed behind the scenes as PDF file / base64.</p>
           </div>
 
-          <input type="hidden" id="editingPromptColumnId" value="" />
+          <div class="prompt-editor-body">
+            <input type="hidden" id="editingPromptColumnId" value="" />
 
-          <div class="prompt-field-group">
-            <label class="prompt-field-label" for="promptColumnNameInput">Column Name</label>
-            <input type="text" class="clean-input" id="promptColumnNameInput" placeholder="e.g., Summary, Sentiment, Key Points, Compliance Check" />
-          </div>
-
-          <div class="prompt-field-group">
-            <span class="prompt-field-label">Quick Templates</span>
-            <div class="quick-templates-row">
-              <button type="button" class="template-chip-btn" data-click="applyQuickPromptTemplate_arg" data-args="[&quot;summary&quot;]">✦ Summarize Document</button>
-              <button type="button" class="template-chip-btn" data-click="applyQuickPromptTemplate_arg" data-args="[&quot;highlights&quot;]">✦ Extract Highlights</button>
-              <button type="button" class="template-chip-btn" data-click="applyQuickPromptTemplate_arg" data-args="[&quot;language&quot;]">✦ Classify Language</button>
-              <button type="button" class="template-chip-btn" data-click="applyQuickPromptTemplate_arg" data-args="[&quot;contract&quot;]">✦ Verify Contract &amp; Signatures</button>
-            </div>
-          </div>
-
-          <div class="prompt-field-group">
-            <div style="display:flex;align-items:center;justify-content:space-between;">
-              <label class="prompt-field-label" for="promptInstructionsInput">Prompt Instructions</label>
-              <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">Supports {{Document.Content}} &amp; PDF/Base64</span>
-            </div>
-            <textarea class="clean-textarea" id="promptInstructionsInput" rows="4" placeholder="Summarize the contents of {{Document.Content}} in a clear and concise manner. Focus on key points, main arguments, and important conclusions."></textarea>
-          </div>
-
-          <!-- Entity Filter Builder -->
-          <div class="entity-filter-box">
-            <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
-              <div>
-                <div class="prompt-field-label">Entity Filter (Which Documents to Process)</div>
-                <div style="font-size:11.5px;color:var(--text-secondary);">Filter on extracted Entities to choose which documents/slices run this prompt column</div>
-              </div>
-              <select class="clean-select" id="promptFilterModeSelect" data-change="onPromptFilterModeChanged">
-                <option value="All">All Documents (No Filter)</option>
-                <option value="Or">Match Any Condition (OR)</option>
-                <option value="And">Match All Conditions (AND)</option>
-              </select>
+            <div class="prompt-field-group">
+              <label class="prompt-field-label" for="promptColumnNameInput">Column Name</label>
+              <input type="text" class="clean-input" id="promptColumnNameInput" placeholder="e.g., Summary, Sentiment, Key Points, Compliance Check" />
             </div>
 
-            <div id="promptFilterRulesContainer" style="display:none;flex-direction:column;gap:8px;">
-              <datalist id="existingEntitiesDatalist"></datalist>
-              <div id="promptFilterRulesList" style="display:flex;flex-direction:column;gap:7px;"></div>
-              <div>
-                <button type="button" class="btn-mini" data-click="addPromptEntityFilterRow">+ Add entity condition</button>
+            <div class="prompt-field-group">
+              <span class="prompt-field-label">Quick Templates</span>
+              <div class="quick-templates-row">
+                <button type="button" class="template-chip-btn" data-click="applyQuickPromptTemplate_arg" data-args="[&quot;summary&quot;]">✦ Summarize Document</button>
+                <button type="button" class="template-chip-btn" data-click="applyQuickPromptTemplate_arg" data-args="[&quot;highlights&quot;]">✦ Extract Highlights</button>
+                <button type="button" class="template-chip-btn" data-click="applyQuickPromptTemplate_arg" data-args="[&quot;language&quot;]">✦ Classify Language</button>
+                <button type="button" class="template-chip-btn" data-click="applyQuickPromptTemplate_arg" data-args="[&quot;contract&quot;]">✦ Verify Contract &amp; Signatures</button>
               </div>
             </div>
-          </div>
 
-          <div class="prompt-actions-row">
-            <button type="button" class="btn-save-prompt" data-click="savePromptColumnFromForm">
-              <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M4 10.5l4 4L16 6.5" />
-              </svg>
-              <span id="btnSavePromptLabel">Save Prompt</span>
-            </button>
-            <button type="button" class="btn-clear-prompt" data-click="clearPromptColumnForm">✕ Clear</button>
+            <div class="prompt-field-group">
+              <div style="display:flex;align-items:center;justify-content:space-between;">
+                <label class="prompt-field-label" for="promptInstructionsInput">Prompt Instructions</label>
+                <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">Supports {{Document.Content}} &amp; PDF/Base64</span>
+              </div>
+              <textarea class="clean-textarea" id="promptInstructionsInput" rows="4" placeholder="Summarize the contents of {{Document.Content}} in a clear and concise manner. Focus on key points, main arguments, and important conclusions."></textarea>
+            </div>
+
+            <!-- Entity Filter Builder -->
+            <div class="entity-filter-box">
+              <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
+                <div>
+                  <div class="prompt-field-label">Entity Filter (Which Documents to Process)</div>
+                  <div style="font-size:11.5px;color:var(--text-secondary);">Filter on extracted Entities to choose which documents/slices run this prompt column</div>
+                </div>
+                <select class="clean-select" id="promptFilterModeSelect" data-change="onPromptFilterModeChanged">
+                  <option value="All">All Documents (No Filter)</option>
+                  <option value="Or">Match Any Condition (OR)</option>
+                  <option value="And">Match All Conditions (AND)</option>
+                </select>
+              </div>
+
+              <div id="promptFilterRulesContainer" style="display:none;flex-direction:column;gap:8px;">
+                <datalist id="existingEntitiesDatalist"></datalist>
+                <div id="promptFilterRulesList" style="display:flex;flex-direction:column;gap:7px;"></div>
+                <div>
+                  <button type="button" class="btn-mini" data-click="addPromptEntityFilterRow">+ Add entity condition</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="prompt-actions-row">
+              <button type="button" class="btn-save-prompt" data-click="savePromptColumnFromForm">
+                <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M4 10.5l4 4L16 6.5" />
+                </svg>
+                <span id="btnSavePromptLabel">Save Prompt</span>
+              </button>
+              <button type="button" class="btn-clear-prompt" data-click="clearPromptColumnForm">✕ Clear</button>
+            </div>
           </div>
         </div>
 

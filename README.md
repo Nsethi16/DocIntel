@@ -364,6 +364,8 @@ The icon-labeled section tabs support arrow/Home/End navigation. Switching to Us
 hides harness-only controls without collapsing the header or shifting the section navigation.
 The settings canvas is capped at 1,440px for readable wide-screen layouts. Personality fields,
 preview and channel cards share aligned columns and collapse into stacked sections on smaller screens.
+Document processing uses the same equal-column grid for models, features and prompt configuration.
+The prompt editor and saved-prompts panel share header/body rows and aligned outer edges.
 
 ### Enterprise users and unified access
 
