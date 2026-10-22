@@ -13,6 +13,9 @@ namespace DocIntel.Core.Features.DocumentSplitting;
 
 public interface IPageLayoutExtractor
 {
+    Task<IReadOnlyList<PageLayout>> ExtractGeometryAsync(
+        byte[] pdfBytes, SplittingConfig config, CancellationToken cancellationToken = default) =>
+        ExtractPagesAsync(pdfBytes, config, cancellationToken);
     Task<IReadOnlyList<PageLayout>> ExtractPagesAsync(
         byte[] pdfBytes,
         SplittingConfig config,
@@ -35,7 +38,14 @@ public sealed class PdfPigLayoutExtractor : IPageLayoutExtractor, IPdfSlicer
     public Task<IReadOnlyList<PageLayout>> ExtractPagesAsync(
         byte[] pdfBytes,
         SplittingConfig config,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default) => ExtractPagesAsync(pdfBytes, config, true, cancellationToken);
+
+    public Task<IReadOnlyList<PageLayout>> ExtractGeometryAsync(
+        byte[] pdfBytes, SplittingConfig config, CancellationToken cancellationToken = default) =>
+        ExtractPagesAsync(pdfBytes, config, false, cancellationToken);
+
+    private static Task<IReadOnlyList<PageLayout>> ExtractPagesAsync(
+        byte[] pdfBytes, SplittingConfig config, bool includeText, CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(pdfBytes);
         ArgumentNullException.ThrowIfNull(config);
@@ -49,7 +59,13 @@ public sealed class PdfPigLayoutExtractor : IPageLayoutExtractor, IPdfSlicer
         {
             cancellationToken.ThrowIfCancellationRequested();
             var page = document.GetPage(pageNumber);
-            pages.Add(ExtractSinglePage(page, pageNumber, config.FootersToIgnore));
+            pages.Add(includeText ? ExtractSinglePage(page, pageNumber, config.FootersToIgnore) : new PageLayout
+            {
+                PageNumber = pageNumber,
+                PageWidth = page.Width,
+                PageHeight = page.Height,
+                TextSource = "PendingContentUnderstanding"
+            });
         }
 
         return Task.FromResult<IReadOnlyList<PageLayout>>(pages);

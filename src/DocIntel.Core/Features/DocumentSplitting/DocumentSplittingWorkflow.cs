@@ -189,7 +189,9 @@ internal sealed class ExtractPageLayoutsExecutor : Executor<SplittingState, Spli
             var config = message.Tenant.Capabilities.TryGetValue(FeatureHarness.SplitAndGroupKey, out var feature)
                 ? feature.SplitAndGroup ?? new SplittingConfig()
                 : new SplittingConfig();
-            var extracted = await _extractor.ExtractPagesAsync(message.SourcePdfBytes, config, cancellationToken);
+            var extracted = _ocr?.UsesFullLayout == true
+                ? await _extractor.ExtractGeometryAsync(message.SourcePdfBytes, config, cancellationToken)
+                : await _extractor.ExtractPagesAsync(message.SourcePdfBytes, config, cancellationToken);
             message.Pages = extracted.ToList();
         }
 

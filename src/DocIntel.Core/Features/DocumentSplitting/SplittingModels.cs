@@ -32,6 +32,7 @@ public sealed class PageLayout
     public string BodyText { get; set; } = string.Empty;
 
     public string Markdown { get; set; } = string.Empty;
+    public string? NativeLayoutJson { get; set; }
 
     public string FooterText { get; set; } = string.Empty;
 

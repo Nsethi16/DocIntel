@@ -61,8 +61,10 @@ $application = $applications[0]
 if ($application.properties.template.PSObject.Properties['dependsOn']) {
     throw 'Container App dependencies must not be emitted as ARM resource lookups inside its API properties.'
 }
-if (-not @($application.dependsOn | Where-Object { $_ -match "variables\('documentIntelligenceName'\)" })) {
-    throw 'The conditional OCR role must be a resource-level dependency, safe when an existing endpoint is used.'
+if (-not @($application.properties.template.containers[0].env | Where-Object {
+    $_.name -eq 'AzureAI__ContentUnderstandingEndpoint'
+})) {
+    throw 'The application must use the configured Content Understanding resource root endpoint.'
 }
 if ($application.apiVersion -ne '2025-07-01') {
     throw 'Container Apps must use the verified API schema supporting managed-identity scale rules.'

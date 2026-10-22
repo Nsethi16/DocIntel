@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "9386825530604598513"
+      "templateHash": "5900693894318063651"
     }
   },
   "parameters": {
@@ -93,11 +93,11 @@
         "description": "Optional existing Azure AI Translator endpoint. Defaults to the provisioned Foundry resource when empty."
       }
     },
-    "documentIntelligenceEndpoint": {
+    "contentUnderstandingEndpoint": {
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Optional existing Azure Document Intelligence endpoint. Empty provisions managed-identity prebuilt-read access."
+        "description": "Content Understanding Foundry resource root endpoint in a supported region. Empty uses the provisioned Foundry resource."
       }
     },
     "modelDeployments": {
@@ -130,7 +130,6 @@
     "keyVaultName": "[format('kv-di-{0}-{1}', take(parameters('environmentName'), 3), variables('uniqueSuffix'))]",
     "effectiveAcrName": "[if(not(empty(parameters('acrName'))), parameters('acrName'), take(format('acrdocintel{0}{1}', parameters('environmentName'), variables('uniqueSuffix')), 50))]",
     "createFoundryResource": "[empty(parameters('foundryInferenceEndpoint'))]",
-    "documentIntelligenceName": "[format('di-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix'))]",
     "cognitiveServicesUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
     "cognitiveServicesOpenAiUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
     "foundryAiUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
@@ -197,38 +196,6 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName'))]"
-      ]
-    },
-    {
-      "condition": "[empty(parameters('documentIntelligenceEndpoint'))]",
-      "type": "Microsoft.CognitiveServices/accounts",
-      "apiVersion": "2024-10-01",
-      "name": "[variables('documentIntelligenceName')]",
-      "location": "[parameters('location')]",
-      "kind": "FormRecognizer",
-      "sku": {
-        "name": "S0"
-      },
-      "properties": {
-        "customSubDomainName": "[variables('documentIntelligenceName')]",
-        "publicNetworkAccess": "Enabled",
-        "disableLocalAuth": true
-      }
-    },
-    {
-      "condition": "[empty(parameters('documentIntelligenceEndpoint'))]",
-      "type": "Microsoft.Authorization/roleAssignments",
-      "apiVersion": "2022-04-01",
-      "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('documentIntelligenceName'))]",
-      "name": "[guid(resourceGroup().id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('documentIntelligenceName'), variables('cognitiveServicesUserRoleId'))]",
-      "properties": {
-        "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').principalId]",
-        "principalType": "ServicePrincipal",
-        "roleDefinitionId": "[variables('cognitiveServicesUserRoleId')]"
-      },
-      "dependsOn": [
-        "[resourceId('Microsoft.CognitiveServices/accounts', variables('documentIntelligenceName'))]",
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
       ]
     },
     {
@@ -703,8 +670,8 @@
                   "value": "[variables('effectiveTranslatorEndpoint')]"
                 },
                 {
-                  "name": "AzureAI__DocumentIntelligenceEndpoint",
-                  "value": "[if(not(empty(parameters('documentIntelligenceEndpoint'))), parameters('documentIntelligenceEndpoint'), format('https://{0}.cognitiveservices.azure.com/', variables('documentIntelligenceName')))]"
+                  "name": "AzureAI__ContentUnderstandingEndpoint",
+                  "value": "[if(not(empty(parameters('contentUnderstandingEndpoint'))), parameters('contentUnderstandingEndpoint'), format('https://{0}.services.ai.azure.com/', variables('foundryName')))]"
                 },
                 {
                   "name": "AzureAI__CosmosEndpoint",
@@ -828,7 +795,6 @@
         "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName'))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments', variables('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '00000000-0000-0000-0000-000000000002'))]",
         "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'ask-ai')]",
-        "[extensionResourceId(resourceId('Microsoft.CognitiveServices/accounts', variables('documentIntelligenceName')), 'Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('documentIntelligenceName'), variables('cognitiveServicesUserRoleId')))]",
         "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'document-jobs-poison')]",
         "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'document-jobs')]",
         "[resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity')]",

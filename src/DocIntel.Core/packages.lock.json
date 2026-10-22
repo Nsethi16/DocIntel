@@ -2,6 +2,15 @@
   "version": 2,
   "dependencies": {
     "net10.0": {
+      "Azure.AI.ContentUnderstanding": {
+        "type": "Direct",
+        "requested": "[1.1.0, )",
+        "resolved": "1.1.0",
+        "contentHash": "edVSPfzwSEwFzZ6hMJo8cY7rzoA3ZZslXlB3UvwQ7ir5u0ImCHSmQ3DxIpfxXp9QIE8fDJQOggJPGjMBPu38xQ==",
+        "dependencies": {
+          "Azure.Core": "1.53.0"
+        }
+      },
       "Azure.AI.DocumentIntelligence": {
         "type": "Direct",
         "requested": "[1.0.0, )",

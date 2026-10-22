@@ -1,5 +1,6 @@
 using Azure.Core;
 using Azure.AI.DocumentIntelligence;
+using Azure.AI.ContentUnderstanding;
 using Azure.Identity;
 using Azure.Storage.Blobs;
 using Azure.Storage.Queues;
@@ -46,6 +47,7 @@ public sealed class AzureIntegrationOptions
     public string? LocalOpenAIEndpoint { get; set; }
 
     public string? DocumentIntelligenceEndpoint { get; set; }
+    public string? ContentUnderstandingEndpoint { get; set; }
 
     /// <summary>
     /// Optional Azure Cosmos DB account endpoint (e.g. "https://cosmos-docintel-dev.documents.azure.com:443/").
@@ -127,13 +129,13 @@ public static class ServiceCollectionExtensions
             ? new ManagedIdentityCredential(ManagedIdentityId.FromUserAssignedClientId(managedIdentityClientId))
             : new DefaultAzureCredential();
         services.TryAddSingleton(credential);
-        var ocrUri = Endpoint(azureOptions.DocumentIntelligenceEndpoint);
-        if (ocrUri is not null)
+        var layoutUri = Endpoint(azureOptions.ContentUnderstandingEndpoint);
+        if (layoutUri is not null)
         {
-            services.TryAddSingleton(_ => new DocumentIntelligenceClient(ocrUri, credential,
-                new DocumentIntelligenceClientOptions(DocumentIntelligenceClientOptions.ServiceVersion.V2024_11_30)));
-            services.TryAddSingleton<IOcrProvider>(sp => new AzureDocumentIntelligenceOcrProvider(
-                sp.GetRequiredService<DocumentIntelligenceClient>(), ocrUri));
+            services.TryAddSingleton(_ => new ContentUnderstandingClient(layoutUri, credential,
+                new ContentUnderstandingClientOptions(ContentUnderstandingClientOptions.ServiceVersion.V2025_11_01)));
+            services.TryAddSingleton<IOcrProvider>(sp => new AzureContentUnderstandingLayoutProvider(
+                sp.GetRequiredService<ContentUnderstandingClient>(), layoutUri));
         }
         services.TryAddSingleton<OcrProcessor>();
         var cosmosUri = Endpoint(azureOptions.CosmosEndpoint);

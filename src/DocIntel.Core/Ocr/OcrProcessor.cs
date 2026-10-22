@@ -15,6 +15,7 @@ public sealed class OcrProcessor(
     ILogger<OcrProcessor> logger, IOcrProvider? provider = null, IArtifactStore? artifacts = null,
     IOcrUsageStore? usage = null, TimeProvider? clock = null)
 {
+    public bool UsesFullLayout => provider?.UsesFullLayout == true;
     private readonly IOcrUsageStore _usage = usage ?? new InMemoryOcrUsageStore();
     private readonly TimeProvider _clock = clock ?? TimeProvider.System;
 
@@ -23,8 +24,8 @@ public sealed class OcrProcessor(
         cancellationToken.ThrowIfCancellationRequested();
         var policy = state.Tenant.Ocr ?? throw new InvalidDataException("The accepted OCR policy is missing.");
         policy.Validate();
-        if (policy.Mode == OcrMode.Never) return;
-        var selected = state.Pages.Where(page => policy.Mode == OcrMode.Always ||
+        if (!UsesFullLayout && policy.Mode == OcrMode.Never) return;
+        var selected = state.Pages.Where(page => UsesFullLayout || policy.Mode == OcrMode.Always ||
             page.BodyText.Length < 50 && page.ImageAreaRatio > 0.5).ToList();
         if (selected.Count == 0) return;
         if (provider is null)
@@ -98,18 +99,25 @@ public sealed class OcrProcessor(
                 PageWidth = source.PageWidth,
                 PageHeight = source.PageHeight,
                 ImageAreaRatio = source.ImageAreaRatio,
-                TextSource = "Ocr",
+                TextSource = UsesFullLayout ? "ContentUnderstandingLayout" : "Ocr",
                 TextProvider = result.ProviderName,
                 OcrCacheHit = hits.Contains(result.PageNumber),
                 Words = result.Words,
                 IsAmendment = source.IsAmendment,
-                AmendmentId = source.AmendmentId
+                AmendmentId = source.AmendmentId,
+                NativeLayoutJson = result.NativeLayoutJson
             };
             if (page.Words is null || page.Words.Any(word => word?.Box is null))
                 throw new InvalidDataException("OCR returned incomplete source words.");
             PageTextLayout.Apply(page, page.Words.Select(word => new LayoutTextWord(word.Text,
                 word.Box.Polygon.Where((_, index) => index % 2 == 0).Min() * page.PageWidth,
                 (1 - word.Box.Polygon.Where((_, index) => index % 2 == 1).Max()) * page.PageHeight)), footerRules);
+            if (UsesFullLayout)
+            {
+                if (result.Markdown is null || result.NativeLayoutJson is null)
+                    throw new InvalidDataException("Content Understanding layout is missing native Markdown/source information.");
+                page.Markdown = result.Markdown;
+            }
             staged.Add(page.PageNumber, page);
         }
         var pages = state.Pages.Select(page => staged.GetValueOrDefault(page.PageNumber) ?? page).ToList();

@@ -41,7 +41,8 @@ param(
     [string]$AzureOpenAiEndpoint = "",
 
     [Parameter(Mandatory = $false)]
-    [string]$TranslatorEndpoint = ""
+    [string]$TranslatorEndpoint = "",
+    [string]$ContentUnderstandingEndpoint = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -110,6 +111,7 @@ try {
             foundryInferenceEndpoint = @{ value = $FoundryEndpoint }
             azureOpenAiEndpoint = @{ value = $AzureOpenAiEndpoint }
             translatorEndpoint = @{ value = $TranslatorEndpoint }
+            contentUnderstandingEndpoint = @{ value = $ContentUnderstandingEndpoint }
         }
     }
     $parameters | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $parameterPath -Encoding utf8

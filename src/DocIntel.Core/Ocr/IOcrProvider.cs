@@ -6,6 +6,7 @@ namespace DocIntel.Core.Ocr;
 public interface IOcrProvider
 {
     string Name { get; }
+    bool UsesFullLayout => false;
     /// <summary>Stable model/API/endpoint identity, or null when persistent reuse is unsupported.</summary>
     string? CacheIdentity { get; }
     Task<IReadOnlyList<OcrPageResult>> RecognizeAsync(
@@ -14,4 +15,5 @@ public interface IOcrProvider
 
 /// <summary>Actual provider output; dimensions and polygons share the provider's page coordinate system.</summary>
 public sealed record OcrPageResult(
-    int PageNumber, double PageWidth, double PageHeight, IReadOnlyList<PageWord> Words, string ProviderName);
+    int PageNumber, double PageWidth, double PageHeight, IReadOnlyList<PageWord> Words, string ProviderName,
+    string? Markdown = null, string? NativeLayoutJson = null);

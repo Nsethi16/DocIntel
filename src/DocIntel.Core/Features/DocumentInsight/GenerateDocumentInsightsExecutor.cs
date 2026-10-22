@@ -80,9 +80,7 @@ public sealed class GenerateDocumentInsightsExecutor : Executor<SplittingState, 
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var sourceContent = !string.IsNullOrWhiteSpace(slice.TranslatedText)
-                ? slice.TranslatedText!
-                : slice.BodyText;
+            var sourceContent = DocumentPromptBoundary.SourceText(slice);
 
             var response = await insightAgent.RunAsync(
                 DocumentPromptBoundary.Wrap(sourceContent), cancellationToken: cancellationToken);
@@ -171,9 +169,7 @@ public sealed class GenerateDocumentInsightsExecutor : Executor<SplittingState, 
         foreach (var slice in job.Segments)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var sourceContent = !string.IsNullOrWhiteSpace(slice.TranslatedText)
-                ? slice.TranslatedText!
-                : slice.BodyText;
+            var sourceContent = DocumentPromptBoundary.SourceText(slice);
 
             var response = await insightAgent.RunAsync(
                 DocumentPromptBoundary.Wrap(sourceContent), cancellationToken: cancellationToken);

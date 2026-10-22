@@ -253,7 +253,7 @@ public sealed class OcrTests
         // Arrange
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {
-            ["AzureAI:DocumentIntelligenceEndpoint"] = "http://untrusted.invalid/"
+            ["AzureAI:ContentUnderstandingEndpoint"] = "http://untrusted.invalid/"
         }).Build();
 
         // Act / Assert

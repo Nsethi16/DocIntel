@@ -41,9 +41,9 @@ public sealed class ProviderStartupCheck(
                 timeout.Token.ThrowIfCancellationRequested();
                 var processing = tenant.Capabilities.Any(capability => capability.Value.Enabled &&
                     capability.Key != FeatureHarness.AskAiKey && capability.Key != FeatureHarness.DocumentGraphKey);
-                if (processing && tenant.Ocr.Mode != OcrMode.Never &&
-                    String.IsNullOrWhiteSpace(azure.DocumentIntelligenceEndpoint))
-                    throw new InvalidOperationException("Enabled OCR requires a configured provider.");
+                if (processing && String.IsNullOrWhiteSpace(azure.ContentUnderstandingEndpoint) &&
+                    (!models.AllowsDevelopmentSimulation || tenant.Ocr.Mode != OcrMode.Never))
+                    throw new InvalidOperationException("Document ingestion requires configured Content Understanding layout.");
                 if (Enabled(tenant, FeatureHarness.DocumentTranslationKey) &&
                     String.IsNullOrWhiteSpace(azure.ResolveEffectiveTranslatorEndpoint()) && !models.AllowsDevelopmentSimulation)
                     throw new InvalidOperationException("Enabled translation requires a configured provider.");

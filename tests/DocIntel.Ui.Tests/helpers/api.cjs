@@ -19,6 +19,7 @@ async function startApi(directory, settings = {}, { environment = 'Development',
     'AzureAI:LocalOpenAIEndpoint': '',
     'AzureAI:TranslatorEndpoint': '',
     'AzureAI:DocumentIntelligenceEndpoint': '',
+    'AzureAI:ContentUnderstandingEndpoint': '',
     ...settings
   };
   const child = spawn('dotnet', [apiDll,

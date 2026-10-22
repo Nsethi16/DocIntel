@@ -98,9 +98,7 @@ public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, Split
                     ChatOptions = chatOptions
                 });
 
-            var sourceContent = !string.IsNullOrWhiteSpace(slice.TranslatedText)
-                ? slice.TranslatedText!
-                : slice.BodyText;
+            var sourceContent = DocumentPromptBoundary.SourceText(slice);
 
             var response = await agent.RunAsync(
                 DocumentPromptBoundary.Wrap(sourceContent), cancellationToken: cancellationToken);

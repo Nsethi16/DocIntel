@@ -269,12 +269,12 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
                     }
                     inputFingerprint = Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
                     {
-                        version = 4,
+                        version = 5,
                         docName,
                         modelId,
                         supportsPdf,
                         simulationUsed,
-                        text = !String.IsNullOrWhiteSpace(slice.TranslatedText) ? slice.TranslatedText : slice.BodyText,
+                        text = DocumentPromptBoundary.SourceText(slice),
                         ExtractedEntities = slice.ExtractedEntities.Select(entity => new
                         {
                             entity.Name,
@@ -502,9 +502,7 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
         IChatClient chatClient,
         CancellationToken cancellationToken)
     {
-        var textContent = !string.IsNullOrWhiteSpace(slice.TranslatedText)
-            ? slice.TranslatedText!
-            : slice.BodyText;
+        var textContent = DocumentPromptBoundary.SourceText(slice);
 
         var entitiesContext = slice.ExtractedEntities.Count > 0
             ? string.Join("; ", slice.ExtractedEntities.Select(e => $"{e.Name}: {e.Value}"))

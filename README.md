@@ -28,6 +28,29 @@ design and end-to-end purge verification; no GDPR/HIPAA/SOC 2 compliance is clai
 
 ## Features
 
+### Content Understanding ingestion
+
+Production document ingestion now uses Azure Content Understanding `prebuilt-layout`, pinned to
+GA API `2025-11-01` through the native `Azure.AI.ContentUnderstanding` SDK. Configure the server-owned
+`AzureAI:ContentUnderstandingEndpoint` to the Foundry resource root endpoint (not `/models`).
+Assign its runtime managed identity the supported Content Understanding data-plane access and verify
+regional availability/default model prerequisites in Content Understanding Studio. No resource,
+model mapping or directory permission is silently created by application startup.
+
+All original PDF pages use the same layout pipeline, irrespective of legacy OCR Auto/Always/Never
+settings. PdfPig validates page counts/dimensions and copies original pages for splitting; it does
+not supply a competing text representation when CU is configured. Native page Markdown, spans,
+word quadrilaterals, paragraphs and table metadata are retained with original page identity.
+Downstream extraction/prompts prefer Markdown (or an explicitly translated text result).
+
+Page-level reuse is tenant/original-hash/analyzer/API/endpoint/mapping-version bound. Cache hits do
+not consume fresh page reservations; incomplete pages, unexpected warnings, invalid geometry or
+provider failures fail explicitly with no silent native-text fallback. CU page reservations share
+the existing live operational page allowance; they are not an exact invoice or token-cost estimate.
+The old DI endpoint is not used by the new provider. Offline loopback development can still use
+native PDF text with explicit development settings; no live CU quality/cost claim is made from mocks.
+The deployment template now supplies CU instead of provisioning another Form Recognizer account.
+
 Admins can manage isolated **Tenants** and configure each tenant's **Agent Harness** at runtime:
 
 - **Harness-Level Model Routing**:

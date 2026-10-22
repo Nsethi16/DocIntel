@@ -79,9 +79,7 @@ public sealed class ExtractEntitiesExecutor : Executor<SplittingState, Splitting
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var sourceContent = !string.IsNullOrWhiteSpace(slice.TranslatedText)
-                ? slice.TranslatedText!
-                : slice.BodyText;
+            var sourceContent = DocumentPromptBoundary.SourceText(slice);
 
             var response = await extractionAgent.RunAsync(
                 DocumentPromptBoundary.Wrap(sourceContent), cancellationToken: cancellationToken);

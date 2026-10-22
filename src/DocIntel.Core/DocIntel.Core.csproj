@@ -11,6 +11,7 @@
   <ItemGroup>
     <PackageReference Include="Azure.AI.Inference" />
     <PackageReference Include="Azure.AI.DocumentIntelligence" />
+    <PackageReference Include="Azure.AI.ContentUnderstanding" />
     <PackageReference Include="Azure.AI.OpenAI" />
     <PackageReference Include="Azure.AI.Translation.Document" />
     <PackageReference Include="Azure.AI.Translation.Text" />

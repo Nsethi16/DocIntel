@@ -569,6 +569,7 @@
       "docintel.core": {
         "type": "Project",
         "dependencies": {
+          "Azure.AI.ContentUnderstanding": "[1.1.0, )",
           "Azure.AI.DocumentIntelligence": "[1.0.0, )",
           "Azure.AI.Inference": "[1.0.0-beta.4, )",
           "Azure.AI.OpenAI": "[2.8.0-beta.1, )",
@@ -600,6 +601,15 @@
           "OpenTelemetry.Instrumentation.AspNetCore": "[1.15.0, )",
           "OpenTelemetry.Instrumentation.Http": "[1.15.0, )",
           "OpenTelemetry.Instrumentation.Runtime": "[1.15.0, )"
+        }
+      },
+      "Azure.AI.ContentUnderstanding": {
+        "type": "CentralTransitive",
+        "requested": "[1.1.0, )",
+        "resolved": "1.1.0",
+        "contentHash": "edVSPfzwSEwFzZ6hMJo8cY7rzoA3ZZslXlB3UvwQ7ir5u0ImCHSmQ3DxIpfxXp9QIE8fDJQOggJPGjMBPu38xQ==",
+        "dependencies": {
+          "Azure.Core": "1.53.0"
         }
       },
       "Azure.AI.DocumentIntelligence": {
