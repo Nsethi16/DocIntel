@@ -38,7 +38,7 @@
         "type": "Direct",
         "requested": "[1.15.3, )",
         "resolved": "1.15.3",
-        "contentHash": "CFhnho/lHNGbkqRHzE2ewXCQ6hiJCUa63u18igag3/ZsFcM4qzdRBNTna0s+OyRh6dL7MySR6VBuzydaCA7rBw==",
+        "contentHash": "FEXJepcseTGbATiCkUfP7ipoFEYYfl/0UmmUwi0KxCPg9PaUA8ab2P1LGopK+/HExasJ1ZutFhZrN6WvUIR23g==",
         "dependencies": {
           "OpenTelemetry": "1.15.3"
         }
@@ -47,7 +47,7 @@
         "type": "Direct",
         "requested": "[1.15.3, )",
         "resolved": "1.15.3",
-        "contentHash": "G2E3zEf9md7LdvseTLLryNErvS5fCbAADJEPwG5+hUw+vsvKNspcCoxMnsASqUybvBh2lbmIQ8rUXSaQ3iKFfg==",
+        "contentHash": "u8n/W8yIlqv0BXZmvId1iVaeWXG42tGKdTkuLYg5g57Y/r9CeUNzqtrSHNdG5IoO8iPX79w3v+WsbAHgUQbfeg==",
         "dependencies": {
           "OpenTelemetry": "1.15.3"
         }
@@ -56,7 +56,7 @@
         "type": "Direct",
         "requested": "[1.15.0, )",
         "resolved": "1.15.0",
-        "contentHash": "X1nIyVAspY+FJqGHeJtUTe7Ljr8PmDBTTRSHA8ySgrkx0AigLySr7g2Ad5HVi9Tqw/OcIsXgS5mw4fk+Hgvv5g==",
+        "contentHash": "mte1nRYefxjed2syXgVWq3UCfMKO7MkebvTZmf0O1aLgVgCktLsVjQ6mftyjIbWGBBCHN0wg+Glxj8BSFS70pQ==",
         "dependencies": {
           "OpenTelemetry.Api.ProviderBuilderExtensions": "[1.15.0, 2.0.0)"
         }
@@ -65,7 +65,7 @@
         "type": "Direct",
         "requested": "[1.15.0, )",
         "resolved": "1.15.0",
-        "contentHash": "JzFU/oFCNprE+eCKtcg2KMuc6PRLdd04iC4NMcpb58mLwmrOonQL7SZQnEC77iEiAYDG25PwJBB/MQ+UyTLF8w==",
+        "contentHash": "uToc7bUp8IEdb0ny9mKsL6FrrYelINPzxxiSShJgOf4XmQc4Azww6S5RjRj24YhsOn2a1MABOrxfVTZXtDk4Eg==",
         "dependencies": {
           "OpenTelemetry.Api.ProviderBuilderExtensions": "[1.15.0, 2.0.0)"
         }
@@ -74,7 +74,7 @@
         "type": "Direct",
         "requested": "[1.15.0, )",
         "resolved": "1.15.0",
-        "contentHash": "kGRoX1dEWn8ofP76z0vn9bv17UJQTSWsBkSJVF+3+6Fwa2omuVTMUlhGWs+6BwaK7gJ5dqlQsDXvQMPpPrxjwg==",
+        "contentHash": "OOvpqR/j2Pb6+tWhHNODIbSJ53Or/MDtTiXEyrsWI02K2lLAgvBFcxUOrHggS/8015cYR3AdSaXv6NZrkz5yQA==",
         "dependencies": {
           "OpenTelemetry.Api": "[1.15.0, 2.0.0)"
         }
@@ -182,7 +182,7 @@
       "OpenTelemetry.Api.ProviderBuilderExtensions": {
         "type": "Transitive",
         "resolved": "1.15.3",
-        "contentHash": "D51qxpCBj45mZKJ75RhrxQKGGPvi4OMaRp5ibxGm84w6AOGS+CEXqTBUSK4H1K4Q/74rQ+d8ZXB1XOsKn50Pxg==",
+        "contentHash": "SYn0lqYDwLMWhv/zlNGsQcl2yX++yTumanX46bmOZE/ZDOd1WjPBO2kZaZgKLEZTZk48pavIFGJ6vOvxXgWVFQ==",
         "dependencies": {
           "OpenTelemetry.Api": "1.15.3"
         }
@@ -256,7 +256,7 @@
         "type": "CentralTransitive",
         "requested": "[1.15.3, )",
         "resolved": "1.15.3",
-        "contentHash": "xOcrtr16be77gb13QImk7oghu4SW5DB/dcLaMEazO+Bha6ak8u6q1V161NzcchV+aOFyQRl9rkhmTRg3f3mzqg==",
+        "contentHash": "N0i6WjPoHPbZyms1ugbDIFAJFuGlpeExJMU/+XSL0lQRUkg/D0utFkDoLXf8Z1km5B+xVZ2GyMXXiX8qdeNmPg==",
         "dependencies": {
           "OpenTelemetry.Api.ProviderBuilderExtensions": "1.15.3"
         }
@@ -265,7 +265,7 @@
         "type": "CentralTransitive",
         "requested": "[1.15.3, )",
         "resolved": "1.15.3",
-        "contentHash": "d6DrMH1cgt1dHz4MrRL8HDr0FgxXb7/I+VWEPCkdhWCPk2jfawtUfjchG7ge0da8Hpfnh65t8TbSi3fIVM890Q=="
+        "contentHash": "fX+fkCysfPut+qCcT3bKqyX4QN9Saf4CgX8HLOHywEVD+Xr7sULtfuypITpoDysjx8R59dn/3mWhgimMH8cm/g=="
       }
     }
   }

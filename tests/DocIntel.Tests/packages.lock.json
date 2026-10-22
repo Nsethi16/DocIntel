@@ -538,7 +538,7 @@
         "type": "CentralTransitive",
         "requested": "[1.15.3, )",
         "resolved": "1.15.3",
-        "contentHash": "d6DrMH1cgt1dHz4MrRL8HDr0FgxXb7/I+VWEPCkdhWCPk2jfawtUfjchG7ge0da8Hpfnh65t8TbSi3fIVM890Q=="
+        "contentHash": "fX+fkCysfPut+qCcT3bKqyX4QN9Saf4CgX8HLOHywEVD+Xr7sULtfuypITpoDysjx8R59dn/3mWhgimMH8cm/g=="
       },
       "PdfPig": {
         "type": "CentralTransitive",
