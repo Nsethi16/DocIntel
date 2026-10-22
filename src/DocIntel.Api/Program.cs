@@ -25,6 +25,7 @@ builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = 
 builder.Services.AddExceptionHandler<DocIntelExceptionHandler>();
 builder.AddDocIntelIdentity();
 builder.AddDocIntelTeams();
+builder.AddDocIntelEmail();
 
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
@@ -91,6 +92,7 @@ app.MapGet("/admin", () => Results.Redirect("/admin.html"));
 app.MapDefaultEndpoints();
 app.MapDocIntelIdentity();
 app.MapDocIntelTeams();
+app.MapDocIntelEmail();
 app.MapHarnessEndpoints();
 app.MapOcrUsageEndpoints();
 app.MapGet("/api/harness/tenants/{tenantId}/reviews", () =>

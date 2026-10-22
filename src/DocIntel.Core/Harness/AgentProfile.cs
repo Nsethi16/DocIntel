@@ -17,6 +17,7 @@ public sealed record AgentProfile
     public bool TeamsEnabled { get; init; }
 
     public bool IsValid => Enum.IsDefined(Tone) && Valid(DisplayName, 64, true) &&
+        !DisplayName.Any(Char.IsControl) &&
         Valid(Purpose, 500, true) && Valid(Instructions, 4_000, false);
 
     public string Prompt => "Agent presentation settings (style and purpose only):\n" +

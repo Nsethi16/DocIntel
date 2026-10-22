@@ -2,6 +2,30 @@
 
 This document provides a comprehensive technical walkthrough of **what** happens and **how** a document packet is processed end-to-end in **DocIntel**—from PDF upload and per-tenant Agent Harness loading to deterministic PDF slicing, AI document identification, translation, insight generation, entity extraction, and schema-driven structured data extraction.
 
+## Current ingestion and channel changes
+
+Cloud ingestion now uses **Azure Content Understanding `prebuilt-layout`**, GA API `2025-11-01`,
+for every original PDF page. Native Markdown, source spans and word geometry are retained and
+cached under tenant/source/analyzer/API/endpoint identity. PdfPig validates geometry and physically
+copies PDF pages; native text extraction is only an explicit offline/development path when CU
+is not configured. The older native-text/DI OCR sections below describe the historical pipeline,
+not the configured CU production path.
+
+Human review is retired: new jobs do not create review sessions, exports use labeled machine
+values without approval, and Ask AI no longer advertises a human-review tool. Historical records
+remain stored, and legacy review endpoints return 410. No audit or review data is purged.
+
+Admin Studio separates **Document processing** from **Agent & channels**. The tenant's versioned
+agent name, purpose, tone and response guidance apply to web/email/Teams, but do not grant access
+or weaken source/citation policies. Channel toggles are distinct from operator connection status.
+Graph email ingestion uses a durable leased delta cursor and a source-free sign-in/confirmation
+challenge; the signed-in account must own the original sender address before its question is
+exposed or queued. Teams shared mentions queue under the verified user and reply privately, or
+provide an actor-authorized web link if a personal chat cannot be established. No document answer
+is posted into an unverified shared audience. External sends persist intent before sending and
+uncertain outcomes never automatically replay. See the README's current channel setup and
+verification sections; real provider credentials, consent and live delivery are separate setup.
+
 ---
 
 ## Ask AI execution policy

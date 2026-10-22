@@ -54,9 +54,32 @@ public sealed class TeamsChannelOptions
 public sealed record VerifiedTeamsQuestion(
     string ChannelId, string? DirectoryTenantId, string? ConversationTenantId, string? ObjectId,
     string? RecipientId, string? ConversationType, bool? IsGroup, string? ConversationId,
-    string? MessageId, Uri? ServiceUrl, string? Text);
+    string? MessageId, Uri? ServiceUrl, string? Text, bool BotMentioned = false);
 
-public sealed record TeamsSubmission(bool Created, string RunId, string StatusUrl);
+public sealed record TeamsSubmission(bool Created, string RunId, string StatusUrl,
+    bool SharedRequest = false, bool PrivateReplyAvailable = true, string AgentName = "DocIntel");
+
+/// <summary>Only the configured bot's structured mention entity activates a shared-chat request.</summary>
+public static class TeamsMentionParser
+{
+    public static (bool Mentioned, string Text) Parse(string activityJson, string botId, string? fallbackText)
+    {
+        using var document = JsonDocument.Parse(activityJson);
+        var text = fallbackText ?? String.Empty;
+        var mentioned = false;
+        if (document.RootElement.TryGetProperty("entities", out var entities) && entities.ValueKind == JsonValueKind.Array)
+            foreach (var entity in entities.EnumerateArray())
+                if (entity.TryGetProperty("type", out var type) && type.GetString() == "mention" &&
+                    entity.TryGetProperty("mentioned", out var account) &&
+                    account.TryGetProperty("id", out var id) && id.GetString() == botId)
+                {
+                    mentioned = true;
+                    if (entity.TryGetProperty("text", out var label) && label.GetString() is { Length: > 0 } marker)
+                        text = text.Replace(marker, String.Empty, StringComparison.Ordinal);
+                }
+        return (mentioned, text.Trim());
+    }
+}
 
 /// <summary>Produces one small plaintext preview; the complete answer remains behind application sign-in.</summary>
 public static class TeamsAnswerFormatter
@@ -72,6 +95,8 @@ public static class TeamsAnswerFormatter
         if (suffix.Length >= maximumTextCharacters)
             suffix = "\n\nFull answer and all cited sources (sign-in required): " + options.RunUrl(run.RunId);
         var available = maximumTextCharacters - suffix.Length;
+        var identity = run.AgentProfile?.DisplayName;
+        if (!String.IsNullOrWhiteSpace(identity)) text = identity + "\n\n" + text;
         if (text.Length <= available) return text + suffix;
         const string shortened = "\n[Preview shortened; open full answer.]";
         var length = Math.Max(0, available - shortened.Length);
@@ -86,7 +111,8 @@ public sealed class TeamsQuestionReceiver(
     IAskAiRunStore runs, IAskAiQueue queue)
 {
     public async Task<TeamsSubmission> ReceiveAsync(
-        VerifiedTeamsQuestion question, CancellationToken cancellationToken = default)
+        VerifiedTeamsQuestion question, CancellationToken cancellationToken = default,
+        Func<CancellationToken, Task<string?>>? privateConversation = null)
     {
         var actor = ValidateRouting(question);
         var validation = AskAiRequestValidator.GetError(question.Text);
@@ -109,37 +135,53 @@ public sealed class TeamsQuestionReceiver(
             question.ConversationId,
             question.MessageId
         }))));
+        var shared = question.ConversationType != "personal";
+        var existing = await runs.GetRunAsync(options.ApplicationTenantId, runId, cancellationToken);
+        if (existing is not null)
+        {
+            if (existing.Actor != actor || existing.Question != question.Text!.Trim() ||
+                existing.ReplyChannel.ConversationId != question.ConversationId)
+                throw new InvalidDataException("Duplicate Teams activity differs from its original question.");
+            return new TeamsSubmission(false, runId, options.RunUrl(runId), shared,
+                existing.ChannelDelivery is not null, tenant.Agent.DisplayName);
+        }
+        var destination = shared ? privateConversation is null ? null : await privateConversation(cancellationToken)
+            : question.ConversationId;
+        if (destination is not null && (!ValidId(destination) || shared && destination == question.ConversationId))
+            throw new InvalidDataException("A shared request cannot deliver its answer to the shared conversation.");
         var run = new AskAiRun
         {
             RunId = runId,
             TenantId = options.ApplicationTenantId,
             Actor = actor,
             Question = question.Text!.Trim(),
-            ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Teams },
-            ChannelDelivery = new ChannelDelivery
+            ReplyChannel = new AskAiReplyChannel
+            {
+                ChannelType = AskAiChannelType.Teams,
+                ConversationId = question.ConversationId
+            },
+            ChannelDelivery = destination is null ? null : new ChannelDelivery
             {
                 Transport = "Teams",
                 Profile = options.Profile,
-                DestinationId = question.ConversationId!,
+                DestinationId = destination,
                 MessageId = question.MessageId
             }
         };
         var created = await runs.TryCreateRunAsync(run, cancellationToken);
         if (!created)
         {
-            var existing = await runs.GetRunAsync(run.TenantId, runId, cancellationToken)
+            var concurrent = await runs.GetRunAsync(run.TenantId, runId, cancellationToken)
                 ?? throw new InvalidDataException("A duplicate Teams activity has no stored run.");
-            if (existing.Actor != actor || existing.Question != run.Question ||
-                existing.ChannelDelivery?.Profile != options.Profile ||
-                existing.ChannelDelivery.DestinationId != question.ConversationId ||
-                existing.ChannelDelivery.MessageId != question.MessageId)
+            if (concurrent.Actor != actor || concurrent.Question != run.Question ||
+                concurrent.ReplyChannel.ConversationId != question.ConversationId)
                 throw new InvalidDataException("Duplicate activity contents differ from the original verified question.");
         }
         else
         {
             await queue.TryEnqueueAsync(new AskAiQueueTicket(runId, run.TenantId), cancellationToken);
         }
-        return new TeamsSubmission(created, runId, options.RunUrl(runId));
+        return new TeamsSubmission(created, runId, options.RunUrl(runId), shared, destination is not null, tenant.Agent.DisplayName);
     }
 
     /// <summary>Checks the private routing envelope before even a generic acceptance/rejection reply is allowed.</summary>
@@ -147,14 +189,16 @@ public sealed class TeamsQuestionReceiver(
     {
         options.Validate();
         if (!options.Enabled) throw new UnauthorizedAccessException("Teams is not enabled.");
-        if (question.ChannelId != "msteams" || question.ConversationType != "personal" || question.IsGroup == true ||
+        var personal = question.ConversationType == "personal" && question.IsGroup != true;
+        var sharedMention = question.ConversationType is "channel" or "groupChat" && question.BotMentioned;
+        if (question.ChannelId != "msteams" || (!personal && !sharedMention) ||
             !Guid.TryParse(question.DirectoryTenantId, out var directory) || directory != options.TenantId ||
             !Guid.TryParse(question.ConversationTenantId, out var conversationDirectory) || conversationDirectory != directory ||
             !Guid.TryParse(question.ObjectId, out var objectId) || objectId == Guid.Empty ||
             question.RecipientId != $"28:{options.ClientId:D}" ||
             question.ServiceUrl?.AbsoluteUri != new Uri(options.ServiceUrl).AbsoluteUri ||
             !ValidId(question.ConversationId) || !ValidId(question.MessageId))
-            throw new UnauthorizedAccessException("Only verified personal Teams conversations for the configured bot are accepted.");
+            throw new UnauthorizedAccessException("Only verified personal chats or structured mentions of the configured bot are accepted.");
         return new ActorIdentity(directory, objectId);
     }
 

@@ -163,6 +163,63 @@ public sealed class TeamsChannelTests
         Assert.True(System.Text.Json.JsonSerializer.SerializeToUtf8Bytes(new { text = preview }).Length < 20_000);
     }
 
+    [Fact]
+    public async Task A_Shared_Mention_Creates_A_Private_Reply_Target_And_Never_Uses_The_Channel_As_The_Destination()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        var question = fixture.Question with { ConversationType = "channel", IsGroup = true, BotMentioned = true };
+        var privateCreates = 0;
+        Task<string?> Private(CancellationToken _) { privateCreates++; return Task.FromResult<string?>("private-user-chat"); }
+
+        // Act
+        var accepted = await fixture.Receiver.ReceiveAsync(question, privateConversation: Private);
+        await fixture.Receiver.ReceiveAsync(question, privateConversation: Private);
+        var run = await fixture.Runs.GetRunAsync("tenant", accepted.RunId);
+
+        // Assert
+        Assert.True(accepted.SharedRequest);
+        Assert.True(accepted.PrivateReplyAvailable);
+        Assert.Equal("private-user-chat", run!.ChannelDelivery!.DestinationId);
+        Assert.NotEqual(question.ConversationId, run.ChannelDelivery.DestinationId);
+        Assert.Equal(1, privateCreates);
+    }
+
+    [Fact]
+    public async Task Missing_Private_Chat_Access_Leaves_Only_An_Authenticated_Answer_Link_Not_A_Shared_Answer()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        var question = fixture.Question with { ConversationType = "groupChat", IsGroup = true, BotMentioned = true };
+
+        // Act
+        var accepted = await fixture.Receiver.ReceiveAsync(question);
+        var run = await fixture.Runs.GetRunAsync("tenant", accepted.RunId);
+
+        // Assert
+        Assert.False(accepted.PrivateReplyAvailable);
+        Assert.Null(run!.ChannelDelivery);
+        Assert.Equal(JobStatus.Queued, run.Status);
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            fixture.Receiver.ReceiveAsync(question with { BotMentioned = false }));
+    }
+
+    [Fact]
+    public void Only_The_Bots_Structured_Mention_Is_Removed_From_The_Question()
+    {
+        // Arrange
+        var activity = """{"entities":[{"type":"mention","mentioned":{"id":"28:bot"},"text":"<at>Meridian</at>"}]}""";
+
+        // Act
+        var parsed = TeamsMentionParser.Parse(activity, "28:bot", "<at>Meridian</at> What is the renewal date?");
+        var unmentioned = TeamsMentionParser.Parse(activity, "28:other", "@Meridian show documents");
+
+        // Assert
+        Assert.True(parsed.Mentioned);
+        Assert.Equal("What is the renewal date?", parsed.Text);
+        Assert.False(unmentioned.Mentioned);
+    }
+
     private sealed class Fixture
     {
         public ActorIdentity Actor { get; } = new(Guid.NewGuid(), Guid.NewGuid());

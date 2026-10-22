@@ -45,7 +45,8 @@
       const result = await response.json();
       if (current !== revision) return;
       node('agentEmailStatus').textContent = result.email.configured
-        ? `Connected mailbox: ${result.email.address}` : 'Not connected - mailbox setup required';
+        ? `Mailbox configured: ${result.email.address} - live delivery must be verified`
+        : 'Not connected - mailbox setup required';
       node('agentTeamsStatus').textContent = result.teams.configured
         ? 'Bot connection configured - installation and live delivery must be verified'
         : 'Not connected - Teams bot setup required';

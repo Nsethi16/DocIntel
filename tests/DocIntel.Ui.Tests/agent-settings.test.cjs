@@ -5,6 +5,30 @@ const test = require('node:test');
 const vm = require('node:vm');
 const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'DocIntel.Api', 'wwwroot', 'agent-settings.js'), 'utf8');
 
+test('the real Admin markup does not hide the settings navigation inside the conflict notice', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'DocIntel.Api', 'wwwroot', 'admin.html'), 'utf8');
+  const sections = [];
+  const seen = new Set();
+  for (const [tag] of html.matchAll(/<\/?section\b[^>]*>|<[^>]+\bid="(?:processingSettingsTab|agentSettingsTab|harnessDecisionModelSelect)"[^>]*>/g)) {
+    if (tag.startsWith('</section')) {
+      assert.ok(sections.length > 0, 'Unbalanced settings section');
+      sections.pop();
+    } else if (tag.startsWith('<section')) {
+      const id = tag.match(/\bid="([^"]+)"/)?.[1] || 'anonymous';
+      if (['agentSettingsPanel', 'processingSettingsPanel'].includes(id))
+        assert.ok(!sections.includes('harnessSaveNotice'), `${id} cannot live inside a hidden error panel`);
+      sections.push(id);
+    } else {
+      const id = tag.match(/\bid="([^"]+)"/)[1];
+      seen.add(id);
+      assert.ok(!sections.includes('harnessSaveNotice'), `${id} must remain visible when there is no conflict`);
+      if (id === 'harnessDecisionModelSelect') assert.ok(sections.includes('processingSettingsPanel'));
+    }
+  }
+  assert.equal(sections.length, 0);
+  assert.equal(seen.size, 3);
+});
+
 function runtime() {
   const elements = new Map();
   const element = id => {

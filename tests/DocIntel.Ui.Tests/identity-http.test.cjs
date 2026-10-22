@@ -279,6 +279,29 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         assert.equal((await request(tenantPath, administrator, 'PUT', {})).status, 400);
       });
       let tenant = await (await request(tenantPath, administrator)).json();
+      await t.test('only administrators can save personality and inspect channel configuration without granting access', async () => {
+        const profile = {
+          displayName: 'Meridian', purpose: 'Explain customer agreements', tone: 'Friendly',
+          instructions: 'Use plain English and cite sources.', emailEnabled: false, teamsEnabled: true
+        };
+        assert.equal((await request(tenantPath, reader, 'PUT', { ...tenant, agent: profile })).status, 403);
+        assert.equal((await request(tenantPath + '/agent/channels', reader)).status, 403);
+        const connection = await request(tenantPath + '/agent/channels', administrator);
+        assert.equal(connection.status, 200);
+        const state = await connection.json();
+        assert.equal(state.email.configured, false);
+        assert.equal(state.teams.configured, true);
+        assert.equal((await request(tenantPath, administrator, 'PUT',
+          { ...tenant, agent: { ...profile, displayName: 'Invalid\nname' } })).status, 400);
+        const saved = await request(tenantPath, administrator, 'PUT', { ...tenant, agent: profile });
+        assert.equal(saved.status, 200);
+        const previousVersion = tenant.harnessVersion;
+        tenant = await saved.json();
+        assert.equal(tenant.harnessVersion, previousVersion + 1);
+        assert.deepEqual(Object.fromEntries(Object.keys(profile).map(key => [key, tenant.agent[key]])), profile);
+        assert.equal((await (await request(tenantPath, reader)).json()).agent.displayName, 'Meridian');
+        assert.equal((await request('/api/harness/tenants/fabrikam-procurement/agent/channels', reader)).status, 403);
+      });
       await t.test('stale harness drafts return a visible conflict without overwriting another administrator', async () => {
         const stale = structuredClone(tenant);
         const edited = { ...tenant, displayName: 'Concurrently saved tenant' };

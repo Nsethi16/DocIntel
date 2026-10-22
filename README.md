@@ -222,39 +222,16 @@ invalid geometry, duplicate IDs, content/identity mismatches, and oversized evid
 up to 1,000 sequential pages and 50,000 words per page). Stored source evidence is not itself
 field grounding, calibrated confidence, or review approval.
 
-## Scanned PDF recognition
+## Unified PDF layout
 
-`Ocr.Mode` is part of each accepted tenant harness snapshot: `Auto` recognizes a page only when
-its body text has fewer than 50 characters and embedded images cover more than half the page;
-`Always` requests every page, and `Never` uses only the existing PDF text layer. Admin exposes
-this policy under the file-splitting settings and includes it in unsaved-change tracking.
+Azure Content Understanding `prebuilt-layout` (GA `2025-11-01`) is the cloud ingestion provider
+for text PDFs and scans, with native Markdown/page spans and original word quadrilaterals.
+See Content Understanding ingestion above for configuration and cache behavior. Legacy OCR
+Auto/Always/Never values are retained for old harness compatibility/offline development only;
+they do not bypass CU page analysis when a CU endpoint is configured. Use a supported Foundry
+region and validate the resource/analyzer before production use. PdfPig remains the PDF
+validation/physical-slicing component, not a second cloud text extractor.
 
-Configure the service-owned `AzureAI:DocumentIntelligenceEndpoint` to enable native Azure
-`prebuilt-read` using managed identity. Requests send original PDF bytes plus explicit page
-numbers; no client URL, local PDF rendering dependency, or generative text fallback is used.
-Recognized words retain actual provider scores, pass geometry/source-page validation, and use
-the same footer/pagination rules as embedded text before splitting and immutable layout
-publication. Missing configuration, missing pages, malformed output, cancellation and provider
-errors fail explicitly. OCR dimensions must match the source page orientation; no unverified
-rotation correction is guessed.
-
-Bicep provisions a passwordless Document Intelligence account and the application's data role,
-or accepts `documentIntelligenceEndpoint` for an existing account whose access must be configured
-separately. Tests verify the native SDK contract and an actual image-only PDF through a scripted
-recognizer; live recognition quality and permissions remain unverified here.
-
-Actual recognition results are cached immutably within each tenant, keyed by original-PDF SHA-256,
-original page number, and a hash of the provider/model/API/endpoint identity. Recreated workers
-reuse validated words and submit only missing pages; `Always` still permits valid cache reuse.
-The page evidence reports `ocrCacheHit`, and traces distinguish recognition from reuse. Cache
-entries include a checked content digest and input/provider/tenant identity; corruption is an
-explicit failure, not an unnoticed provider retry. Raw recognized words are cached, so a new job
-still applies its own accepted footer rules. Uncacheable custom providers run without persistent
-reuse rather than inheriting another provider's identity.
-
-Concurrent cache misses may both call the provider; immutable first-writer publication prevents
-overwrites, not duplicate billing. An air-gapped Tesseract runtime remains outstanding, and cache
-reuse is not an exactly-once usage guarantee.
 
 ### Live OCR allowances
 
@@ -308,78 +285,26 @@ publishing. Human corrections receive `HumanReviewedField` citations linked to t
 workspace; they are never presented as verbatim original-PDF quotations. Pending review does
 not expose unapproved effective-field evidence.
 
-## Human review
+## Machine-extracted exports and retained history
 
-Open **Human review** in the workspace or `/review.html?tenant=<tenant>&job=<job>`.
-New completed jobs are routed to persisted review by the accepted `ReviewPolicy` (enabled by
-default, elapsed-UTC due hours default 24, optional dual review). Existing completed jobs can
-start a review explicitly. No uncalibrated score automatically approves a value.
+Human review is no longer an application step. New jobs do not create review sessions, Ask AI
+does not advertise a review tool and the workspace/Admin do not expose approval controls.
+Legacy review API operations return HTTP 410, and the old page explains retirement.
+Existing review/audit data is retained without purge or promotion into current answers.
 
-The focused workspace keeps original PDF rendering/highlights separate from fields and human
-decisions. It uses pinned PDF.js 4.6.82 from cdnjs with an explicit unavailable-renderer message
-and an original-PDF link if loading fails. Clicking a field seeks its original page/region;
-hovering a source region identifies the associated original field. Zoom and keyboard shortcuts
-are available. Corrections never rewrite model outputs or pretend their new value is supported
-by an old highlighted region.
+`GET .../jobs/{jobId}/export?format=csv|xlsx|json` exports current machine-extracted values with
+`view=MachineExtracted` metadata, original source/provenance and uncalibrated scores. It never
+claims human verification and is available to authorized document readers without approval.
+Explicit legacy `view=original` remains Processor/Admin-only and labeled unreviewed; removed
+`view=reviewed` is not accepted. CSV formula defenses and safe text-only Open XML workbooks remain.
+Reference-only immutable export receipts record the actual response SHA before download.
 
-`Reviewer`, `Processor` and `Admin` roles can review only documents they may read; `Reviewer`
-does not gain upload, tenant-edit or budget permissions. Production decisions require a verified
-human directory identity, not an app-only service principal. Claims expire after 15 minutes.
-Every mutation requires the current strong `If-Match: "review-N"` version; stale edits and active
-claim conflicts return 409. Reload after an unconfirmed mutation rather than retrying it blindly.
-Dual review requires two different verified identities, and the second review cannot silently
-rewrite the first review's field decisions. Pending/rejected fields block submission.
+All responses retain MIME sniffing, anti-framing, referrer and permissions policies. Script CSP
+permits self-hosted external application scripts only; review compatibility assets are not
+loaded by the retired page. Workspace/Admin use shared safe action dispatch and no inline
+executable handlers or eval; dynamic style attributes retain a style-only compatibility exception.
+Original/slice PDFs remain same-origin embeddable. HTML is no-store and JS/CSS revalidates.
 
-Sessions and their audit appends commit atomically in SQLite or the separate `review-sessions`
-Cosmos tenant partition. Audit events carry verified actors, source-bound review identity,
-sequence, UTC time and a checked SHA-256 continuity chain. Original and effective values are
-separate. Development identity activity is explicitly tagged. Review fields are capped at 2,000
-and audit versions at 10,000 per session, with reserved terminal-action capacity; source changes
-invalidate old snapshots. This accommodates individual decisions for all 2,000 admitted fields.
-
-This is application-level append-only review history, **not** immutable/legal-hold archival,
-global endpoint audit coverage, SOC 2 certification or calibrated accuracy. Broad shared-chrome
-refactoring, business-calendar SLA computation, leaderboard metrics and model-score bulk
-approval are not claimed. All responses have MIME sniffing, referrer, permissions and frame
-policies, including errors and static files. Production advertises a one-year HSTS policy;
-HTTPS ingress is still required, and unrelated subdomains are not opted in. Review and question
-pages use strict script policies. Workspace/Admin scripts and styles are external assets with
-shared theme/base rules, safe text/clipboard helpers and a whitelisted action dispatcher.
-Static and dynamically rendered controls use primitive JSON data arguments, never inline
-handlers or runtime expression evaluation. Their script policy is now `script-src 'self'` with
-`script-src-attr 'none'`, without `unsafe-inline` or `unsafe-eval`. Existing dynamic style attributes
-still require a documented style-only `unsafe-inline` exception. Shared JS/CSS assets revalidate
-on navigation so updates do not silently mix stale scripts with new markup. Policies
-allow only their existing font providers and same-origin/blob PDF frames. Original/slice PDFs
-are embeddable by this application only (`SAMEORIGIN`), not blocked by the HTML page anti-framing
-policy. The remaining style compatibility exception is not a claim of complete XSS prevention.
-
-## Reviewed exports
-
-The review workspace exposes CSV, Excel and JSON downloads after explicit human approval.
-`GET /api/harness/tenants/{tenantId}/jobs/{jobId}/export?format=csv|xlsx|json` checks current
-document permissions, the approved source-matching review and its audit continuity. Pending,
-rejected, missing or stale review never silently falls back to model values. Corrections are
-exported as effective human values alongside original values, review outcomes/version, original
-source evidence status/pages, source hash and development-provenance markers.
-
-These are normalized field rows, including entity, structured-field and table-cell identities;
-they are not a fabricated wide schema across unlike document types. Original model scores are
-explicitly uncalibrated and are not scores for human corrections. Processor/Admin callers may
-request `view=original` explicitly; those artifacts are labeled `OriginalUnreviewed`, and this mode
-is forbidden to Readers/Reviewers even when they can read the approved document.
-
-CSV quotes every cell and neutralizes formula-leading values, including whitespace/control
-prefixes. Excel uses the approved Open XML SDK with inline-string cells and no formulas/macros.
-Values beyond Excel's cell limit are rejected rather than truncated; JSON retains exact values.
-Exports have bounded row/text/output sizes and direct authenticated downloads, not long-lived
-bearer SAS links that survive permission revocation.
-
-An immutable reference-only export event is persisted before bytes are released. The
-`X-DocIntel-Export-Id` response correlates format, actor, review/source version and content SHA-256;
-it does not log raw field values or prove that the client received every byte. This is application
-audit evidence, not immutable regulatory archival. Parquet, bulk/background exports, arbitrary
-webhooks, and SharePoint/Power Automate delivery remain subsequent connector work.
 
 ## Identity and document access
 
@@ -423,52 +348,107 @@ Conditional run creation prevents duplicate channel activities from replacing an
 Managed-identity sign-in requires a matching federated credential on the web app registration;
 this code does not create registrations or consent/permission grants.
 
-### Native Teams personal-chat adapter
+## Agent identity and channels
 
-The supported Microsoft Teams SDK (`Microsoft.Teams.Apps` 2.1.2, approved NuGet feed) hosts
-`POST /api/messages` only when `Channels:Teams:Enabled` is true. The default is disabled.
-This pilot supports **personal chats only**, one configured bot/application tenant and one exact
-public-cloud service URL. Shared channels/group chats, arbitrary callback destinations and
-anonymous bot authentication are rejected. A verified Teams AAD object ID must have current
-server-side DocIntel membership; directory membership alone does not grant document access.
+Admin Studio has separate **Document processing** and **Agent & channels** tabs. The latter
+stores tenant-versioned `agent.displayName`, `purpose`, `tone` (Professional/Friendly/Concise),
+`instructions`, `emailEnabled` and `teamsEnabled`. The style preview is illustrative, not a model
+completion. Channel toggles are distinct from read-only operator connection status; no token,
+password, arbitrary callback URL or privileged role is configured through personality fields.
+Name/purpose/guidance are bounded and JSON-encoded into presentation instructions; fixed
+authorization, evidence, citation and tool policies always remain in force. Each executed run
+captures its agent profile and harness version for consistent web/email/Teams responses.
+
+Both channel toggles are off by default. Operator configuration alone is insufficient:
+enable the intended channel for the matching tenant in Admin. Current tenant activation,
+channel toggle, actor grants, all referenced document IDs and source availability are rechecked
+before delivery. Durable send intent is saved before external operations; uncertain sends are
+`OutcomeUnknown`, not automatically retried. HTTP resilience retries are disabled for unsafe
+methods so a POST is not silently replayed beneath the outbox. Sent means service acknowledgement,
+not user receipt.
+
+### Teams personal chat and mentions
+
+The supported Microsoft Teams SDK hosts `POST /api/messages` only when `Channels:Teams:Enabled`
+is true. Configure:
 
 | `Channels:Teams` setting | Purpose |
 |---|---|
-| `Enabled` | Explicit opt-in; false leaves the native route and transport unregistered |
-| `TenantId` | Entra directory GUID; must match `Identity:DirectoryTenantId` |
-| `ClientId` | Separate bot application/UAMI client GUID, not the web/API registration |
-| `ApplicationTenantId` | Fixed DocIntel tenant slug; never chosen from incoming message text |
-| `ServiceUrl` | Exact HTTPS `smba.trafficmanager.net` regional/Teams URL for the registered bot |
-| `PublicOrigin` | HTTPS application origin; must match `Identity:PublicOrigin` |
-| `ClientCredentials` | Optional native SDK federation configuration; omit for a bot registered as UserAssignedMSI |
+| `Enabled` | Explicit operator opt-in |
+| `TenantId` | Same Entra directory as `Identity:DirectoryTenantId` |
+| `ClientId` | Bot registration/UAMI client GUID, separate from web/API registration |
+| `ApplicationTenantId` | Fixed DocIntel tenant, never selected by message text |
+| `ServiceUrl` | Exact HTTPS regional/Teams `smba.trafficmanager.net` service URL |
+| `PublicOrigin` | Same HTTPS app origin as `Identity:PublicOrigin` |
+| `ClientCredentials` | Optional native SDK federation settings; omit for UserAssignedMSI bots |
 
-Environment variables use double underscores, for example `Channels__Teams__Enabled`.
-For a UserAssignedMSI bot, assign that user-managed identity to the host and set `ClientId` to its
-client ID. For an application registration using managed-identity federation, configure the SDK's
-`ClientCredentials` with `SourceType: SignedAssertionFromManagedIdentity` and the managed identity
-client ID. Provisioning identities, the Azure Bot registration, the Teams application manifest
-(personal scope only), federation and installation/consent requires authorized operator setup;
-the deployment script does not provision a bot or change directory permissions.
+SDK signature/key/audience/lifetime checks and the explicit Bot Framework RS256 issuer policy
+run before handling. Personal messages queue directly under the verified sender's AAD membership.
+Group/channel messages require a structured mention entity for the configured bot: a display-name
+string such as `@Meridian` alone is not authentication. The adapter requests a private conversation
+with the verified user; the answer is never delivered to the shared conversation. Shared replies
+contain a generic acknowledgement and actor-protected progress link only. If personal-chat
+creation is unavailable (for example, the bot is not installed personally), the same run remains
+available through that authenticated link rather than posting document details to the channel.
 
-Native SDK signature/key, audience, lifetime and issuer validation runs before activity handling;
-this adapter additionally restricts the issuer to Bot Framework and RS256. Browser/API authentication
-remains separate, including PKCE, CSRF and live membership reload. SDK registration is deliberately
-isolated from the application's default authorization policy and host-owned configuration lifetime.
-The bounded in-memory cache is for reacquirable SDK tokens, **not** for questions or conversation state.
+Provision/authorize the bot registration, identity, federation and Teams app installation
+outside the app. Its manifest must declare the personal/team/group-chat scopes needed for the
+intended use and the user must be eligible for the personal bot chat. This code does not create
+registrations, grant directory permissions or install apps.
 
-Accepted questions receive a private acknowledgement and a sign-in-required
-`/ask-run.html?tenant=...&run=...` progress link. Activity deduplication, job execution and answer
-delivery use the existing persistent run store/leases/recovery worker. A single bounded plaintext
-answer preview includes citation labels and the full-answer link; large answers are not split into
-replay-prone partial messages. The progress page shows the complete answer, collapsed cited evidence,
-original PDF links or version-labeled human-review links, and explicit execution/delivery failures.
-It only polls the original run, never resubmits it. An uncertain send must be investigated rather
-than automatically replayed.
+### Email mailbox with verified sender confirmation
 
-No real bot registration or private Teams message has been exercised by offline checks. Those
-checks cover native-route authentication refusal, the existing bearer/browser/CSRF/revocation
-flows with Teams enabled, trusted routing, duplicate activity recovery and bounded previews.
-Mailbox Graph ingestion and Entra-confirmed email reply authorization remain separate connector work.
+Configure the operator-owned `Channels:Email` section:
+
+| Setting | Purpose |
+|---|---|
+| `Enabled` | Explicit opt-in; disabled leaves the worker/routes/transport unregistered |
+| `TenantId` | Same Entra directory as the web/API identity |
+| `MailboxObjectId` | Directory object GUID of the single connected mailbox |
+| `MailboxAddress` | Address shown in Admin connection status and confirmation messages |
+| `ApplicationTenantId` | Fixed application tenant for incoming questions |
+| `PublicOrigin` | Same HTTPS public origin used for sign-in |
+| `PollSeconds` | Delta synchronization cadence, 10-300 seconds; default 30 |
+
+The runtime managed identity needs Microsoft Graph `Mail.Read` and `Mail.Send` application access
+restricted to this mailbox through the organization's supported Exchange application access/RBAC
+controls. Directory lookup requires approved application access to read the user's primary
+`mail`/`userPrincipalName` (for example, `User.Read.All`); have an administrator approve and scope
+the permissions. Do not grant tenant-wide mailbox access just to bypass setup. No credentials
+are accepted in incoming emails or confirmation requests.
+
+The mailbox worker persists an exclusive, shared Graph delta checkpoint in the existing run
+store. It processes new inbox mail after first activation, not historical mailbox contents;
+restarts retain the original checkpoint. Metadata pages and per-message bodies are bounded;
+oversized/unsupported messages are logged as not accepted rather than blocking the cursor forever.
+Questions must be plain text and at most 8,000 characters. Automatic replies/self-mail are ignored.
+Immutable activity identity deduplicates messages. No incoming attachment or URL is fetched.
+
+An email From address is not trusted as authorization. The initial message receives only a
+source-free, 24-hour confirmation link. The sender signs in, sees the question and destination,
+and explicitly confirms through a CSRF-protected POST. Graph verifies the signed-in directory
+object owns the original sender address before revealing/executing the question. Forwarding the
+link to a different authorized user cannot use that user's permissions to send data to the
+original sender. A GET never runs the agent. Confirmation queues the same durable Ask AI run
+once. Answers use the snapshotted personality, include citations/source links, and go to the
+verified original address only; Reply-To/CC/BCC from the inbound message are not used.
+Aliases not returned as the account's primary mail/UPN are rejected rather than guessed.
+
+Graph requests use a fixed HTTPS host, mailbox identity and Graph token audience, with redirects
+disabled. Stored continuation links must belong to the configured mailbox delta resource.
+Interrupted/uncertain challenges and answers are not automatically resent. Inspect run status
+for failures/unknown outcomes; no end-user receipt or exactly-once provider billing claim is made.
+
+### Activation and verification
+
+Environment-variable names use `__` separators. Configure real identities/resources/Graph consent
+securely, enable the matching tenant channel, then verify a personal Teams question, a real
+shared mention with a private answer, and an email/confirmation/answer round trip with two
+different users to verify destination isolation. Endpoint refusals, native SDK/Graph contracts,
+deduplication, delta restart behavior and confirmation UI have offline tests; no real mailbox,
+bot installation, external message, directory consent or cloud deployment was performed here.
+
+
 
 Each membership has `DirectoryTenantId`, `ObjectId`, `ApplicationTenantId`, `Role` (`Reader`,
 `Reviewer`, `Processor`, or `Admin`), `AllDocuments`, and `DocumentIds`. Use the **user or enterprise service

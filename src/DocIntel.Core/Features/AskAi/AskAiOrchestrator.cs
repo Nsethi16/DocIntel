@@ -83,7 +83,7 @@ public sealed record AskAiStepTrace(
 public sealed class AskAiRun
 {
     [JsonPropertyName("actor")]
-    public ActorIdentity? Actor { get; init; }
+    public ActorIdentity? Actor { get; set; }
 
     [JsonPropertyName("schemaVersion")]
     public int SchemaVersion { get; init; } = 1;
@@ -125,6 +125,10 @@ public sealed class AskAiRun
     public AgentProfile? AgentProfile { get; set; }
     [JsonPropertyName("agentHarnessVersion")]
     public int? AgentHarnessVersion { get; set; }
+    [JsonPropertyName("pendingEmail")]
+    public PendingEmailQuestion? PendingEmail { get; set; }
+    [JsonPropertyName("mailboxContinuation")]
+    public string? MailboxContinuation { get; set; }
 
     [JsonPropertyName("citations")]
     public List<AskAiCitation> Citations { get; set; } = [];

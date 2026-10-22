@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http.Features;
 using Microsoft.IdentityModel.Tokens;
 using Microsoft.Teams.Apps;
+using Microsoft.Teams.Core;
 
 namespace DocIntel.Api.Channels;
 
@@ -63,11 +64,12 @@ public static class TeamsHostingExtensions
         teams.OnMessage(async (context, cancellationToken) =>
         {
             var activity = context.Activity;
+            var mention = TeamsMentionParser.Parse(activity.ToJson(), activity.Recipient?.Id ?? String.Empty, activity.Text);
             var question = new VerifiedTeamsQuestion(
                 activity.ChannelId?.ToString() ?? String.Empty, activity.ChannelData?.Tenant?.Id,
                 activity.Conversation?.TenantId,
                 activity.From?.AadObjectId, activity.Recipient?.Id, activity.Conversation?.ConversationType?.ToString(),
-                activity.Conversation?.IsGroup, activity.Conversation?.Id, activity.Id, activity.ServiceUrl, activity.Text);
+                activity.Conversation?.IsGroup, activity.Conversation?.Id, activity.Id, activity.ServiceUrl, mention.Text, mention.Mentioned);
             try
             {
                 receiver.ValidateRouting(question);
@@ -80,7 +82,26 @@ public static class TeamsHostingExtensions
             TeamsSubmission accepted;
             try
             {
-                accepted = await receiver.ReceiveAsync(question, cancellationToken);
+                accepted = await receiver.ReceiveAsync(question, cancellationToken, async ct =>
+                {
+                    try
+                    {
+                        var created = await teams.ConversationClient.CreateConversationAsync(new ConversationParameters
+                        {
+                            IsGroup = false,
+                            TenantId = question.DirectoryTenantId,
+                            Bot = activity.Recipient,
+                            Members = [activity.From!]
+                        }, new Uri(app.Services.GetRequiredService<TeamsChannelOptions>().ServiceUrl), cancellationToken: ct);
+                        return created.Id;
+                    }
+                    catch (HttpRequestException exception)
+                    {
+                        app.Logger.LogWarning("A private Teams reply could not be established: {ErrorType}. An authorized web link will be used.",
+                            exception.GetType().Name);
+                        return null;
+                    }
+                });
             }
             catch (Exception exception) when (exception is UnauthorizedAccessException or ArgumentException)
             {
@@ -92,9 +113,15 @@ public static class TeamsHostingExtensions
             }
             if (accepted.Created)
             {
-                await context.SendAsync(new MessageActivityInput().WithText(
-                    "Your question is queued. DocIntel will reply here when it completes. " +
-                    "You can also sign in to view progress: " + accepted.StatusUrl), cancellationToken);
+                var message = accepted.SharedRequest
+                    ? accepted.PrivateReplyAvailable
+                        ? $"{accepted.AgentName} is working on your question and will reply privately. " +
+                            "Document details are never posted to this shared conversation. "
+                        : $"{accepted.AgentName} accepted your question. Install/open the personal bot chat for future private replies. " +
+                            "Use the sign-in-required link for this answer. "
+                    : $"{accepted.AgentName} accepted your question and will reply here when it completes. ";
+                await context.SendAsync(new MessageActivityInput().WithText(message +
+                    "Private progress and answer: " + accepted.StatusUrl), cancellationToken);
             }
         });
         app.MapPost("/api/messages", async (HttpContext context, CancellationToken cancellationToken) =>

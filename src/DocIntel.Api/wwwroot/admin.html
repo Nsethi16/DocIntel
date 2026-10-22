@@ -97,6 +97,7 @@
           <h3>Server configuration at conflict</h3><pre id="harnessServer" style="max-height:300px;overflow:auto;white-space:pre-wrap;"></pre>
         </details>
         <button type="button" class="btn-action" data-click="reloadHarnessAfterConflict">Reload latest configuration</button>
+      </section>
 
       <!-- Harness-Level Model Selection (Stacked One After Another Above Features) -->
       <nav class="admin-sections" aria-label="Tenant settings">
@@ -115,6 +116,7 @@
             <label for="agentDisplayName">Agent name</label>
             <input id="agentDisplayName" maxlength="64" class="clean-input" placeholder="e.g. Meridian"
               data-input="onAgentProfileChanged">
+            <p class="agent-safety-note">Used in replies. The mailbox address and installed Teams app mention name are configured separately.</p>
             <label for="agentPurpose">What does your agent help with?</label>
             <textarea id="agentPurpose" maxlength="500" class="clean-textarea" rows="3"
               placeholder="Describe its purpose and audience." data-input="onAgentProfileChanged"></textarea>
@@ -176,7 +178,6 @@
               <strong>Decision Model</strong>
               <span>Classifies and routes PDF slices into defined document types</span>
             </div>
-            </section>
           </div>
           <select class="modern-model-pill" id="harnessDecisionModelSelect" data-change="onHarnessChanged">
             <option value="decision-1">Microsoft Decision 1</option>
@@ -247,15 +248,16 @@
 
           <div class="feature-drawer" id="splitDrawer">
             <div class="drawer-row">
-              <label class="drawer-label" for="ocrModeSelect">Page text recognition</label>
-              <select class="clean-input" id="ocrModeSelect" data-change="onHarnessChanged">
+              <span class="drawer-label">Document understanding</span>
+              <span>Azure Content Understanding &middot; all PDF pages &middot; layout + Markdown</span>
+              <select class="clean-input" id="ocrModeSelect" hidden aria-label="Legacy offline recognition policy">
                 <option value="Auto">Automatic for scanned pages</option>
                 <option value="Always">Recognize every page</option>
                 <option value="Never">Use the PDF text layer only</option>
               </select>
             </div>
             <details>
-              <summary>Live OCR allowance</summary>
+              <summary>Live document-analysis allowance</summary>
               <p id="ocrUsageStatus" role="status">Load the current monthly allowance and reserved request pages.</p>
               <div class="drawer-row">
                 <label for="ocrPageLimit">Monthly pages</label>
@@ -265,7 +267,7 @@
                 <button type="button" class="btn-mini" data-click="loadOcrUsage">Load / refresh</button>
                 <button type="button" class="btn-mini" id="ocrBudgetSave" data-click="saveOcrBudget" disabled>Save live allowance</button>
               </div>
-              <p>Separate from the harness version. Zero blocks fresh OCR, not validated cache reuse.
+              <p>Separate from the harness version. Zero blocks fresh analysis, not validated cache reuse.
                 Failed or interrupted provider requests retain their reserved pages; these counts are not an invoice.</p>
             </details>
             <div class="drawer-row">

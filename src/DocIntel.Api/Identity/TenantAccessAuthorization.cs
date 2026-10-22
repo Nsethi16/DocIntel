@@ -90,9 +90,11 @@ internal sealed class TenantAccessHandler(
             if (context.Request.RouteValues["runId"]?.ToString() is { } runId)
             {
                 var run = await runStore.GetRunAsync(tenantId, runId, context.RequestAborted);
+                var pendingEmailConfirmation = run?.Status == JobStatus.AwaitingConfirmation &&
+                    pattern.Contains("/ask/email/runs/", StringComparison.Ordinal);
                 if (run is null ||
                     (!(scope.CanAdmin && scope.AllowedJobIds is null) &&
-                     run.Actor != IdentityAccessService.GetActor(context.User)) ||
+                     !pendingEmailConfirmation && run.Actor != IdentityAccessService.GetActor(context.User)) ||
                     run.Citations.Any(c => !scope.CanReadDocument(c.JobId)))
                 {
                     return 404;

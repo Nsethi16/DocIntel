@@ -100,6 +100,7 @@ public sealed class AskAiRunProcessor(
             return;
         }
         var run = lease.Run;
+        if (run.Status == JobStatus.AwaitingConfirmation) return;
         if (run.Status == JobStatus.Completed && run.ChannelDelivery is not null)
         {
             if (delivery is null)

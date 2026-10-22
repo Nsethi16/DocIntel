@@ -15,7 +15,8 @@ public enum JobStatus
     Running,
     Completed,
     Failed,
-    Deleted
+    Deleted,
+    AwaitingConfirmation
 }
 
 /// <summary>
