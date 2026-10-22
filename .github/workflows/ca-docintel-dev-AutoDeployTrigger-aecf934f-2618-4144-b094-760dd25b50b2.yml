@@ -48,15 +48,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
-      - name: Restore locked dependencies from the approved feed
+      - name: Restore locked dependencies from NuGet.org
         shell: pwsh
-        env:
-          NuGetPackageSourceCredentials_IDE-BOC-RevenueProcessingforComOps: ${{ secrets.DOCINTEL_NUGET_CREDENTIALS }}
         run: |
-          $credential = [Environment]::GetEnvironmentVariable('NuGetPackageSourceCredentials_IDE-BOC-RevenueProcessingforComOps')
-          if ([String]::IsNullOrWhiteSpace($credential)) {
-            throw 'Configure a read-only approved-feed credential; public-feed fallback is not permitted.'
-          }
           dotnet restore DocIntel.slnx --configfile NuGet.config --locked-mode
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Build every project with warnings as errors
@@ -103,15 +97,13 @@ jobs:
       - name: Authenticate to the registry with the federated identity
         run: az acr login --name acrdocinteldevokjs3fevazuto
       - uses: docker/setup-buildx-action@v3
-      - name: Build and push with an ephemeral approved-feed credential
+      - name: Build and push the validated application image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
           push: true
           tags: acrdocinteldevokjs3fevazuto.azurecr.io/ca-docintel-dev:${{ github.sha }}
-          secrets: |
-            nuget_credentials=${{ secrets.DOCINTEL_NUGET_CREDENTIALS }}
       - name: Deploy the validated image
         run: >-
           az containerapp update

@@ -34,6 +34,11 @@ is posted into an unverified shared audience. External sends persist intent befo
 uncertain outcomes never automatically replay. See the README's current channel setup and
 verification sections; real provider credentials, consent and live delivery are separate setup.
 
+Standalone builds restore locked packages from public NuGet.org, not a corporate Azure DevOps
+feed. GitHub deployment uses the owner's Azure subscription through OIDC; enterprise people
+search, mailbox and Teams setup remain optional. See the README's personal-subscription deployment
+instructions. A clean public restore and the normal security/build gates must succeed before rollout.
+
 ---
 
 ## Ask AI execution policy

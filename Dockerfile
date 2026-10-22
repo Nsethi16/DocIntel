@@ -2,9 +2,7 @@
 FROM mcr.microsoft.com/dotnet/sdk:10.0 AS build
 WORKDIR /src
 COPY . .
-RUN --mount=type=secret,id=nuget_credentials,required=true \
-    env "NuGetPackageSourceCredentials_IDE-BOC-RevenueProcessingforComOps=$(cat /run/secrets/nuget_credentials)" \
-    dotnet restore "src/DocIntel.Api/DocIntel.Api.csproj" --configfile NuGet.config --locked-mode \
+RUN dotnet restore "src/DocIntel.Api/DocIntel.Api.csproj" --configfile NuGet.config --locked-mode \
     && dotnet publish "src/DocIntel.Api/DocIntel.Api.csproj" -c Release -o /app/publish \
        --no-restore /p:UseAppHost=false /p:ContinuousIntegrationBuild=true
 

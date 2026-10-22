@@ -94,35 +94,88 @@ node --test tests\DocIntel.Ui.Tests\ask-ai.test.cjs tests\DocIntel.Ui.Tests\iden
   tests\DocIntel.Ui.Tests\evidence.test.cjs tests\DocIntel.Ui.Tests\review-client.test.cjs
 ```
 
-### Reproducible container builds and CI
+### Reproducible standalone builds and CI
 
-NuGet remains restricted to the approved internal feed, with package-source mapping and checked-in
-content-hashed lockfiles for every project. CI and container restore use `--locked-mode`; package
-changes require intentionally regenerating and reviewing the affected locks from that same feed.
-The Dockerfile no longer removes `NuGet.config` or falls back to nuget.org. Its build context excludes
-local job/artifact data, editor metadata and common credential files, and the runtime uses the .NET
-non-root application user with a writable `App_Data` directory.
+This repository is a standalone GitHub-to-Azure application. It deliberately restores from
+**public NuGet.org only**, with package-source mapping and checked-in, content-hashed lockfiles
+for every project. It does not require Azure DevOps, an internal package feed, a corporate PAT,
+or a package-feed secret in GitHub. CI and container restore still use `--locked-mode`; package
+changes must intentionally regenerate and review affected locks. Changing the package source does
+not authorize ignoring lock/hash errors or substituting package versions.
 
-Container builds require BuildKit and a read-only feed credential supplied as a secret, never a
-Docker build argument or committed file. Set `DOCINTEL_NUGET_CREDENTIALS` privately to the NuGet
-credential value `Username=<feed-user>;Password=<read-only-credential>;ValidAuthenticationTypes=Basic`,
-then use:
+The Dockerfile uses the checked-in `NuGet.config`, excludes local job/artifact data, editor
+metadata and common credential files, and runs as the .NET non-root application user with a
+writable `App_Data` directory. A normal container build needs no package credential:
 
 ```powershell
-docker buildx build --secret id=nuget_credentials,env=DOCINTEL_NUGET_CREDENTIALS -t docintel:local .
+dotnet restore DocIntel.slnx --configfile NuGet.config --locked-mode
+docker build --tag docintel:local .
 ```
 
 The GitHub workflow validates all Release projects, .NET/browser/recovery tests and infrastructure
-before deployment. Documentation-only pushes do not deploy. Deployment requires `main`, an explicit
-repository variable `DOCINTEL_DEPLOY_ENABLED=true`, and the `docintel-dev` environment. It retains
-the existing Entra federation identifiers, uses `az acr login` instead of registry passwords, and
-passes `DOCINTEL_NUGET_CREDENTIALS` as a BuildKit secret. Configure those secrets/environment approvals
-outside Git; the federated identity needs registry `AcrPush` and appropriate Container App permissions.
-No directory grants, repository secrets or deployment-enable variable are created by this code.
-Untrusted fork PRs receive no secrets and cannot restore private packages without an approved trusted
-validation environment; do not switch to `pull_request_target` or a public package feed to bypass this.
-Local locked restore/publish and workflow syntax can be checked without cloud mutation; an actual
-Linux image build/deployment still requires Docker and authorized registry/feed access.
+before deployment. Pull requests can restore public packages without deployment secrets. Azure
+credentials are available only to the separate deployment job; keep that job disabled for pull
+requests and do not use `pull_request_target` to run untrusted changes with privileges.
+
+Documentation-only pushes do not deploy. Deployment requires `main`, an explicit repository
+variable `DOCINTEL_DEPLOY_ENABLED=true`, and the `docintel-dev` environment. The workflow uses
+Azure OIDC federation and `az acr login`, not registry passwords. Local restore/build checks do
+not prove a Linux image build or live rollout; the latter require Docker or the GitHub runner,
+authorized Azure access, and working network connectivity.
+
+If NuGet.org fails with a TLS/certificate/network error, fix the machine's network/trust setup
+or run validation on an approved network/runner. Do not disable certificate validation, package
+auditing or warnings, add an unknown mirror, or silently use a private-feed fallback.
+
+### Personal Azure subscription deployment
+
+The configured existing target is Container App `ca-docintel-dev`, resource group `Docintel`,
+and registry `acrdocinteldevokjs3fevazuto`. Those resources must belong to your intended
+subscription. A personal Azure subscription still has an Entra directory; no Microsoft corporate
+account or enterprise employee directory integration is required. The current application uses
+directory-based sign-in, not unrestricted sign-in by any personal Microsoft account.
+
+1. In GitHub repository **Settings > Environments**, create/configure **docintel-dev** and
+   restrict deployment to **main**. Add approval protection where your plan supports it.
+2. Configure the deployment identity's Azure federated credential for issuer
+   `https://token.actions.githubusercontent.com`, audience `api://AzureADTokenExchange`, and subject
+   `repo:Nsethi16/DocIntel:environment:docintel-dev`. This is the identity GitHub uses to deploy,
+   not the runtime identity or browser web registration.
+3. Make these existing workflow secret names available to the deployment job:
+   `CADOCINTELDEV_AZURE_CLIENT_ID` (deployment identity client ID),
+   `CADOCINTELDEV_AZURE_TENANT_ID` (your subscription's Entra directory ID), and
+   `CADOCINTELDEV_AZURE_SUBSCRIPTION_ID`. These are identifiers; no Azure client password or
+   package-feed credential is required. Give that identity registry push and target Container App
+   update access at the narrow resource scopes, using the roles appropriate to the registry mode.
+4. Prepare the runtime independently: attached managed identity, persistent Cosmos/Blob/Queue
+   storage, protected sign-in keys, web/API Entra registrations, HTTPS redirect/origin, and an
+   explicit initial tenant-admin grant. Production must use `Identity__Mode=Entra` and
+   `Models__AllowDevelopmentSimulation=false`. See **Deploy to Azure** and **Identity and document access**
+   below. Do not publish loopback-development identity or depend on ephemeral container files.
+5. Configure a real `AzureAI__AzureOpenAIEndpoint` and deployed model such as `gpt-5-mini`,
+   `AzureAI__ContentUnderstandingEndpoint` at the supported Foundry resource root, and any
+   translation endpoint needed by enabled features. Grant the runtime identity the required
+   data-plane roles. Select only deployed models in every active tenant.
+6. Initially leave `Identity__Directory__Enabled`, `Channels__Email__Enabled`, and
+   `Channels__Teams__Enabled` false. Operator-configured tenant grants still work. Directory
+   photos/search, a mailbox, and a Teams bot are optional separate integrations, not prerequisites
+   for deploying the web application.
+7. After runtime setup, set the repository **Actions variable** `DOCINTEL_DEPLOY_ENABLED` to
+   `true`, publish the latest feature changes and merge them to **main**. The push triggers
+   **Validate and deploy DocIntel**. To redeploy the code already on main, use **Actions >
+   Validate and deploy DocIntel > Run workflow > main**, or:
+
+```powershell
+gh workflow run "Validate and deploy DocIntel" --repo Nsethi16/DocIntel --ref main
+```
+
+The workflow builds/pushes a commit-tagged image and updates the existing app. It does **not**
+apply Bicep, create sign-in registrations, grant cloud/Graph access, or copy local documents and
+tenant settings. Review infrastructure changes separately using explicit existing-resource
+parameters; the deployment script's defaults target a different resource group. Verify
+`/health/live`, `/health/ready`, authorized sign-in, a real PDF upload, a cited Ask AI answer and
+persistence after restart. Directory/user-profile integration can be enabled later with approved
+read-only Graph permission on the runtime identity.
 
 Local development uses explicit loopback-only access. It is not an authentication mode for a
 publicly exposed service: `LocalDevelopment` is refused outside `Development` or when listening

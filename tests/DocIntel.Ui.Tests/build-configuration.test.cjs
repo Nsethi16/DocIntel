@@ -8,10 +8,10 @@ const read = name => fs.readFileSync(path.join(root, name), 'utf8');
 const workflow = read(path.join('.github', 'workflows',
   'ca-docintel-dev-AutoDeployTrigger-aecf934f-2618-4144-b094-760dd25b50b2.yml'));
 
-test('container restore cannot remove the approved feed or pass credentials through image arguments', () => {
+test('standalone container restore uses the configured public source without package credentials', () => {
   const docker = read('Dockerfile');
-  assert.doesNotMatch(docker, /nuget\.org|rm\s+-f\s+NuGet|ARG\s+.*(?:SECRET|PASSWORD|TOKEN|CREDENTIAL)/i);
-  assert.match(docker, /--mount=type=secret,id=nuget_credentials,required=true/);
+  assert.doesNotMatch(docker, /rm\s+-f\s+NuGet|ARG\s+.*(?:SECRET|PASSWORD|TOKEN|CREDENTIAL)/i);
+  assert.doesNotMatch(docker, /--mount=type=secret|NuGetPackageSourceCredentials|nuget_credentials|OneITVSO/);
   assert.match(docker, /dotnet restore.*--configfile NuGet\.config --locked-mode/);
   assert.match(docker, /--no-restore/);
   assert.match(docker, /USER \$APP_UID/);
@@ -20,15 +20,22 @@ test('container restore cannot remove the approved feed or pass credentials thro
   assert.ok(!ignored.includes('NuGet.config'));
 });
 
-test('NuGet source mapping and locked restore remain scoped to the approved internal feed', () => {
+test('NuGet source mapping deliberately uses only NuGet.org and keeps locked restore', () => {
   const config = read('NuGet.config');
-  assert.doesNotMatch(config, /api\.nuget\.org/);
+  const sources = [...config.matchAll(/<add key="([^"]+)" value="(https:[^"]+)"/g)];
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0][1], 'nuget.org');
+  assert.equal(sources[0][2], 'https://api.nuget.org/v3/index.json');
+  assert.doesNotMatch(config, /OneITVSO|visualstudio\.com|pkgs\.dev\.azure\.com|<packageSourceCredentials>/i);
   assert.match(config, /<clear\s*\/>/);
-  assert.match(config, /<packageSource key="IDE-BOC-RevenueProcessingforComOps">/);
+  assert.match(config, /<packageSource key="nuget\.org">/);
   assert.match(config, /<package pattern="\*"\s*\/>/);
+  assert.doesNotMatch(config, /disableTLSCertificateValidation|allowInsecureConnections/i);
   const props = read('Directory.Build.props');
   assert.match(props, /<RestorePackagesWithLockFile>true/);
   assert.match(props, /<RestoreLockedMode Condition=.*ContinuousIntegrationBuild/);
+  assert.match(read('README.md'), /public NuGet\.org only/);
+  assert.doesNotMatch(read('README.md'), /DOCINTEL_NUGET_CREDENTIALS|nuget_credentials|OneITVSO/);
 });
 
 test('all five projects have content-hashed dependency lockfiles without changing pinned package versions', () => {
@@ -56,7 +63,8 @@ test('deployment uses federation and registry identity rather than registry acco
   assert.match(workflow, /DOCINTEL_DEPLOY_ENABLED == 'true'/);
   assert.match(workflow, /github\.event_name != 'pull_request'/);
   assert.match(workflow, /environment: docintel-dev/);
-  assert.match(workflow, /nuget_credentials=\$\{\{ secrets\.DOCINTEL_NUGET_CREDENTIALS \}\}/);
+  assert.doesNotMatch(workflow, /DOCINTEL_NUGET_CREDENTIALS|NuGetPackageSourceCredentials|nuget_credentials|OneITVSO/);
+  assert.match(workflow, /Restore locked dependencies from NuGet\.org/);
 });
 
 test('docs-only changes do not match deployment paths and pull requests get validation', () => {
@@ -68,4 +76,6 @@ test('docs-only changes do not match deployment paths and pull requests get vali
   assert.match(workflow, /--locked-mode/);
   assert.match(workflow, /-warnaserror/);
   assert.match(workflow, /node --test/);
+  for (const content of [workflow, read('Dockerfile'), read('Directory.Build.props')])
+    assert.doesNotMatch(content, /ignore-failed-sources|NuGetAudit>\s*false|NuGetAudit=false|NoWarn.*NU19|disableTLSCertificateValidation/i);
 });
