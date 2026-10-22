@@ -21,6 +21,10 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Compile Include="..\..\src\DocIntel.Api\Channels\GraphMailboxClient.cs" Link="Channels\GraphMailboxClient.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Channels\MailboxQuestionWorker.cs" Link="Channels\MailboxQuestionWorker.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Identity\IdentityOptions.cs" Link="Identity\IdentityOptions.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Identity\IdentityAccessService.cs" Link="Identity\IdentityAccessService.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Identity\TenantUserService.cs" Link="Identity\TenantUserService.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Identity\GraphEnterpriseDirectory.cs" Link="Identity\GraphEnterpriseDirectory.cs" />
   </ItemGroup>
 
 </Project>

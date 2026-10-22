@@ -26,7 +26,7 @@ public static class ReviewEndpoints
         {
             if (offset is < 0 || limit is < 1 or > 50 || status.HasValue && !Enum.IsDefined(status.Value))
                 return Results.Problem(statusCode: 400, title: "Invalid review page or status.");
-            var scope = access.GetAccess(context.User, tenantId);
+            var scope = await access.GetAccessAsync(context.User, tenantId, ct);
             var actor = IdentityAccessService.GetActor(context.User);
             var canReview = scope.CanReview &&
                 (access.IsLocalDevelopment || actor is not null && !access.IsServicePrincipal(actor));
@@ -61,7 +61,7 @@ public static class ReviewEndpoints
         {
             var actor = IdentityAccessService.GetActor(context.User);
             context.Response.Headers["X-DocIntel-Can-Review"] =
-                access.GetAccess(context.User, tenantId).CanReview &&
+                (await access.GetAccessAsync(context.User, tenantId, ct)).CanReview &&
                 (access.IsLocalDevelopment || actor is not null && !access.IsServicePrincipal(actor)) ? "true" : "false";
             var job = await jobs.GetJobAsync(jobId, ct, tenantId);
             if (job?.Status != JobStatus.Completed) return Results.NotFound();

@@ -46,18 +46,22 @@ internal sealed class TenantAccessHandler(
         var pattern = (context.GetEndpoint() as RouteEndpoint)?.RoutePattern.RawText ?? String.Empty;
         var read = HttpMethods.IsGet(context.Request.Method) || HttpMethods.IsHead(context.Request.Method);
         var bearer = context.User.Identities.Any(i => i.AuthenticationType == IdentityHostingExtensions.BearerScheme);
-        if (!access.HasAnyMembership(context.User) ||
-            (pattern.EndsWith("/catalog", StringComparison.Ordinal) && !access.CanAdministerAnyTenant(context.User)))
+        var routeTenant = context.Request.RouteValues["tenantId"]?.ToString();
+        if (routeTenant is null && !await access.HasAnyMembershipAsync(context.User, context.RequestAborted) ||
+            pattern.EndsWith("/catalog", StringComparison.Ordinal) &&
+                !await access.CanAdministerAnyTenantAsync(context.User, context.RequestAborted))
         {
             return Denied(pattern, context);
         }
         if (context.Request.RouteValues["tenantId"]?.ToString() is { } tenantId)
         {
-            var scope = access.GetAccess(context.User, tenantId);
+            var scope = await access.GetAccessAsync(context.User, tenantId, context.RequestAborted);
             if (!scope.CanRead)
             {
                 return Denied(pattern, context);
             }
+            context.Response.Headers["X-DocIntel-Can-Admin"] = scope.CanAdmin ? "true" : "false";
+            context.Response.Headers["X-DocIntel-Can-Process"] = scope.CanProcess ? "true" : "false";
             var tenant = await harnessStore.GetTenantAsync(tenantId, context.RequestAborted);
             var configurationOperation = pattern.EndsWith("/tenants/{tenantId}", StringComparison.Ordinal);
             if (tenant?.IsActive != true && !(configurationOperation && scope.CanAdmin))
@@ -68,6 +72,9 @@ internal sealed class TenantAccessHandler(
             var review = pattern.Contains("/review", StringComparison.Ordinal);
             var usageOperation = pattern.EndsWith("/ocr-budget", StringComparison.Ordinal) ||
                 pattern.EndsWith("/ocr-usage", StringComparison.Ordinal);
+            if (pattern.Contains("/users", StringComparison.Ordinal) &&
+                (!scope.CanAdmin || scope.AllowedJobIds is not null))
+                return Denied(pattern, context);
             if (usageOperation && (!scope.CanAdmin || scope.AllowedJobIds is not null))
                 return Denied(pattern, context);
             if (HttpMethods.IsDelete(context.Request.Method) &&
@@ -112,7 +119,7 @@ internal sealed class TenantAccessHandler(
                 }
             }
         }
-        else if ((!read && !access.IsPlatformAdministrator(context.User)) ||
+        else if ((!read && !await access.IsPlatformAdministratorAsync(context.User, context.RequestAborted)) ||
                  (read && !pattern.EndsWith("/tenants", StringComparison.Ordinal) &&
                   !pattern.EndsWith("/catalog", StringComparison.Ordinal) &&
                   !pattern.EndsWith("/jobs/{jobId}", StringComparison.Ordinal)))

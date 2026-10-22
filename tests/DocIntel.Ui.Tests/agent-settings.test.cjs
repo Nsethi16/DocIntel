@@ -73,6 +73,26 @@ test('agent settings have a separate discoverable panel from document-processing
   assert.equal(app.element('agentSettingsPanel').hidden, true);
 });
 
+test('users tab hides only harness actions and preserves dirty profile values and conflict state', () => {
+  const app = runtime();
+  app.settings.render({ displayName: 'Unsaved agent name', instructions: 'Unsaved instructions' });
+  app.element('harnessSaveNotice').hidden = false;
+  app.element('btnSaveHarness').disabled = false;
+  app.settings.section('users');
+  assert.equal(app.element('tenantUsersPanel').hidden, false);
+  assert.equal(app.element('agentSettingsPanel').hidden, true);
+  assert.equal(app.element('processingSettingsPanel').hidden, true);
+  assert.equal(app.element('harnessHeaderActions').hidden, true);
+  assert.equal(app.element('tenantUsersTab')['aria-selected'], 'true');
+  assert.equal(app.element('tenantUsersTab').tabindex, '0');
+  app.settings.section('agent');
+  assert.equal(app.element('harnessHeaderActions').hidden, false);
+  assert.equal(app.element('harnessSaveNotice').hidden, false);
+  assert.equal(app.element('btnSaveHarness').disabled, false);
+  assert.equal(app.settings.read().displayName, 'Unsaved agent name');
+  assert.equal(app.settings.read().instructions, 'Unsaved instructions');
+});
+
 test('a tenant toggle cannot pretend a mailbox or bot is connected', async () => {
   const app = runtime();
   app.settings.render({ emailEnabled: true, teamsEnabled: true });

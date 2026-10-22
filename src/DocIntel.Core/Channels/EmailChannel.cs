@@ -9,6 +9,8 @@ using Microsoft.Extensions.Logging;
 
 namespace DocIntel.Core.Channels;
 
+public enum EmailAuthorizationMode { ConfirmSender, TrustedInternal }
+
 /// <summary>Operator-owned mailbox binding. No sender address or URL grants document permissions.</summary>
 public sealed class EmailChannelOptions
 {
@@ -20,9 +22,17 @@ public sealed class EmailChannelOptions
     public string ApplicationTenantId { get; set; } = String.Empty;
     public string PublicOrigin { get; set; } = String.Empty;
     public int PollSeconds { get; set; } = 30;
+    public EmailAuthorizationMode AuthorizationMode { get; set; }
+    /// <summary>Secret transport attestation; Exchange must strip incoming copies and stamp only authenticated internal mail.</summary>
+    public string CorporateSenderProof { get; set; } = String.Empty;
+    public const string CorporateSenderProofHeader = "X-DocIntel-Internal-Sender-Proof";
     public void Validate()
     {
         if (!Enabled) return;
+        if (!Enum.IsDefined(AuthorizationMode) || AuthorizationMode == EmailAuthorizationMode.TrustedInternal &&
+            (CorporateSenderProof.Length is < 43 or > 256 ||
+             CorporateSenderProof.Any(character => !Char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_')))
+            throw new InvalidOperationException("Automatic email requires a securely configured corporate sender attestation.");
         if (TenantId == Guid.Empty || MailboxObjectId == Guid.Empty || !IsAddress(MailboxAddress) ||
             String.IsNullOrWhiteSpace(ApplicationTenantId) || ApplicationTenantId.Length > 128 ||
             ApplicationTenantId.Any(c => !Char.IsAsciiLetterOrDigit(c) && c != '-') ||
@@ -37,7 +47,9 @@ public sealed class EmailChannelOptions
         MailboxObjectId,
         MailboxAddress,
         ApplicationTenantId,
-        PublicOrigin
+        PublicOrigin,
+        AuthorizationMode,
+        ProofHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(CorporateSenderProof)))
     })));
     public string ConfirmationUrl(string runId) => PublicOrigin.TrimEnd('/') + "/email-question.html?tenant=" +
         Uri.EscapeDataString(ApplicationTenantId) + "&run=" + Uri.EscapeDataString(runId);
@@ -48,7 +60,7 @@ public sealed class EmailChannelOptions
 }
 
 public sealed record MailboxQuestion(string MessageId, string Sender, string Subject, string Text,
-    DateTimeOffset ReceivedAtUtc, bool Automatic = false);
+    DateTimeOffset ReceivedAtUtc, bool Automatic = false, bool TrustedInternalSender = false);
 public sealed record MailboxChanges(IReadOnlyList<MailboxQuestion> Messages, string? NextLink, string? DeltaLink);
 
 public interface IMailboxClient
@@ -68,12 +80,15 @@ public sealed class PendingEmailQuestion
     public required DateTimeOffset ExpiresAtUtc { get; init; }
     public ChannelDeliveryStatus ChallengeStatus { get; set; } = ChannelDeliveryStatus.Pending;
     public DateTimeOffset? ConfirmedAtUtc { get; set; }
+    public EmailAuthorizationMode AuthorizationMode { get; init; }
+    public DateTimeOffset? AuthenticatedAtUtc { get; init; }
 }
 
 /// <summary>Deduplicates mailbox messages and sends only a source-free sign-in challenge before user authorization.</summary>
 public sealed class EmailQuestionReceiver(
     EmailChannelOptions options, IAskAiRunStore runs, IHarnessStore harness, IMailboxClient mailbox,
-    ILogger<EmailQuestionReceiver> logger)
+    ILogger<EmailQuestionReceiver> logger, IAutomaticEmailAuthorization? automaticAuthorization = null,
+    IAskAiQueue? queue = null)
 {
     public async Task ReceiveAsync(MailboxQuestion message, CancellationToken cancellationToken = default)
     {
@@ -91,6 +106,23 @@ public sealed class EmailQuestionReceiver(
         var tenant = await harness.GetTenantAsync(options.ApplicationTenantId, cancellationToken);
         if (tenant is not { IsActive: true } || !tenant.Agent.EmailEnabled ||
             !tenant.Capabilities.TryGetValue(FeatureHarness.AskAiKey, out var feature) || !feature.Enabled) return;
+        VerifiedEmailActor? verified = null;
+        if (options.AuthorizationMode == EmailAuthorizationMode.TrustedInternal)
+        {
+            if (!message.TrustedInternalSender)
+            {
+                logger.LogWarning("An email lacked trusted corporate sender authentication; no question or answer was created.");
+                return;
+            }
+            if (automaticAuthorization is null || queue is null)
+                throw new InvalidOperationException("Automatic email requires directory-backed tenant authorization and dispatch.");
+            verified = await automaticAuthorization.ResolveAsync(options.ApplicationTenantId, message.Sender, cancellationToken);
+            if (verified is null)
+            {
+                logger.LogWarning("An email sender has no active verified tenant assignment; no question or answer was created.");
+                return;
+            }
+        }
         var runId = "mail-" + Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
         {
             options.MailboxObjectId,
@@ -102,17 +134,32 @@ public sealed class EmailQuestionReceiver(
             RunId = runId,
             TenantId = options.ApplicationTenantId,
             Question = message.Text.Trim(),
-            Status = JobStatus.AwaitingConfirmation,
+            Actor = verified?.Actor,
+            Status = verified is null ? JobStatus.AwaitingConfirmation : JobStatus.Queued,
             ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Email },
             PendingEmail = new PendingEmailQuestion
             {
                 Profile = options.Profile,
-                Sender = message.Sender,
+                Sender = verified?.Address ?? message.Sender,
                 MessageId = message.MessageId,
-                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(24)
+                ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(24),
+                AuthorizationMode = options.AuthorizationMode,
+                AuthenticatedAtUtc = verified is null ? null : DateTimeOffset.UtcNow
+            },
+            ChannelDelivery = verified is null ? null : new ChannelDelivery
+            {
+                Transport = "Email",
+                Profile = options.Profile,
+                DestinationId = verified.Address,
+                MessageId = message.MessageId
             }
         };
-        await runs.TryCreateRunAsync(run, cancellationToken);
+        var created = await runs.TryCreateRunAsync(run, cancellationToken);
+        if (verified is not null)
+        {
+            if (created) await queue!.TryEnqueueAsync(new AskAiQueueTicket(runId, run.TenantId), cancellationToken);
+            return;
+        }
         await using var lease = await runs.TryAcquireAsync(run.TenantId, run.RunId, cancellationToken)
             ?? throw new InvalidOperationException("The message is still owned by another worker; retain the mailbox checkpoint.");
         if (lease.Run.Status != JobStatus.AwaitingConfirmation ||
@@ -194,6 +241,7 @@ public sealed class EmailQuestionConfirmation(
         if (!options.Enabled || actor.DirectoryTenantId != options.TenantId ||
             run.TenantId != options.ApplicationTenantId || run.PendingEmail is not { } pending ||
             pending.Profile != options.Profile ||
+            pending.AuthorizationMode != EmailAuthorizationMode.ConfirmSender ||
             (run.Status == JobStatus.AwaitingConfirmation && pending.ExpiresAtUtc <= DateTimeOffset.UtcNow) ||
             (run.Actor is not null && run.Actor != actor) ||
             !(await access.ResolveAsync(actor, run.TenantId, cancellationToken)).CanRead)
@@ -217,7 +265,10 @@ public sealed class EmailAnswerTransport(
     {
         if (!options.Enabled || target.Profile != options.Profile || run.TenantId != options.ApplicationTenantId ||
             run.Actor is not { } actor || actor.DirectoryTenantId != options.TenantId ||
-            run.PendingEmail?.ConfirmedAtUtc is null ||
+            run.PendingEmail is not { } pending || pending.Profile != options.Profile ||
+            !(pending.AuthorizationMode == EmailAuthorizationMode.ConfirmSender && pending.ConfirmedAtUtc is not null ||
+              pending.AuthorizationMode == EmailAuthorizationMode.TrustedInternal &&
+              options.AuthorizationMode == EmailAuthorizationMode.TrustedInternal && pending.AuthenticatedAtUtc is not null) ||
             !String.Equals(target.DestinationId, run.PendingEmail.Sender, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The verified mailbox destination is unavailable.");
         var current = await mailbox.GetActorAddressesAsync(actor, cancellationToken);

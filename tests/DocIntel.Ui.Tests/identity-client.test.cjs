@@ -105,3 +105,30 @@ test('sign-out clears the application session and shows a signed-out page instea
   assert.equal(app.requests[1].options.headers['X-DocIntel-CSRF'], 'test-request-token');
   assert.deepEqual(app.navigations, ['/auth/signed-out']);
 });
+
+test('unassigned identities are refused before submitting any tenant mutation', async () => {
+  const app = runtime([{ data: { ...identity, hasMembership: false } }]);
+  await assert.rejects(app.context.fetch('/api/harness/tenants/one/ask/runs', { method: 'POST' }), /not assigned/);
+  assert.equal(app.requests.length, 1);
+  assert.ok(app.nodes.some(node => node.id === 'identityAccessError'));
+});
+
+test('server-authorized role headers update controls only for the selected tenant', async () => {
+  const app = runtime([
+    { data: identity },
+    { headers: { 'X-DocIntel-Can-Admin': 'false', 'X-DocIntel-Can-Process': 'false' } },
+    { headers: { 'X-DocIntel-Can-Admin': 'true', 'X-DocIntel-Can-Process': 'true' } },
+    { headers: { 'X-DocIntel-Can-Admin': 'true', 'X-DocIntel-Can-Process': 'true' } }
+  ]);
+  const admin = { id: 'adminStudioSwitchLink', style: {} };
+  const upload = { id: 'drawerUploadLabel', style: {} };
+  app.nodes.push(admin, upload);
+  await app.context.fetch('/api/harness/tenants/one/jobs');
+  assert.equal(admin.style.display, 'none');
+  assert.equal(upload.style.display, 'none');
+  await app.context.fetch('/api/harness/tenants/other/jobs');
+  assert.equal(admin.style.display, 'none');
+  await app.context.fetch('/api/harness/tenants/one/jobs');
+  assert.equal(admin.style.display, '');
+  assert.equal(upload.style.display, '');
+});

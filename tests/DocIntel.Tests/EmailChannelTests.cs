@@ -3,6 +3,8 @@ using DocIntel.Core.Channels;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
+using DocIntel.Core.Models;
+using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -11,6 +13,84 @@ namespace DocIntel.Tests;
 
 public sealed class EmailChannelTests
 {
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Trusted_Employee_Email_Executes_Ask_AI_Without_Confirmation_And_Rechecks_Access_Before_Sending(bool revoke)
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Options.AuthorizationMode = EmailAuthorizationMode.TrustedInternal;
+        fixture.Options.CorporateSenderProof = new String('a', 43);
+        var authorization = new Mock<IAutomaticEmailAuthorization>();
+        authorization.Setup(a => a.ResolveAsync("tenant", fixture.Message.Sender, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VerifiedEmailActor(fixture.Actor, "reader@example.com"));
+        var receiver = new EmailQuestionReceiver(fixture.Options, fixture.Runs, fixture.Harness.Object,
+            fixture.Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance, authorization.Object, fixture.Queue.Object);
+        var model = new Mock<IChatClient>();
+        model.Setup(m => m.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse(
+                new ChatMessage(ChatRole.Assistant, "{\"kind\":\"Conversation\",\"answer\":\"Hello from Meridian\",\"evidenceIds\":[]}")));
+        var catalog = new ModelCatalog(customClients: new Dictionary<string, IChatClient>
+        { [fixture.Tenant.DefaultModelId] = model.Object });
+        var jobs = new InMemoryJobStore();
+        var orchestrator = new AskAiOrchestrator(fixture.Harness.Object, jobs, catalog, null,
+            NullLogger<AskAiOrchestrator>.Instance, fixture.Access.Object);
+        var delivery = new ChannelDeliveryProcessor(
+            [new EmailAnswerTransport(fixture.Options, fixture.Mailbox.Object)],
+            NullLogger<ChannelDeliveryProcessor>.Instance, fixture.Access.Object, fixture.Harness.Object, jobs);
+        var processor = new AskAiRunProcessor(fixture.Runs, orchestrator, new(),
+            NullLogger<AskAiRunProcessor>.Instance, delivery);
+
+        // Act
+        await receiver.ReceiveAsync(fixture.Message with { Text = "Hello", TrustedInternalSender = true });
+        var run = await fixture.RunAsync();
+        Assert.Equal(JobStatus.Queued, run.Status);
+        Assert.Equal(fixture.Actor, run.Actor);
+        Assert.Null(run.PendingEmail!.ConfirmedAtUtc);
+        Assert.NotNull(run.PendingEmail.AuthenticatedAtUtc);
+        await processor.ProcessAsync(new(run.RunId, run.TenantId));
+        if (revoke)
+            fixture.Access.Setup(a => a.ResolveAsync(fixture.Actor, "tenant", It.IsAny<CancellationToken>()))
+                .ReturnsAsync(DocumentAccessScope.Denied);
+        await processor.ProcessAsync(new(run.RunId, run.TenantId));
+        await receiver.ReceiveAsync(fixture.Message with { Text = "Hello", TrustedInternalSender = true });
+
+        // Assert
+        var completed = await fixture.RunAsync();
+        Assert.Equal(JobStatus.Completed, completed.Status);
+        Assert.Equal(revoke ? ChannelDeliveryStatus.Failed : ChannelDeliveryStatus.Sent, completed.ChannelDelivery!.Status);
+        fixture.Mailbox.Verify(m => m.SendAsync("reader@example.com", It.IsAny<string>(),
+            It.Is<string>(body => body.Contains("Hello from Meridian")), It.IsAny<CancellationToken>()),
+            revoke ? Times.Never() : Times.Once());
+        fixture.Mailbox.Verify(m => m.SendAsync(It.IsAny<string>(), It.IsAny<string>(),
+            It.Is<string>(body => body.Contains("/email-question.html")), It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Queue.Verify(q => q.TryEnqueueAsync(It.IsAny<AskAiQueueTicket>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Automatic_Email_Rejects_Untrusted_Or_Unassigned_Senders_Before_Creating_Any_Run(bool trusted)
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Options.AuthorizationMode = EmailAuthorizationMode.TrustedInternal;
+        fixture.Options.CorporateSenderProof = new String('b', 43);
+        var authorization = new Mock<IAutomaticEmailAuthorization>();
+        var receiver = new EmailQuestionReceiver(fixture.Options, fixture.Runs, fixture.Harness.Object,
+            fixture.Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance, authorization.Object, fixture.Queue.Object);
+
+        // Act
+        await receiver.ReceiveAsync(fixture.Message with { TrustedInternalSender = trusted });
+
+        // Assert
+        Assert.Empty(await fixture.Runs.ListRunsByTenantAsync("tenant"));
+        fixture.Mailbox.Verify(m => m.SendAsync(It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Queue.Verify(q => q.TryEnqueueAsync(It.IsAny<AskAiQueueTicket>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public async Task Inbound_Email_Is_Deduplicated_And_Sends_Only_A_Source_Free_Confirmation_Not_An_Answer()
     {
@@ -168,6 +248,8 @@ public sealed class EmailChannelTests
         public InMemoryAskAiRunStore Runs { get; } = new();
         public Mock<IMailboxClient> Mailbox { get; } = new();
         public Mock<IAskAiQueue> Queue { get; } = new();
+        public Mock<IHarnessStore> Harness { get; } = new();
+        public Mock<ITenantAccessResolver> Access { get; } = new();
         public EmailQuestionReceiver Receiver { get; }
         public EmailQuestionConfirmation Confirmation { get; }
         public MailboxQuestion Message { get; } =
@@ -183,14 +265,12 @@ public sealed class EmailChannelTests
                 MailboxAddress = "agent@example.com",
                 PublicOrigin = "https://docintel.example"
             };
-            var harness = new Mock<IHarnessStore>();
-            harness.Setup(h => h.GetTenantAsync("tenant", It.IsAny<CancellationToken>())).ReturnsAsync(Tenant);
-            var access = new Mock<ITenantAccessResolver>();
-            access.Setup(a => a.ResolveAsync(It.IsAny<ActorIdentity>(), "tenant", It.IsAny<CancellationToken>()))
+            Harness.Setup(h => h.GetTenantAsync("tenant", It.IsAny<CancellationToken>())).ReturnsAsync(Tenant);
+            Access.Setup(a => a.ResolveAsync(It.IsAny<ActorIdentity>(), "tenant", It.IsAny<CancellationToken>()))
                 .ReturnsAsync(DocumentAccessScope.Unrestricted);
             Mailbox.Setup(m => m.GetActorAddressesAsync(Actor, It.IsAny<CancellationToken>())).ReturnsAsync(["reader@example.com"]);
-            Receiver = new EmailQuestionReceiver(Options, Runs, harness.Object, Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance);
-            Confirmation = new EmailQuestionConfirmation(Options, Mailbox.Object, access.Object, Runs, Queue.Object, harness.Object);
+            Receiver = new EmailQuestionReceiver(Options, Runs, Harness.Object, Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance);
+            Confirmation = new EmailQuestionConfirmation(Options, Mailbox.Object, Access.Object, Runs, Queue.Object, Harness.Object);
         }
         public async Task<AskAiRun> RunAsync() => Assert.Single(await Runs.ListRunsByTenantAsync("tenant"));
     }

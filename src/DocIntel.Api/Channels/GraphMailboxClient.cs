@@ -2,6 +2,8 @@ using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Text.Json;
 using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
 using Azure.Core;
 using DocIntel.Core.Authorization;
 using DocIntel.Core.Channels;
@@ -44,7 +46,7 @@ public sealed class GraphMailboxClient(
             {
                 using var detail = new HttpRequestMessage(HttpMethod.Get, MailboxRoot +
                     "/messages/" + Uri.EscapeDataString(messageId) +
-                    "?$select=id,subject,body,from,receivedDateTime,internetMessageHeaders");
+                    "?$select=id,subject,body,from,sender,receivedDateTime,internetMessageHeaders");
                 detail.Headers.TryAddWithoutValidation("Prefer", "outlook.body-content-type=\"text\"");
                 using var detailResult = await SendAsync(detail, cancellationToken);
                 message = await ReadAsync(detailResult, cancellationToken, 128 * 1024);
@@ -81,7 +83,8 @@ public sealed class GraphMailboxClient(
                 address.GetProperty("address").GetString() ?? String.Empty,
                 entry.GetProperty("subject").GetString() ?? String.Empty,
                 content.GetProperty("content").GetString() ?? String.Empty,
-                entry.GetProperty("receivedDateTime").GetDateTimeOffset(), automatic));
+                entry.GetProperty("receivedDateTime").GetDateTimeOffset(), automatic,
+                IsTrustedInternal(entry, address.GetProperty("address").GetString())));
             if (messages.Count > 100) throw new InvalidDataException("Graph returned an oversized mailbox page.");
         }
         var next = body.RootElement.TryGetProperty("@odata.nextLink", out var nextValue) ? nextValue.GetString() : null;
@@ -90,6 +93,23 @@ public sealed class GraphMailboxClient(
         if (delta is not null) ValidateMailboxLink(delta);
         if (next is null && delta is null) throw new InvalidDataException("Graph returned no durable mailbox continuation.");
         return new MailboxChanges(messages, next, delta);
+    }
+
+    private bool IsTrustedInternal(JsonElement entry, string? from)
+    {
+        if (options.AuthorizationMode != EmailAuthorizationMode.TrustedInternal ||
+            !entry.TryGetProperty("sender", out var sender) ||
+            !sender.TryGetProperty("emailAddress", out var account) ||
+            !account.TryGetProperty("address", out var address) ||
+            !String.Equals(address.GetString(), from, StringComparison.OrdinalIgnoreCase) ||
+            !entry.TryGetProperty("internetMessageHeaders", out var headers)) return false;
+        var proofs = headers.EnumerateArray().Where(header =>
+            String.Equals(header.GetProperty("name").GetString(), EmailChannelOptions.CorporateSenderProofHeader,
+                StringComparison.OrdinalIgnoreCase)).ToList();
+        if (proofs.Count != 1 || proofs[0].GetProperty("value").GetString() is not { Length: <= 256 } proof)
+            return false;
+        return CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(options.CorporateSenderProof), Encoding.UTF8.GetBytes(proof));
     }
 
     public async Task<IReadOnlyList<string>> GetActorAddressesAsync(

@@ -1,4 +1,3 @@
-using System.Collections.Frozen;
 using System.Security.Claims;
 using System.Security.Cryptography;
 using System.Text;
@@ -12,7 +11,8 @@ namespace DocIntel.Api.Identity;
 public sealed class IdentityAccessService(
     IdentityOptions startup,
     IOptionsMonitor<IdentityOptions> configuration,
-    IHarnessStore harnessStore) : ITenantAccessResolver
+    IHarnessStore harnessStore,
+    TenantUserService users) : ITenantAccessResolver
 {
     public bool IsLocalDevelopment => startup.Mode == IdentityMode.LocalDevelopment;
 
@@ -30,45 +30,48 @@ public sealed class IdentityAccessService(
         Guid.TryParse(principal.FindFirst("oid")?.Value, out var objectId) && objectId != Guid.Empty
             ? new ActorIdentity(directoryId, objectId) : null;
 
-    public bool IsPlatformAdministrator(ClaimsPrincipal principal) =>
-        IsLocalDevelopment || IsPlatformAdministrator(GetActor(principal));
+    public async Task<bool> IsPlatformAdministratorAsync(
+        ClaimsPrincipal principal, CancellationToken cancellationToken = default) =>
+        IsLocalDevelopment || await users.IsPlatformAdministratorAsync(GetActor(principal), cancellationToken);
 
     public bool IsServicePrincipal(ActorIdentity actor) =>
         configuration.CurrentValue.Memberships.Any(m => m.ServicePrincipal &&
             m.DirectoryTenantId == actor.DirectoryTenantId && m.ObjectId == actor.ObjectId);
 
-    public DocumentAccessScope GetAccess(ClaimsPrincipal principal, string tenantId) =>
-        GetAccess(GetActor(principal), tenantId);
+    public Task<DocumentAccessScope> GetAccessAsync(
+        ClaimsPrincipal principal, string tenantId, CancellationToken cancellationToken = default) =>
+        GetAccessAsync(GetActor(principal), tenantId, cancellationToken);
 
-    public bool HasAnyMembership(ClaimsPrincipal principal) =>
-        IsPlatformAdministrator(principal) || configuration.CurrentValue.Memberships.Any(m =>
-            GetActor(principal) == new ActorIdentity(m.DirectoryTenantId, m.ObjectId));
+    public async Task<bool> HasAnyMembershipAsync(ClaimsPrincipal principal, CancellationToken cancellationToken = default) =>
+        await IsPlatformAdministratorAsync(principal, cancellationToken) ||
+        GetActor(principal) is { } actor &&
+        (await users.GetTenantIdsAsync(actor, false, cancellationToken)).Count > 0;
 
-    public bool CanAdministerAnyTenant(ClaimsPrincipal principal) =>
-        IsPlatformAdministrator(principal) || configuration.CurrentValue.Memberships.Any(m =>
-            m.Role == TenantRole.Admin && GetActor(principal) == new ActorIdentity(m.DirectoryTenantId, m.ObjectId));
+    public async Task<bool> CanAdministerAnyTenantAsync(
+        ClaimsPrincipal principal, CancellationToken cancellationToken = default) =>
+        await IsPlatformAdministratorAsync(principal, cancellationToken) ||
+        GetActor(principal) is { } actor &&
+        (await users.GetTenantIdsAsync(actor, true, cancellationToken)).Count > 0;
 
-    public IReadOnlySet<string>? GetTenantIds(ClaimsPrincipal principal) =>
-        IsPlatformAdministrator(principal) ? null : configuration.CurrentValue.Memberships
-            .Where(m => GetActor(principal) == new ActorIdentity(m.DirectoryTenantId, m.ObjectId))
-            .Select(m => m.ApplicationTenantId).ToFrozenSet(StringComparer.Ordinal);
+    public async Task<IReadOnlyList<string>?> GetTenantIdsAsync(
+        ClaimsPrincipal principal, bool administratorsOnly = false, CancellationToken cancellationToken = default) =>
+        await IsPlatformAdministratorAsync(principal, cancellationToken) ? null : GetActor(principal) is { } actor
+            ? await users.GetTenantIdsAsync(actor, administratorsOnly, cancellationToken) : [];
 
     public async Task<DocumentAccessScope> ResolveAsync(
         ActorIdentity? actor, string tenantId, CancellationToken cancellationToken = default)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        var scope = GetAccess(actor, tenantId);
+        var scope = await GetAccessAsync(actor, tenantId, cancellationToken);
         if (!scope.CanRead) return scope;
         var tenant = await harnessStore.GetTenantAsync(tenantId, cancellationToken);
         return tenant?.IsActive == true ? scope : DocumentAccessScope.Denied;
     }
 
-    private bool IsPlatformAdministrator(ActorIdentity? actor) =>
-        actor is not null && configuration.CurrentValue.PlatformAdministrators.Contains(actor);
-
-    private DocumentAccessScope GetAccess(ActorIdentity? actor, string tenantId)
+    private async Task<DocumentAccessScope> GetAccessAsync(
+        ActorIdentity? actor, string tenantId, CancellationToken cancellationToken)
     {
-        if (IsLocalDevelopment || IsPlatformAdministrator(actor))
+        if (IsLocalDevelopment || await users.IsPlatformAdministratorAsync(actor, cancellationToken))
         {
             return DocumentAccessScope.Unrestricted;
         }
@@ -76,11 +79,6 @@ public sealed class IdentityAccessService(
         {
             return DocumentAccessScope.Denied;
         }
-        var membership = configuration.CurrentValue.Memberships.SingleOrDefault(m =>
-            m.DirectoryTenantId == actor.DirectoryTenantId && m.ObjectId == actor.ObjectId &&
-            String.Equals(m.ApplicationTenantId, tenantId, StringComparison.Ordinal));
-        return membership is null ? DocumentAccessScope.Denied : new DocumentAccessScope(
-            membership.Role,
-            membership.AllDocuments ? null : membership.DocumentIds.ToFrozenSet(StringComparer.Ordinal));
+        return await users.GetAccessAsync(actor, tenantId, cancellationToken);
     }
 }

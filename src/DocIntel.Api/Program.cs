@@ -24,6 +24,7 @@ builder.Services.AddProblemDetails(options => options.CustomizeProblemDetails = 
     context.ProblemDetails.Extensions["traceId"] = context.HttpContext.TraceIdentifier);
 builder.Services.AddExceptionHandler<DocIntelExceptionHandler>();
 builder.AddDocIntelIdentity();
+builder.AddDocIntelTenantUsers();
 builder.AddDocIntelTeams();
 builder.AddDocIntelEmail();
 
@@ -69,6 +70,7 @@ app.Use(async (context, next) =>
 });
 app.UseRateLimiter();
 app.UseAuthorization();
+app.UseDocIntelUiAccess();
 app.UseDefaultFiles();
 app.UseStaticFiles(new StaticFileOptions
 {
@@ -91,6 +93,7 @@ app.UseStaticFiles(new StaticFileOptions
 app.MapGet("/admin", () => Results.Redirect("/admin.html"));
 app.MapDefaultEndpoints();
 app.MapDocIntelIdentity();
+app.MapDocIntelTenantUsers();
 app.MapDocIntelTeams();
 app.MapDocIntelEmail();
 app.MapHarnessEndpoints();

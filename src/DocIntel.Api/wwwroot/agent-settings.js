@@ -57,13 +57,30 @@
     }
   }
   function section(name) {
-    if (!['processing', 'agent'].includes(name)) return;
+    if (!['processing', 'agent', 'users'].includes(name)) return;
     node('agentSettingsPanel').hidden = name !== 'agent';
     node('processingSettingsPanel').hidden = name !== 'processing';
-    for (const [id, selected] of [['processingSettingsTab', name === 'processing'], ['agentSettingsTab', name === 'agent']]) {
+    node('tenantUsersPanel').hidden = name !== 'users';
+    node('harnessHeaderActions').hidden = name === 'users';
+    node('harnessVersionChip').hidden = name === 'users';
+    node('harnessSaveNotice').classList.toggle('tenant-users-hidden', name === 'users');
+    if (name !== 'users') root.DocIntelTenantUsers?.closeDialogs();
+    for (const [id, selected] of [['processingSettingsTab', name === 'processing'],
+      ['agentSettingsTab', name === 'agent'], ['tenantUsersTab', name === 'users']]) {
       node(id).classList.toggle('selected', selected);
       node(id).setAttribute('aria-selected', String(selected));
+      node(id).setAttribute('tabindex', selected ? '0' : '-1');
     }
   }
+  node('adminSections')?.addEventListener?.('keydown', event => {
+    const tabs = ['processingSettingsTab', 'agentSettingsTab', 'tenantUsersTab'];
+    const index = tabs.indexOf(event.target.id);
+    if (index < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? 2
+      : (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3;
+    section(['processing', 'agent', 'users'][next]);
+    node(tabs[next]).focus();
+  });
   root.DocIntelAgentSettings = Object.freeze({ read, render, preview, connections, section });
 })(globalThis);

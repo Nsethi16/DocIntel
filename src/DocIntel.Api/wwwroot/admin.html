@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/shared/shell.css" />
   <link rel="stylesheet" href="/admin.css" />
   <link rel="stylesheet" href="/agent-settings.css" />
+  <link rel="stylesheet" href="/tenant-users.css" />
 </head>
 <body>
   <!-- Left Panel: Tenant Navigation & Creation (Collapsible) -->
@@ -83,7 +84,7 @@
             <span class="version-chip" id="harnessVersionChip">Harness v1</span>
           </div>
         </div>
-        <div class="header-actions">
+        <div class="header-actions" id="harnessHeaderActions">
           <span class="unsaved-dot" id="unsavedBadge">Unsaved changes</span>
           <button class="btn-action" id="btnCancelHarness" data-click="cancelTenantChanges" disabled>Cancel</button>
           <button class="btn-action primary" id="btnSaveHarness" data-click="saveTenantHarness" disabled>Save</button>
@@ -100,13 +101,84 @@
       </section>
 
       <!-- Harness-Level Model Selection (Stacked One After Another Above Features) -->
-      <nav class="admin-sections" aria-label="Tenant settings">
-        <button type="button" id="processingSettingsTab" class="selected"
+      <nav class="admin-sections" id="adminSections" aria-label="Tenant settings" role="tablist">
+        <button type="button" id="processingSettingsTab" class="selected" role="tab"
+          aria-controls="processingSettingsPanel" tabindex="0"
           data-click="setAdminSection_arg" data-args="[&quot;processing&quot;]" aria-selected="true">Document processing</button>
-        <button type="button" id="agentSettingsTab"
+        <button type="button" id="agentSettingsTab" role="tab" aria-controls="agentSettingsPanel" tabindex="-1"
           data-click="setAdminSection_arg" data-args="[&quot;agent&quot;]" aria-selected="false">Agent &amp; channels</button>
+        <button type="button" id="tenantUsersTab" role="tab" aria-controls="tenantUsersPanel" tabindex="-1"
+          data-click="setAdminSection_arg" data-args="[&quot;users&quot;]" aria-selected="false">Users &amp; access</button>
       </nav>
-      <section id="agentSettingsPanel" class="agent-settings" hidden>
+      <section id="tenantUsersPanel" class="tenant-users" role="tabpanel" aria-labelledby="tenantUsersTab" hidden>
+        <div class="tenant-users-heading">
+          <div><span class="tenant-users-eyebrow">PEOPLE, NOT PERMISSIONS TO MANAGE</span>
+            <h2>The right people. One shared workspace.</h2>
+            <p>Assign existing employees from your enterprise directory. The same membership applies to the
+              workspace, Admin Studio, web, email and Teams.</p></div>
+          <button type="button" class="btn-action primary" id="tenantUsersAdd"
+            data-click="tenantUsersOpenAdd" disabled>Add people</button>
+        </div>
+        <div class="tenant-users-access-note">
+          <strong>Tenant-wide documents for every new assignment</strong>
+          <p><strong>User</strong> — read documents and Ask AI. <strong>Tenant admin</strong> — full tenant access,
+            including processing, settings and people management. There are no per-document permissions to configure here.</p>
+        </div>
+        <div class="tenant-users-toolbar">
+          <h3>Assigned people <span id="tenantUsersCount"></span></h3>
+          <div><span id="tenantUsersVersion" class="version-chip"></span>
+            <button type="button" class="btn-action" id="tenantUsersReload" data-click="tenantUsersReload">
+              Reload access</button></div>
+        </div>
+        <p id="tenantUsersDirectory" class="tenant-users-guidance"></p>
+        <p id="tenantUsersStatus" class="tenant-users-status" role="status" aria-live="polite"></p>
+        <div id="tenantUsersList" class="tenant-users-list" aria-busy="false"></div>
+        <div class="tenant-users-dialog-actions">
+          <button type="button" class="btn-action" id="tenantUsersMore" data-click="tenantUsersMore" hidden>
+            Load more people</button></div>
+
+        <dialog id="tenantUsersAddDialog" class="tenant-users-dialog" aria-labelledby="tenantUsersAddTitle">
+          <div class="tenant-users-dialog-heading"><h2 id="tenantUsersAddTitle">Add people</h2>
+            <button type="button" class="btn-action" data-click="tenantUsersClose_arg"
+              data-args="[&quot;add&quot;]" aria-label="Close Add people">Close</button></div>
+          <p>Choose existing directory members, not arbitrary email addresses. New assignments include all tenant documents.</p>
+          <label for="tenantUsersSearch">Find employees by name or work email</label>
+          <input type="search" id="tenantUsersSearch" class="clean-input" minlength="2" maxlength="80"
+            autocomplete="off" data-input="tenantUsersSearch" aria-describedby="tenantUsersSearchStatus">
+          <p id="tenantUsersSearchStatus" role="status" aria-live="polite">Enter at least 2 characters.</p>
+          <div id="tenantUsersSearchResults" class="tenant-users-search-results" aria-label="Directory results"></div>
+          <h3>Selected people <span id="tenantUsersSelectedCount"></span></h3>
+          <p class="tenant-users-guidance">Up to 25 people at a time. The default role is User.</p>
+          <div id="tenantUsersSelected" class="tenant-users-selected"></div>
+          <div class="tenant-users-dialog-actions">
+            <button type="button" class="btn-action" data-click="tenantUsersClose_arg"
+              data-args="[&quot;add&quot;]">Cancel</button>
+            <button type="button" class="btn-action primary" id="tenantUsersReviewAdd"
+              data-click="tenantUsersReviewAdd" disabled>Review assignments</button></div>
+        </dialog>
+
+        <dialog id="tenantUsersDetailsDialog" class="tenant-users-dialog tenant-users-detail-dialog"
+          aria-labelledby="tenantUsersDetailsTitle">
+          <div class="tenant-users-dialog-heading"><h2 id="tenantUsersDetailsTitle">Person details</h2>
+            <button type="button" class="btn-action" data-click="tenantUsersClose_arg"
+              data-args="[&quot;details&quot;]" aria-label="Close person details">Close</button></div>
+          <div id="tenantUsersDetails"></div>
+          <div id="tenantUsersDetailControls"></div>
+        </dialog>
+
+        <dialog id="tenantUsersConfirmDialog" class="tenant-users-dialog tenant-users-confirm-dialog"
+          aria-labelledby="tenantUsersConfirmTitle" aria-describedby="tenantUsersConfirmText">
+          <h2 id="tenantUsersConfirmTitle">Confirm access change</h2>
+          <p id="tenantUsersConfirmText"></p>
+          <p id="tenantUsersConfirmStatus" role="status" aria-live="polite"></p>
+          <div class="tenant-users-dialog-actions">
+            <button type="button" class="btn-action" id="tenantUsersConfirmCancel"
+              data-click="tenantUsersClose_arg" data-args="[&quot;confirm&quot;]">Go back</button>
+            <button type="button" class="btn-action primary" id="tenantUsersConfirmSave"
+              data-click="tenantUsersConfirm">Confirm change</button></div>
+        </dialog>
+      </section>
+      <section id="agentSettingsPanel" class="agent-settings" role="tabpanel" aria-labelledby="agentSettingsTab" hidden>
         <div class="agent-settings-heading"><span class="agent-eyebrow">YOUR DOCUMENT ASSISTANT</span>
           <h2>A recognizable voice. Grounded answers.</h2>
           <p>Choose how your agent introduces itself and responds, wherever people ask.</p>
@@ -157,7 +229,7 @@
           </section>
         </div>
       </section>
-      <section id="processingSettingsPanel">
+      <section id="processingSettingsPanel" role="tabpanel" aria-labelledby="processingSettingsTab">
       <div class="section-bar">
         <span class="section-bar-title">Models</span>
         <span class="section-bar-meta">Harness-level routing</span>
@@ -666,6 +738,7 @@
   <script src="/shared/ui.js"></script>
   <script src="/shared/actions.js"></script>
   <script src="/agent-settings.js"></script>
+  <script src="/tenant-users.js"></script>
   <script src="/admin.js"></script>
 </body>
 </html>

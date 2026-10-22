@@ -88,9 +88,9 @@ public static class HarnessEndpoints
         });
 
         group.MapGet("/tenants", async (
-            HttpContext context, IdentityAccessService access, IHarnessStore store, CancellationToken ct) =>
+            HttpContext context, IdentityAccessService access, IHarnessStore store, bool? adminOnly, CancellationToken ct) =>
         {
-            var ids = access.GetTenantIds(context.User);
+            var ids = await access.GetTenantIdsAsync(context.User, adminOnly == true, ct);
             if (ids is null)
             {
                 return Results.Ok(await store.ListTenantsAsync(ct));
@@ -99,7 +99,7 @@ public static class HarnessEndpoints
             foreach (var id in ids)
             {
                 var tenant = await store.GetTenantAsync(id, ct);
-                if (tenant is not null && (tenant.IsActive || access.GetAccess(context.User, id).CanAdmin))
+                if (tenant is not null && (tenant.IsActive || (await access.GetAccessAsync(context.User, id, ct)).CanAdmin))
                     tenants.Add(tenant);
             }
             return Results.Ok(tenants);
@@ -113,10 +113,10 @@ public static class HarnessEndpoints
                 : Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
         });
 
-        group.MapGet("/tenants/{tenantId}/agent/channels", (
-            string tenantId, HttpContext context, IdentityAccessService access, IConfiguration configuration) =>
+        group.MapGet("/tenants/{tenantId}/agent/channels", async (
+            string tenantId, HttpContext context, IdentityAccessService access, IConfiguration configuration, CancellationToken ct) =>
         {
-            if (!access.GetAccess(context.User, tenantId).CanAdmin) return Results.Forbid();
+            if (!(await access.GetAccessAsync(context.User, tenantId, ct)).CanAdmin) return Results.Forbid();
             var teams = configuration.GetValue<bool>("Channels:Teams:Enabled") &&
                 configuration["Channels:Teams:ApplicationTenantId"] == tenantId;
             var email = configuration.GetValue<bool>("Channels:Email:Enabled") &&
@@ -178,7 +178,7 @@ public static class HarnessEndpoints
             CancellationToken ct) =>
         {
             var jobs = (await GetVisibleJobsAsync(
-                    tenantId, access.GetAccess(context.User, tenantId), jobStore, ct))
+                    tenantId, await access.GetAccessAsync(context.User, tenantId, ct), jobStore, ct))
                 .Where(j => j.Status == JobStatus.Completed)
                 .ToList();
 
@@ -268,7 +268,7 @@ public static class HarnessEndpoints
             IJobStore jobStore,
             CancellationToken ct) =>
         {
-            var scope = access.GetAccess(context.User, tenantId);
+            var scope = await access.GetAccessAsync(context.User, tenantId, ct);
             var jobs = await GetVisibleJobsAsync(tenantId, scope, jobStore, ct);
             return Results.Ok(jobs.Select(FormatJobResponse));
         });
@@ -726,8 +726,8 @@ public static class HarnessEndpoints
             string jobId, HttpContext context, IdentityAccessService access,
             IHarnessStore harnessStore, IJobStore jobStore, CancellationToken ct) =>
         {
-            var tenantIds = access.GetTenantIds(context.User) ??
-                (await harnessStore.ListTenantsAsync(ct)).Select(t => t.TenantId).ToHashSet(StringComparer.Ordinal);
+            var tenantIds = await access.GetTenantIdsAsync(context.User, cancellationToken: ct) ??
+                (await harnessStore.ListTenantsAsync(ct)).Select(t => t.TenantId).ToList();
             foreach (var tenantId in tenantIds)
             {
                 var scope = await access.ResolveAsync(IdentityAccessService.GetActor(context.User), tenantId, ct);

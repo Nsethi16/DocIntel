@@ -15,12 +15,20 @@ Human review is retired: new jobs do not create review sessions, exports use lab
 values without approval, and Ask AI no longer advertises a human-review tool. Historical records
 remain stored, and legacy review endpoints return 410. No audit or review data is purged.
 
-Admin Studio separates **Document processing** from **Agent & channels**. The tenant's versioned
+Admin Studio separates **Document processing**, **Agent & channels**, and **Users & access**. The tenant's versioned
 agent name, purpose, tone and response guidance apply to web/email/Teams, but do not grant access
 or weaken source/citation policies. Channel toggles are distinct from operator connection status.
-Graph email ingestion uses a durable leased delta cursor and a source-free sign-in/confirmation
-challenge; the signed-in account must own the original sender address before its question is
-exposed or queued. Teams shared mentions queue under the verified user and reply privately, or
+Directory-backed User/TenantAdmin assignments are versioned and audited separately from document
+and harness artifacts. Current membership governs both UIs, APIs and channel workers; User reads
+all tenant documents and uses Ask AI, while TenantAdmin also configures/processes/manages that
+tenant. Operator bootstrap/service identities and older restricted grants are preserved without
+exposing a new document-scope interface. Removed memberships remain explicit overrides.
+Graph email ingestion uses a durable leased delta cursor. Safe-default confirmation requires
+sign-in/address binding. Opt-in automatic internal mail instead requires a protected Exchange
+transport attestation, matching sender/from and one active directory user with current tenant
+membership, then queues Ask AI directly under that user. It never authorizes by email From alone.
+See README for the required stripping/stamping and credential-protection invariants; these rules
+are operator setup, not something the application silently creates. Teams shared mentions queue under the verified user and reply privately, or
 provide an actor-authorized web link if a personal chat cannot be established. No document answer
 is posted into an unverified shared audience. External sends persist intent before sending and
 uncertain outcomes never automatically replay. See the README's current channel setup and

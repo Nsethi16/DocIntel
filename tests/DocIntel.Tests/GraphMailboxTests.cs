@@ -11,6 +11,51 @@ namespace DocIntel.Tests;
 
 public sealed class GraphMailboxTests
 {
+    [Theory]
+    [InlineData("valid", true)]
+    [InlineData("missing", false)]
+    [InlineData("wrong", false)]
+    [InlineData("duplicate", false)]
+    [InlineData("different-sender", false)]
+    public async Task Automatic_Sender_Trust_Requires_One_Exact_Transport_Attestation_And_Matching_Sender(string mode, bool expected)
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Options.AuthorizationMode = EmailAuthorizationMode.TrustedInternal;
+        fixture.Options.CorporateSenderProof = new String('c', 43);
+        var headers = mode == "missing" ? Array.Empty<object>() : Enumerable.Range(0, mode == "duplicate" ? 2 : 1)
+            .Select(_ => (object)new
+            {
+                name = EmailChannelOptions.CorporateSenderProofHeader,
+                value = mode == "wrong" ? new String('d', 43) : fixture.Options.CorporateSenderProof
+            }).ToArray();
+        fixture.Handler.ResponseFactory = request => new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(request.RequestUri!.AbsolutePath.EndsWith("/messages/one", StringComparison.Ordinal)
+                ? JsonSerializer.Serialize(new
+                {
+                    id = "one",
+                    subject = "Question",
+                    receivedDateTime = "2026-10-22T00:00:00Z",
+                    from = new { emailAddress = new { address = "reader@example.com" } },
+                    sender = new { emailAddress = new { address = mode == "different-sender" ? "other@example.com" : "reader@example.com" } },
+                    body = new { contentType = "text", content = "Hello" },
+                    internetMessageHeaders = headers
+                })
+                : JsonSerializer.Serialize(new Dictionary<string, object>
+                {
+                    ["value"] = new[] { new { id = "one", receivedDateTime = "2026-10-22T00:00:00Z" } },
+                    ["@odata.deltaLink"] = fixture.MailboxRoot + "/mailFolders/inbox/messages/delta?$deltatoken=next"
+                }))
+        };
+
+        // Act
+        var page = await fixture.Client.ReadChangesAsync(null, CancellationToken.None);
+
+        // Assert
+        Assert.Equal(expected, Assert.Single(page.Messages).TrustedInternalSender);
+    }
+
     [Fact]
     public async Task Mailbox_Requests_Are_Fixed_To_The_Operator_Binding_And_Only_Use_Graph_Audience_Tokens()
     {

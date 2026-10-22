@@ -82,7 +82,7 @@ let tenants = [];
     }
 
     async function loadTenants(selectedId) {
-      const resp = await fetch('/api/harness/tenants');
+      const resp = await fetch('/api/harness/tenants?adminOnly=true');
       tenants = await resp.json();
 
       if (!selectedId && currentTenant) {
@@ -500,6 +500,7 @@ let tenants = [];
     }
 
     function renderMainCanvas() {
+      if (globalThis.DocIntelTenantUsers) DocIntelTenantUsers.setTenant(currentTenant?.tenantId || null);
       if (!currentTenant) return;
       if (globalThis.DocIntelAgentSettings) {
         DocIntelAgentSettings.render(currentTenant.agent);

@@ -1,5 +1,6 @@
 using System.Net;
 using DocIntel.Core.Authorization;
+using Microsoft.Extensions.Hosting;
 
 namespace DocIntel.Api.Identity;
 

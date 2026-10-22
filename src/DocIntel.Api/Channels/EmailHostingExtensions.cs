@@ -18,6 +18,9 @@ public static class EmailHostingExtensions
         if (identity.Mode != IdentityMode.Entra || identity.DirectoryTenantId != settings.TenantId ||
             identity.PublicOrigin?.TrimEnd('/') != settings.PublicOrigin.TrimEnd('/'))
             throw new InvalidOperationException("Email delivery requires matching production Entra identity and public origin.");
+        if (settings.AuthorizationMode == EmailAuthorizationMode.TrustedInternal &&
+            !builder.Configuration.GetValue<bool>("Identity:Directory:Enabled"))
+            throw new InvalidOperationException("Automatic internal email requires a connected enterprise directory.");
         builder.Services.AddHttpClient(GraphMailboxClient.HttpClientName, client =>
             client.Timeout = TimeSpan.FromSeconds(60))
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });

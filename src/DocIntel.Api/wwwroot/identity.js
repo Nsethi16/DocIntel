@@ -47,6 +47,10 @@
           if (!response.ok) throw new Error('Unable to verify the signed-in account.');
           const identity = await response.json();
           if (!identity.chatPartition) throw new Error('Unable to verify the signed-in account.');
+          if (identity.hasMembership === false) {
+            showAccessError();
+            throw new Error('Your account is not assigned to a DocIntel tenant.');
+          }
           globalThis.DocIntelIdentity.chatPartition = identity.chatPartition;
           return identity;
         }).catch(error => { identityReady = null; throw error; });
@@ -68,6 +72,16 @@
     }
     const response = await nativeFetch(input, { ...options, headers, credentials: 'same-origin', cache: 'no-store' });
     if (response.status === 401) requireSignIn();
+    const tenantPath = url.pathname.match(/^\/api\/harness\/tenants\/([^/]+)(?:\/|$)/);
+    const selected = document.getElementById('tenantSelectDropdown')?.value ||
+      new URL(location.href).searchParams.get('tenant');
+    const canAdmin = response.headers.get('X-DocIntel-Can-Admin');
+    if (tenantPath && decodeURIComponent(tenantPath[1]) === selected && canAdmin !== null) {
+      const adminLink = document.getElementById('adminStudioSwitchLink');
+      if (adminLink) adminLink.style.display = canAdmin === 'true' ? '' : 'none';
+      const upload = document.getElementById('drawerUploadLabel');
+      if (upload) upload.style.display = response.headers.get('X-DocIntel-Can-Process') === 'true' ? '' : 'none';
+    }
     const partition = response.headers.get('X-DocIntel-Identity');
     if (partition && partition !== globalThis.DocIntelIdentity.chatPartition) {
       location.reload();
@@ -78,6 +92,10 @@
   };
 
   globalThis.DocIntelIdentity = {
+    async refresh() {
+      identityReady = null;
+      return syncIdentityControls();
+    },
     async signOut() {
       const response = await nativeFetch('/auth/logout', {
         method: 'POST', credentials: 'same-origin',
@@ -92,8 +110,15 @@
 
   async function syncIdentityControls() {
     const identity = await ensureIdentity();
+    const tenantId = document.getElementById('tenantSelectDropdown')?.value ||
+      new URL(location.href).searchParams.get('tenant');
+    const tenant = identity.tenants?.find(entry => entry.tenantId === tenantId);
+    const canAdminister = identity.platformAdministrator ||
+      (tenantId && identity.tenants ? !!tenant?.canAdmin : identity.canAdministerAnyTenant);
     const adminLink = document.getElementById('adminStudioSwitchLink');
-    if (adminLink) adminLink.style.display = identity.canAdministerAnyTenant ? '' : 'none';
+    if (adminLink) adminLink.style.display = canAdminister ? '' : 'none';
+    const upload = document.getElementById('drawerUploadLabel');
+    if (upload && tenant) upload.style.display = tenant.canProcess ? '' : 'none';
     for (const id of ['platformNewTenant', 'platformCreateTenant']) {
       const control = document.getElementById(id);
       if (control) control.style.display = identity.platformAdministrator ? '' : 'none';
@@ -103,7 +128,8 @@
       signOut.hidden = identity.localDevelopment;
       signOut.style.display = identity.localDevelopment ? 'none' : '';
     }
-    if (location.pathname === '/admin.html' && !identity.canAdministerAnyTenant) location.replace('/');
+    if (location.pathname === '/admin.html' && !canAdminister) location.replace('/');
+    return identity;
   }
   document.addEventListener('DOMContentLoaded', () => {
     syncIdentityControls().catch(() => { if (!redirecting) showAccessError(); });

@@ -29,7 +29,7 @@ public static class ExportEndpoints
                 !String.Equals(view, "original", StringComparison.OrdinalIgnoreCase))
                 return Results.Problem(statusCode: 400, title: "Choose csv, xlsx or json and extracted or original values.");
             var original = String.Equals(view, "original", StringComparison.OrdinalIgnoreCase);
-            var scope = access.GetAccess(context.User, tenantId);
+            var scope = await access.GetAccessAsync(context.User, tenantId, ct);
             if (original && scope.Role is not (TenantRole.Processor or TenantRole.Admin)) return Results.Forbid();
             var job = await jobs.GetJobAsync(jobId, ct, tenantId);
             if (job is null) return Results.NotFound();
@@ -39,7 +39,7 @@ public static class ExportEndpoints
                     : DocumentExporter.MachineSnapshot(job, DateTimeOffset.UtcNow);
                 var bytes = DocumentExporter.Write(snapshot, kind);
                 ct.ThrowIfCancellationRequested();
-                var currentAccess = access.GetAccess(context.User, tenantId);
+                var currentAccess = await access.GetAccessAsync(context.User, tenantId, ct);
                 if (!currentAccess.CanReadDocument(jobId)) return Results.NotFound();
                 if (original && currentAccess.Role is not (TenantRole.Processor or TenantRole.Admin)) return Results.Forbid();
                 var currentJob = await jobs.GetJobAsync(jobId, ct, tenantId);

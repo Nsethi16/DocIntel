@@ -320,15 +320,24 @@ public static class IdentityHostingExtensions
             context.Response.Headers.CacheControl = "no-store";
             return Results.Ok(new { token = antiforgery.GetAndStoreTokens(context).RequestToken });
         }).RequireAuthorization();
-        app.MapGet("/api/identity/me", (HttpContext context, IdentityAccessService access) =>
+        app.MapGet("/api/identity/me", async (HttpContext context, IdentityAccessService access, CancellationToken ct) =>
         {
             context.Response.Headers.CacheControl = "no-store";
+            var memberships = new List<object>();
+            var ids = await access.GetTenantIdsAsync(context.User, cancellationToken: ct);
+            if (ids is not null)
+                foreach (var id in ids)
+                {
+                    var scope = await access.GetAccessAsync(context.User, id, ct);
+                    memberships.Add(new { tenantId = id, canAdmin = scope.CanAdmin, canProcess = scope.CanProcess });
+                }
             return Results.Ok(new
             {
                 localDevelopment = access.IsLocalDevelopment,
-                hasMembership = access.HasAnyMembership(context.User),
-                platformAdministrator = access.IsPlatformAdministrator(context.User),
-                canAdministerAnyTenant = access.CanAdministerAnyTenant(context.User),
+                hasMembership = await access.HasAnyMembershipAsync(context.User, ct),
+                platformAdministrator = await access.IsPlatformAdministratorAsync(context.User, ct),
+                canAdministerAnyTenant = await access.CanAdministerAnyTenantAsync(context.User, ct),
+                tenants = memberships,
                 chatPartition = access.GetChatPartition(context.User)
             });
         }).RequireAuthorization();

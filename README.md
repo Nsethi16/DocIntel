@@ -311,8 +311,9 @@ Original/slice PDFs remain same-origin embeddable. HTML is no-store and JS/CSS r
 Production defaults to **Entra** and fails startup when identity configuration is incomplete.
 Browser sign-in uses authorization code + PKCE and an HttpOnly application session; API clients
 use validated bearer tokens. Application tenant slugs are **not** Entra tenant IDs. Server-side
-memberships map `(directory tenant ID, object ID)` to an application tenant and a role, with
-explicit document access. An empty document grant allows no documents.
+memberships map `(directory tenant ID, object ID)` to an application tenant and a role.
+Admin-managed people have tenant-wide reading/Ask AI access. Historical operator-configured
+document restrictions remain enforced and are not broadened by the new two-role interface.
 
 Configure `Identity` through environment/configuration providers:
 
@@ -331,6 +332,7 @@ Configure `Identity` through environment/configuration providers:
 | `ApiAccessPermission` | Delegated scope/app role name; default `DocIntel.Access` |
 | `Memberships` | Server-side tenant role/document grants described below |
 | `PlatformAdministrators` | Explicit directory/object pairs allowed to administer every application tenant |
+| `Directory:Enabled` | Enable read-only enterprise people/profile/photo lookup through Microsoft Graph |
 
 The API registration must expose the delegated permission and application role. App-only callers
 also need an explicitly mapped membership with `ServicePrincipal: true`; neither a sender address
@@ -350,7 +352,7 @@ this code does not create registrations or consent/permission grants.
 
 ## Agent identity and channels
 
-Admin Studio has separate **Document processing** and **Agent & channels** tabs. The latter
+Admin Studio has **Document processing**, **Agent & channels**, and **Users & access** tabs. Agent & channels
 stores tenant-versioned `agent.displayName`, `purpose`, `tone` (Professional/Friendly/Concise),
 `instructions`, `emailEnabled` and `teamsEnabled`. The style preview is illustrative, not a model
 completion. Channel toggles are distinct from read-only operator connection status; no token,
@@ -358,6 +360,46 @@ password, arbitrary callback URL or privileged role is configured through person
 Name/purpose/guidance are bounded and JSON-encoded into presentation instructions; fixed
 authorization, evidence, citation and tool policies always remain in force. Each executed run
 captures its agent profile and harness version for consistent web/email/Teams responses.
+
+### Enterprise users and unified access
+
+`Users & access` searches existing corporate Entra people; it never creates corporate accounts,
+passwords, or Entra administrator roles. Select one or several people, then assign **User**
+(tenant-wide document reading and Ask AI) or **TenantAdmin** (also document processing, user
+management, harness configuration and channels). All new people have the same document collection;
+there is no document-scope picker. Directory photos, title, department and office help distinguish
+people; initials are shown when no photo exists. Missing/failed directory connections are explicit,
+not simulated employee records. User lists are paged, and search excludes already assigned users
+across all pages. Only tenant-wide admins can search people, read photos or edit memberships.
+
+Corporate directory identity `(directory tenant ID, user object ID)` is stable even when work
+email changes. DocIntel persists assignment/role/status and reference-only access-change audit
+records separately from harnesses, source artifacts and model prompts. The directory remains
+the authority for profile, primary mail/UPN and enabled/member state. Its read-only Graph calls
+normally require approved `User.Read.All` application permission; this also permits user-photo
+retrieval, or use separately approved `ProfilePhoto.Read.All` when appropriate. Do not grant
+directory-write permissions. The configured managed identity needs explicit corporate consent;
+enabling the UI does not grant Graph access.
+
+Membership changes use an expected `version` and atomically persist their audit with the change.
+Stale edits return 409; do not retry mutations automatically. Removing/disabling a user leaves
+a tombstone, overriding an old operator bootstrap grant even after restart. The last active
+tenant-wide admin cannot be removed, disabled or demoted; assign a replacement first. Bootstrap
+the first admin using existing `Identity:Memberships` or an explicitly configured platform admin.
+Ordinary tenant admins cannot promote anyone to platform administrator. Existing service principals
+and legacy restricted grants remain operator-owned; restricted assignments cannot be upgraded
+through this UI.
+
+The same current membership is resolved for HTML entry points, tenant lists, backend operations,
+Ask AI tools/final answers, Teams reception and email execution/delivery. Existing session/API
+tokens do not freeze their old role. Membership revocation is checked on subsequent operations;
+directory account state has a bounded 30-second cache and lookup failures never grant access.
+Display/photo caches are not permission sources. Shared deployments persist access in a private
+`tenant-access/v1/` prefix in the existing run Blob container with ETag compare-and-swap; local
+execution uses atomic, inter-process-locked files under `App_Data/tenant-users`. Existing
+`Identity:Memberships` remain bootstrap/compatibility grants unless explicitly overridden.
+Directory group provisioning/SCIM, last-activity monitoring and corporate account creation are not
+implemented.
 
 Both channel toggles are off by default. Operator configuration alone is insufficient:
 enable the intended channel for the matching tenant in Admin. Current tenant activation,
@@ -396,7 +438,7 @@ outside the app. Its manifest must declare the personal/team/group-chat scopes n
 intended use and the user must be eligible for the personal bot chat. This code does not create
 registrations, grant directory permissions or install apps.
 
-### Email mailbox with verified sender confirmation
+### Email mailbox and automatic assigned-user questions
 
 Configure the operator-owned `Channels:Email` section:
 
@@ -409,6 +451,8 @@ Configure the operator-owned `Channels:Email` section:
 | `ApplicationTenantId` | Fixed application tenant for incoming questions |
 | `PublicOrigin` | Same HTTPS public origin used for sign-in |
 | `PollSeconds` | Delta synchronization cadence, 10-300 seconds; default 30 |
+| `AuthorizationMode` | `ConfirmSender` (safe default) or explicitly configured `TrustedInternal` |
+| `CorporateSenderProof` | Secret transport attestation for `TrustedInternal`; store in a secret provider, never in source/Admin fields |
 
 The runtime managed identity needs Microsoft Graph `Mail.Read` and `Mail.Send` application access
 restricted to this mailbox through the organization's supported Exchange application access/RBAC
@@ -434,6 +478,30 @@ once. Answers use the snapshotted personality, include citations/source links, a
 verified original address only; Reply-To/CC/BCC from the inbound message are not used.
 Aliases not returned as the account's primary mail/UPN are rejected rather than guessed.
 
+For **automatic email without interactive sign-in**, set `AuthorizationMode=TrustedInternal`
+only after the operator has configured and verified a trusted corporate mail path. This also
+requires `Identity:Directory:Enabled=true`. The dedicated mailbox's Exchange transport policy must
+remove **all** preexisting `X-DocIntel-Internal-Sender-Proof` headers before trusted stamping,
+then stamp the protected mailbox's delivery copy with the configured high-entropy secret only
+for authenticated internal corporate mail. Do not use sender-domain matching, SPF/DKIM alone,
+an externally supplied header, or an accepted-domain address as this authentication decision.
+The proof must never be exposed through outbound mail, other recipients' delivery copies, forwarding,
+model content, logs, or Admin APIs. Require a dedicated protected transport path, reject/strip
+external or relay-originated claims, disable unauthorized mailbox forwarding, and validate
+mixed-recipient/bypass/connector cases before enabling this mode. If your mail environment cannot
+guarantee these invariants, leave confirmation enabled; the app cannot establish Exchange rule
+correctness from an incoming header alone.
+
+The application requires one exact proof header and matching Graph `sender`/`from` identities.
+It resolves the work address to one active corporate directory member and checks their current
+DocIntel tenant assignment. Accepted messages queue the existing Ask AI pipeline as that employee,
+without a challenge or confirmation email. The answer is sent only to the employee's authoritative
+directory work address, never arbitrary Reply-To/CC/BCC recipients. Untrusted, ambiguous, disabled
+or unassigned senders create no question and receive no document answer. Membership and directory
+address ownership are checked again before delivery. Rotate the transport proof as a credential;
+changing authorization mode/proof invalidates old profile-bound pending mail rather than authorizing
+it under a different trust policy.
+
 Graph requests use a fixed HTTPS host, mailbox identity and Graph token audience, with redirects
 disabled. Stored continuation links must belong to the configured mailbox delta resource.
 Interrupted/uncertain challenges and answers are not automatically resent. Inspect run status
@@ -443,14 +511,18 @@ for failures/unknown outcomes; no end-user receipt or exactly-once provider bill
 
 Environment-variable names use `__` separators. Configure real identities/resources/Graph consent
 securely, enable the matching tenant channel, then verify a personal Teams question, a real
-shared mention with a private answer, and an email/confirmation/answer round trip with two
-different users to verify destination isolation. Endpoint refusals, native SDK/Graph contracts,
+shared mention with a private answer, and the chosen email authorization/answer round trip with two
+different users to verify destination isolation. For automatic mail, also test spoofed/missing/duplicate
+proofs, differing sender/from, outside-directory mail, unassigned/disabled users, membership revocation
+and unrelated mailbox denial. Verify actual Exchange delivery separately from Graph acknowledgement.
+The current send is a new plaintext email, not an Outlook-threaded reply; attachment ingestion and
+dedicated failure-notification emails are not implemented. Endpoint refusals, native SDK/Graph contracts,
 deduplication, delta restart behavior and confirmation UI have offline tests; no real mailbox,
 bot installation, external message, directory consent or cloud deployment was performed here.
 
 
 
-Each membership has `DirectoryTenantId`, `ObjectId`, `ApplicationTenantId`, `Role` (`Reader`,
+For legacy operator bootstrap configuration, each membership has `DirectoryTenantId`, `ObjectId`, `ApplicationTenantId`, `Role` (`Reader`,
 `Reviewer`, `Processor`, or `Admin`), `AllDocuments`, and `DocumentIds`. Use the **user or enterprise service
 principal object ID**, not an application/client ID. `AllDocuments` defaults to false;
 `DocumentIds` is an explicit allowlist. Creating/processing new documents requires tenant-wide
