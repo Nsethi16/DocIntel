@@ -44,13 +44,13 @@
         link.textContent = `${citation.fileName || 'Document'} | ${citation.documentName || 'Source'} | ${citation.pageRange || ''}`;
         if (typeof citation.jobId === 'string' && Number.isSafeInteger(citation.sliceIndex) && citation.sliceIndex >= 0) {
           link.href = citation.evidenceKind && citation.evidenceKind !== 'OriginalSourceText'
-            ? `/review?tenant=${encodeURIComponent(tenant)}&job=${encodeURIComponent(citation.jobId)}`
+            ? `/?tenant=${encodeURIComponent(tenant)}`
             : `${prefix}/jobs/${encodeURIComponent(citation.jobId)}/slices/${citation.sliceIndex}/pdf`;
         }
         item.appendChild(link);
         if (Number.isSafeInteger(citation.reviewVersion)) {
           const origin = document.createElement('p');
-          origin.textContent = `Human review version ${citation.reviewVersion}; not a quotation of the original model value.`;
+          origin.textContent = `Historical review version ${citation.reviewVersion}; this workflow is retired. Ask a new question.`;
           item.appendChild(origin);
         }
         if (citation.excerpt) {

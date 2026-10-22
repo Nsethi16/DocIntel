@@ -275,7 +275,7 @@ public sealed class TenantHarness
 
     public DocIntel.Core.Ocr.OcrPolicy Ocr { get; set; } = new();
 
-    public DocIntel.Core.Review.ReviewPolicy ReviewPolicy { get; set; } = new();
+    public DocIntel.Core.Review.ReviewPolicy ReviewPolicy { get; set; } = new() { Enabled = false };
 
     public DocIntel.Core.Jobs.DataRetentionPolicy Retention { get; set; } = new();
     public DateTimeOffset? DeactivatedAtUtc { get; set; }

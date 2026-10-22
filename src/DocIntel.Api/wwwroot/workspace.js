@@ -2109,8 +2109,7 @@ let tenants = [];
     }
 
     function jumpToHumanReview(jobId) {
-      window.location.href = '/review.html?tenant=' + encodeURIComponent(currentTenant?.tenantId || '') +
-        '&job=' + encodeURIComponent(jobId);
+      showToast('Human review is no longer available. Ask a new question against the original document results.');
     }
 
     function citationAction(citation) {
@@ -2302,7 +2301,6 @@ let tenants = [];
       jumpToSlicePdf_arg_event: { arity: 1, run: function(args, event) { return jumpToSlicePdf(args[0], event); } },
       onTenantSwitched_value: { arity: 0, run: function(args, event) { return onTenantSwitched(this.value); } },
       openAdminForTenant: { arity: 0, run: function(args, event) { this.href='/admin.html?tenant=' + encodeURIComponent(currentTenant ? currentTenant.tenantId : ''); } },
-      openReviewForTenant: { arity: 0, run: function(args, event) { this.href='/review.html?tenant=' + encodeURIComponent(currentTenant ? currentTenant.tenantId : ''); } },
       renderDocumentList: { arity: 0, run: function(args, event) { return renderDocumentList(); } },
       resetGraphFilters: { arity: 0, run: function(args, event) { return resetGraphFilters(); } },
       resetGraphFilters_event: { arity: 0, run: function(args, event) { return resetGraphFilters(event); } },

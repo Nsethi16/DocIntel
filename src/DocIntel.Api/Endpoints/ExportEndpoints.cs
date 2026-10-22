@@ -19,15 +19,15 @@ public static class ExportEndpoints
         group.AddEndpointFilter<CsrfEndpointFilter>();
         group.MapGet("/jobs/{jobId}/export", async (
             string tenantId, string jobId, string? format, string? view, HttpContext context,
-            IdentityAccessService access, IJobStore jobs, IHarnessStore harnesses, ReviewService reviews,
-            IReviewStore reviewStore, IArtifactStore artifacts, CancellationToken ct) =>
+            IdentityAccessService access, IJobStore jobs, IHarnessStore harnesses,
+            IArtifactStore artifacts, CancellationToken ct) =>
         {
             var kind = new[] { "csv", "xlsx", "json" }.FirstOrDefault(candidate =>
                 String.Equals(candidate, format ?? "csv", StringComparison.OrdinalIgnoreCase));
             if (kind is null || view is not null &&
-                !String.Equals(view, "reviewed", StringComparison.OrdinalIgnoreCase) &&
+                !String.Equals(view, "extracted", StringComparison.OrdinalIgnoreCase) &&
                 !String.Equals(view, "original", StringComparison.OrdinalIgnoreCase))
-                return Results.Problem(statusCode: 400, title: "Choose csv, xlsx or json and reviewed or original values.");
+                return Results.Problem(statusCode: 400, title: "Choose csv, xlsx or json and extracted or original values.");
             var original = String.Equals(view, "original", StringComparison.OrdinalIgnoreCase);
             var scope = access.GetAccess(context.User, tenantId);
             if (original && scope.Role is not (TenantRole.Processor or TenantRole.Admin)) return Results.Forbid();
@@ -35,10 +35,8 @@ public static class ExportEndpoints
             if (job is null) return Results.NotFound();
             try
             {
-                var review = original ? null : await reviews.GetAsync(job, ct);
-                if (review is not null)
-                    ReviewEngine.HistorySnapshot(review, await reviewStore.GetAuditAsync(tenantId, review.Id, ct));
-                var snapshot = DocumentExporter.Snapshot(job, review, original, DateTimeOffset.UtcNow);
+                var snapshot = original ? DocumentExporter.Snapshot(job, null, true, DateTimeOffset.UtcNow)
+                    : DocumentExporter.MachineSnapshot(job, DateTimeOffset.UtcNow);
                 var bytes = DocumentExporter.Write(snapshot, kind);
                 ct.ThrowIfCancellationRequested();
                 var currentAccess = access.GetAccess(context.User, tenantId);
@@ -46,8 +44,7 @@ public static class ExportEndpoints
                 if (original && currentAccess.Role is not (TenantRole.Processor or TenantRole.Admin)) return Results.Forbid();
                 var currentJob = await jobs.GetJobAsync(jobId, ct, tenantId);
                 if (currentJob is null || currentJob.Status != JobStatus.Completed ||
-                    ReviewEngine.Fingerprint(currentJob) != ReviewEngine.Fingerprint(job) ||
-                    !original && currentJob.ReviewId != review!.Id)
+                    ReviewEngine.Fingerprint(currentJob) != ReviewEngine.Fingerprint(job))
                     return Results.Problem(statusCode: 409, title: "The document changed during export. Reload it.");
                 if ((await harnesses.GetTenantAsync(tenantId, ct))?.IsActive != true) return Results.NotFound();
                 await artifacts.SaveExportAuditAsync(new ExportAuditEvent(snapshot.ExportId, tenantId, jobId,

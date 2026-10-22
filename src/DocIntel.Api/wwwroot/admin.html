@@ -210,16 +210,6 @@
               <p>Separate from the harness version. Zero blocks fresh OCR, not validated cache reuse.
                 Failed or interrupted provider requests retain their reserved pages; these counts are not an invoice.</p>
             </details>
-            <details>
-              <summary>Human review policy</summary>
-              <div class="drawer-row">
-                <label><input id="reviewEnabled" type="checkbox" data-change="onHarnessChanged" /> Queue completed documents</label>
-                <label><input id="reviewDual" type="checkbox" data-change="onHarnessChanged" /> Require two distinct reviewers</label>
-                <label for="reviewDueHours">Due after UTC hours</label>
-                <input id="reviewDueHours" class="clean-input" type="number" min="1" max="720" data-change="onHarnessChanged" />
-              </div>
-              <p>Uncalibrated model scores never automatically approve fields. Due hours are elapsed UTC hours, not a business calendar.</p>
-            </details>
             <div class="drawer-row">
               <div style="display:flex;align-items:center;gap:8px;flex:1;">
                 <span class="drawer-label">Footers to ignore</span>

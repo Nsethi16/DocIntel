@@ -18,8 +18,7 @@ public sealed class DocumentJobProcessor(
     DocumentSplittingWorkflow workflow,
     DocumentProcessingOptions options,
     ILogger<DocumentJobProcessor> logger,
-    ITenantAccessResolver? access = null,
-    ReviewService? reviews = null)
+    ITenantAccessResolver? access = null)
 {
     public async Task ProcessAsync(JobQueueTicket ticket, CancellationToken stoppingToken = default)
     {
@@ -88,11 +87,6 @@ public sealed class DocumentJobProcessor(
             Update(job, result);
             job.Status = JobStatus.Completed;
             job.CompletedAtUtc = DateTimeOffset.UtcNow;
-            if (tenant.ReviewPolicy?.Enabled == true)
-            {
-                if (reviews is null) throw new InvalidOperationException("Human review storage is not configured.");
-                job.ReviewId = await reviews.CreateAsync(job, tenant.ReviewPolicy, execution.Token);
-            }
             job.ProcessingResultSha256 = await artifacts.SaveProcessingResultAsync(job, execution.Token);
             if (job.ProcessingResultSha256 is not { Length: 64 } ||
                 !job.ProcessingResultSha256.All(Char.IsAsciiHexDigit))

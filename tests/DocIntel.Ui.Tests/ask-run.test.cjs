@@ -75,7 +75,7 @@ test('large cited evidence stays collapsed and untrusted model text or URLs neve
   assert.equal(item.children[1].children[1].textContent.length, 3000);
 });
 
-test('reviewed citations use the human review workspace and disclose their version', async () => {
+test('historical review citations disclose retirement rather than opening removed review controls', async () => {
   const app = runtime();
   app.response = {
     status: 'Completed', answer: 'A correction [1]', citations: [{
@@ -84,8 +84,8 @@ test('reviewed citations use the human review workspace and disclose their versi
   };
   await app.load();
   const item = app.element('citations').children[0];
-  assert.equal(item.children[0].href, '/review?tenant=tenant&job=doc');
-  assert.match(item.children[1].textContent, /Human review version 8/);
+  assert.equal(item.children[0].href, '/?tenant=tenant');
+  assert.match(item.children[1].textContent, /Historical review version 8/);
 });
 
 test('uncertain delivery stops polling and cannot trigger an automatic resend', async () => {

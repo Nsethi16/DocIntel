@@ -338,9 +338,7 @@ let tenants = [];
       updated.decisionModelId = decisionModel;
       updated.defaultModelId = languageModel;
       updated.ocr = { ...(updated.ocr || {}), mode: document.getElementById('ocrModeSelect').value };
-      updated.reviewPolicy = { enabled: document.getElementById('reviewEnabled').checked,
-        requiresDualReview: document.getElementById('reviewDual').checked,
-        dueHours: Number(document.getElementById('reviewDueHours').value) };
+      updated.reviewPolicy = { enabled: false, requiresDualReview: false, dueHours: 24 };
       updated.capabilities = updated.capabilities || {};
 
       // 1. SplitAndGroup
@@ -529,9 +527,6 @@ let tenants = [];
       const splitCap = caps.SplitAndGroup || { enabled: true, splitAndGroup: {} };
       const splitCfg = splitCap.splitAndGroup || {};
       document.getElementById('ocrModeSelect').value = currentTenant.ocr?.mode || 'Auto';
-      document.getElementById('reviewEnabled').checked = currentTenant.reviewPolicy?.enabled !== false;
-      document.getElementById('reviewDual').checked = currentTenant.reviewPolicy?.requiresDualReview === true;
-      document.getElementById('reviewDueHours').value = currentTenant.reviewPolicy?.dueHours || 24;
       document.getElementById('splitFeatureToggle').checked = splitCap.enabled !== false;
       document.getElementById('footersToIgnoreInput').value = (splitCfg.footersToIgnore || ['Confidential', 'Microsoft Confidential', 'Page']).join(', ');
       document.getElementById('amendmentIndicatorsInput').value = (splitCfg.amendmentIndicators || ['amendment', 'avenant', 'enmienda', 'nachtrag', 'ctm']).join(', ');

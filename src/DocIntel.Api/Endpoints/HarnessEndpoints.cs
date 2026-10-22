@@ -121,8 +121,7 @@ public static class HarnessEndpoints
         {
             if (updated.Ocr is null || !Enum.IsDefined(updated.Ocr.Mode))
                 return Results.BadRequest(new { error = "A supported OCR policy is required." });
-            if (updated.ReviewPolicy is null || updated.ReviewPolicy.DueHours is < 1 or > 720)
-                return Results.BadRequest(new { error = "A review policy with bounded UTC due hours is required." });
+            updated.ReviewPolicy = new() { Enabled = false };
             if (updated.Retention?.IsValid != true)
                 return Results.BadRequest(new { error = "Retention days must be unset or 1-36,500; permanent purge is unavailable." });
             updated.TenantId = tenantId;

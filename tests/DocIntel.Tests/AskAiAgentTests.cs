@@ -306,105 +306,29 @@ public sealed class AskAiAgentTests
     }
 
     [Fact]
-    public async Task Human_Corrections_Have_Explicit_Review_Evidence_Not_A_False_Original_Quotation()
+    public async Task Human_Review_Is_Not_An_Advertised_Model_Tool()
     {
         // Arrange
-        var store = await CreateDocumentStoreAsync();
-        var job = (await store.GetJobAsync("source", tenantId: "tenant-one"))!;
-        job.OriginalSha256 = new string('A', 64);
-        job.Segments[0].ExtractedEntities = [new ExtractedEntity("Customer", "Original", "Party", 0.9, 0)];
-        var reviewStore = new InMemoryReviewStore();
-        var reviews = new ReviewService(reviewStore);
-        var actor = new ActorIdentity(Guid.NewGuid(), Guid.NewGuid());
-        job.ReviewId = await reviews.CreateAsync(job, new ReviewPolicy());
-        var claimed = await reviews.ChangeAsync(job, actor, 1, "claim");
-        var corrected = await reviews.ChangeAsync(job, actor, claimed.Version, "field",
-            "entity:0:0", FieldReviewOutcome.Corrected, "Human verified customer", "Original checked.");
-        var approved = await reviews.ChangeAsync(job, actor, corrected.Version, "submit");
-        var call = ToolCall("inspect_human_review",
-            new Dictionary<string, object?> { ["jobId"] = "source", ["sliceIndex"] = 0, ["offset"] = 0, ["pageSize"] = 5 });
-        var orchestrator = CreateOrchestrator(store, [], [
-            SearchCall(), call, Final("DocumentAnswer", "Human review corrected the customer [1].", "e2")
-        ], reviews: reviews, reviewStore: reviewStore);
+        var tenant = new TenantHarness { TenantId = "tenant-one", DisplayName = "Test" };
+        var harness = new Mock<IHarnessStore>();
+        harness.Setup(s => s.GetTenantAsync("tenant-one", It.IsAny<CancellationToken>())).ReturnsAsync(tenant);
+        ChatOptions? captured = null;
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((_, options, _) => captured = options)
+            .ReturnsAsync(Final("Conversation", "Hello"));
+        var catalog = new ModelCatalog(customClients: new Dictionary<string, IChatClient> { [tenant.DefaultModelId] = client.Object });
+        var orchestrator = new AskAiOrchestrator(harness.Object, new InMemoryJobStore(), catalog, [],
+            NullLogger<AskAiOrchestrator>.Instance);
 
         // Act
-        var run = await orchestrator.ExecuteRunAsync(CreateRun());
+        await orchestrator.ExecuteRunAsync(CreateRun("Hi"));
 
         // Assert
-        var citation = Assert.Single(run.Citations);
-        Assert.Equal("HumanReviewedField", citation.EvidenceKind);
-        Assert.Equal(approved.Version, citation.ReviewVersion);
-        Assert.Equal("Human verified customer", citation.Excerpt);
-        Assert.StartsWith("/review.html?", citation.WorkspaceUrl);
-        Assert.Equal("Original Woodgrove agreement text.", job.Segments[0].BodyText);
-    }
-
-    [Fact]
-    public async Task Pending_Human_Review_Does_Not_Expose_Unapproved_Effective_Value_Evidence()
-    {
-        // Arrange
-        var store = await CreateDocumentStoreAsync();
-        var job = (await store.GetJobAsync("source", tenantId: "tenant-one"))!;
-        job.OriginalSha256 = new string('A', 64);
-        var reviewStore = new InMemoryReviewStore();
-        var reviews = new ReviewService(reviewStore);
-        job.ReviewId = await reviews.CreateAsync(job, new ReviewPolicy());
-        var call = ToolCall("inspect_human_review", new Dictionary<string, object?> { ["jobId"] = "source" });
-        var orchestrator = CreateOrchestrator(store, [], [
-            SearchCall(), call, Final("DocumentAnswer", "The document is pending human review [1].", "e1")
-        ], reviews: reviews, reviewStore: reviewStore);
-
-        // Act
-        var run = await orchestrator.ExecuteRunAsync(CreateRun());
-
-        // Assert
-        var citation = Assert.Single(run.Citations);
-        Assert.Equal("HumanReviewStatus", citation.EvidenceKind);
-        Assert.Equal("Pending", citation.Excerpt);
-    }
-
-    [Fact]
-    public async Task A_Review_Change_Before_Answer_Publication_Invalidates_The_Old_Status_Evidence()
-    {
-        // Arrange
-        var store = await CreateDocumentStoreAsync();
-        var job = (await store.GetJobAsync("source", tenantId: "tenant-one"))!;
-        job.OriginalSha256 = new string('A', 64);
-        var initial = ReviewEngine.Create(job, new ReviewPolicy(), DateTimeOffset.UtcNow);
-        var created = ReviewEngine.Audit(initial, "Created", null, initial.CreatedAtUtc);
-        initial = initial with { LastAuditHash = created.Hash };
-        job.ReviewId = initial.Id;
-        var reviewStore = new Mock<IReviewStore>();
-        reviewStore.SetupSequence(s => s.GetAsync("tenant-one", initial.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(initial).ReturnsAsync(initial with { Version = 2, Status = ReviewStatus.InReview });
-        reviewStore.Setup(s => s.GetAuditAsync("tenant-one", initial.Id, It.IsAny<CancellationToken>()))
-            .ReturnsAsync([created]);
-        var reviews = new ReviewService(reviewStore.Object);
-        var orchestrator = CreateOrchestrator(store, [], [
-            SearchCall(), ToolCall("inspect_human_review", new Dictionary<string, object?> { ["jobId"] = "source" }),
-            Final("DocumentAnswer", "Review is pending [1].", "e1")
-        ], reviews: reviews, reviewStore: reviewStore.Object);
-        var run = CreateRun();
-
-        // Act / Assert
-        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => orchestrator.ExecuteRunAsync(run));
-        Assert.Contains("review changed", failure.Message, StringComparison.OrdinalIgnoreCase);
-        Assert.Null(run.Answer);
-        Assert.Empty(run.Citations);
-    }
-
-    [Fact]
-    public async Task Human_Review_Inspection_Cannot_Bypass_The_Preceding_Authorized_Search()
-    {
-        // Arrange
-        var store = new Mock<IJobStore>(MockBehavior.Strict);
-        var orchestrator = CreateOrchestrator(store.Object,
-            ToolCall("inspect_human_review", new Dictionary<string, object?> { ["jobId"] = "source" }),
-            Final("NoEvidence", "No reviewed values."));
-
-        // Act / Assert
-        await Assert.ThrowsAnyAsync<Exception>(() => orchestrator.ExecuteRunAsync(CreateRun()));
-        store.VerifyNoOtherCalls();
+        Assert.NotNull(captured);
+        Assert.DoesNotContain(captured.Tools!, tool => tool.Name == "inspect_human_review");
+        Assert.Contains(captured.Tools!, tool => tool.Name == "inspect_document_slice");
     }
 
     private static async Task<InMemoryJobStore> CreateDocumentStoreAsync()

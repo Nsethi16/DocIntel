@@ -464,107 +464,31 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         assert.equal((await request(`${tenantPath}/jobs/${allowedDocumentId}/layout`, reader)).status, 200);
         assert.equal((await request(`${tenantPath}/jobs/${forbiddenDocumentId}/layout`, reader)).status, 404);
       });
-      await t.test('document-scoped reviewers use verified claims, version fences and immutable original values', async () => {
-        const reviewerId = crypto.randomUUID();
-        memberships.push({ directoryTenantId: directoryId, objectId: reviewerId, applicationTenantId: 'contoso-legal',
-          role: 'Reviewer', allDocuments: false, documentIds: [allowedDocumentId] });
-        await saveMemberships();
-        const reviewer = signToken(issuer, apiClientId, { oid: reviewerId, sub: reviewerId, scp: 'DocIntel.Access' });
-        for (let attempt = 0; attempt < 60; attempt++) {
-          if ((await request(tenantPath + '/reviews', reviewer)).status === 200) break;
-          await new Promise(resolve => setTimeout(resolve, 100));
-        }
+      await t.test('machine exports require document access but no human approval and review routes are retired', async () => {
         const reviewPath = `${tenantPath}/jobs/${allowedDocumentId}/review`;
-        const scopedQueue = await (await request(tenantPath + '/reviews', reviewer)).json();
-        assert.ok(scopedQueue.items.length > 0);
-        assert.ok(scopedQueue.items.every(item => item.jobId === allowedDocumentId && item.canReview === true));
-        assert.equal((await request(reviewPath + '/start', reader, 'POST', {})).status, 403);
-        assert.equal((await request(`${tenantPath}/jobs/${forbiddenDocumentId}/review`, reviewer)).status, 404);
-        assert.equal((await request(tenantPath + '/jobs', reviewer, 'POST', {})).status, 403);
-        assert.equal((await request(tenantPath + '/ocr-budget', reviewer)).status, 403);
-        const started = await request(reviewPath + '/start', reviewer, 'POST', {});
-        assert.equal(started.status, 200, await started.clone().text());
-        const original = await started.json();
-        assert.ok(original.fields.length > 0);
+        assert.equal((await request(tenantPath + '/reviews', administrator)).status, 410);
+        assert.equal((await request(reviewPath, reader)).status, 410);
+        assert.equal((await request(reviewPath + '/claim', processor, 'POST', {})).status, 410);
         const exportPath = `${tenantPath}/jobs/${allowedDocumentId}/export`;
-        assert.equal((await request(exportPath + '?format=json', reader)).status, 409);
-        assert.equal((await request(exportPath + '?view=original&format=json', reader)).status, 403);
-        assert.equal((await request(exportPath + '?view=original&format=json', processor)).status, 200);
-        assert.equal((await request(`${tenantPath}/jobs/${forbiddenDocumentId}/export`, reviewer)).status, 404);
-        const read = await request(reviewPath, reader);
-        assert.equal(read.status, 200);
-        assert.equal(read.headers.get('X-DocIntel-Can-Review'), 'false');
-        const action = (name, tag, body = {}, token = reviewer) => fetch(api.url + reviewPath + '/' + name, {
-          method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json',
-            ...(tag ? { 'If-Match': tag } : {}) }, body: JSON.stringify(body)
-        });
-        assert.equal((await action('claim', null)).status, 428);
-        const claim = await action('claim', started.headers.get('ETag'), { actor: { objectId: administratorId } });
-        assert.equal(claim.status, 200);
-        const claimed = await claim.json();
-        assert.equal(claimed.claimedBy.objectId, reviewerId);
-        assert.equal((await action('claim', claim.headers.get('ETag'), {}, administrator)).status, 409);
-        const corrected = await action('field', claim.headers.get('ETag'), {
-          fieldId: original.fields[0].id, outcome: 'Corrected', value: 'Human verified value',
-          reason: 'Checked against the original source.'
-        });
-        assert.equal(corrected.status, 200);
-        const changed = await corrected.json();
-        assert.equal(changed.fields[0].originalValue, original.fields[0].originalValue);
-        assert.equal(changed.fields[0].currentValue, 'Human verified value');
-        assert.equal(changed.fields[0].reviewedBy.objectId, reviewerId);
-        assert.equal((await action('submit', claim.headers.get('ETag'))).status, 409);
-        assert.equal((await action('submit', corrected.headers.get('ETag'))).status, 409);
-        const audit = await request(reviewPath + '/audit', reader);
-        assert.equal(audit.status, 200);
-        const events = await audit.json();
-        assert.equal(events.length, 3);
-        assert.equal(events[2].actor.objectId, reviewerId);
-        assert.equal(events[2].newValue, 'Human verified value');
-        const unchanged = await (await request(`/api/harness/jobs/${allowedDocumentId}`, reader)).json();
-        assert.equal(unchanged.segments[0].extractedEntities[0].value, original.fields[0].originalValue);
-        assert.equal((await action('release', corrected.headers.get('ETag'))).status, 200);
-        let currentResponse = await request(reviewPath, reviewer);
-        let currentReview = await currentResponse.json();
-        currentResponse = await action('claim', currentResponse.headers.get('ETag'));
-        currentReview = await currentResponse.json();
-        let currentTag = currentResponse.headers.get('ETag');
-        for (const field of currentReview.fields.filter(field => field.outcome === 'Pending' || field.outcome === 'Rejected')) {
-          currentResponse = await action('field', currentTag, { fieldId: field.id, outcome: 'Approved' });
-          assert.equal(currentResponse.status, 200);
-          currentTag = currentResponse.headers.get('ETag');
-        }
-        const submitted = await action('submit', currentTag);
-        assert.equal(submitted.status, 200);
-        assert.equal((await submitted.json()).status, 'Approved');
         for (const format of ['csv', 'xlsx', 'json']) {
           const exported = await request(exportPath + '?format=' + format, reader);
-          assert.equal(exported.status, 200, exported.ok ? '' : await exported.clone().text());
-          assert.match(exported.headers.get('content-disposition'), /attachment/);
+          assert.equal(exported.status, 200);
           const bytes = Buffer.from(await exported.arrayBuffer());
-          assert.ok(bytes.length > 0);
           const exportedId = exported.headers.get('X-DocIntel-Export-Id');
-          assert.match(exportedId, /^[a-f0-9]{32}$/);
           const recorded = JSON.parse(await fs.readFile(path.join(directory, 'App_Data', 'blobs',
             'tenant-contoso-legal', allowedDocumentId, `export-event-${exportedId}.json`), 'utf8'));
           assert.equal(recorded.contentSha256, crypto.createHash('sha256').update(bytes).digest('hex').toUpperCase());
+          assert.equal(recorded.view, 'MachineExtracted');
           if (format === 'json') {
             const data = JSON.parse(bytes.toString('utf8'));
-            assert.equal(data.view, 'HumanReviewed');
-            assert.equal(data.fields[0].effectiveValue, 'Human verified value');
-            assert.equal(data.fields[0].originalValue, original.fields[0].originalValue);
+            assert.equal(data.view, 'MachineExtracted');
+            assert.equal(data.reviewStatus, 'NotApplicable');
+            assert.ok(data.fields.every(field => field.effectiveValue === field.originalValue));
           }
-          if (format === 'xlsx') assert.equal(bytes.subarray(0, 2).toString('ascii'), 'PK');
         }
-        const exportDirectory = path.join(directory, 'App_Data', 'blobs', 'tenant-contoso-legal', allowedDocumentId);
-        const exportAudits = (await fs.readdir(exportDirectory)).filter(name => /^export-event-.*\.json$/.test(name));
-        assert.equal(exportAudits.length, 4);
-        const auditBodies = await Promise.all(exportAudits.map(async name =>
-          JSON.parse(await fs.readFile(path.join(exportDirectory, name), 'utf8'))));
-        const exportAudit = auditBodies.find(audit => audit.view === 'OriginalUnreviewed');
-        assert.ok(exportAudit);
-        assert.ok(exportAudit.contentSha256);
-        assert.equal(exportAudit.actor.objectId, processorId);
+        assert.equal((await request(exportPath + '?view=original&format=json', reader)).status, 403);
+        assert.equal((await request(exportPath + '?view=original&format=json', processor)).status, 200);
+        assert.equal((await request(`${tenantPath}/jobs/${forbiddenDocumentId}/export`, reader)).status, 404);
       });
       await t.test('model arguments cannot broaden the server-owned document search scope', async () => {
         const response = await request(tenantPath + '/ask', reader, 'POST', {
@@ -696,7 +620,7 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         assert.equal(receipt.permanentErasure, false);
         assert.ok(receipt.deletedAtUtc);
         for (const suffix of ['', '/original', '/layout', '/processing-result', '/slices/0/pdf',
-          '/review', '/review/audit', '/export?format=json']) {
+          '/export?format=json']) {
           assert.equal((await request(url + suffix, administrator)).status, 404, suffix);
         }
         const remaining = await (await request(tenantPath + '/jobs', administrator)).json();

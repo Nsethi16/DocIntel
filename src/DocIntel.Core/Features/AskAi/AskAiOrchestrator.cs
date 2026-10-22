@@ -464,8 +464,6 @@ public sealed class AskAiOrchestrator
     private readonly IEnumerable<IAskAiToolProvider> _toolProviders;
     private readonly ILogger<AskAiOrchestrator> _logger;
     private readonly ITenantAccessResolver? _accessResolver;
-    private readonly ReviewService? _reviews;
-    private readonly IReviewStore? _reviewStore;
 
     public bool CanAutomaticallyReplay => !_toolProviders.Any();
 
@@ -483,8 +481,6 @@ public sealed class AskAiOrchestrator
         _toolProviders = toolProviders?.ToArray() ?? [];
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _accessResolver = accessResolver;
-        _reviews = reviews;
-        _reviewStore = reviewStore;
     }
 
     public async Task<AskAiRun> ExecuteRunAsync(
@@ -690,68 +686,6 @@ public sealed class AskAiOrchestrator
             }
         }
 
-        async Task<object> InspectHumanReviewAsync(
-            string jobId, int sliceIndex = 0, int offset = 0, int pageSize = 5, CancellationToken ct = default)
-        {
-            var timer = Stopwatch.StartNew();
-            if (!allowedJobIds.Contains(jobId)) throw new InvalidOperationException("Search for the document before inspecting its review.");
-            var access = await ResolveAccessAsync(ct);
-            if (!access.CanReadDocument(jobId)) throw new UnauthorizedAccessException("Document review access changed.");
-            if (_reviews is null || _reviewStore is null)
-                throw new InvalidOperationException("Human review storage is not configured for this host.");
-            if (offset < 0 || pageSize is < 1 or > 5) throw new ArgumentException("Use a valid review offset and at most five fields.");
-            var job = await _jobStore.GetJobAsync(jobId, ct, tenant.TenantId);
-            if (job is null || job.Status != JobStatus.Completed || job.TenantId != tenant.TenantId)
-                throw new InvalidOperationException("The requested document is not available.");
-            var slice = job.Segments.FirstOrDefault(item => item.SegmentIndex == sliceIndex)
-                ?? throw new ArgumentException("The requested review slice does not exist.");
-            var review = await _reviews.GetAsync(job, ct);
-            if (review is not null)
-                ReviewEngine.HistorySnapshot(review, await _reviewStore.GetAuditAsync(tenant.TenantId, review.Id, ct));
-            string Cite(string excerpt, string kind)
-            {
-                if (evidence.Count >= 48) throw new InvalidOperationException("The evidence limit was reached. Narrow the question.");
-                var id = $"e{evidence.Count + 1}";
-                evidence.Add(id, new AskAiCitation(0, job.JobId, job.FileName, Path.GetFileNameWithoutExtension(job.FileName),
-                    sliceIndex, "Human review", review is null ? "Not started" : $"Review v{review.Version}",
-                    String.Empty, String.Empty, String.Empty, String.Empty, String.Empty, excerpt,
-                    $"/review.html?tenant={Uri.EscapeDataString(tenant.TenantId)}&job={Uri.EscapeDataString(jobId)}",
-                    $"/api/harness/tenants/{Uri.EscapeDataString(tenant.TenantId)}/jobs/{Uri.EscapeDataString(jobId)}/original",
-                    kind, review?.Version));
-                return id;
-            }
-            var status = review?.Status.ToString() ?? "NotStarted";
-            var statusId = Cite(status, "HumanReviewStatus");
-            var fields = review?.Status == ReviewStatus.Approved
-                ? review.Fields.Where(field => field.SliceIndex == sliceIndex).ToList() : [];
-            var page = fields.Skip(offset).Take(pageSize).Select(field => new
-            {
-                evidenceId = Cite(field.CurrentValue[..Math.Min(field.CurrentValue.Length, 3_000)], "HumanReviewedField"),
-                field.Id,
-                field.Label,
-                originalValue = field.OriginalValue[..Math.Min(field.OriginalValue.Length, 1_000)],
-                effectiveValue = field.CurrentValue[..Math.Min(field.CurrentValue.Length, 2_000)],
-                truncated = field.OriginalValue.Length > 1_000 || field.CurrentValue.Length > 2_000,
-                field.Outcome,
-                field.ReviewedAtUtc
-            }).ToList();
-            var result = new
-            {
-                status,
-                statusEvidenceId = statusId,
-                reviewVersion = review?.Version,
-                job.HasDevelopmentResults,
-                hasDevelopmentReview = review?.HasDevelopmentActivity,
-                fields = page,
-                nextOffset = offset + page.Count < fields.Count ? (int?)(offset + page.Count) : null,
-                evidencePolicy = "Effective values are human review decisions, not quotations from original PDF text."
-            };
-            if (JsonSerializer.Serialize(result).Length > 32_000)
-                throw new InvalidOperationException("The reviewed fields exceed the evidence limit. Request fewer fields.");
-            await RecordStepAsync("inspect_human_review", timer, ct);
-            return result;
-        }
-
         var tools = new List<AIFunction>
         {
             AIFunctionFactory.Create(SearchDocumentsAsync, "search_documents",
@@ -760,10 +694,7 @@ public sealed class AskAiOrchestrator
             AIFunctionFactory.Create(InspectDocumentSliceAsync, "inspect_document_slice",
                 "Read one previously found document slice and receive a server evidenceId. " +
                 "Results include original text, insights, entities, structured data, and prompt-column outcomes. " +
-                "Use nextTextOffset to read more source text."),
-            AIFunctionFactory.Create(InspectHumanReviewAsync, "inspect_human_review",
-                "Inspect authorized human review status and approved effective fields separately from original source values. " +
-                "Search first. Use review evidence IDs to cite corrections and disclose their review version/origin. Follow nextOffset.")
+                "Use nextTextOffset to read more source text.")
         };
         tools.AddRange(_toolProviders.SelectMany(p => p.GetTools(tenant)));
         if (tools.Select(t => t.Name).Distinct(StringComparer.Ordinal).Count() != tools.Count)
@@ -788,11 +719,7 @@ public sealed class AskAiOrchestrator
                 confidenceSignals are uncalibrated model/text-presence signals, not probabilities.
                 ExactTextMatch only means a value occurs uniquely in source text, not that the field meaning
                 was verified or a human approved it. Heavy word polygons are excluded from tool payloads.
-                Use inspect_human_review to check human decisions when the answer depends on reviewed/effective values.
-                HumanReviewedField citations are human-approved values, NOT verbatim original-PDF quotations.
-                Say when a human correction differs from original model/source results and cite its review evidence/version.
-                ReviewStatus other than Approved does not authorize an effective-value claim. Development review
-                activity is not verified production-human approval.
+                Human review is not part of this application. Use original source evidence and machine-extracted results.
                 Return JSON: kind is Conversation, Clarification, NoEvidence, or DocumentAnswer.
                 answer is a friendly Markdown response; evidenceIds lists ONLY evidenceIds you
                 actually used, in citation order. Inline [1], [2], etc. refer to that list. Every document-specific
@@ -865,16 +792,6 @@ public sealed class AskAiOrchestrator
         if (answer.EvidenceIds.Any(id => !finalAccess.CanReadDocument(evidence[id].JobId)))
         {
             throw new UnauthorizedAccessException("Document permissions changed before the answer completed.");
-        }
-        foreach (var citation in answer.EvidenceIds.Select(id => evidence[id])
-            .Where(citation => citation.EvidenceKind != "OriginalSourceText"))
-        {
-            var job = await _jobStore.GetJobAsync(citation.JobId, cancellationToken, tenant.TenantId)
-                ?? throw new InvalidOperationException("The reviewed document is unavailable.");
-            var current = await _reviews!.GetAsync(job, cancellationToken);
-            if (current?.Version != citation.ReviewVersion ||
-                citation.EvidenceKind == "HumanReviewedField" && current?.Status != ReviewStatus.Approved)
-                throw new InvalidOperationException("Human review changed before the answer completed. Refresh the question.");
         }
         run.Citations = answer.EvidenceIds.Select((id, i) => evidence[id] with { CitationNumber = i + 1 }).ToList();
         if (run.ChannelDelivery is not null)

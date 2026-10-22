@@ -28,6 +28,15 @@ design and end-to-end purge verification; no GDPR/HIPAA/SOC 2 compliance is clai
 
 ## Features
 
+### Human review is retired
+
+The application no longer creates review sessions, advertises review tools to Ask AI, or requires
+approval before exports. Review navigation and Admin policy controls are removed; legacy review
+API operations return HTTP 410. Exports default to `MachineExtracted`, never a human-verification
+claim. Historical review/audit records and their compatibility readers are retained without
+purge or automatic conversion into current answers. Old browser citations explain retirement
+instead of reopening editable review controls.
+
 ### Content Understanding ingestion
 
 Production document ingestion now uses Azure Content Understanding `prebuilt-layout`, pinned to

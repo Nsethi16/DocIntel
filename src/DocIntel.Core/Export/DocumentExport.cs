@@ -45,6 +45,19 @@ public static class DocumentExporter
     ];
     private const int MaximumBytes = 16 * 1024 * 1024;
 
+    public static DocumentExport MachineSnapshot(DocumentJob job, DateTimeOffset now)
+    {
+        var snapshot = Snapshot(job, null, original: true, now);
+        return snapshot with
+        {
+            View = "MachineExtracted",
+            ReviewStatus = "NotApplicable",
+            ReviewVersion = null,
+            HasDevelopmentReview = null,
+            Fields = snapshot.Fields.Select(field => field with { Outcome = "MachineExtracted" }).ToList()
+        };
+    }
+
     public static DocumentExport Snapshot(DocumentJob job, ReviewSession? review, bool original, DateTimeOffset now)
     {
         if (job.Status != JobStatus.Completed) throw new ReviewConflictException("Complete processing before exporting.");

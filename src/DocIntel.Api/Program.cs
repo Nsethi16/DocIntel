@@ -93,12 +93,13 @@ app.MapDocIntelIdentity();
 app.MapDocIntelTeams();
 app.MapHarnessEndpoints();
 app.MapOcrUsageEndpoints();
-app.MapReviewEndpoints();
+app.MapGet("/api/harness/tenants/{tenantId}/reviews", () =>
+    Results.Problem(statusCode: 410, title: "Human review has been retired.")).RequireAuthorization("TenantAccess");
+app.MapMethods("/api/harness/tenants/{tenantId}/jobs/{jobId}/review/{**action}", ["GET", "POST"], () =>
+    Results.Problem(statusCode: 410, title: "Human review has been retired.")).RequireAuthorization("TenantAccess");
 app.MapLifecycleEndpoints();
 app.MapExportEndpoints();
-app.MapGet("/review", (HttpRequest request) => Results.Redirect(
-    "/review.html?tenant=" + Uri.EscapeDataString(request.Query["tenant"].ToString()) +
-    "&job=" + Uri.EscapeDataString(request.Query["job"].ToString())));
+app.MapGet("/review", () => Results.Redirect("/"));
 
 app.Run();
 
