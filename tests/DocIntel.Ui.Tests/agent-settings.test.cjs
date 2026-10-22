@@ -32,12 +32,22 @@ test('the real Admin markup does not hide the settings navigation inside the con
 function runtime() {
   const elements = new Map();
   const element = id => {
-    if (!elements.has(id)) elements.set(id, { value: '', checked: false, hidden: false, textContent: '',
-      classList: { toggle() {} }, setAttribute(name, value) { this[name] = value; },
-      set innerHTML(value) { throw new Error('Profile text must not become HTML'); } });
+    if (!elements.has(id)) {
+      const classes = new Set();
+      elements.set(id, { id, value: '', checked: false, hidden: false, textContent: '',
+        classList: {
+          toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); },
+          contains(name) { return classes.has(name); }
+        },
+        setAttribute(name, value) { this[name] = value; },
+        set innerHTML(value) { throw new Error('Profile text must not become HTML'); } });
+    }
     return elements.get(id);
   };
   const app = { element, response: { email: { configured: false }, teams: { configured: false } } };
+  element('adminSections').addEventListener = (type, listener) => { app[type] = listener; };
+  for (const id of ['processingSettingsTab', 'agentSettingsTab', 'tenantUsersTab'])
+    element(id).focus = () => { app.focused = id; };
   const context = vm.createContext({
     document: { getElementById: element },
     fetch: async () => ({ ok: true, json: async () => typeof app.response === 'function' ? app.response() : app.response })
@@ -73,7 +83,7 @@ test('agent settings have a separate discoverable panel from document-processing
   assert.equal(app.element('agentSettingsPanel').hidden, true);
 });
 
-test('users tab hides only harness actions and preserves dirty profile values and conflict state', () => {
+test('users tab reserves header geometry while removing harness actions from focus and preserving unsaved drafts', () => {
   const app = runtime();
   app.settings.render({ displayName: 'Unsaved agent name', instructions: 'Unsaved instructions' });
   app.element('harnessSaveNotice').hidden = false;
@@ -82,15 +92,47 @@ test('users tab hides only harness actions and preserves dirty profile values an
   assert.equal(app.element('tenantUsersPanel').hidden, false);
   assert.equal(app.element('agentSettingsPanel').hidden, true);
   assert.equal(app.element('processingSettingsPanel').hidden, true);
-  assert.equal(app.element('harnessHeaderActions').hidden, true);
+  for (const id of ['harnessHeaderActions', 'harnessVersionChip']) {
+    assert.equal(app.element(id).hidden, false, 'Header space must not collapse');
+    assert.equal(app.element(id).classList.contains('settings-context-hidden'), true);
+    assert.equal(app.element(id).inert, true);
+    assert.equal(app.element(id)['aria-hidden'], 'true');
+  }
   assert.equal(app.element('tenantUsersTab')['aria-selected'], 'true');
   assert.equal(app.element('tenantUsersTab').tabindex, '0');
   app.settings.section('agent');
   assert.equal(app.element('harnessHeaderActions').hidden, false);
+  for (const id of ['harnessHeaderActions', 'harnessVersionChip']) {
+    assert.equal(app.element(id).classList.contains('settings-context-hidden'), false);
+    assert.equal(app.element(id).inert, false);
+    assert.equal(app.element(id)['aria-hidden'], 'false');
+  }
   assert.equal(app.element('harnessSaveNotice').hidden, false);
   assert.equal(app.element('btnSaveHarness').disabled, false);
   assert.equal(app.settings.read().displayName, 'Unsaved agent name');
   assert.equal(app.settings.read().instructions, 'Unsaved instructions');
+});
+
+test('section tabs preserve keyboard selection, focus and labels with decorative icons', () => {
+  const app = runtime();
+  let prevented = 0;
+  for (const [target, key, expected] of [
+    ['processingSettingsTab', 'ArrowRight', 'agentSettingsTab'],
+    ['agentSettingsTab', 'End', 'tenantUsersTab'],
+    ['tenantUsersTab', 'ArrowRight', 'processingSettingsTab'],
+    ['processingSettingsTab', 'ArrowLeft', 'tenantUsersTab'],
+    ['tenantUsersTab', 'Home', 'processingSettingsTab']
+  ]) {
+    app.keydown({ target: app.element(target), key, preventDefault() { prevented++; } });
+    assert.equal(app.focused, expected);
+    assert.equal(app.element(expected)['aria-selected'], 'true');
+    assert.equal(app.element(expected).tabindex, '0');
+  }
+  assert.equal(prevented, 5);
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'DocIntel.Api', 'wwwroot', 'admin.html'), 'utf8');
+  assert.equal([...html.matchAll(/class="admin-section-icon" aria-hidden="true"/g)].length, 3);
+  assert.ok(html.indexOf('id="adminSections"') < html.indexOf('id="harnessSaveNotice"'),
+    'A section-specific conflict must not move the navigation');
 });
 
 test('a tenant toggle cannot pretend a mailbox or bot is connected', async () => {

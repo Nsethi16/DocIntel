@@ -91,6 +91,45 @@
         </div>
       </div>
 
+      <nav class="admin-sections" id="adminSections" aria-label="Tenant settings" role="tablist">
+        <button type="button" id="processingSettingsTab" class="selected" role="tab"
+          aria-label="Document processing" aria-controls="processingSettingsPanel" tabindex="0"
+          data-click="setAdminSection_arg" data-args="[&quot;processing&quot;]" aria-selected="true">
+          <span class="admin-section-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="M7 3.5h7l4 4V20H7z" stroke-linejoin="round" />
+              <path d="M14 3.5V8h4M10 12h5M10 16h5" stroke-linecap="round" />
+            </svg>
+          </span>
+          <span class="admin-section-copy"><span class="admin-section-title">Document processing</span>
+            <span class="admin-section-description">Extraction &amp; models</span></span>
+        </button>
+        <button type="button" id="agentSettingsTab" role="tab" aria-label="Agent &amp; channels"
+          aria-controls="agentSettingsPanel" tabindex="-1"
+          data-click="setAdminSection_arg" data-args="[&quot;agent&quot;]" aria-selected="false">
+          <span class="admin-section-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <path d="m12 3 2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z" stroke-linejoin="round" />
+              <path d="M19 17v4M17 19h4" stroke-linecap="round" />
+            </svg>
+          </span>
+          <span class="admin-section-copy"><span class="admin-section-title">Agent &amp; channels</span>
+            <span class="admin-section-description">Personality &amp; connections</span></span>
+        </button>
+        <button type="button" id="tenantUsersTab" role="tab" aria-label="Users &amp; access"
+          aria-controls="tenantUsersPanel" tabindex="-1"
+          data-click="setAdminSection_arg" data-args="[&quot;users&quot;]" aria-selected="false">
+          <span class="admin-section-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
+              <circle cx="9" cy="8" r="3" />
+              <path d="M3.5 20v-2a5.5 5.5 0 0 1 11 0v2M16 5.5a3 3 0 0 1 0 5.8M17 14a5 5 0 0 1 3.5 4.8V20"
+                stroke-linecap="round" />
+            </svg>
+          </span>
+          <span class="admin-section-copy"><span class="admin-section-title">Users &amp; access</span>
+            <span class="admin-section-description">People &amp; tenant roles</span></span>
+        </button>
+      </nav>
       <section id="harnessSaveNotice" role="status" hidden>
         <p id="harnessSaveMessage"></p>
         <details><summary>Compare unsaved draft and server configuration</summary>
@@ -99,17 +138,6 @@
         </details>
         <button type="button" class="btn-action" data-click="reloadHarnessAfterConflict">Reload latest configuration</button>
       </section>
-
-      <!-- Harness-Level Model Selection (Stacked One After Another Above Features) -->
-      <nav class="admin-sections" id="adminSections" aria-label="Tenant settings" role="tablist">
-        <button type="button" id="processingSettingsTab" class="selected" role="tab"
-          aria-controls="processingSettingsPanel" tabindex="0"
-          data-click="setAdminSection_arg" data-args="[&quot;processing&quot;]" aria-selected="true">Document processing</button>
-        <button type="button" id="agentSettingsTab" role="tab" aria-controls="agentSettingsPanel" tabindex="-1"
-          data-click="setAdminSection_arg" data-args="[&quot;agent&quot;]" aria-selected="false">Agent &amp; channels</button>
-        <button type="button" id="tenantUsersTab" role="tab" aria-controls="tenantUsersPanel" tabindex="-1"
-          data-click="setAdminSection_arg" data-args="[&quot;users&quot;]" aria-selected="false">Users &amp; access</button>
-      </nav>
       <section id="tenantUsersPanel" class="tenant-users" role="tabpanel" aria-labelledby="tenantUsersTab" hidden>
         <div class="tenant-users-heading">
           <div><span class="tenant-users-eyebrow">PEOPLE, NOT PERMISSIONS TO MANAGE</span>

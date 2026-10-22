@@ -1,6 +1,37 @@
-.admin-sections { display:flex; gap:6px; padding:5px; margin:12px 0 24px; border:1px solid var(--border); background:#f1f2f7; border-radius:12px; width:fit-content; }
-.admin-sections button { border:0; border-radius:8px; padding:10px 18px; background:none; color:var(--text-secondary); font:inherit; cursor:pointer; }
-.admin-sections button.selected { background:white; color:var(--text-primary); box-shadow:0 1px 5px #172b4d12; font-weight:600; }
+.admin-sections {
+  display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; width:100%;
+  padding:6px; margin:12px 0 26px; border:1px solid var(--border); background:#f1f2f8; border-radius:16px;
+}
+.admin-sections button {
+  display:flex; align-items:center; gap:12px; min-width:0; min-height:72px; padding:13px 16px;
+  border:1px solid transparent; border-radius:11px; background:transparent; color:var(--text-secondary);
+  font:inherit; text-align:left; cursor:pointer; transition:background .15s ease,border-color .15s ease,color .15s ease;
+}
+.admin-sections button:hover { background:#ffffff80; color:var(--text-primary); }
+.admin-sections button.selected {
+  background:#fff; color:#344bbc; border-color:#d8def8; box-shadow:0 2px 5px #172b4d08;
+}
+.admin-sections button:focus-visible { outline:2px solid #4b63d8; outline-offset:2px; }
+.admin-section-icon {
+  display:grid; place-items:center; width:34px; height:34px; flex-shrink:0;
+  border-radius:10px; background:#e8eaf2; color:#6b7087;
+}
+.selected .admin-section-icon { background:#edf0ff; color:#4057ca; }
+.admin-section-icon svg { width:21px; height:21px; }
+.admin-section-copy { display:flex; flex-direction:column; gap:4px; min-width:0; }
+.admin-section-title { font-size:14px; font-weight:600; line-height:1.35; }
+.admin-section-description { font-size:12px; line-height:1.4; color:var(--text-secondary); }
+.settings-context-hidden { visibility:hidden; pointer-events:none; }
+@media(max-width:1050px) {
+  .admin-sections button { gap:9px; padding:12px 10px; }
+  .admin-section-description { display:none; }
+}
+@media(max-width:700px) {
+  .admin-sections { gap:3px; padding:4px; }
+  .admin-sections button { flex-direction:column; gap:7px; padding:10px 6px; text-align:center; }
+  .admin-section-title { font-size:12px; }
+}
+@media(prefers-reduced-motion:reduce) { .admin-sections button { transition:none; } }
 [hidden] { display:none !important; }
 .agent-settings-heading h2 { font-size:28px; letter-spacing:-.8px; margin:10px 0 6px; font-weight:600; }
 .agent-settings-heading p { color:var(--text-secondary); margin:0 0 24px; }

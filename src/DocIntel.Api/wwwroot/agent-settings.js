@@ -61,8 +61,11 @@
     node('agentSettingsPanel').hidden = name !== 'agent';
     node('processingSettingsPanel').hidden = name !== 'processing';
     node('tenantUsersPanel').hidden = name !== 'users';
-    node('harnessHeaderActions').hidden = name === 'users';
-    node('harnessVersionChip').hidden = name === 'users';
+    for (const id of ['harnessHeaderActions', 'harnessVersionChip']) {
+      node(id).classList.toggle('settings-context-hidden', name === 'users');
+      node(id).inert = name === 'users';
+      node(id).setAttribute('aria-hidden', String(name === 'users'));
+    }
     node('harnessSaveNotice').classList.toggle('tenant-users-hidden', name === 'users');
     if (name !== 'users') root.DocIntelTenantUsers?.closeDialogs();
     for (const [id, selected] of [['processingSettingsTab', name === 'processing'],

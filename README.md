@@ -360,6 +360,8 @@ password, arbitrary callback URL or privileged role is configured through person
 Name/purpose/guidance are bounded and JSON-encoded into presentation instructions; fixed
 authorization, evidence, citation and tool policies always remain in force. Each executed run
 captures its agent profile and harness version for consistent web/email/Teams responses.
+The icon-labeled section tabs support arrow/Home/End navigation. Switching to Users & access
+hides harness-only controls without collapsing the header or shifting the section navigation.
 
 ### Enterprise users and unified access
 

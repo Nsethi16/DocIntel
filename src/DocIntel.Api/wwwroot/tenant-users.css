@@ -3,7 +3,7 @@
 .tenant-users-heading, .tenant-users-toolbar, .tenant-users-dialog-heading {
   display:flex; align-items:center; justify-content:space-between; gap:18px;
 }
-.tenant-users-heading { align-items:flex-start; margin:12px 0 24px; }
+.tenant-users-heading { align-items:flex-start; margin:0 0 24px; }
 .tenant-users-heading h2 { font-size:28px; font-weight:600; letter-spacing:-.8px; margin:10px 0; }
 .tenant-users-heading p { max-width:680px; margin:0; color:var(--text-secondary); line-height:1.6; }
 .tenant-users-heading > button { flex-shrink:0; margin-top:24px; }
@@ -55,7 +55,6 @@
 .tenant-users-detail-dialog { width:min(560px, calc(100vw - 32px)); }
 .tenant-users-confirm-dialog { width:min(500px, calc(100vw - 32px)); }
 .tenant-users button:disabled, .tenant-users-dialog button:disabled { opacity:.5; cursor:not-allowed; }
-.admin-sections { max-width:100%; flex-wrap:wrap; box-sizing:border-box; }
 @media(max-width:700px) {
   .tenant-users-heading { flex-direction:column; }
   .tenant-users-heading > button { margin-top:0; }
@@ -64,5 +63,4 @@
   .tenant-users-dialog { padding:20px; }
   .tenant-users-details-grid { grid-template-columns:1fr; gap:6px; }
   .tenant-users-details-grid dd { margin-bottom:8px; }
-  .admin-sections button { padding:10px; font-size:12px; }
 }
