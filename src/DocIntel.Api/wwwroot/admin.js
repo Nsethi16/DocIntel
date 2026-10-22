@@ -339,6 +339,7 @@ let tenants = [];
       updated.defaultModelId = languageModel;
       updated.ocr = { ...(updated.ocr || {}), mode: document.getElementById('ocrModeSelect').value };
       updated.reviewPolicy = { enabled: false, requiresDualReview: false, dueHours: 24 };
+      updated.agent = globalThis.DocIntelAgentSettings ? DocIntelAgentSettings.read() : currentTenant.agent;
       updated.capabilities = updated.capabilities || {};
 
       // 1. SplitAndGroup
@@ -464,6 +465,7 @@ let tenants = [];
             defaultModelId: currentPayload.defaultModelId,
             ocr: currentPayload.ocr,
             reviewPolicy: currentPayload.reviewPolicy,
+            agent: currentPayload.agent,
             capabilities: currentPayload.capabilities
           })
         : '';
@@ -499,6 +501,10 @@ let tenants = [];
 
     function renderMainCanvas() {
       if (!currentTenant) return;
+      if (globalThis.DocIntelAgentSettings) {
+        DocIntelAgentSettings.render(currentTenant.agent);
+        DocIntelAgentSettings.connections(currentTenant.tenantId);
+      }
       harnessSaveBlocked = false;
       document.getElementById('harnessSaveNotice').hidden = true;
       document.getElementById('harnessDraft').textContent = '';
@@ -594,6 +600,7 @@ let tenants = [];
             defaultModelId: initialPayload.defaultModelId,
             ocr: initialPayload.ocr,
             reviewPolicy: initialPayload.reviewPolicy,
+            agent: initialPayload.agent,
             capabilities: initialPayload.capabilities
           })
         : '';
@@ -885,7 +892,7 @@ let tenants = [];
         if (editedDuringSave) {
           savedSnapshotJson = JSON.stringify({
             decisionModelId: updated.decisionModelId, defaultModelId: updated.defaultModelId,
-            ocr: updated.ocr, reviewPolicy: updated.reviewPolicy, capabilities: updated.capabilities
+            ocr: updated.ocr, reviewPolicy: updated.reviewPolicy, agent: updated.agent, capabilities: updated.capabilities
           });
           document.getElementById('harnessVersionChip').textContent = `Harness v${saved.harnessVersion}`;
         } else {
@@ -1585,7 +1592,14 @@ let tenants = [];
       }
     }
 
+    function onAgentProfileChanged() {
+      DocIntelAgentSettings.preview();
+      updateDirtyState();
+    }
+
     DocIntelActions.register({
+      setAdminSection_arg: { arity: 1, run: function(args) { DocIntelAgentSettings.section(args[0]); } },
+      onAgentProfileChanged: { arity: 0, run: function() { onAgentProfileChanged(); } },
       addDataExtractionFieldRow: { arity: 0, run: function(args, event) { return addDataExtractionFieldRow(); } },
       addDataExtractionTableBlock: { arity: 0, run: function(args, event) { return addDataExtractionTableBlock(); } },
       addExtractionColumn: { arity: 0, run: function(args, event) { return addColumnToTableBox(this.closest('.table-schema-box')); } },

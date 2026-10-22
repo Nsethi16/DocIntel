@@ -97,6 +97,8 @@ public sealed class TeamsQuestionReceiver(
         if (tenant is not { IsActive: true } ||
             !tenant.Capabilities.TryGetValue(FeatureHarness.AskAiKey, out var feature) || !feature.Enabled)
             throw new UnauthorizedAccessException("Ask AI is not enabled for this tenant.");
+        if (tenant.Agent.TeamsEnabled != true)
+            throw new UnauthorizedAccessException("Teams questions are not enabled for this tenant.");
 
         var runId = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
         {

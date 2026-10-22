@@ -229,7 +229,12 @@ public sealed class ChannelDeliveryTests
         public Mock<ITenantAccessResolver> Access { get; } = new();
         public Mock<IJobStore> Jobs { get; } = new();
         public List<ChannelDeliveryStatus> Saved { get; } = [];
-        public TenantHarness Tenant { get; } = new() { TenantId = "tenant", DisplayName = "Tenant" };
+        public TenantHarness Tenant { get; } = new()
+        {
+            TenantId = "tenant",
+            DisplayName = "Tenant",
+            Agent = new() { TeamsEnabled = true, EmailEnabled = true }
+        };
         public ChannelDeliveryProcessor Processor { get; }
         public Fixture()
         {

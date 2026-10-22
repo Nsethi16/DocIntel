@@ -45,6 +45,14 @@ public sealed class ChannelDeliveryProcessor(
             await lease.SaveAsync(cancellationToken);
             return;
         }
+        if ((target.Transport == "Teams" && !tenant.Agent.TeamsEnabled) ||
+            (target.Transport == "Email" && !tenant.Agent.EmailEnabled))
+        {
+            target.Status = ChannelDeliveryStatus.Failed;
+            target.ErrorCode = "DeliveryChannelDisabled";
+            await lease.SaveAsync(cancellationToken);
+            return;
+        }
         var scope = await access.ResolveAsync(run.Actor, run.TenantId, cancellationToken);
         if (!scope.CanRead || target.AccessFingerprint != ChannelDelivery.GetAccessFingerprint(scope) ||
             run.Citations.Any(citation => !scope.CanReadDocument(citation.JobId)))

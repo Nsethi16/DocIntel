@@ -113,6 +113,21 @@ public static class HarnessEndpoints
                 : Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
         });
 
+        group.MapGet("/tenants/{tenantId}/agent/channels", (
+            string tenantId, HttpContext context, IdentityAccessService access, IConfiguration configuration) =>
+        {
+            if (!access.GetAccess(context.User, tenantId).CanAdmin) return Results.Forbid();
+            var teams = configuration.GetValue<bool>("Channels:Teams:Enabled") &&
+                configuration["Channels:Teams:ApplicationTenantId"] == tenantId;
+            var email = configuration.GetValue<bool>("Channels:Email:Enabled") &&
+                configuration["Channels:Email:ApplicationTenantId"] == tenantId;
+            return Results.Ok(new
+            {
+                teams = new { configured = teams },
+                email = new { configured = email, address = email ? configuration["Channels:Email:MailboxAddress"] : null }
+            });
+        });
+
         group.MapPut("/tenants/{tenantId}", async (
             string tenantId,
             [FromBody] TenantHarness updated,
@@ -122,6 +137,8 @@ public static class HarnessEndpoints
             if (updated.Ocr is null || !Enum.IsDefined(updated.Ocr.Mode))
                 return Results.BadRequest(new { error = "A supported OCR policy is required." });
             updated.ReviewPolicy = new() { Enabled = false };
+            if (updated.Agent?.IsValid != true)
+                return Results.BadRequest(new { error = "Agent name, purpose, tone or response guidance is invalid." });
             if (updated.Retention?.IsValid != true)
                 return Results.BadRequest(new { error = "Retention days must be unset or 1-36,500; permanent purge is unavailable." });
             updated.TenantId = tenantId;
@@ -465,6 +482,8 @@ public static class HarnessEndpoints
                 run.StartedAtUtc,
                 run.ExecutionAttempts,
                 run.CompletedAtUtc,
+                agentName = run.AgentProfile?.DisplayName,
+                run.AgentHarnessVersion,
                 delivery = run.ChannelDelivery is null ? null : new
                 {
                     status = run.ChannelDelivery.Status.ToString(),

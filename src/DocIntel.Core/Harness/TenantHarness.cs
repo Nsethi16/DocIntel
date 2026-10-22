@@ -272,6 +272,7 @@ public sealed class TenantHarness
     public required string DisplayName { get; set; }
 
     public int HarnessVersion { get; set; } = 1;
+    public AgentProfile Agent { get; set; } = new();
 
     public DocIntel.Core.Ocr.OcrPolicy Ocr { get; set; } = new();
 

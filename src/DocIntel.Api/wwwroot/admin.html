@@ -11,6 +11,7 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/shared/shell.css" />
   <link rel="stylesheet" href="/admin.css" />
+  <link rel="stylesheet" href="/agent-settings.css" />
 </head>
 <body>
   <!-- Left Panel: Tenant Navigation & Creation (Collapsible) -->
@@ -96,9 +97,65 @@
           <h3>Server configuration at conflict</h3><pre id="harnessServer" style="max-height:300px;overflow:auto;white-space:pre-wrap;"></pre>
         </details>
         <button type="button" class="btn-action" data-click="reloadHarnessAfterConflict">Reload latest configuration</button>
-      </section>
 
       <!-- Harness-Level Model Selection (Stacked One After Another Above Features) -->
+      <nav class="admin-sections" aria-label="Tenant settings">
+        <button type="button" id="processingSettingsTab" class="selected"
+          data-click="setAdminSection_arg" data-args="[&quot;processing&quot;]" aria-selected="true">Document processing</button>
+        <button type="button" id="agentSettingsTab"
+          data-click="setAdminSection_arg" data-args="[&quot;agent&quot;]" aria-selected="false">Agent &amp; channels</button>
+      </nav>
+      <section id="agentSettingsPanel" class="agent-settings" hidden>
+        <div class="agent-settings-heading"><span class="agent-eyebrow">YOUR DOCUMENT ASSISTANT</span>
+          <h2>A recognizable voice. Grounded answers.</h2>
+          <p>Choose how your agent introduces itself and responds, wherever people ask.</p>
+        </div>
+        <div class="agent-identity-grid">
+          <section class="agent-settings-card" aria-label="Agent personality">
+            <label for="agentDisplayName">Agent name</label>
+            <input id="agentDisplayName" maxlength="64" class="clean-input" placeholder="e.g. Meridian"
+              data-input="onAgentProfileChanged">
+            <label for="agentPurpose">What does your agent help with?</label>
+            <textarea id="agentPurpose" maxlength="500" class="clean-textarea" rows="3"
+              placeholder="Describe its purpose and audience." data-input="onAgentProfileChanged"></textarea>
+            <label for="agentTone">Conversation style</label>
+            <select id="agentTone" class="clean-select" data-change="onAgentProfileChanged">
+              <option>Professional</option><option>Friendly</option><option>Concise</option>
+            </select>
+            <label for="agentInstructions">Response guidance <span>Optional</span></label>
+            <textarea id="agentInstructions" maxlength="4000" class="clean-textarea" rows="5"
+              placeholder="For example: use plain English, lead with the answer, explain unfamiliar contract terms."
+              data-input="onAgentProfileChanged"></textarea>
+            <p class="agent-safety-note">Personality shapes wording, not permissions. Answers still respect document
+              access, cite evidence and disclose uncertainty. Never enter passwords or tokens here.</p>
+          </section>
+          <aside class="agent-settings-card agent-preview" aria-label="Personality preview">
+            <span class="agent-eyebrow">STYLE PREVIEW</span>
+            <div class="agent-preview-identity"><span class="agent-avatar" id="agentPreviewAvatar">D</span>
+              <div><strong id="agentPreviewName">DocIntel</strong><span id="agentPreviewPurpose"></span></div></div>
+            <div class="agent-preview-user">Which agreement covers this customer?</div>
+            <div class="agent-preview-message" id="agentPreviewMessage"></div>
+            <p class="agent-preview-disclaimer">Illustrative wording only. This is not a generated answer or document evidence.</p>
+            <div class="agent-preview-footnote"><span>Web</span><span>Email</span><span>Teams</span></div>
+          </aside>
+        </div>
+        <h3 class="agent-channel-heading">Meet people where they work</h3>
+        <div class="agent-channel-grid">
+          <section class="agent-settings-card agent-channel-card"><div><span class="agent-channel-icon">@</span>
+            <h3>Email</h3><p>Receive a question by email and return a cited answer to a verified sender.</p></div>
+            <label class="agent-channel-toggle"><input type="checkbox" id="agentEmailEnabled" data-change="onAgentProfileChanged">
+              Enable for this tenant</label><p class="agent-connection-state" id="agentEmailStatus">Checking connection...</p>
+            <p class="agent-safety-note">Mailbox connection and permissions are configured securely by the operator.</p>
+          </section>
+          <section class="agent-settings-card agent-channel-card"><div><span class="agent-channel-icon">#</span>
+            <h3>Microsoft Teams</h3><p>Ask in a personal chat or mention the agent. Shared-chat requests keep document answers private.</p></div>
+            <label class="agent-channel-toggle"><input type="checkbox" id="agentTeamsEnabled" data-change="onAgentProfileChanged">
+              Enable for this tenant</label><p class="agent-connection-state" id="agentTeamsStatus">Checking connection...</p>
+            <p class="agent-safety-note">Enabling a channel does not create a bot, grant access or send a test message.</p>
+          </section>
+        </div>
+      </section>
+      <section id="processingSettingsPanel">
       <div class="section-bar">
         <span class="section-bar-title">Models</span>
         <span class="section-bar-meta">Harness-level routing</span>
@@ -119,6 +176,7 @@
               <strong>Decision Model</strong>
               <span>Classifies and routes PDF slices into defined document types</span>
             </div>
+            </section>
           </div>
           <select class="modern-model-pill" id="harnessDecisionModelSelect" data-change="onHarnessChanged">
             <option value="decision-1">Microsoft Decision 1</option>
@@ -596,6 +654,7 @@
           <div class="saved-prompts-list" id="savedPromptsList"></div>
         </div>
       </div>
+      </section>
     </div>
   </main>
 
@@ -604,6 +663,7 @@
   <script src="/identity.js"></script>
   <script src="/shared/ui.js"></script>
   <script src="/shared/actions.js"></script>
+  <script src="/agent-settings.js"></script>
   <script src="/admin.js"></script>
 </body>
 </html>

@@ -167,7 +167,12 @@ public sealed class TeamsChannelTests
     {
         public ActorIdentity Actor { get; } = new(Guid.NewGuid(), Guid.NewGuid());
         public TeamsChannelOptions Options { get; }
-        public TenantHarness Tenant { get; } = new() { TenantId = "tenant", DisplayName = "Tenant" };
+        public TenantHarness Tenant { get; } = new()
+        {
+            TenantId = "tenant",
+            DisplayName = "Tenant",
+            Agent = new() { TeamsEnabled = true }
+        };
         public InMemoryAskAiRunStore Runs { get; } = new();
         public Mock<ITenantAccessResolver> Access { get; } = new();
         public Mock<IAskAiQueue> Queue { get; } = new();

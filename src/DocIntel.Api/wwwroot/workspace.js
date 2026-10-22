@@ -2171,7 +2171,7 @@ let tenants = [];
                     </svg>
                   </button>
                 ` : ''}
-                <span class="ask-panel-title">Ask AI</span>
+                <span class="ask-panel-title">${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')}</span>
               </div>
               <button type="button" class="icon-toggle-btn" title="Collapse Ask AI panel" data-click="toggleAskInnerSidebar">
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -2222,10 +2222,10 @@ let tenants = [];
           <div class="ask-main-pane">
             ${floatingExpandBtnHtml}
             <div class="ask-minimal-stage">
-              <h2 class="ask-minimal-heading">Hi, I can help you explore and answer questions across your documents</h2>
+              <h2 class="ask-minimal-heading">${escapeHtml(currentTenant?.agent?.purpose || 'Explore and answer questions across your documents')}</h2>
 
               <div class="ask-pill-bar">
-                <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Message Copilot" data-enter="runCrossDocumentAskAi_value" />
+                <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Ask ${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')} about your documents..." data-enter="runCrossDocumentAskAi_value" />
                 <button type="button" class="ask-pill-send" title="Send message" data-click="submitAskInput">
                   <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                     <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
@@ -2276,7 +2276,7 @@ let tenants = [];
             </div>
 
             <div class="ask-pill-bar" style="position:sticky;bottom:8px;">
-              <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Message Copilot" data-enter="runCrossDocumentAskAi_value" />
+              <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Ask ${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')} about your documents..." data-enter="runCrossDocumentAskAi_value" />
               <button type="button" class="ask-pill-send" title="Send message" data-click="submitAskInput">
                 <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />

@@ -121,6 +121,11 @@ public sealed class AskAiRun
     [JsonPropertyName("referencedJobIds")]
     public List<string> ReferencedJobIds { get; set; } = [];
 
+    [JsonPropertyName("agentProfile")]
+    public AgentProfile? AgentProfile { get; set; }
+    [JsonPropertyName("agentHarnessVersion")]
+    public int? AgentHarnessVersion { get; set; }
+
     [JsonPropertyName("citations")]
     public List<AskAiCitation> Citations { get; set; } = [];
 
@@ -346,6 +351,8 @@ public static class AskAiPromptBuilder
         TenantHarness.EnsureDefaultCapabilities(tenant);
 
         var sb = new StringBuilder();
+        if (tenant.Agent?.IsValid != true) throw new InvalidDataException("The agent presentation settings are invalid.");
+        sb.AppendLine(tenant.Agent.Prompt);
         sb.AppendLine($"You are the Enterprise Document Intelligence Ask AI Agent for tenant '{tenant.DisplayName}' (tenantId: '{tenant.TenantId}').");
         sb.AppendLine("Use only authorized documents returned by tenant-scoped tools. Results include original text, extracted entities, structured tables, and Prompt Column results.");
         sb.AppendLine();
@@ -511,6 +518,9 @@ public sealed class AskAiOrchestrator
         }
 
         var initialAccess = await ResolveAccessAsync(cancellationToken);
+        if (tenant.Agent?.IsValid != true) throw new InvalidDataException("The agent presentation settings are invalid.");
+        run.AgentProfile = tenant.Agent with { };
+        run.AgentHarnessVersion = tenant.HarnessVersion;
         if (_toolProviders.Any() && (initialAccess.AllowedJobIds is not null || !initialAccess.CanProcess))
         {
             throw new InvalidOperationException("Extension tools require tenant-wide processing permissions.");
@@ -797,9 +807,9 @@ public sealed class AskAiOrchestrator
         if (run.ChannelDelivery is not null)
             run.ChannelDelivery.AccessFingerprint = ChannelDelivery.GetAccessFingerprint(finalAccess);
         run.Answer = answer.Answer;
-        run.EmailHtmlBody = FormatEmailHtmlResponse(tenant.DisplayName, run.Question, answer.Answer, run.Citations);
+        run.EmailHtmlBody = FormatEmailHtmlResponse(run.AgentProfile.DisplayName, run.Question, answer.Answer, run.Citations);
         run.TeamsAdaptiveCardJson = FormatTeamsAdaptiveCardJson(
-            tenant.DisplayName, run.Question, answer.Answer, run.Citations);
+            run.AgentProfile.DisplayName, run.Question, answer.Answer, run.Citations);
         run.Status = JobStatus.Completed;
         run.CompletedAtUtc = DateTimeOffset.UtcNow;
         _logger.LogInformation("Ask AI run {RunId} completed with {ToolCalls} tool calls and {Citations} citations.",
