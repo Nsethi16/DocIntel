@@ -74,6 +74,16 @@ test('Aspire locks vary only by native host tools and are selected by the SDK ru
   assert.deepEqual(common[0], common[1], 'Shared package versions and hashes must not drift between operating systems');
 });
 
+test('AppHost retains the patched MessagePack 2.x release on both host platforms', () => {
+  assert.match(read('Directory.Packages.props'), /<PackageVersion Include="MessagePack" Version="2\.5\.303"\s*\/>/);
+  for (const rid of ['win-x64', 'linux-x64']) {
+    const dependencies = JSON.parse(read(path.join('src', 'DocIntel.AppHost', `packages.${rid}.lock.json`)))
+      .dependencies['net10.0'];
+    assert.equal(dependencies.MessagePack.resolved, '2.5.303');
+    assert.equal(dependencies['MessagePack.Annotations'].resolved, '2.5.303');
+  }
+});
+
 test('deployment uses federation and registry identity rather than registry account passwords', () => {
   assert.match(workflow, /actions\/checkout@v4/);
   assert.doesNotMatch(workflow, /checkout@v2|registryUsername|registryPassword|REGISTRY_PASSWORD|REGISTRY_USERNAME/);

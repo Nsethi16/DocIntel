@@ -20,7 +20,7 @@
     <PackageVersion Include="Azure.Storage.Queues" Version="12.28.1" />
     <PackageVersion Include="Azure.Extensions.AspNetCore.DataProtection.Blobs" Version="1.5.4" />
     <PackageVersion Include="Azure.Extensions.AspNetCore.DataProtection.Keys" Version="1.6.4" />
-    <PackageVersion Include="MessagePack" Version="2.5.301" />
+    <PackageVersion Include="MessagePack" Version="2.5.303" />
     <PackageVersion Include="Microsoft.Agents.AI" Version="1.9.0" />
     <PackageVersion Include="Microsoft.Agents.AI.Abstractions" Version="1.9.0" />
     <PackageVersion Include="Microsoft.Agents.AI.Workflows" Version="1.9.0" />
