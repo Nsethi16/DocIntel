@@ -30,10 +30,34 @@ public sealed partial class LocalFileArtifactStore
             }
             cancellationToken.ThrowIfCancellationRequested();
             var path = Path.Combine(directory, fileName);
+            // Unix Move(false) can race between its existence check and rename; coordinate all local publishers.
+            await using var publicationLock = await AcquirePublicationLockAsync(path, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
             File.Move(temporary, path, overwrite: false);
             return path;
         }
         finally { File.Delete(temporary); }
+    }
+
+    private static async Task<FileStream> AcquirePublicationLockAsync(
+        string path, CancellationToken cancellationToken)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(10));
+        while (true)
+        {
+            deadline.Token.ThrowIfCancellationRequested();
+            try
+            {
+                // Keep the lock file: unlinking it could give contenders different inodes for the same target.
+                return new FileStream(path + ".publish.lock", FileMode.OpenOrCreate,
+                    FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException exception) when ((exception.HResult & 0xffff) is 11 or 32 or 33)
+            {
+                await Task.Delay(TimeSpan.FromMilliseconds(25), deadline.Token);
+            }
+        }
     }
 
     public async Task<DocumentLayout?> GetLayoutAsync(string tenantId, string documentId,

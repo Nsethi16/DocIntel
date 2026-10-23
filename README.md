@@ -60,6 +60,12 @@ The old DI endpoint is not used by the new provider. Offline loopback developmen
 native PDF text with explicit development settings; no live CU quality/cost claim is made from mocks.
 The deployment template now supplies CU instead of provisioning another Form Recognizer account.
 
+Local immutable artifacts are staged and flushed before publication. Per-target, OS-owned file
+locks coordinate publishers across store instances/processes before the final move, so concurrent
+writers cannot replace a winning cache entry, original, layout, result snapshot or export audit.
+The empty publication lock files remain in place to avoid an unlink/reopen race; locks release when
+the owning process closes/exits. Azure Blob publications retain storage-enforced create-only conditions.
+
 Admins can manage isolated **Tenants** and configure each tenant's **Agent Harness** at runtime:
 
 - **Harness-Level Model Routing**:

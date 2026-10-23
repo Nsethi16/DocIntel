@@ -41,6 +41,38 @@ public sealed class ArtifactIsolationTests : IDisposable
     }
 
     [Fact]
+    public async Task Concurrent_Original_Uploads_Preserve_Exactly_One_Winners_Bytes_Across_Store_Instances()
+    {
+        // Arrange
+        var originals = Enumerable.Range(0, 16).Select(index =>
+            System.Text.Encoding.UTF8.GetBytes($"%PDF-Original candidate {index}")).ToArray();
+        var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var pending = originals.Select(async bytes =>
+        {
+            await start.Task;
+            try
+            {
+                await new LocalFileArtifactStore(_directory).SaveOriginalPdfAsync("tenant", "one", bytes);
+                return true;
+            }
+            catch (IOException exception) when ((exception.HResult & 0xffff) is 17 or 80 or 183)
+            {
+                return false;
+            }
+        }).ToArray();
+
+        // Act
+        start.SetResult();
+        var writes = await Task.WhenAll(pending);
+        var original = await new LocalFileArtifactStore(_directory).GetOriginalPdfAsync("tenant", "one");
+
+        // Assert
+        Assert.Single(writes, written => written);
+        Assert.Equal(originals[Array.IndexOf(writes, true)], original);
+        Assert.Empty(Directory.GetFiles(_directory, "*.upload", SearchOption.AllDirectories));
+    }
+
+    [Fact]
     public async Task Canceled_Original_Uploads_Do_Not_Expose_A_Partial_Source_File()
     {
         // Arrange

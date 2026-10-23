@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using Azure;
@@ -92,19 +93,107 @@ public sealed class OcrCacheTests : IDisposable
     [Fact]
     public async Task Concurrent_Cache_Publications_Are_Immutable_And_Have_One_Winner()
     {
-        // Arrange
-        var entry = Entry();
+        for (var round = 0; round < 32; round++)
+        {
+            // Arrange
+            var fingerprint = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"provider:{round}")));
+            var entries = Enumerable.Range(0, 16).Select(index => Entry() with
+            {
+                ProviderFingerprint = fingerprint,
+                Result = Result(1) with { Words = [Word(1, $"Candidate-{index}")] }
+            }).ToArray();
+            var start = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var pending = entries.Select(async entry =>
+            {
+                await start.Task;
+                return await new LocalFileArtifactStore(_directory).TrySaveOcrCacheAsync(entry);
+            }).ToArray();
 
-        // Act
-        var writes = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ =>
-            new LocalFileArtifactStore(_directory).TrySaveOcrCacheAsync(entry)));
+            // Act
+            start.SetResult();
+            var writes = await Task.WhenAll(pending);
+            var result = await new LocalFileArtifactStore(_directory).GetOcrCacheAsync(
+                "tenant", SourceHash, fingerprint, 1);
 
-        // Assert
-        Assert.Single(writes, written => written);
-        var result = await new LocalFileArtifactStore(_directory).GetOcrCacheAsync(
-            "tenant", SourceHash, ProviderHash, 1);
-        Assert.Equal("Recognized", result!.Words[0].Text);
+            // Assert
+            Assert.Single(writes, written => written);
+            Assert.Equal(entries[Array.IndexOf(writes, true)].Result.Words[0].Text, result!.Words[0].Text);
+        }
         Assert.Empty(Directory.GetFiles(_directory, "*.upload", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public async Task Cross_Process_Publication_Locks_Allow_Cancellation_And_Independent_Keys()
+    {
+        // Arrange
+        var directory = Path.Combine(_directory, "tenant-tenant", "_ocr-cache");
+        Directory.CreateDirectory(directory);
+        var ready = Path.Combine(_directory, "holder-ready.signal");
+        var release = Path.Combine(_directory, "holder-release.signal");
+        var info = new ProcessStartInfo("pwsh")
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true
+        };
+        foreach (var argument in new[] { "-NoLogo", "-NoProfile", "-NonInteractive", "-Command", """
+            $ErrorActionPreference = 'Stop'
+            $gate = [IO.FileStream]::new($env:DOCINTEL_TEST_LOCK, [IO.FileMode]::OpenOrCreate,
+                [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+            try {
+                [IO.File]::WriteAllText($env:DOCINTEL_TEST_READY, 'ready')
+                $deadline = [DateTime]::UtcNow.AddSeconds(30)
+                while (-not [IO.File]::Exists($env:DOCINTEL_TEST_RELEASE)) {
+                    if ([DateTime]::UtcNow -ge $deadline) { throw 'The publication test holder timed out.' }
+                    Start-Sleep -Milliseconds 20
+                }
+            } finally { $gate.Dispose() }
+            """ }) info.ArgumentList.Add(argument);
+        info.Environment["DOCINTEL_TEST_LOCK"] = Path.Combine(directory, $"{ProviderHash}-{SourceHash}-1.json.publish.lock");
+        info.Environment["DOCINTEL_TEST_READY"] = ready;
+        info.Environment["DOCINTEL_TEST_RELEASE"] = release;
+        using var holder = Process.Start(info) ??
+            throw new InvalidOperationException("The publication lock holder did not start.");
+        var stdout = holder.StandardOutput.ReadToEndAsync();
+        var stderr = holder.StandardError.ReadToEndAsync();
+        try
+        {
+            using var readyDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+            while (!File.Exists(ready))
+            {
+                if (holder.HasExited)
+                    throw new InvalidOperationException("The publication lock holder exited: " + await stderr);
+                await Task.Delay(20, readyDeadline.Token);
+            }
+            var store = new LocalFileArtifactStore(_directory);
+
+            // Act / Assert
+            using var independentDeadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            Assert.True(await store.TrySaveOcrCacheAsync(Entry() with { Result = Result(2) }, independentDeadline.Token));
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(1));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+                store.TrySaveOcrCacheAsync(Entry(), cancellation.Token));
+            Assert.Null(await store.GetOcrCacheAsync("tenant", SourceHash, ProviderHash, 1));
+            Assert.NotNull(await store.GetOcrCacheAsync("tenant", SourceHash, ProviderHash, 2));
+            Assert.Empty(Directory.GetFiles(_directory, "*.upload", SearchOption.AllDirectories));
+        }
+        finally
+        {
+            await File.WriteAllTextAsync(release, "release");
+            try { await holder.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
+            catch (TimeoutException)
+            {
+                holder.Kill(entireProcessTree: true);
+                await holder.WaitForExitAsync();
+                throw;
+            }
+            await stdout;
+        }
+        Assert.Equal(0, holder.ExitCode);
+        var errors = await stderr;
+        Assert.True(String.IsNullOrWhiteSpace(errors), errors);
+        Assert.True(await new LocalFileArtifactStore(_directory).TrySaveOcrCacheAsync(Entry()));
     }
 
     [Fact]
