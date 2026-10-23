@@ -112,8 +112,8 @@ dotnet restore DocIntel.slnx --configfile NuGet.config --locked-mode
 docker build --tag docintel:local .
 ```
 
-The GitHub workflow validates all Release projects, .NET/browser/recovery tests and infrastructure
-before deployment. Pull requests can restore public packages without deployment secrets. Azure
+The GitHub workflow validates all Release projects, .NET/browser/recovery tests, infrastructure,
+and a Linux container build without publishing before deployment. Pull requests can restore public packages without deployment secrets. Azure
 credentials are available only to the separate deployment job; keep that job disabled for pull
 requests and do not use `pull_request_target` to run untrusted changes with privileges.
 
@@ -129,9 +129,11 @@ auditing or warnings, add an unknown mirror, or silently use a private-feed fall
 
 ### Personal Azure subscription deployment
 
-The configured existing target is Container App `ca-docintel-dev`, resource group `Docintel`,
-and registry `acrdocinteldevokjs3fevazuto`. Those resources must belong to your intended
-subscription. A personal Azure subscription still has an Entra directory; no Microsoft corporate
+The default existing target is Container App `ca-docintel-dev`, resource group `Docintel`,
+and registry `acrdocinteldevokjs3fevazuto`. Override those defaults with repository Actions variables
+`AZURE_CONTAINER_APP_NAME`, `AZURE_RESOURCE_GROUP`, and `AZURE_CONTAINER_REGISTRY` when using different
+resources in your subscription. Use the registry's short name, not its `.azurecr.io` hostname.
+A personal Azure subscription still has an Entra directory; no Microsoft corporate
 account or enterprise employee directory integration is required. The current application uses
 directory-based sign-in, not unrestricted sign-in by any personal Microsoft account.
 
@@ -141,10 +143,13 @@ directory-based sign-in, not unrestricted sign-in by any personal Microsoft acco
    `https://token.actions.githubusercontent.com`, audience `api://AzureADTokenExchange`, and subject
    `repo:Nsethi16/DocIntel:environment:docintel-dev`. This is the identity GitHub uses to deploy,
    not the runtime identity or browser web registration.
-3. Make these existing workflow secret names available to the deployment job:
-   `CADOCINTELDEV_AZURE_CLIENT_ID` (deployment identity client ID),
-   `CADOCINTELDEV_AZURE_TENANT_ID` (your subscription's Entra directory ID), and
-   `CADOCINTELDEV_AZURE_SUBSCRIPTION_ID`. These are identifiers; no Azure client password or
+3. Make these workflow secrets available to the deployment job:
+   `AZURE_CLIENT_ID` (deployment identity client ID),
+   `AZURE_TENANT_ID` (your subscription's Entra directory ID), and
+   `AZURE_SUBSCRIPTION_ID`. Set all three together when choosing a new identity/subscription.
+   The older `CADOCINTELDEV_AZURE_CLIENT_ID`, `CADOCINTELDEV_AZURE_TENANT_ID`, and
+   `CADOCINTELDEV_AZURE_SUBSCRIPTION_ID` names remain supported as fallbacks, so an existing connection need not
+   be recreated. These are identifiers; no Azure client password or
    package-feed credential is required. Give that identity registry push and target Container App
    update access at the narrow resource scopes, using the roles appropriate to the registry mode.
 4. Prepare the runtime independently: attached managed identity, persistent Cosmos/Blob/Queue
@@ -176,6 +181,10 @@ parameters; the deployment script's defaults target a different resource group. 
 `/health/live`, `/health/ready`, authorized sign-in, a real PDF upload, a cited Ask AI answer and
 persistence after restart. Directory/user-profile integration can be enabled later with approved
 read-only Graph permission on the runtime identity.
+
+To validate an unpublished feature branch without deploying, push it and dispatch the same
+workflow with `--ref <feature-branch>`. Only validation (including the non-publishing image build)
+runs; Azure deployment is independently restricted to `main` and the explicit deployment opt-in.
 
 Local development uses explicit loopback-only access. It is not an authentication mode for a
 publicly exposed service: `LocalDevelopment` is refused outside `Development` or when listening

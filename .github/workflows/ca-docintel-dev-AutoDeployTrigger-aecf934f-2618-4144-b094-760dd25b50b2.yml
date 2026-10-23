@@ -76,6 +76,14 @@ jobs:
           az bicep build --file infra/main.bicep --outfile infra/azuredeploy.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tests/Deploy-DocIntelAzure.Tests.ps1
+      - uses: docker/setup-buildx-action@v3
+      - name: Build the container without publishing
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          tags: docintel:validation
 
   deploy:
     needs: validate
@@ -86,16 +94,32 @@ jobs:
     permissions:
       contents: read
       id-token: write
+    env:
+      AZURE_CONTAINER_REGISTRY: ${{ vars.AZURE_CONTAINER_REGISTRY || 'acrdocinteldevokjs3fevazuto' }}
+      AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME || 'ca-docintel-dev' }}
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'Docintel' }}
     steps:
       - uses: actions/checkout@v4
+      - name: Prevent mixed personal and legacy Azure identities
+        env:
+          PERSONAL_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          PERSONAL_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          PERSONAL_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          if [[ -n "$PERSONAL_CLIENT_ID" || -n "$PERSONAL_TENANT_ID" || -n "$PERSONAL_SUBSCRIPTION_ID" ]]; then
+            if [[ -z "$PERSONAL_CLIENT_ID" || -z "$PERSONAL_TENANT_ID" || -z "$PERSONAL_SUBSCRIPTION_ID" ]]; then
+              echo "::error::Set AZURE_CLIENT_ID, AZURE_TENANT_ID and AZURE_SUBSCRIPTION_ID together."
+              exit 1
+            fi
+          fi
       - name: Sign in to Azure using federation
         uses: azure/login@v2
         with:
-          client-id: ${{ secrets.CADOCINTELDEV_AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.CADOCINTELDEV_AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.CADOCINTELDEV_AZURE_SUBSCRIPTION_ID }}
+          client-id: ${{ secrets.AZURE_CLIENT_ID || secrets.CADOCINTELDEV_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || secrets.CADOCINTELDEV_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || secrets.CADOCINTELDEV_AZURE_SUBSCRIPTION_ID }}
       - name: Authenticate to the registry with the federated identity
-        run: az acr login --name acrdocinteldevokjs3fevazuto
+        run: az acr login --name "$AZURE_CONTAINER_REGISTRY"
       - uses: docker/setup-buildx-action@v3
       - name: Build and push the validated application image
         uses: docker/build-push-action@v6
@@ -103,10 +127,10 @@ jobs:
           context: .
           file: Dockerfile
           push: true
-          tags: acrdocinteldevokjs3fevazuto.azurecr.io/ca-docintel-dev:${{ github.sha }}
+          tags: ${{ env.AZURE_CONTAINER_REGISTRY }}.azurecr.io/${{ env.AZURE_CONTAINER_APP_NAME }}:${{ github.sha }}
       - name: Deploy the validated image
-        run: >-
-          az containerapp update
-          --name ca-docintel-dev
-          --resource-group Docintel
-          --image acrdocinteldevokjs3fevazuto.azurecr.io/ca-docintel-dev:${{ github.sha }}
+        run: |
+          az containerapp update \
+            --name "$AZURE_CONTAINER_APP_NAME" \
+            --resource-group "$AZURE_RESOURCE_GROUP" \
+            --image "${AZURE_CONTAINER_REGISTRY}.azurecr.io/${AZURE_CONTAINER_APP_NAME}:${GITHUB_SHA}"
