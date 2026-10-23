@@ -102,6 +102,10 @@ for every project. It does not require Azure DevOps, an internal package feed, a
 or a package-feed secret in GitHub. CI and container restore still use `--locked-mode`; package
 changes must intentionally regenerate and review affected locks. Changing the package source does
 not authorize ignoring lock/hash errors or substituting package versions.
+Aspire's development AppHost references operating-system-specific dashboard/orchestration tools,
+so it uses `packages.win-x64.lock.json` on Windows and `packages.linux-x64.lock.json` on the GitHub
+Linux runner. Other projects use `packages.lock.json`. Additional AppHost platforms need their own
+reviewed SDK-RID lockfile; locked restore is never disabled to accommodate platform differences.
 
 The Dockerfile uses the checked-in `NuGet.config`, excludes local job/artifact data, editor
 metadata and common credential files, and runs as the .NET non-root application user with a

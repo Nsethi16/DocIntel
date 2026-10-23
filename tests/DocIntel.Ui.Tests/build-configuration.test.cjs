@@ -39,10 +39,12 @@ test('NuGet source mapping deliberately uses only NuGet.org and keeps locked res
   assert.doesNotMatch(read('README.md'), /DOCINTEL_NUGET_CREDENTIALS|nuget_credentials|OneITVSO/);
 });
 
-test('all five projects have content-hashed dependency lockfiles without changing pinned package versions', () => {
-  for (const project of ['src/DocIntel.Api', 'src/DocIntel.AppHost', 'src/DocIntel.Core',
-    'src/DocIntel.ServiceDefaults', 'tests/DocIntel.Tests']) {
-    const lock = JSON.parse(read(path.join(project, 'packages.lock.json')));
+test('every project and supported Aspire host platform has a content-hashed dependency lockfile', () => {
+  const files = ['src/DocIntel.Api', 'src/DocIntel.Core',
+    'src/DocIntel.ServiceDefaults', 'tests/DocIntel.Tests'].map(project => path.join(project, 'packages.lock.json'));
+  files.push(...['linux-x64', 'win-x64'].map(rid => path.join('src', 'DocIntel.AppHost', `packages.${rid}.lock.json`)));
+  for (const file of files) {
+    const lock = JSON.parse(read(file));
     assert.ok([1, 2].includes(lock.version));
     for (const framework of Object.values(lock.dependencies)) {
       for (const dependency of Object.values(framework)) {
@@ -53,6 +55,23 @@ test('all five projects have content-hashed dependency lockfiles without changin
       }
     }
   }
+});
+
+test('Aspire locks vary only by native host tools and are selected by the SDK runtime identifier', () => {
+  assert.match(read(path.join('src', 'DocIntel.AppHost', 'DocIntel.AppHost.csproj')),
+    /<NuGetLockFilePath>\$\(MSBuildThisFileDirectory\)packages\.\$\(NETCoreSdkRuntimeIdentifier\)\.lock\.json<\/NuGetLockFilePath>/);
+  const common = [];
+  for (const rid of ['win-x64', 'linux-x64']) {
+    const lock = JSON.parse(read(path.join('src', 'DocIntel.AppHost', `packages.${rid}.lock.json`)));
+    for (const prefix of ['Aspire.Dashboard.Sdk', 'Aspire.Hosting.Orchestration']) {
+      const key = `${prefix}.${rid}`;
+      assert.equal(lock.dependencies['net10.0'][key].resolved, '13.1.0');
+      delete lock.dependencies['net10.0'][key];
+      assert.ok(!Object.keys(lock.dependencies['net10.0']).some(name => name.startsWith(prefix + '.')));
+    }
+    common.push(lock);
+  }
+  assert.deepEqual(common[0], common[1], 'Shared package versions and hashes must not drift between operating systems');
 });
 
 test('deployment uses federation and registry identity rather than registry account passwords', () => {
