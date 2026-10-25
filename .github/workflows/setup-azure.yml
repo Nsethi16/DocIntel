@@ -12,6 +12,10 @@ on:
         description: For Apply, type APPLY after reviewing a previous Preview run.
         type: string
         default: ''
+      reviewed_plan_hash:
+        description: For Apply, paste plan_hash from the Preview run you reviewed.
+        type: string
+        default: ''
       configure_directory:
         description: Also create/configure web/API registrations and runtime federation (requires approved Graph access).
         type: boolean
@@ -58,12 +62,16 @@ jobs:
         env:
           SETUP_MODE: ${{ inputs.mode }}
           SETUP_CONFIRMATION: ${{ inputs.confirmation }}
+          REVIEWED_PLAN_HASH: ${{ inputs.reviewed_plan_hash }}
           PERSONAL_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           PERSONAL_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
           PERSONAL_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
         run: |
           if ($env:SETUP_MODE -eq 'Apply' -and $env:SETUP_CONFIRMATION -cne 'APPLY') {
             throw 'Apply requires the exact confirmation APPLY. No resources were changed.'
+          }
+          if ($env:SETUP_MODE -eq 'Apply' -and $env:REVIEWED_PLAN_HASH -notmatch '^[A-Fa-f0-9]{64}$') {
+            throw 'Apply requires plan_hash from the Preview run you reviewed. No resources were changed.'
           }
           $values = @($env:PERSONAL_CLIENT_ID, $env:PERSONAL_TENANT_ID, $env:PERSONAL_SUBSCRIPTION_ID)
           $present = @($values | Where-Object { -not [String]::IsNullOrWhiteSpace($_) }).Count
@@ -78,8 +86,10 @@ jobs:
         shell: pwsh
         env:
           CONFIGURE_DIRECTORY: ${{ inputs.configure_directory }}
+          REVIEWED_PLAN_HASH: ${{ inputs.mode == 'Apply' && inputs.reviewed_plan_hash || '' }}
         run: |
           ./scripts/Setup-DocIntelGitHub.ps1 -Mode Preview `
+            -ExpectedPlanHash $env:REVIEWED_PLAN_HASH `
             -ResourceGroup $env:SETUP_RESOURCE_GROUP -ContainerAppName $env:SETUP_APP_NAME `
             -RegistryName $env:SETUP_REGISTRY -ContainerName $env:SETUP_CONTAINER `
             -RuntimeIdentityName $env:SETUP_IDENTITY -StorageAccountName $env:SETUP_STORAGE `
@@ -99,6 +109,7 @@ jobs:
           '### DocIntel infrastructure preview' >> $env:GITHUB_STEP_SUMMARY
           'Download **docintel-infrastructure-preview** to review resources, permissions and the full ARM what-if.' >> $env:GITHUB_STEP_SUMMARY
           'Preview does not mutate Azure or Entra. Provisioning can incur charges.' >> $env:GITHUB_STEP_SUMMARY
+          'Reviewed plan hash: `${{ steps.plan.outputs.plan_hash }}`. Paste this into reviewed_plan_hash for Apply.' >> $env:GITHUB_STEP_SUMMARY
           'Apply re-discovers resources and refuses changed plans. Configure required reviewers on docintel-dev for an approval between jobs.' >> $env:GITHUB_STEP_SUMMARY
 
   apply:

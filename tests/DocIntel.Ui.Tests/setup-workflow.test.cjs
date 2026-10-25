@@ -19,6 +19,9 @@ test('infrastructure setup is manual, main-only, preview-first and explicitly co
   assert.equal([...setup.matchAll(/environment: docintel-dev/g)].length, 2);
   assert.match(setup, /-ExpectedPlanHash \$env:EXPECTED_PLAN_HASH/);
   assert.match(setup, /needs\.preview\.outputs\.plan_hash/);
+  assert.match(setup, /reviewed_plan_hash:[\s\S]*?type: string/);
+  assert.match(setup, /Apply requires plan_hash from the Preview run you reviewed/);
+  assert.match(setup, /-ExpectedPlanHash \$env:REVIEWED_PLAN_HASH/);
   assert.match(setup, /actions\/upload-artifact@v4/);
   assert.match(setup, /retention-days: 7/);
 });

@@ -201,9 +201,10 @@ need an explicit separately reviewed configuration, not guesses or duplicate res
 
 #### Apply and release
 
-After reviewing Preview, run the workflow again with **Apply** and confirmation **APPLY**.
-It first produces a new preview, then the apply job re-discovers targets and requires the same
-plan hash before changing anything. Use `docintel-dev` required reviewers to review/approve that
+After reviewing Preview, run the workflow again with **Apply**, confirmation **APPLY**, and its
+**reviewed_plan_hash** from the Preview job summary. It first compares a fresh preview with that
+reviewed hash, then the apply job re-discovers targets and again requires the same plan before
+changing anything. Use `docintel-dev` required reviewers to review/approve that
 run's preview before allowing the apply job. A resource/app/template change blocks stale apply.
 Resource provisioning can incur charges.
 

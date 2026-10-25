@@ -221,6 +221,8 @@ try {
     Assert-Failure $invalid 'Confirmation=APPLY'
     $invalid.Confirmation = 'APPLY'
     Assert-Failure $invalid 'plan hash'
+    $invalid.Mode = 'Preview'; $invalid.ExpectedPlanHash = 'invalid'
+    Assert-Failure $invalid 'ExpectedPlanHash'
     Assert-Equal 0 $global:DocIntelSetupFixture.calls.Count 'Invalid input must be rejected before Azure calls.'
 
     & $scriptPath @base | Out-Null
@@ -251,6 +253,17 @@ try {
     }
     if (-not ($update -contains "Identity__PublicOrigin=$($global:DocIntelSetupFixture.origin)") -or
         -not ($update -contains "Identity__ClientId=$($global:DocIntelSetupFixture.webId)")) { throw 'Runtime identity/origin outputs were not wired.' }
+
+    Reset-Calls
+    & $scriptPath @base | Out-Null
+    $currentPlan = Get-Content (Join-Path $base.OutputDirectory 'setup-plan.json') -Raw | ConvertFrom-Json
+    $apply.ExpectedPlanHash = $currentPlan.planHash
+    $reviewedPreview = $base.Clone(); $reviewedPreview.ExpectedPlanHash = $currentPlan.planHash
+    & $scriptPath @reviewedPreview | Out-Null
+    Assert-Equal 0 $global:DocIntelSetupFixture.mutations.Count 'An unchanged reviewed plan must remain a read-only preview.'
+    $global:DocIntelSetupFixture.scenario = 'drift'
+    Assert-Failure $reviewedPreview 'changed since Preview'
+    Assert-Equal 0 $global:DocIntelSetupFixture.mutations.Count 'A different plan from the reviewed run must block the Apply workflow before writes.'
 
     foreach ($scenario in 'delete', 'replace-app', 'drift') {
         Reset-Calls; $global:DocIntelSetupFixture.scenario = $scenario
@@ -303,6 +316,7 @@ try {
     }
     Reset-Calls
     $directoryRetry = $managedDirectory.Clone(); $directoryRetry.Mode = 'Preview'
+    $directoryRetry.ExpectedPlanHash = ''
     & $scriptPath @directoryRetry | Out-Null
     $retryPlan = Get-Content (Join-Path $base.OutputDirectory 'setup-plan.json') -Raw | ConvertFrom-Json
     Assert-Equal 0 $retryPlan.missingServicePrincipals 'An existing enterprise application must be reused.'

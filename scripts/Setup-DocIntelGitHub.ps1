@@ -53,6 +53,9 @@ if ($Mode -eq 'Apply' -and $Confirmation -cne 'APPLY') {
 if ($Mode -eq 'Apply' -and $ExpectedPlanHash -notmatch '^[A-Fa-f0-9]{64}$') {
     throw 'Apply requires the SHA-256 plan hash from the preceding Preview job.'
 }
+if ($ExpectedPlanHash -and $ExpectedPlanHash -notmatch '^[A-Fa-f0-9]{64}$') {
+    throw 'ExpectedPlanHash must be the SHA-256 hash from the reviewed Preview.'
+}
 if ($ResourceGroup -notmatch '^[A-Za-z0-9_.()-]{1,90}$' -or
     $ContainerAppName -notmatch '^[a-z][a-z0-9-]{1,30}[a-z0-9]$' -or
     $RegistryName -notmatch '^[a-zA-Z0-9]{5,50}$' -or
@@ -445,7 +448,7 @@ try {
     }
     $planHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
         [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlanJson $planIdentity))))
-    if ($Mode -eq 'Apply' -and $planHash -cne $ExpectedPlanHash.ToUpperInvariant()) {
+    if ($ExpectedPlanHash -and $planHash -cne $ExpectedPlanHash.ToUpperInvariant()) {
         throw 'The discovered targets or infrastructure plan changed since Preview. Apply was stopped before any mutation; review a new preview.'
     }
     $summary = @{
