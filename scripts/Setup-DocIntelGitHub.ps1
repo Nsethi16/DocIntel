@@ -367,6 +367,11 @@ try {
         @($api.appRoles | Where-Object { $_.value -ceq 'DocIntel.Access' }).Count) {
         throw 'An app role conflicts with delegated DocIntel.Access. Resolve it explicitly; setup will not delete roles or scopes.'
     }
+    if ($ConfigureDirectoryApplications -and -not $api.Planned -and
+        @($api.api.oauth2PermissionScopes |
+            Where-Object { $_.value -ceq 'DocIntel.Access' -and -not $_.isEnabled }).Count) {
+        throw 'DocIntel.Access is disabled; setup will not override a deliberate permission disablement.'
+    }
     $webWasPlanned = [bool]$web.Planned
     $apiWasPlanned = [bool]$api.Planned
     $directoryState = if ($ConfigureDirectoryApplications) { Get-DirectoryPlanState $web $api } else { $null }

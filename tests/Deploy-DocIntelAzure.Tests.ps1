@@ -46,12 +46,13 @@ Assert-PreflightFailure $same 'separate'
 $temporary = Join-Path $PSScriptRoot ('.docintel-grants-test-' + [guid]::NewGuid().ToString('N') + '.json')
 try {
     '{}' | Set-Content -LiteralPath $temporary
+    (Get-Item -LiteralPath $temporary -Force).IsReadOnly = $true
     $empty = $ids.Clone()
     $empty.IdentityGrantsPath = $temporary
     Assert-PreflightFailure $empty 'nonempty'
 }
 finally {
-    if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary }
+    if (Test-Path -LiteralPath $temporary) { Remove-Item -LiteralPath $temporary -Force }
 }
 $templatePath = Join-Path (Split-Path $PSScriptRoot -Parent) 'infra\azuredeploy.json'
 $template = Get-Content -LiteralPath $templatePath -Raw | ConvertFrom-Json -Depth 100

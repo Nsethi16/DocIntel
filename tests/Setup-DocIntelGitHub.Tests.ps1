@@ -102,7 +102,12 @@ function az {
                     appId = $global:DocIntelSetupFixture.apiId; id = $global:DocIntelSetupFixture.apiId
                     identifierUris = @("api://$($global:DocIntelSetupFixture.apiId)")
                     api = @{ oauth2PermissionScopes = @(@{
-                        id = [guid]::Empty.ToString(); value = 'Existing.Scope'; isEnabled = $true; type = 'Admin'
+                        id = [guid]::Empty.ToString()
+                        value = if ($global:DocIntelSetupFixture.scenario -eq 'disabled-scope') {
+                            'DocIntel.Access'
+                        } else { 'Existing.Scope' }
+                        isEnabled = $global:DocIntelSetupFixture.scenario -ne 'disabled-scope'
+                        type = 'Admin'
                     }) }
                     appRoles = @($(if ($global:DocIntelSetupFixture.scenario -eq 'role-collision') {
                         @{ value = 'DocIntel.Access' }
@@ -308,6 +313,9 @@ try {
     Reset-Calls; $global:DocIntelSetupFixture.scenario = 'role-collision'
     Assert-Failure $managedDirectory 'app role conflicts'
     Assert-Equal 0 $global:DocIntelSetupFixture.mutations.Count 'An invalid directory setup must fail before resource provisioning.'
+    Reset-Calls; $global:DocIntelSetupFixture.scenario = 'disabled-scope'
+    Assert-Failure $managedDirectory 'DocIntel.Access is disabled'
+    Assert-Equal 0 $global:DocIntelSetupFixture.mutations.Count 'A deliberately disabled API permission must fail before resource provisioning.'
 
     Reset-Calls
     $originalResources = $global:DocIntelSetupFixture.resourceList
