@@ -790,7 +790,7 @@ public sealed class FileHarnessStore : IHarnessStore
             DisplayName = "Fabrikam Procurement Ops",
             HarnessVersion = 1,
             DecisionModelId = "decision-1",
-            DefaultModelId = "deepseek-r1",
+            DefaultModelId = "gpt-5-mini",
             AllowedModels = ["decision-1", "phi-4", "mai-reasoning", "deepseek-r1", "mistral-large", "gpt-5-mini"]
         }
     ];

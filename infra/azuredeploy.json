@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "5900693894318063651"
+      "templateHash": "7661632051563873710"
     }
   },
   "parameters": {
@@ -49,11 +49,8 @@
       }
     },
     "identityGrants": {
-      "type": "object",
-      "defaultValue": {
-        "Memberships": [],
-        "PlatformAdministrators": []
-      },
+      "type": "secureObject",
+      "defaultValue": {},
       "metadata": {
         "description": "Server-owned Memberships and PlatformAdministrators. No credentials belong in this object."
       }
@@ -70,6 +67,153 @@
       "defaultValue": "",
       "metadata": {
         "description": "Optional Azure Container Registry name for Managed Identity AcrPull."
+      }
+    },
+    "reuseRegistry": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Existing registry reuse leaves its SKU, networking, and authentication settings unchanged."
+      }
+    },
+    "registryPullRoleDefinitionId": {
+      "type": "string",
+      "defaultValue": "7f951dda-4ed3-4680-a7ca-43fe172d538d",
+      "metadata": {
+        "description": "Registry pull role GUID. AcrPull is the default; ABAC registries require an explicitly supported role."
+      }
+    },
+    "runtimeIdentityName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Runtime managed identity name. Empty uses uami-docintel-<environmentName>."
+      }
+    },
+    "reuseRuntimeIdentity": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Use the existing runtime identity without redeploying it."
+      }
+    },
+    "existingEnvironmentId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing Container Apps environment resource ID, including another resource group in this subscription. Skips environment and workspace creation."
+      }
+    },
+    "publicOrigin": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Existing public HTTPS origin. Empty derives the origin from the selected app and environment."
+      }
+    },
+    "containerAppName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Container App name. Empty uses ca-docintel-<environmentName>."
+      }
+    },
+    "storageAccountName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Storage account name. Empty uses the generated default."
+      }
+    },
+    "reuseStorageAccount": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Use the existing storage account without changing its root, Blob service, or Queue service configuration."
+      }
+    },
+    "existingBlobContainers": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Existing required blob container names. Listed containers are not redeployed or reconfigured."
+      }
+    },
+    "existingQueues": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Existing required queue names. Listed queues are not redeployed or reconfigured."
+      }
+    },
+    "cosmosAccountNameOverride": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Cosmos DB account name. Empty uses the generated default."
+      }
+    },
+    "reuseCosmosAccount": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Use the existing Cosmos DB account without changing its root configuration."
+      }
+    },
+    "reuseCosmosDatabase": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Use the existing DocIntel database without changing its throughput or other database settings."
+      }
+    },
+    "existingCosmosContainers": {
+      "type": "array",
+      "defaultValue": [],
+      "metadata": {
+        "description": "Existing required Cosmos container names. Listed containers retain indexing, TTL, and all other settings."
+      }
+    },
+    "keyVaultNameOverride": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Key Vault name. Empty uses the generated default."
+      }
+    },
+    "reuseKeyVault": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Use the existing Key Vault without changing its root configuration."
+      }
+    },
+    "reuseIdentityKey": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Use the existing docintel-identity key without changing its key material or rotation policy."
+      }
+    },
+    "foundryAccountNameOverride": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Foundry account name. Empty uses the generated default when an account is required."
+      }
+    },
+    "reuseFoundryAccount": {
+      "type": "bool",
+      "defaultValue": false,
+      "metadata": {
+        "description": "Use the existing Foundry account without changing its identity, SKU, networking, or authentication settings."
+      }
+    },
+    "deployModels": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Provision the requested model deployments. False leaves existing deployments unchanged."
       }
     },
     "foundryInferenceEndpoint": {
@@ -119,29 +263,32 @@
   },
   "variables": {
     "uniqueSuffix": "[uniqueString(resourceGroup().id, parameters('environmentName'))]",
-    "uamiName": "[format('uami-docintel-{0}', parameters('environmentName'))]",
+    "uamiName": "[if(not(empty(parameters('runtimeIdentityName'))), parameters('runtimeIdentityName'), format('uami-docintel-{0}', parameters('environmentName')))]",
     "logAnalyticsName": "[format('law-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix'))]",
-    "caeName": "[format('cae-docintel-{0}', parameters('environmentName'))]",
-    "appName": "[format('ca-docintel-{0}', parameters('environmentName'))]",
-    "storageName": "[take(format('sadocintel{0}{1}', parameters('environmentName'), variables('uniqueSuffix')), 24)]",
-    "cosmosAccountName": "[format('cosmos-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix'))]",
+    "caeName": "[if(not(empty(parameters('existingEnvironmentId'))), last(split(parameters('existingEnvironmentId'), '/')), format('cae-docintel-{0}', parameters('environmentName')))]",
+    "caeSubscriptionId": "[if(not(empty(parameters('existingEnvironmentId'))), split(parameters('existingEnvironmentId'), '/')[2], subscription().subscriptionId)]",
+    "caeResourceGroupName": "[if(not(empty(parameters('existingEnvironmentId'))), split(parameters('existingEnvironmentId'), '/')[4], resourceGroup().name)]",
+    "appName": "[if(not(empty(parameters('containerAppName'))), parameters('containerAppName'), format('ca-docintel-{0}', parameters('environmentName')))]",
+    "storageName": "[if(not(empty(parameters('storageAccountName'))), parameters('storageAccountName'), take(format('sadocintel{0}{1}', parameters('environmentName'), variables('uniqueSuffix')), 24))]",
+    "cosmosAccountName": "[if(not(empty(parameters('cosmosAccountNameOverride'))), parameters('cosmosAccountNameOverride'), format('cosmos-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix')))]",
     "cosmosDatabaseName": "DocIntel",
-    "foundryName": "[format('aif-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix'))]",
-    "keyVaultName": "[format('kv-di-{0}-{1}', take(parameters('environmentName'), 3), variables('uniqueSuffix'))]",
+    "foundryName": "[if(not(empty(parameters('foundryAccountNameOverride'))), parameters('foundryAccountNameOverride'), format('aif-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix')))]",
+    "keyVaultName": "[if(not(empty(parameters('keyVaultNameOverride'))), parameters('keyVaultNameOverride'), format('kv-di-{0}-{1}', take(parameters('environmentName'), 3), variables('uniqueSuffix')))]",
     "effectiveAcrName": "[if(not(empty(parameters('acrName'))), parameters('acrName'), take(format('acrdocintel{0}{1}', parameters('environmentName'), variables('uniqueSuffix')), 50))]",
-    "createFoundryResource": "[empty(parameters('foundryInferenceEndpoint'))]",
+    "hasFoundryAccount": "[or(or(parameters('reuseFoundryAccount'), not(empty(parameters('foundryAccountNameOverride')))), empty(parameters('foundryInferenceEndpoint')))]",
+    "createFoundryResource": "[and(variables('hasFoundryAccount'), not(parameters('reuseFoundryAccount')))]",
+    "createEnvironment": "[empty(parameters('existingEnvironmentId'))]",
     "cognitiveServicesUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'a97b65f3-24c7-4388-baec-2e87135dc908')]",
     "cognitiveServicesOpenAiUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
     "foundryAiUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
-    "acrPullRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')]",
-    "effectiveFoundryEndpoint": "[if(not(empty(parameters('foundryInferenceEndpoint'))), parameters('foundryInferenceEndpoint'), format('https://{0}.services.ai.azure.com/models', variables('foundryName')))]",
-    "effectiveOpenAiEndpoint": "[if(not(empty(parameters('azureOpenAiEndpoint'))), parameters('azureOpenAiEndpoint'), format('https://{0}.openai.azure.com/', variables('foundryName')))]",
-    "effectiveTranslatorEndpoint": "[if(not(empty(parameters('translatorEndpoint'))), parameters('translatorEndpoint'), format('https://{0}.cognitiveservices.azure.com/', variables('foundryName')))]",
+    "acrPullRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('registryPullRoleDefinitionId'))]",
+    "effectiveEnvironmentId": "[if(not(empty(parameters('existingEnvironmentId'))), parameters('existingEnvironmentId'), extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('caeSubscriptionId'), variables('caeResourceGroupName')), 'Microsoft.App/managedEnvironments', variables('caeName')))]",
     "storageBlobDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
     "cosmosDataContributorRoleId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')))]"
   },
   "resources": [
     {
+      "condition": "[not(parameters('reuseRuntimeIdentity'))]",
       "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
       "apiVersion": "2023-01-31",
       "name": "[variables('uamiName')]",
@@ -179,7 +326,7 @@
         "mode": "serial",
         "batchSize": 1
       },
-      "condition": "[variables('createFoundryResource')]",
+      "condition": "[and(variables('hasFoundryAccount'), parameters('deployModels'))]",
       "type": "Microsoft.CognitiveServices/accounts/deployments",
       "apiVersion": "2024-10-01",
       "name": "[format('{0}/{1}', variables('foundryName'), parameters('modelDeployments')[copyIndex()].name)]",
@@ -199,7 +346,7 @@
       ]
     },
     {
-      "condition": "[variables('createFoundryResource')]",
+      "condition": "[variables('hasFoundryAccount')]",
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName'))]",
@@ -215,7 +362,7 @@
       ]
     },
     {
-      "condition": "[variables('createFoundryResource')]",
+      "condition": "[variables('hasFoundryAccount')]",
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName'))]",
@@ -231,7 +378,7 @@
       ]
     },
     {
-      "condition": "[variables('createFoundryResource')]",
+      "condition": "[variables('hasFoundryAccount')]",
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName'))]",
@@ -247,6 +394,7 @@
       ]
     },
     {
+      "condition": "[not(parameters('reuseRegistry'))]",
       "type": "Microsoft.ContainerRegistry/registries",
       "apiVersion": "2023-07-01",
       "name": "[variables('effectiveAcrName')]",
@@ -255,7 +403,7 @@
         "name": "Basic"
       },
       "properties": {
-        "adminUserEnabled": true
+        "adminUserEnabled": false
       }
     },
     {
@@ -274,6 +422,7 @@
       ]
     },
     {
+      "condition": "[not(parameters('reuseStorageAccount'))]",
       "type": "Microsoft.Storage/storageAccounts",
       "apiVersion": "2023-05-01",
       "name": "[variables('storageName')]",
@@ -289,6 +438,7 @@
       }
     },
     {
+      "condition": "[not(parameters('reuseStorageAccount'))]",
       "type": "Microsoft.Storage/storageAccounts/blobServices",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
@@ -297,6 +447,7 @@
       ]
     },
     {
+      "condition": "[not(contains(parameters('existingBlobContainers'), 'ask-ai-runs'))]",
       "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'ask-ai-runs')]",
@@ -308,6 +459,7 @@
       ]
     },
     {
+      "condition": "[not(contains(parameters('existingBlobContainers'), 'identity-keys'))]",
       "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'identity-keys')]",
@@ -319,6 +471,7 @@
       ]
     },
     {
+      "condition": "[not(parameters('reuseStorageAccount'))]",
       "type": "Microsoft.Storage/storageAccounts/queueServices",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}', variables('storageName'), 'default')]",
@@ -327,6 +480,7 @@
       ]
     },
     {
+      "condition": "[not(contains(parameters('existingQueues'), 'ask-ai'))]",
       "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'ask-ai')]",
@@ -335,6 +489,7 @@
       ]
     },
     {
+      "condition": "[not(contains(parameters('existingQueues'), 'ask-ai-poison'))]",
       "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'ask-ai-poison')]",
@@ -343,6 +498,7 @@
       ]
     },
     {
+      "condition": "[not(contains(parameters('existingQueues'), 'document-jobs'))]",
       "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'document-jobs')]",
@@ -351,6 +507,7 @@
       ]
     },
     {
+      "condition": "[not(contains(parameters('existingQueues'), 'document-jobs-poison'))]",
       "type": "Microsoft.Storage/storageAccounts/queueServices/queues",
       "apiVersion": "2023-05-01",
       "name": "[format('{0}/{1}/{2}', variables('storageName'), 'default', 'document-jobs-poison')]",
@@ -374,6 +531,7 @@
       ]
     },
     {
+      "condition": "[not(parameters('reuseKeyVault'))]",
       "type": "Microsoft.KeyVault/vaults",
       "apiVersion": "2023-07-01",
       "name": "[variables('keyVaultName')]",
@@ -391,6 +549,7 @@
       }
     },
     {
+      "condition": "[not(parameters('reuseIdentityKey'))]",
       "type": "Microsoft.KeyVault/vaults/keys",
       "apiVersion": "2023-07-01",
       "name": "[format('{0}/{1}', variables('keyVaultName'), 'docintel-identity')]",
@@ -433,6 +592,7 @@
       },
       "dependsOn": [
         "[resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity')]",
+        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
         "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
       ]
     },
@@ -452,6 +612,7 @@
       ]
     },
     {
+      "condition": "[not(parameters('reuseCosmosAccount'))]",
       "type": "Microsoft.DocumentDB/databaseAccounts",
       "apiVersion": "2024-05-15",
       "name": "[variables('cosmosAccountName')]",
@@ -474,6 +635,7 @@
       }
     },
     {
+      "condition": "[not(parameters('reuseCosmosDatabase'))]",
       "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases",
       "apiVersion": "2024-05-15",
       "name": "[format('{0}/{1}', variables('cosmosAccountName'), variables('cosmosDatabaseName'))]",
@@ -487,6 +649,7 @@
       ]
     },
     {
+      "condition": "[not(contains(parameters('existingCosmosContainers'), 'harnesses'))]",
       "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
       "apiVersion": "2024-05-15",
       "name": "[format('{0}/{1}/{2}', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'harnesses')]",
@@ -506,6 +669,7 @@
       ]
     },
     {
+      "condition": "[not(contains(parameters('existingCosmosContainers'), 'jobs'))]",
       "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
       "apiVersion": "2024-05-15",
       "name": "[format('{0}/{1}/{2}', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'jobs')]",
@@ -525,6 +689,7 @@
       ]
     },
     {
+      "condition": "[not(contains(parameters('existingCosmosContainers'), 'ocr-usage'))]",
       "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
       "apiVersion": "2024-05-15",
       "name": "[format('{0}/{1}/{2}', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'ocr-usage')]",
@@ -544,6 +709,7 @@
       ]
     },
     {
+      "condition": "[not(contains(parameters('existingCosmosContainers'), 'review-sessions'))]",
       "type": "Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers",
       "apiVersion": "2024-05-15",
       "name": "[format('{0}/{1}/{2}', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'review-sessions')]",
@@ -577,6 +743,7 @@
       ]
     },
     {
+      "condition": "[variables('createEnvironment')]",
       "type": "Microsoft.OperationalInsights/workspaces",
       "apiVersion": "2023-09-01",
       "name": "[variables('logAnalyticsName')]",
@@ -589,6 +756,7 @@
       }
     },
     {
+      "condition": "[variables('createEnvironment')]",
       "type": "Microsoft.App/managedEnvironments",
       "apiVersion": "2024-03-01",
       "name": "[variables('caeName')]",
@@ -619,7 +787,7 @@
         }
       },
       "properties": {
-        "environmentId": "[resourceId('Microsoft.App/managedEnvironments', variables('caeName'))]",
+        "environmentId": "[variables('effectiveEnvironmentId')]",
         "configuration": {
           "activeRevisionsMode": "Single",
           "ingress": {
@@ -659,19 +827,19 @@
                 },
                 {
                   "name": "AzureAI__FoundryInferenceEndpoint",
-                  "value": "[variables('effectiveFoundryEndpoint')]"
+                  "value": "[if(not(empty(parameters('foundryInferenceEndpoint'))), parameters('foundryInferenceEndpoint'), if(not(empty(if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), ''))), format('{0}{1}models', if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), ''), if(endsWith(if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), ''), '/'), '', '/')), ''))]"
                 },
                 {
                   "name": "AzureAI__AzureOpenAIEndpoint",
-                  "value": "[variables('effectiveOpenAiEndpoint')]"
+                  "value": "[if(not(empty(parameters('azureOpenAiEndpoint'))), parameters('azureOpenAiEndpoint'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.openai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), '')))]"
                 },
                 {
                   "name": "AzureAI__TranslatorEndpoint",
-                  "value": "[variables('effectiveTranslatorEndpoint')]"
+                  "value": "[if(not(empty(parameters('translatorEndpoint'))), parameters('translatorEndpoint'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.cognitiveservices.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), '')))]"
                 },
                 {
                   "name": "AzureAI__ContentUnderstandingEndpoint",
-                  "value": "[if(not(empty(parameters('contentUnderstandingEndpoint'))), parameters('contentUnderstandingEndpoint'), format('https://{0}.services.ai.azure.com/', variables('foundryName')))]"
+                  "value": "[if(not(empty(parameters('contentUnderstandingEndpoint'))), parameters('contentUnderstandingEndpoint'), if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), ''))]"
                 },
                 {
                   "name": "AzureAI__CosmosEndpoint",
@@ -711,7 +879,7 @@
                 },
                 {
                   "name": "Identity__PublicOrigin",
-                  "value": "[format('https://{0}.{1}', variables('appName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('caeName')), '2024-03-01').defaultDomain)]"
+                  "value": "[if(not(empty(parameters('publicOrigin'))), parameters('publicOrigin'), format('https://{0}.{1}', variables('appName'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('caeSubscriptionId'), variables('caeResourceGroupName')), 'Microsoft.App/managedEnvironments', variables('caeName')), '2024-03-01').defaultDomain))]"
                 },
                 {
                   "name": "Identity__DataProtectionBlobUri",
@@ -790,32 +958,34 @@
         }
       },
       "dependsOn": [
-        "[resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName'))]",
-        "[resourceId('Microsoft.App/managedEnvironments', variables('caeName'))]",
-        "[resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName'))]",
+        "[extensionResourceId(resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('acrPullRoleId')))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments', variables('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '00000000-0000-0000-0000-000000000002'))]",
-        "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'ask-ai')]",
         "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'document-jobs-poison')]",
-        "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'document-jobs')]",
-        "[resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity')]",
+        "[extensionResourceId(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), 'Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('foundryAiUserRoleId')))]",
+        "[extensionResourceId(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), 'Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('cognitiveServicesUserRoleId')))]",
+        "foundryModelDeployments",
+        "[extensionResourceId(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), 'Microsoft.Authorization/roleAssignments', guid(resourceGroup().id, resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('cognitiveServicesOpenAiUserRoleId')))]",
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'harnesses')]",
         "[extensionResourceId(resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity'), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity'), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), 'e147488a-f6f5-4113-8e2d-b22465e65bf6'))]",
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'identity-keys')]",
-        "[resourceId('Microsoft.KeyVault/vaults', variables('keyVaultName'))]",
+        "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'jobs')]",
+        "[resourceId('Microsoft.App/managedEnvironments', variables('caeName'))]",
+        "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'ask-ai')]",
+        "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'document-jobs')]",
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'ocr-usage')]",
         "[resourceId('Microsoft.Storage/storageAccounts/queueServices/queues', variables('storageName'), 'default', 'ask-ai-poison')]",
         "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'review-sessions')]",
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'ask-ai-runs')]",
-        "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
         "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '974c5e8b-45b9-4653-ba55-5f855dd0fb88'))]",
-        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('storageBlobDataContributorRoleId')))]",
-        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('storageBlobDataContributorRoleId')))]"
       ]
     }
   ],
   "outputs": {
     "containerAppFqdn": {
       "type": "string",
-      "value": "[format('https://{0}.{1}', variables('appName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('caeName')), '2024-03-01').defaultDomain)]"
+      "value": "[if(not(empty(parameters('publicOrigin'))), parameters('publicOrigin'), format('https://{0}.{1}', variables('appName'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('caeSubscriptionId'), variables('caeResourceGroupName')), 'Microsoft.App/managedEnvironments', variables('caeName')), '2024-03-01').defaultDomain))]"
     },
     "containerRegistryName": {
       "type": "string",
@@ -833,17 +1003,53 @@
       "type": "string",
       "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').principalId]"
     },
+    "managedIdentityResourceId": {
+      "type": "string",
+      "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
+    },
     "storageAccountName": {
       "type": "string",
       "value": "[variables('storageName')]"
+    },
+    "storageBlobEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.blob]"
+    },
+    "storageQueueEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), '2023-05-01').primaryEndpoints.queue]"
     },
     "cosmosAccountName": {
       "type": "string",
       "value": "[variables('cosmosAccountName')]"
     },
+    "cosmosEndpoint": {
+      "type": "string",
+      "value": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')), '2024-05-15').documentEndpoint]"
+    },
     "foundryEndpoint": {
       "type": "string",
-      "value": "[variables('effectiveFoundryEndpoint')]"
+      "value": "[if(not(empty(parameters('foundryInferenceEndpoint'))), parameters('foundryInferenceEndpoint'), if(not(empty(if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), ''))), format('{0}{1}models', if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), ''), if(endsWith(if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), ''), '/'), '', '/')), ''))]"
+    },
+    "foundryResourceId": {
+      "type": "string",
+      "value": "[if(variables('hasFoundryAccount'), resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '')]"
+    },
+    "azureOpenAiEndpoint": {
+      "type": "string",
+      "value": "[if(not(empty(parameters('azureOpenAiEndpoint'))), parameters('azureOpenAiEndpoint'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.openai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), '')))]"
+    },
+    "contentUnderstandingEndpoint": {
+      "type": "string",
+      "value": "[if(not(empty(parameters('contentUnderstandingEndpoint'))), parameters('contentUnderstandingEndpoint'), if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), ''))]"
+    },
+    "translatorEndpoint": {
+      "type": "string",
+      "value": "[if(not(empty(parameters('translatorEndpoint'))), parameters('translatorEndpoint'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.cognitiveservices.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), '')))]"
+    },
+    "containerEnvironmentId": {
+      "type": "string",
+      "value": "[variables('effectiveEnvironmentId')]"
     },
     "identityKeyIdentifier": {
       "type": "string",
@@ -851,7 +1057,7 @@
     },
     "requiredWebRedirectUri": {
       "type": "string",
-      "value": "[format('https://{0}.{1}/signin-oidc', variables('appName'), reference(resourceId('Microsoft.App/managedEnvironments', variables('caeName')), '2024-03-01').defaultDomain)]"
+      "value": "[format('{0}/signin-oidc', if(not(empty(parameters('publicOrigin'))), parameters('publicOrigin'), format('https://{0}.{1}', variables('appName'), reference(extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('caeSubscriptionId'), variables('caeResourceGroupName')), 'Microsoft.App/managedEnvironments', variables('caeName')), '2024-03-01').defaultDomain)))]"
     },
     "requiredFederationSubject": {
       "type": "string",

@@ -86,11 +86,8 @@ try {
     az account set --subscription $SubscriptionId
     $web = az ad app show --id $WebClientId --output json --only-show-errors | ConvertFrom-Json
     $api = az ad app show --id $ApiClientId --output json --only-show-errors | ConvertFrom-Json
-    if (-not @($api.api.oauth2PermissionScopes | Where-Object { $_.value -eq 'DocIntel.Access' -and $_.isEnabled }).Count -or
-        -not @($api.appRoles | Where-Object {
-            $_.value -eq 'DocIntel.Access' -and $_.isEnabled -and 'Application' -in $_.allowedMemberTypes
-        }).Count) {
-        throw "The API registration must expose enabled DocIntel.Access delegated and application permissions."
+    if (-not @($api.api.oauth2PermissionScopes | Where-Object { $_.value -eq 'DocIntel.Access' -and $_.isEnabled }).Count) {
+        throw "The API registration must expose the enabled DocIntel.Access delegated scope. An app role is not required for browser deployment."
     }
     if ([string]::IsNullOrWhiteSpace($AcrName)) {
         $hash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(

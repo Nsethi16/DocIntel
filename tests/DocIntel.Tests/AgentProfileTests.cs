@@ -12,6 +12,21 @@ namespace DocIntel.Tests;
 public sealed class AgentProfileTests
 {
     [Fact]
+    public void Fresh_Tenants_Use_The_Tool_Calling_Model_Provisioned_By_The_Deployment_Template()
+    {
+        // Arrange
+        var tenants = FileHarnessStore.CreateDefaultTenants();
+
+        // Act / Assert
+        Assert.NotEmpty(tenants);
+        Assert.All(tenants, tenant =>
+        {
+            Assert.Equal("gpt-5-mini", tenant.DefaultModelId);
+            Assert.Contains(tenant.DefaultModelId, tenant.AllowedModels);
+        });
+    }
+
+    [Fact]
     public async Task The_Same_Personality_Is_Snapshotted_And_Used_For_The_Model_And_Channel_Payloads()
     {
         // Arrange

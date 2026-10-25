@@ -137,7 +137,106 @@ If NuGet.org fails with a TLS/certificate/network error, fix the machine's netwo
 or run validation on an approved network/runner. Do not disable certificate validation, package
 auditing or warnings, add an unknown mirror, or silently use a private-feed fallback.
 
-### Personal Azure subscription deployment
+### Set up Azure from GitHub (recommended)
+
+Use **Actions > Set up DocIntel Azure** for infrastructure and runtime configuration, then
+**Validate and deploy DocIntel** for the application image. You do not need to manually create
+each queue, database container, key, runtime role or endpoint setting.
+
+The setup workflow discovers the existing app, reuses its Container Apps environment and HTTPS
+origin, and identifies bound storage, Cosmos, Key Vault, Foundry and runtime identity resources.
+Unambiguous existing DocIntel resources are adopted without redeploying their root SKU, networking
+or security properties. Missing dependencies and runtime resource roles are provisioned by Bicep.
+An existing `gpt-5-mini` deployment/key is not reset. Runtime settings are merged; unrelated settings,
+secret references, identities, application image, ingress and custom domains are preserved.
+
+#### One-time prerequisites in GitHub/Azure
+
+GitHub cannot establish its own initial trust or elevate its deployment identity:
+
+| Setting / permission | Where and why |
+|---|---|
+| Three `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID` secrets | GitHub repository or `docintel-dev` environment; existing `CADOCINTELDEV_AZURE_*` fallback names still work |
+| GitHub federated credential | On the selected deployment identity in Azure; use the **actual subject from the Azure login log**, matching issuer and audience |
+| Resource provisioning and role-assignment authority | Explicitly approved at the target resource group/resource scopes; image-push/app-update-only roles cannot provision the full stack |
+| `docintel-dev` GitHub environment | Restrict to main. Configure required reviewers if an approval is wanted between Preview and Apply |
+| `DOCINTEL_WEB_CLIENT_ID`, `DOCINTEL_API_CLIENT_ID` repository variables | The two existing app-registration client IDs; discovered from existing runtime settings when available |
+| `DOCINTEL_ADMIN_OBJECT_ID` GitHub secret | Your directory user object ID, needed only when no nonempty bootstrap grants already exist |
+
+For this repository's observed GitHub token, the deployment trust subject is:
+
+```text
+repo:Nsethi16@22230402/DocIntel@1422293341:environment:docintel-dev
+```
+
+The issuer is `https://token.actions.githubusercontent.com` and audience is
+`api://AzureADTokenExchange`. Do not assume the older name-only subject matches.
+
+For Azure resources, the deployment identity needs the permitted management operations in the target
+group plus narrowly scoped role-assignment authority for runtime RBAC, and permission to attach the
+runtime identity. It does not need subscription-wide Owner. Scope/delegate those permissions using
+your Azure administrator; this workflow never grants privileges to its own deployment identity.
+Runtime Cosmos access is a Cosmos data-plane role, separately provisioned by the template.
+
+#### Run Preview first
+
+1. Open **Actions > Set up DocIntel Azure > Run workflow** on `main`.
+2. Select **Preview**. Leave directory application configuration off when reusing your manually
+   configured web/API registrations without directory-write access.
+3. Download **docintel-infrastructure-preview**. Review the selected resources, changes, role
+   assignments, model provisioning and expected charges in `setup-plan.json` / `what-if.json`.
+4. If an existing resource cannot be matched unambiguously, set its corresponding optional variable
+   and preview again. Missing administrator configuration is reported without creating a default user.
+
+Optional repository variables resolve explicit existing bindings:
+`DOCINTEL_RUNTIME_IDENTITY_NAME`, `DOCINTEL_STORAGE_ACCOUNT_NAME`, `DOCINTEL_COSMOS_ACCOUNT_NAME`,
+`DOCINTEL_KEY_VAULT_NAME`, `DOCINTEL_FOUNDRY_ACCOUNT_NAME`, and `DOCINTEL_CONTAINER_NAME`.
+The normal `AZURE_RESOURCE_GROUP`, `AZURE_CONTAINER_APP_NAME`, and `AZURE_CONTAINER_REGISTRY`
+variables select the target; their existing defaults are retained.
+
+Preview performs reads and ARM what-if only, not Azure/Entra writes. Setup refuses data-account
+repointing, ambiguous/cross-group data adoption, nonstandard partition keys, incompatible resource
+types, local-only state overrides, and silently collapsing multiple AI accounts. Such migrations
+need an explicit separately reviewed configuration, not guesses or duplicate resources.
+
+#### Apply and release
+
+After reviewing Preview, run the workflow again with **Apply** and confirmation **APPLY**.
+It first produces a new preview, then the apply job re-discovers targets and requires the same
+plan hash before changing anything. Use `docintel-dev` required reviewers to review/approve that
+run's preview before allowing the apply job. A resource/app/template change blocks stale apply.
+Resource provisioning can incur charges.
+
+Apply provisions dependencies/RBAC and merges passwordless production settings, endpoint URLs,
+protected browser keys and (when needed) your explicitly provided initial tenant-admin assignment.
+It preserves existing channel toggles; absent directory/email/Teams toggles default to disabled.
+It does not migrate local documents or overwrite existing tenant choices.
+
+Then run **Validate and deploy DocIntel** on `main`. This builds/pushes the validated image, updates
+the app, and checks the exact image/latest-ready revision and `/health/ready` before claiming success.
+Setup and release serialize on the same Azure target so they cannot race.
+
+#### Optional directory registration automation
+
+The setup input **configure directory applications** enables permission-gated creation/configuration
+of `docintel-web` / `docintel-api`, the delegated `DocIntel.Access` scope, web callback and runtime
+federated credential. It preserves existing redirects/scopes and never creates a conflicting
+same-named application role. Missing registrations can be created in Apply, never Preview.
+
+This requires separately approved Microsoft Graph application-management permission, for example
+`Application.ReadWrite.OwnedBy` with ownership of existing applications it must edit. The workflow
+does not grant directory roles, Graph consent, or ownership to itself; do not grant directory-wide
+write access merely for convenience. Without that authorization, reuse the existing client IDs and
+manually completed registration/federation settings. Corporate people lookup, Exchange mailbox
+provisioning/transport policy, Teams installation and user consent remain separate integrations,
+disabled by default rather than represented as connected.
+
+Fresh sample tenants now both use the provisioned `gpt-5-mini` tool-calling model. Existing tenant
+model overrides remain untouched: unsupported/undeployed model selections still fail readiness and
+must be corrected explicitly. Region/model quota, external network policies and live inference
+quality must still be verified against the actual subscription.
+
+### Personal Azure subscription release settings
 
 The default existing target is Container App `ca-docintel-dev`, resource group `Docintel`,
 and registry `acrdocinteldevokjs3fevazuto`. Override those defaults with repository Actions variables
@@ -150,8 +249,8 @@ directory-based sign-in, not unrestricted sign-in by any personal Microsoft acco
 1. In GitHub repository **Settings > Environments**, create/configure **docintel-dev** and
    restrict deployment to **main**. Add approval protection where your plan supports it.
 2. Configure the deployment identity's Azure federated credential for issuer
-   `https://token.actions.githubusercontent.com`, audience `api://AzureADTokenExchange`, and subject
-   `repo:Nsethi16/DocIntel:environment:docintel-dev`. This is the identity GitHub uses to deploy,
+   `https://token.actions.githubusercontent.com`, audience `api://AzureADTokenExchange`, and the
+   actual subject shown above/from the workflow login log. This is the identity GitHub uses to deploy,
    not the runtime identity or browser web registration.
 3. Make these workflow secrets available to the deployment job:
    `AZURE_CLIENT_ID` (deployment identity client ID),
@@ -162,9 +261,9 @@ directory-based sign-in, not unrestricted sign-in by any personal Microsoft acco
    be recreated. These are identifiers; no Azure client password or
    package-feed credential is required. Give that identity registry push and target Container App
    update access at the narrow resource scopes, using the roles appropriate to the registry mode.
-4. Prepare the runtime independently: attached managed identity, persistent Cosmos/Blob/Queue
-   storage, protected sign-in keys, web/API Entra registrations, HTTPS redirect/origin, and an
-   explicit initial tenant-admin grant. Production must use `Identity__Mode=Entra` and
+4. Run **Set up DocIntel Azure** as described above to prepare the runtime: attached managed identity,
+   persistent Cosmos/Blob/Queue storage, protected sign-in keys, web/API Entra registrations,
+   HTTPS redirect/origin and initial tenant-admin grant. Production must use `Identity__Mode=Entra` and
    `Models__AllowDevelopmentSimulation=false`. See **Deploy to Azure** and **Identity and document access**
    below. Do not publish loopback-development identity or depend on ephemeral container files.
 5. Configure a real `AzureAI__AzureOpenAIEndpoint` and deployed model such as `gpt-5-mini`,
@@ -184,10 +283,9 @@ directory-based sign-in, not unrestricted sign-in by any personal Microsoft acco
 gh workflow run "Validate and deploy DocIntel" --repo Nsethi16/DocIntel --ref main
 ```
 
-The workflow builds/pushes a commit-tagged image and updates the existing app. It does **not**
-apply Bicep, create sign-in registrations, grant cloud/Graph access, or copy local documents and
-tenant settings. Review infrastructure changes separately using explicit existing-resource
-parameters; the deployment script's defaults target a different resource group. Verify
+The release workflow builds/pushes a commit-tagged image and updates the existing app.
+Infrastructure is managed by the separate preview-first setup workflow, not implicitly by an image
+push. Neither workflow copies local documents/tenant settings or grants its own Azure/Graph privileges. Verify
 `/health/live`, `/health/ready`, authorized sign-in, a real PDF upload, a cited Ask AI answer and
 persistence after restart. Directory/user-profile integration can be enabled later with approved
 read-only Graph permission on the runtime identity.
@@ -646,8 +744,9 @@ execution, separate durable Azure Queue dispatch/poison handling, and Blob-backe
 Key Vault key, queue backlog scaling, and readiness/liveness probes. Storage and Key Vault access
 use managed identity. No connection strings or web client secrets are deployed.
 
-Pre-create separate web/API Entra registrations and the API `DocIntel.Access` delegated/application
-permissions. Provide a private JSON file containing the server-owned `Memberships` and
+Prefer the GitHub setup workflow above for an existing deployment. The advanced local PowerShell path
+uses separate web/API Entra registrations and the enabled API `DocIntel.Access` delegated scope;
+an application role is not required for browser sign-in. Provide a private JSON file containing the server-owned `Memberships` and
 `PlatformAdministrators` described above. The script validates explicit subscription/directory/app
 IDs and registration permissions before provisioning. Preview is the default; `-Apply` is explicit.
 `-ConfigureWebRegistration` additionally opts into adding the HTTPS redirect URI and the UAMI

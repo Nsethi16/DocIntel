@@ -1,0 +1,139 @@
+name: Set up DocIntel Azure
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Preview first. Apply provisions chargeable resources and updates runtime settings.
+        type: choice
+        options: [Preview, Apply]
+        default: Preview
+      confirmation:
+        description: For Apply, type APPLY after reviewing a previous Preview run.
+        type: string
+        default: ''
+      configure_directory:
+        description: Also create/configure web/API registrations and runtime federation (requires approved Graph access).
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docintel-azure-${{ vars.AZURE_RESOURCE_GROUP || 'Docintel' }}-${{ vars.AZURE_CONTAINER_APP_NAME || 'ca-docintel-dev' }}
+  cancel-in-progress: false
+
+env:
+  SETUP_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID || secrets.CADOCINTELDEV_AZURE_SUBSCRIPTION_ID }}
+  SETUP_DIRECTORY_TENANT_ID: ${{ secrets.AZURE_TENANT_ID || secrets.CADOCINTELDEV_AZURE_TENANT_ID }}
+  DOCINTEL_WEB_CLIENT_ID: ${{ vars.DOCINTEL_WEB_CLIENT_ID }}
+  DOCINTEL_API_CLIENT_ID: ${{ vars.DOCINTEL_API_CLIENT_ID }}
+  DOCINTEL_ADMIN_OBJECT_ID: ${{ secrets.DOCINTEL_ADMIN_OBJECT_ID }}
+  SETUP_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'Docintel' }}
+  SETUP_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME || 'ca-docintel-dev' }}
+  SETUP_REGISTRY: ${{ vars.AZURE_CONTAINER_REGISTRY || 'acrdocinteldevokjs3fevazuto' }}
+  SETUP_CONTAINER: ${{ vars.DOCINTEL_CONTAINER_NAME }}
+  SETUP_IDENTITY: ${{ vars.DOCINTEL_RUNTIME_IDENTITY_NAME }}
+  SETUP_STORAGE: ${{ vars.DOCINTEL_STORAGE_ACCOUNT_NAME }}
+  SETUP_COSMOS: ${{ vars.DOCINTEL_COSMOS_ACCOUNT_NAME }}
+  SETUP_KEY_VAULT: ${{ vars.DOCINTEL_KEY_VAULT_NAME }}
+  SETUP_FOUNDRY: ${{ vars.DOCINTEL_FOUNDRY_ACCOUNT_NAME }}
+
+jobs:
+  preview:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: docintel-dev
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      plan_hash: ${{ steps.plan.outputs.plan_hash }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check explicit apply confirmation and identity consistency
+        shell: pwsh
+        env:
+          SETUP_MODE: ${{ inputs.mode }}
+          SETUP_CONFIRMATION: ${{ inputs.confirmation }}
+          PERSONAL_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          PERSONAL_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          PERSONAL_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          if ($env:SETUP_MODE -eq 'Apply' -and $env:SETUP_CONFIRMATION -cne 'APPLY') {
+            throw 'Apply requires the exact confirmation APPLY. No resources were changed.'
+          }
+          $values = @($env:PERSONAL_CLIENT_ID, $env:PERSONAL_TENANT_ID, $env:PERSONAL_SUBSCRIPTION_ID)
+          $present = @($values | Where-Object { -not [String]::IsNullOrWhiteSpace($_) }).Count
+          if ($present -ne 0 -and $present -ne 3) { throw 'Configure all three AZURE identity secrets together.' }
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID || secrets.CADOCINTELDEV_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || secrets.CADOCINTELDEV_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || secrets.CADOCINTELDEV_AZURE_SUBSCRIPTION_ID }}
+      - name: Discover existing resources and preview infrastructure
+        id: plan
+        shell: pwsh
+        env:
+          CONFIGURE_DIRECTORY: ${{ inputs.configure_directory }}
+        run: |
+          ./scripts/Setup-DocIntelGitHub.ps1 -Mode Preview `
+            -ResourceGroup $env:SETUP_RESOURCE_GROUP -ContainerAppName $env:SETUP_APP_NAME `
+            -RegistryName $env:SETUP_REGISTRY -ContainerName $env:SETUP_CONTAINER `
+            -RuntimeIdentityName $env:SETUP_IDENTITY -StorageAccountName $env:SETUP_STORAGE `
+            -CosmosAccountName $env:SETUP_COSMOS -KeyVaultName $env:SETUP_KEY_VAULT `
+            -FoundryAccountName $env:SETUP_FOUNDRY `
+            -ConfigureDirectoryApplications:($env:CONFIGURE_DIRECTORY -eq 'true') `
+            -OutputDirectory (Join-Path $env:RUNNER_TEMP 'docintel-setup-plan')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: docintel-infrastructure-preview
+          path: ${{ runner.temp }}/docintel-setup-plan/
+          retention-days: 7
+          if-no-files-found: error
+      - name: Explain the plan
+        shell: pwsh
+        run: |
+          '### DocIntel infrastructure preview' >> $env:GITHUB_STEP_SUMMARY
+          'Download **docintel-infrastructure-preview** to review resources, permissions and the full ARM what-if.' >> $env:GITHUB_STEP_SUMMARY
+          'Preview does not mutate Azure or Entra. Provisioning can incur charges.' >> $env:GITHUB_STEP_SUMMARY
+          'Apply re-discovers resources and refuses changed plans. Configure required reviewers on docintel-dev for an approval between jobs.' >> $env:GITHUB_STEP_SUMMARY
+
+  apply:
+    needs: preview
+    if: github.ref == 'refs/heads/main' && inputs.mode == 'Apply' && inputs.confirmation == 'APPLY'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: docintel-dev
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID || secrets.CADOCINTELDEV_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || secrets.CADOCINTELDEV_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || secrets.CADOCINTELDEV_AZURE_SUBSCRIPTION_ID }}
+      - name: Apply the unchanged preview and configure runtime
+        shell: pwsh
+        env:
+          EXPECTED_PLAN_HASH: ${{ needs.preview.outputs.plan_hash }}
+          CONFIGURE_DIRECTORY: ${{ inputs.configure_directory }}
+        run: |
+          ./scripts/Setup-DocIntelGitHub.ps1 -Mode Apply -Confirmation APPLY `
+            -ExpectedPlanHash $env:EXPECTED_PLAN_HASH `
+            -ResourceGroup $env:SETUP_RESOURCE_GROUP -ContainerAppName $env:SETUP_APP_NAME `
+            -RegistryName $env:SETUP_REGISTRY -ContainerName $env:SETUP_CONTAINER `
+            -RuntimeIdentityName $env:SETUP_IDENTITY -StorageAccountName $env:SETUP_STORAGE `
+            -CosmosAccountName $env:SETUP_COSMOS -KeyVaultName $env:SETUP_KEY_VAULT `
+            -FoundryAccountName $env:SETUP_FOUNDRY `
+            -ConfigureDirectoryApplications:($env:CONFIGURE_DIRECTORY -eq 'true') `
+            -OutputDirectory (Join-Path $env:RUNNER_TEMP 'docintel-setup-applied')
+      - name: Next release step
+        shell: pwsh
+        run: |
+          '### Infrastructure and runtime settings applied' >> $env:GITHUB_STEP_SUMMARY
+          'The existing app image and ingress were preserved. Run **Validate and deploy DocIntel** on main to release the tested image and check readiness.' >> $env:GITHUB_STEP_SUMMARY

@@ -38,6 +38,11 @@ Standalone builds restore locked packages from public NuGet.org, not a corporate
 feed. GitHub deployment uses the owner's Azure subscription through OIDC; enterprise people
 search, mailbox and Teams setup remain optional. See the README's personal-subscription deployment
 instructions. A clean public restore and the normal security/build gates must succeed before rollout.
+The separate **Set up DocIntel Azure** GitHub workflow discovers/reuses existing roots and previews
+supporting Bicep infrastructure, then requires explicit Apply confirmation and an unchanged plan
+before provisioning resources/runtime roles and merging application settings. Directory registration
+changes are a separate opt-in requiring preauthorized Graph access. The normal release verifies
+the exact new image and latest-ready revision; infrastructure/app updates share a target-level lock.
 
 ---
 

@@ -19,16 +19,77 @@ param webClientId string
 param apiClientId string
 
 @description('Server-owned Memberships and PlatformAdministrators. No credentials belong in this object.')
-param identityGrants object = {
-  Memberships: []
-  PlatformAdministrators: []
-}
+@secure()
+param identityGrants object = {}
 
 @description('Container image to deploy (e.g. <acr>.azurecr.io/docintel-api:latest).')
 param containerImage string = 'mcr.microsoft.com/dotnet/samples:aspnetapp'
 
 @description('Optional Azure Container Registry name for Managed Identity AcrPull.')
 param acrName string = ''
+
+@description('Existing registry reuse leaves its SKU, networking, and authentication settings unchanged.')
+param reuseRegistry bool = false
+
+@description('Registry pull role GUID. AcrPull is the default; ABAC registries require an explicitly supported role.')
+param registryPullRoleDefinitionId string = '7f951dda-4ed3-4680-a7ca-43fe172d538d'
+
+@description('Runtime managed identity name. Empty uses uami-docintel-<environmentName>.')
+param runtimeIdentityName string = ''
+
+@description('Use the existing runtime identity without redeploying it.')
+param reuseRuntimeIdentity bool = false
+
+@description('Existing Container Apps environment resource ID, including another resource group in this subscription. Skips environment and workspace creation.')
+param existingEnvironmentId string = ''
+
+@description('Existing public HTTPS origin. Empty derives the origin from the selected app and environment.')
+param publicOrigin string = ''
+
+@description('Container App name. Empty uses ca-docintel-<environmentName>.')
+param containerAppName string = ''
+
+@description('Storage account name. Empty uses the generated default.')
+param storageAccountName string = ''
+
+@description('Use the existing storage account without changing its root, Blob service, or Queue service configuration.')
+param reuseStorageAccount bool = false
+
+@description('Existing required blob container names. Listed containers are not redeployed or reconfigured.')
+param existingBlobContainers array = []
+
+@description('Existing required queue names. Listed queues are not redeployed or reconfigured.')
+param existingQueues array = []
+
+@description('Cosmos DB account name. Empty uses the generated default.')
+param cosmosAccountNameOverride string = ''
+
+@description('Use the existing Cosmos DB account without changing its root configuration.')
+param reuseCosmosAccount bool = false
+
+@description('Use the existing DocIntel database without changing its throughput or other database settings.')
+param reuseCosmosDatabase bool = false
+
+@description('Existing required Cosmos container names. Listed containers retain indexing, TTL, and all other settings.')
+param existingCosmosContainers array = []
+
+@description('Key Vault name. Empty uses the generated default.')
+param keyVaultNameOverride string = ''
+
+@description('Use the existing Key Vault without changing its root configuration.')
+param reuseKeyVault bool = false
+
+@description('Use the existing docintel-identity key without changing its key material or rotation policy.')
+param reuseIdentityKey bool = false
+
+@description('Foundry account name. Empty uses the generated default when an account is required.')
+param foundryAccountNameOverride string = ''
+
+@description('Use the existing Foundry account without changing its identity, SKU, networking, or authentication settings.')
+param reuseFoundryAccount bool = false
+
+@description('Provision the requested model deployments. False leaves existing deployments unchanged.')
+param deployModels bool = true
 
 @description('Optional existing Microsoft Foundry Inference endpoint. When empty, a new Foundry (AIServices) resource is provisioned automatically.')
 param foundryInferenceEndpoint string = ''
@@ -55,26 +116,43 @@ param modelDeployments array = [
 ]
 
 var uniqueSuffix = uniqueString(resourceGroup().id, environmentName)
-var uamiName = 'uami-docintel-${environmentName}'
+var uamiName = !empty(runtimeIdentityName) ? runtimeIdentityName : 'uami-docintel-${environmentName}'
 var logAnalyticsName = 'law-docintel-${environmentName}-${uniqueSuffix}'
-var caeName = 'cae-docintel-${environmentName}'
-var appName = 'ca-docintel-${environmentName}'
-var storageName = take('sadocintel${environmentName}${uniqueSuffix}', 24)
-var cosmosAccountName = 'cosmos-docintel-${environmentName}-${uniqueSuffix}'
+var caeName = !empty(existingEnvironmentId) ? last(split(existingEnvironmentId, '/')) : 'cae-docintel-${environmentName}'
+var caeSubscriptionId = !empty(existingEnvironmentId) ? split(existingEnvironmentId, '/')[2] : subscription().subscriptionId
+var caeResourceGroupName = !empty(existingEnvironmentId) ? split(existingEnvironmentId, '/')[4] : resourceGroup().name
+var appName = !empty(containerAppName) ? containerAppName : 'ca-docintel-${environmentName}'
+var storageName = !empty(storageAccountName) ? storageAccountName : take('sadocintel${environmentName}${uniqueSuffix}', 24)
+var cosmosAccountName = !empty(cosmosAccountNameOverride)
+  ? cosmosAccountNameOverride
+  : 'cosmos-docintel-${environmentName}-${uniqueSuffix}'
 var cosmosDatabaseName = 'DocIntel'
-var foundryName = 'aif-docintel-${environmentName}-${uniqueSuffix}'
-var keyVaultName = 'kv-di-${take(environmentName, 3)}-${uniqueSuffix}'
+var foundryName = !empty(foundryAccountNameOverride)
+  ? foundryAccountNameOverride
+  : 'aif-docintel-${environmentName}-${uniqueSuffix}'
+var keyVaultName = !empty(keyVaultNameOverride) ? keyVaultNameOverride : 'kv-di-${take(environmentName, 3)}-${uniqueSuffix}'
 var effectiveAcrName = !empty(acrName) ? acrName : take('acrdocintel${environmentName}${uniqueSuffix}', 50)
-var createFoundryResource = empty(foundryInferenceEndpoint)
+var hasFoundryAccount = reuseFoundryAccount || !empty(foundryAccountNameOverride) || empty(foundryInferenceEndpoint)
+var createFoundryResource = hasFoundryAccount && !reuseFoundryAccount
+var createEnvironment = empty(existingEnvironmentId)
+
+// Existing references select the same roots in both modes; explicit dependencies order fresh creation.
+resource uami 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' existing = {
+  name: uamiName
+}
 
 // 1. User-Assigned Managed Identity (Passwordless Auth for Foundry, Translator, Blob, and ACR)
-resource uami 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = {
+resource newUami 'Microsoft.ManagedIdentity/userAssignedIdentities@2023-01-31' = if (!reuseRuntimeIdentity) {
   name: uamiName
   location: location
 }
 
+resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
+  name: foundryName
+}
+
 // 1b. Microsoft Foundry (Azure AI Services multi-service account: Models + OpenAI + Translator)
-resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' = if (createFoundryResource) {
+resource newFoundry 'Microsoft.CognitiveServices/accounts@2024-10-01' = if (createFoundryResource) {
   name: foundryName
   location: location
   kind: 'AIServices'
@@ -92,11 +170,14 @@ resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' = if (createF
     publicNetworkAccess: 'Enabled'
     disableLocalAuth: true
   }
+  dependsOn: [
+    newUami
+  ]
 }
 
 // 1c. Model Deployments inside the Microsoft Foundry resource (serialized with @batchSize(1))
 @batchSize(1)
-resource foundryModelDeployments 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = [for m in modelDeployments: if (createFoundryResource) {
+resource foundryModelDeployments 'Microsoft.CognitiveServices/accounts/deployments@2024-10-01' = [for m in modelDeployments: if (hasFoundryAccount && deployModels) {
   parent: foundry
   name: m.name
   sku: {
@@ -110,6 +191,9 @@ resource foundryModelDeployments 'Microsoft.CognitiveServices/accounts/deploymen
       version: m.modelVersion
     }
   }
+  dependsOn: [
+    newFoundry
+  ]
 }]
 
 // Grant UAMI "Cognitive Services User", "Cognitive Services OpenAI User", and "Azure AI User (Foundry)" on the provisioned Foundry resource
@@ -117,7 +201,7 @@ var cognitiveServicesUserRoleId = subscriptionResourceId('Microsoft.Authorizatio
 var cognitiveServicesOpenAiUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
 var foundryAiUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')
 
-resource foundryCogUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createFoundryResource) {
+resource foundryCogUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (hasFoundryAccount) {
   name: guid(resourceGroup().id, uami.id, cognitiveServicesUserRoleId)
   scope: foundry
   properties: {
@@ -125,9 +209,13 @@ resource foundryCogUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01'
     principalType: 'ServicePrincipal'
     roleDefinitionId: cognitiveServicesUserRoleId
   }
+  dependsOn: [
+    newFoundry
+    newUami
+  ]
 }
 
-resource foundryOpenAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createFoundryResource) {
+resource foundryOpenAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (hasFoundryAccount) {
   name: guid(resourceGroup().id, uami.id, cognitiveServicesOpenAiUserRoleId)
   scope: foundry
   properties: {
@@ -135,9 +223,13 @@ resource foundryOpenAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-
     principalType: 'ServicePrincipal'
     roleDefinitionId: cognitiveServicesOpenAiUserRoleId
   }
+  dependsOn: [
+    newFoundry
+    newUami
+  ]
 }
 
-resource foundryAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (createFoundryResource) {
+resource foundryAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (hasFoundryAccount) {
   name: guid(resourceGroup().id, uami.id, foundryAiUserRoleId)
   scope: foundry
   properties: {
@@ -145,21 +237,29 @@ resource foundryAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' 
     principalType: 'ServicePrincipal'
     roleDefinitionId: foundryAiUserRoleId
   }
+  dependsOn: [
+    newFoundry
+    newUami
+  ]
+}
+
+resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
+  name: effectiveAcrName
 }
 
 // 1d. Azure Container Registry (Provisioned automatically + AcrPull RBAC for UAMI)
-resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' = {
+resource newAcr 'Microsoft.ContainerRegistry/registries@2023-07-01' = if (!reuseRegistry) {
   name: effectiveAcrName
   location: location
   sku: {
     name: 'Basic'
   }
   properties: {
-    adminUserEnabled: true
+    adminUserEnabled: false
   }
 }
 
-var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '7f951dda-4ed3-4680-a7ca-43fe172d538d')
+var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', registryPullRoleDefinitionId)
 resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(acr.id, uami.id, acrPullRoleId)
   scope: acr
@@ -168,20 +268,41 @@ resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
     principalType: 'ServicePrincipal'
     roleDefinitionId: acrPullRoleId
   }
+  dependsOn: [
+    newAcr
+    newUami
+  ]
 }
 
+var foundrySubdomain = hasFoundryAccount
+  ? (reuseFoundryAccount ? (foundry.properties.?customSubDomainName ?? '') : foundryName)
+  : ''
+var foundryRootEndpoint = hasFoundryAccount
+  ? (!empty(foundrySubdomain) ? 'https://${foundrySubdomain}.services.ai.azure.com/' : foundry.properties.endpoint)
+  : ''
 var effectiveFoundryEndpoint = !empty(foundryInferenceEndpoint)
   ? foundryInferenceEndpoint
-  : 'https://${foundryName}.services.ai.azure.com/models'
+  : (!empty(foundryRootEndpoint)
+    ? '${foundryRootEndpoint}${endsWith(foundryRootEndpoint, '/') ? '' : '/'}models'
+    : '')
 var effectiveOpenAiEndpoint = !empty(azureOpenAiEndpoint)
   ? azureOpenAiEndpoint
-  : 'https://${foundryName}.openai.azure.com/'
+  : (!empty(foundrySubdomain) ? 'https://${foundrySubdomain}.openai.azure.com/' : foundryRootEndpoint)
 var effectiveTranslatorEndpoint = !empty(translatorEndpoint)
   ? translatorEndpoint
-  : 'https://${foundryName}.cognitiveservices.azure.com/'
+  : (!empty(foundrySubdomain) ? 'https://${foundrySubdomain}.cognitiveservices.azure.com/' : foundryRootEndpoint)
+var effectiveContentUnderstandingEndpoint = !empty(contentUnderstandingEndpoint)
+  ? contentUnderstandingEndpoint
+  : foundryRootEndpoint
+var effectivePublicOrigin = !empty(publicOrigin) ? publicOrigin : 'https://${appName}.${cae.properties.defaultDomain}'
+var effectiveEnvironmentId = !empty(existingEnvironmentId) ? existingEnvironmentId : cae.id
+
+resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' existing = {
+  name: storageName
+}
 
 // 2. Storage Account for Harness Profiles & Split PDF Artifacts
-resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+resource newStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = if (!reuseStorageAccount) {
   name: storageName
   location: location
   sku: {
@@ -195,50 +316,94 @@ resource storage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
   }
 }
 
-resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = {
+resource blobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' existing = {
   parent: storage
   name: 'default'
 }
 
-resource runContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+resource newBlobService 'Microsoft.Storage/storageAccounts/blobServices@2023-05-01' = if (!reuseStorageAccount) {
+  parent: storage
+  name: 'default'
+  dependsOn: [
+    newStorage
+  ]
+}
+
+resource runContainer 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (!contains(existingBlobContainers, 'ask-ai-runs')) {
   parent: blobService
   name: 'ask-ai-runs'
   properties: {
     publicAccess: 'None'
   }
+  dependsOn: [
+    newBlobService
+  ]
 }
 
-resource identityKeys 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = {
+resource identityKeys 'Microsoft.Storage/storageAccounts/blobServices/containers@2023-05-01' = if (!contains(existingBlobContainers, 'identity-keys')) {
   parent: blobService
   name: 'identity-keys'
   properties: {
     publicAccess: 'None'
   }
+  dependsOn: [
+    newBlobService
+  ]
 }
 
-resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = {
+resource queueService 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' existing = {
   parent: storage
   name: 'default'
 }
 
-resource dispatchQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+resource newQueueService 'Microsoft.Storage/storageAccounts/queueServices@2023-05-01' = if (!reuseStorageAccount) {
+  parent: storage
+  name: 'default'
+  dependsOn: [
+    newStorage
+  ]
+}
+
+resource dispatchQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' existing = {
   parent: queueService
   name: 'ask-ai'
 }
 
-resource poisonQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+resource newDispatchQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = if (!contains(existingQueues, 'ask-ai')) {
   parent: queueService
-  name: 'ask-ai-poison'
+  name: 'ask-ai'
+  dependsOn: [
+    newQueueService
+  ]
 }
 
-resource documentQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+resource poisonQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = if (!contains(existingQueues, 'ask-ai-poison')) {
+  parent: queueService
+  name: 'ask-ai-poison'
+  dependsOn: [
+    newQueueService
+  ]
+}
+
+resource documentQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' existing = {
   parent: queueService
   name: 'document-jobs'
 }
 
-resource documentPoisonQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = {
+resource newDocumentQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = if (!contains(existingQueues, 'document-jobs')) {
+  parent: queueService
+  name: 'document-jobs'
+  dependsOn: [
+    newQueueService
+  ]
+}
+
+resource documentPoisonQueue 'Microsoft.Storage/storageAccounts/queueServices/queues@2023-05-01' = if (!contains(existingQueues, 'document-jobs-poison')) {
   parent: queueService
   name: 'document-jobs-poison'
+  dependsOn: [
+    newQueueService
+  ]
 }
 
 resource storageQueueRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -249,9 +414,17 @@ resource storageQueueRole 'Microsoft.Authorization/roleAssignments@2022-04-01' =
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '974c5e8b-45b9-4653-ba55-5f855dd0fb88')
   }
+  dependsOn: [
+    newStorage
+    newUami
+  ]
 }
 
-resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
+resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' existing = {
+  name: keyVaultName
+}
+
+resource newKeyVault 'Microsoft.KeyVault/vaults@2023-07-01' = if (!reuseKeyVault) {
   name: keyVaultName
   location: location
   properties: {
@@ -267,7 +440,12 @@ resource keyVault 'Microsoft.KeyVault/vaults@2023-07-01' = {
   }
 }
 
-resource identityEncryptionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
+resource identityEncryptionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' existing = {
+  parent: keyVault
+  name: 'docintel-identity'
+}
+
+resource newIdentityEncryptionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = if (!reuseIdentityKey) {
   parent: keyVault
   name: 'docintel-identity'
   properties: {
@@ -293,6 +471,9 @@ resource identityEncryptionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = {
       ]
     }
   }
+  dependsOn: [
+    newKeyVault
+  ]
 }
 
 resource identityKeyRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
@@ -303,6 +484,11 @@ resource identityKeyRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
     principalType: 'ServicePrincipal'
     roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'e147488a-f6f5-4113-8e2d-b22465e65bf6')
   }
+  dependsOn: [
+    newIdentityEncryptionKey
+    newKeyVault
+    newUami
+  ]
 }
 
 // Storage Blob Data Contributor role for UAMI
@@ -315,10 +501,18 @@ resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-
     principalType: 'ServicePrincipal'
     roleDefinitionId: storageBlobDataContributorRoleId
   }
+  dependsOn: [
+    newStorage
+    newUami
+  ]
+}
+
+resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' existing = {
+  name: cosmosAccountName
 }
 
 // 2b. Serverless Azure Cosmos DB (Shared 'harnesses' and 'jobs' containers partitioned by /tenantId)
-resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
+resource newCosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = if (!reuseCosmosAccount) {
   name: cosmosAccountName
   location: location
   kind: 'GlobalDocumentDB'
@@ -339,7 +533,12 @@ resource cosmosAccount 'Microsoft.DocumentDB/databaseAccounts@2024-05-15' = {
   }
 }
 
-resource cosmosDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024-05-15' = {
+resource cosmosDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024-05-15' existing = {
+  parent: cosmosAccount
+  name: cosmosDatabaseName
+}
+
+resource newCosmosDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024-05-15' = if (!reuseCosmosDatabase) {
   parent: cosmosAccount
   name: cosmosDatabaseName
   properties: {
@@ -347,9 +546,12 @@ resource cosmosDatabase 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases@2024
       id: cosmosDatabaseName
     }
   }
+  dependsOn: [
+    newCosmosAccount
+  ]
 }
 
-resource harnessesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = {
+resource harnessesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = if (!contains(existingCosmosContainers, 'harnesses')) {
   parent: cosmosDatabase
   name: 'harnesses'
   properties: {
@@ -363,9 +565,12 @@ resource harnessesContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/
       }
     }
   }
+  dependsOn: [
+    newCosmosDatabase
+  ]
 }
 
-resource jobsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = {
+resource jobsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = if (!contains(existingCosmosContainers, 'jobs')) {
   parent: cosmosDatabase
   name: 'jobs'
   properties: {
@@ -379,10 +584,13 @@ resource jobsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/conta
       }
     }
   }
+  dependsOn: [
+    newCosmosDatabase
+  ]
 }
 
 // Cosmos DB Built-in Data Contributor Role Assignment for UAMI
-resource ocrUsageContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = {
+resource ocrUsageContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = if (!contains(existingCosmosContainers, 'ocr-usage')) {
   parent: cosmosDatabase
   name: 'ocr-usage'
   properties: {
@@ -396,10 +604,13 @@ resource ocrUsageContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/c
       }
     }
   }
+  dependsOn: [
+    newCosmosDatabase
+  ]
 }
 
 var cosmosDataContributorRoleId = '${cosmosAccount.id}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002'
-resource reviewsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = {
+resource reviewsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers@2024-05-15' = if (!contains(existingCosmosContainers, 'review-sessions')) {
   parent: cosmosDatabase
   name: 'review-sessions'
   properties: {
@@ -413,6 +624,9 @@ resource reviewsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/co
       }
     }
   }
+  dependsOn: [
+    newCosmosDatabase
+  ]
 }
 
 resource cosmosSqlRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {
@@ -423,10 +637,18 @@ resource cosmosSqlRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleA
     principalId: uami.properties.principalId
     scope: cosmosAccount.id
   }
+  dependsOn: [
+    newCosmosAccount
+    newUami
+  ]
 }
 
 // 3. Log Analytics + Container Apps Environment
-resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
+resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' existing = {
+  name: logAnalyticsName
+}
+
+resource newLogAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = if (createEnvironment) {
   name: logAnalyticsName
   location: location
   properties: {
@@ -437,7 +659,12 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2023-09-01' = {
   }
 }
 
-resource cae 'Microsoft.App/managedEnvironments@2024-03-01' = {
+resource cae 'Microsoft.App/managedEnvironments@2024-03-01' existing = {
+  scope: resourceGroup(caeSubscriptionId, caeResourceGroupName)
+  name: caeName
+}
+
+resource newCae 'Microsoft.App/managedEnvironments@2024-03-01' = if (createEnvironment) {
   name: caeName
   location: location
   properties: {
@@ -449,6 +676,9 @@ resource cae 'Microsoft.App/managedEnvironments@2024-03-01' = {
       }
     }
   }
+  dependsOn: [
+    newLogAnalytics
+  ]
 }
 
 // 4. Azure Container App (DocIntel Agent Harness Studio + Async Worker)
@@ -462,7 +692,7 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
     }
   }
   properties: {
-    environmentId: cae.id
+    environmentId: effectiveEnvironmentId
     configuration: {
       activeRevisionsMode: 'Single'
       ingress: {
@@ -514,9 +744,7 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
             }
             {
               name: 'AzureAI__ContentUnderstandingEndpoint'
-              value: !empty(contentUnderstandingEndpoint)
-                ? contentUnderstandingEndpoint
-                : 'https://${foundryName}.services.ai.azure.com/'
+              value: effectiveContentUnderstandingEndpoint
             }
             {
               name: 'AzureAI__CosmosEndpoint'
@@ -556,7 +784,7 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
             }
             {
               name: 'Identity__PublicOrigin'
-              value: 'https://${appName}.${cae.properties.defaultDomain}'
+              value: effectivePublicOrigin
             }
             {
               name: 'Identity__DataProtectionBlobUri'
@@ -635,6 +863,15 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
     }
   }
   dependsOn: [
+    newUami
+    newCae
+    acrPullRole
+    foundryCogUserRole
+    foundryOpenAiUserRole
+    foundryAiUserRole
+    foundryModelDeployments
+    newDispatchQueue
+    newDocumentQueue
     runContainer
     identityKeys
     poisonQueue
@@ -643,19 +880,30 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
     storageQueueRole
     identityKeyRole
     cosmosSqlRoleAssignment
+    harnessesContainer
+    jobsContainer
     ocrUsageContainer
     reviewsContainer
   ]
 }
 
-output containerAppFqdn string = 'https://${appName}.${cae.properties.defaultDomain}'
+output containerAppFqdn string = effectivePublicOrigin
 output containerRegistryName string = acr.name
 output containerRegistryLoginServer string = acr.properties.loginServer
 output managedIdentityClientId string = uami.properties.clientId
 output managedIdentityPrincipalId string = uami.properties.principalId
+output managedIdentityResourceId string = uami.id
 output storageAccountName string = storage.name
+output storageBlobEndpoint string = storage.properties.primaryEndpoints.blob
+output storageQueueEndpoint string = storage.properties.primaryEndpoints.queue
 output cosmosAccountName string = cosmosAccount.name
+output cosmosEndpoint string = cosmosAccount.properties.documentEndpoint
 output foundryEndpoint string = effectiveFoundryEndpoint
+output foundryResourceId string = hasFoundryAccount ? foundry.id : ''
+output azureOpenAiEndpoint string = effectiveOpenAiEndpoint
+output contentUnderstandingEndpoint string = effectiveContentUnderstandingEndpoint
+output translatorEndpoint string = effectiveTranslatorEndpoint
+output containerEnvironmentId string = effectiveEnvironmentId
 output identityKeyIdentifier string = '${keyVault.properties.vaultUri}keys/${identityEncryptionKey.name}'
-output requiredWebRedirectUri string = 'https://${appName}.${cae.properties.defaultDomain}/signin-oidc'
+output requiredWebRedirectUri string = '${effectivePublicOrigin}/signin-oidc'
 output requiredFederationSubject string = uami.properties.principalId

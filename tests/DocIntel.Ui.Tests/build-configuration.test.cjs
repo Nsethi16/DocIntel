@@ -134,17 +134,23 @@ test('the actual identity preflight accepts complete personal or legacy settings
 });
 
 test('the actual deployment command passes the selected subscription resources as quoted CLI arguments', () => {
-  const script = workflow.match(/name: Deploy the validated image\r?\n\s+run: \|\r?\n([\s\S]*)$/)[1]
+  const script = workflow.match(/name: Deploy the validated image\r?\n\s+run: \|\r?\n([\s\S]*?)(?=\r?\n      - name:|$)/)[1]
     .replace(/^ {10}/gm, '');
-  const result = runBash('az() { printf "%s\\n" "$@"; }\n' + script, {
+  const environment = {
     AZURE_CONTAINER_REGISTRY: 'personalregistry', AZURE_CONTAINER_APP_NAME: 'personal-docintel',
-    AZURE_RESOURCE_GROUP: 'personal-rg', GITHUB_SHA: 'fixture-sha'
-  });
+    AZURE_RESOURCE_GROUP: 'personal-rg', GITHUB_SHA: 'fixture-sha', DOCINTEL_CONTAINER_NAME: ''
+  };
+  const result = runBash('az() { printf "%s\\n" "$@"; }\n' + script, environment);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.stdout.trim().split(/\r?\n/), [
     'containerapp', 'update', '--name', 'personal-docintel', '--resource-group', 'personal-rg',
     '--image', 'personalregistry.azurecr.io/personal-docintel:fixture-sha'
   ]);
+  const named = runBash('az() { printf "%s\\n" "$@"; }\n' + script, {
+    ...environment, DOCINTEL_CONTAINER_NAME: 'docintel-api'
+  });
+  assert.equal(named.status, 0, named.stderr);
+  assert.deepEqual(named.stdout.trim().split(/\r?\n/).slice(-2), ['--container-name', 'docintel-api']);
 });
 
 test('feature-branch validation builds the Linux image without registry or Azure access', () => {
