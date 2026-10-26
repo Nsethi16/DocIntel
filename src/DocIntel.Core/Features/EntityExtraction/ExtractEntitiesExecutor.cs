@@ -31,13 +31,11 @@ public sealed class ExtractEntitiesExecutor : Executor<SplittingState, Splitting
                 "additionalProperties": false,
                 "required": ["name", "value", "category", "confidence"],
                 "properties": {
-                  "name": { "type": "string", "minLength": 1 },
-                  "value": { "type": "string", "minLength": 1 },
-                  "category": { "type": "string", "minLength": 1 },
+                  "name": { "type": "string", "description": "A non-empty entity label." },
+                  "value": { "type": "string", "description": "A non-empty value present in the document." },
+                  "category": { "type": "string", "description": "A non-empty category, or General." },
                   "confidence": {
                     "type": "number",
-                    "minimum": 0,
-                    "maximum": 1,
                     "description": "An uncalibrated confidence signal from 0 to 1, never a percentage from 0 to 100."
                   }
                 }

@@ -13,7 +13,7 @@ namespace DocIntel.Tests;
 public sealed class EntityExtractionContractTests
 {
     [Fact]
-    public async Task The_Requested_Schema_Matches_The_Nonempty_Value_And_Confidence_Validation_Contract()
+    public async Task The_Requested_Schema_Uses_The_Provider_Subset_And_States_The_Validation_Contract()
     {
         // Arrange
         ChatOptions? settings = null;
@@ -41,11 +41,13 @@ public sealed class EntityExtractionContractTests
         foreach (var field in new[] { "name", "value", "category" })
         {
             Assert.Equal("string", properties.GetProperty(field).GetProperty("type").GetString());
-            Assert.Equal(1, properties.GetProperty(field).GetProperty("minLength").GetInt32());
+            Assert.Contains("non-empty", properties.GetProperty(field).GetProperty("description").GetString());
+            Assert.False(properties.GetProperty(field).TryGetProperty("minLength", out _));
         }
         var confidence = properties.GetProperty("confidence");
-        Assert.Equal(0, confidence.GetProperty("minimum").GetInt32());
-        Assert.Equal(1, confidence.GetProperty("maximum").GetInt32());
+        Assert.Contains("from 0 to 1", confidence.GetProperty("description").GetString());
+        Assert.False(confidence.TryGetProperty("minimum", out _));
+        Assert.False(confidence.TryGetProperty("maximum", out _));
         Assert.Contains("Omit requested entities that are absent", settings.Instructions);
         Assert.Contains("""{"entities":[]}""", settings.Instructions);
         Assert.Contains("never a percentage such as 95", settings.Instructions);
