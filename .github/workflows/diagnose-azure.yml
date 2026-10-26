@@ -81,6 +81,7 @@ jobs:
             ConvertFrom-Json -Depth 100)
           if (-not $replicas.Count) { throw 'The latest revision has no active replicas.' }
           $errorTypes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+          $runtimeErrors = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
           $knownTypes = @('InvalidOperationException', 'NotSupportedException', 'CosmosException',
             'RequestFailedException', 'AuthenticationFailedException', 'CredentialUnavailableException',
             'ClientResultException', 'JsonException', 'HttpRequestException', 'IOException',
@@ -98,10 +99,32 @@ jobs:
                 $safeType = if ($type -cin $knownTypes) { $type } else { 'UnclassifiedException' }
                 $errorTypes.Add($safeType) | Out-Null
               }
+              $runtime = [regex]::Match($line,
+                '(?<kind>Request|Document) [A-Za-z0-9:._-]{1,160} failed with (?<type>[A-Za-z_][A-Za-z0-9_]{0,79}); code (?<code>[0-9]{1,10}); site (?<site>[A-Za-z0-9_+.<>,]{1,200})\.')
+              if ($runtime.Success) {
+                $type = $runtime.Groups['type'].Value
+                $safeType = if ($type -cin $knownTypes) { $type } else { 'UnclassifiedException' }
+                $site = $runtime.Groups['site'].Value
+                $component = switch -Regex ($site) {
+                  'Blob|BlockBlob' { 'BlobStorage'; break }
+                  'Queue' { 'QueueStorage'; break }
+                  'Cosmos|ContainerCore|DocumentClient' { 'CosmosStorage'; break }
+                  'ContentUnderstanding' { 'ContentUnderstanding'; break }
+                  'OpenAI|ChatClient|ChatCompletion' { 'LanguageModel'; break }
+                  'Pdf|PDF' { 'PdfValidation'; break }
+                  default { 'Other' }
+                }
+                $runtimeErrors.Add(('{0}: {1}; code {2}; component {3}' -f
+                  $runtime.Groups['kind'].Value, $safeType, $runtime.Groups['code'].Value, $component)) | Out-Null
+              }
             }
           }
           if (-not $errorTypes.Count) {
             Write-Warning 'No startup provider error type was found in the bounded log sample. No diagnosis is assumed.'
           }
           foreach ($errorType in $errorTypes) { Write-Output ('Startup provider error type: ' + $errorType) }
+          if (-not $runtimeErrors.Count) {
+            Write-Warning 'No request or document failure was found in the bounded log sample. No upload diagnosis is assumed.'
+          }
+          foreach ($runtimeError in $runtimeErrors) { Write-Output ('Runtime failure: ' + $runtimeError) }
           Write-Output 'Read-only diagnostics completed. No resources, settings, permissions or tenant profiles were changed.'

@@ -62,6 +62,9 @@ function az {
                 throw 'Logs must target the selected revision/container/replica and remain bounded.'
             }
             Write-Output '{"Log":"customer-private-value should never be printed"}'
+            Write-Output '{"Log":"Request private-correlation-id failed with RequestFailedException; code 403; site BlobRestClient.UploadAsync."}'
+            Write-Output '{"Log":"Document private-job-id failed with RequestFailedException; code 404; site ContentUnderstandingRestClient.AnalyzeBinaryAsync."}'
+            Write-Output '{"Log":"Request secret-id failed with CustomerException; code 500; site SensitiveCustomerIdentifier.Read."}'
             $type = if ($global:DocIntelDiagnosticsFixture.scenario -eq 'unknown-type') {
                 'SensitiveCustomerIdentifier'
             } else { 'NotSupportedException' }
@@ -96,6 +99,12 @@ try {
     }
     if ($output -match 'private-endpoint|private-secret-reference|customer-private-value|UnrelatedPrivateSetting') {
         throw 'Diagnostics leaked raw configuration, logs or customer data.'
+    }
+    if ($output -notmatch 'Runtime failure: Request: RequestFailedException; code 403; component BlobStorage' -or
+        $output -notmatch 'Runtime failure: Document: RequestFailedException; code 404; component ContentUnderstanding' -or
+        $output -notmatch 'Runtime failure: Request: UnclassifiedException; code 500; component Other' -or
+        $output -match 'private-correlation-id|private-job-id|secret-id|SensitiveCustomerIdentifier|CustomerException') {
+        throw 'Runtime error output must report only known types, numeric codes and fixed component categories.'
     }
     $logs = @($global:DocIntelDiagnosticsFixture.calls | Where-Object { $_[0..1] -join ' ' -eq 'containerapp logs' })
     if ($logs.Count -ne 2) { throw 'Each sampled replica must be inspected.' }

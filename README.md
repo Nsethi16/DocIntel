@@ -221,7 +221,8 @@ the app, and checks the exact image/latest-ready revision and `/health/ready` be
 Setup and release serialize on the same Azure target so they cannot race.
 
 If a release fails readiness, **Actions > Diagnose DocIntel Azure > Run workflow > main**
-reads the latest revision, endpoint-presence flags and bounded startup error types. It does not
+reads the latest revision, endpoint-presence flags, bounded startup error types and sanitized
+request/document failure categories. It does not
 deploy, change settings or print raw application logs, endpoint values, secrets or tenant data.
 A successful diagnostics run means evidence was collected, not that application readiness passed.
 
