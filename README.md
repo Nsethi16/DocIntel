@@ -246,6 +246,10 @@ Ask AI's `search_documents` tool advertises a closed query schema with page size
 1-20, non-null entity arrays, and explicit filter/token limits. Unused filters are null and unused
 entities are `[]`. Tenant identity and document access scopes remain server-owned; invalid tool
 arguments fail before storage access and cannot be reported as successful empty searches.
+Search results are references, not citation evidence. Ask AI must inspect each document it lists
+or uses for factual claims, then cite the inspection's server-issued `evidenceId`, never its `jobId`.
+The final answer schema is closed and non-null; unknown citations, missing evidence and mismatched
+inline markers have distinct safe failure codes and never produce a fabricated answer.
 
 For a saved failed Ask AI question, **Diagnose saved Ask AI run** can inspect only status and progress
 counts. Its explicit **Replay** mode requires `REPLAY` confirmation and may incur model usage charges.

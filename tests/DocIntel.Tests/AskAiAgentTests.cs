@@ -381,7 +381,40 @@ public sealed class AskAiAgentTests
         Assert.DoesNotContain("\"sql\"", schema.GetRawText(), StringComparison.OrdinalIgnoreCase);
         Assert.Contains("pageSize must be 1 through 20", captured.Instructions);
         Assert.Contains("entities=[]", captured.Instructions);
+        Assert.Contains("normally starting with sliceIndex=0 and textOffset=0", captured.Instructions);
+        Assert.Contains("A jobId identifies a document; it is NEVER an evidenceId", captured.Instructions);
+        Assert.Contains("not citation evidence", function.Description);
+        var answer = Assert.IsType<ChatResponseFormatJson>(captured.ResponseFormat).Schema!.Value;
+        Assert.False(answer.GetProperty("additionalProperties").GetBoolean());
+        var answerProperties = answer.GetProperty("properties");
+        Assert.Equal("string", answerProperties.GetProperty("kind").GetProperty("type").GetString());
+        Assert.Equal(new[] { "Conversation", "Clarification", "NoEvidence", "DocumentAnswer" },
+            answerProperties.GetProperty("kind").GetProperty("enum").EnumerateArray()
+                .Select(value => Assert.IsType<string>(value.GetString())).ToArray());
+        Assert.Equal("array", answerProperties.GetProperty("evidenceIds").GetProperty("type").GetString());
+        Assert.Contains("Never jobId values", answerProperties.GetProperty("evidenceIds")
+            .GetProperty("description").GetString());
         store.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task A_Job_Id_From_Search_Cannot_Be_Used_As_A_Citation_Without_Inspection()
+    {
+        // Arrange
+        var store = await CreateDocumentStoreAsync();
+        var orchestrator = CreateOrchestrator(store,
+            SearchCall(), Final("DocumentAnswer", "A matching document [1].", "source"));
+        var run = CreateRun("List matching documents");
+
+        // Act
+        var failure = await Assert.ThrowsAsync<InvalidOperationException>(() => orchestrator.ExecuteRunAsync(run));
+
+        // Assert
+        Assert.Equal("UnknownCitation", AskAiFailureDiagnostics.GetCode(failure));
+        Assert.Single(run.Steps, step => step.StepName == "search_documents");
+        Assert.DoesNotContain(run.Steps, step => step.StepName == "inspect_document_slice");
+        Assert.Null(run.Answer);
+        Assert.Empty(run.Citations);
     }
 
     [Theory]

@@ -110,6 +110,7 @@ public sealed class AskAiRunTests
     [InlineData("""{"kind":"DocumentAnswer","answer":"A claim without evidence.","evidenceIds":[]}""", "MissingEvidence")]
     [InlineData("""{"kind":"NoEvidence","answer":"No matches [1].","evidenceIds":[]}""", "CitationMismatch")]
     [InlineData("""{"kind":"Conversation","answer":"","evidenceIds":[]}""", "InvalidModelAnswer")]
+    [InlineData("""{"kind":"DocumentAnswer","answer":"A document [1].","evidenceIds":["invented-id"]}""", "UnknownCitation")]
     public async Task Known_Answer_Validation_Failures_Persist_Specific_Safe_Codes(string response, string code)
     {
         // Arrange

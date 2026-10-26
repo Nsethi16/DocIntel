@@ -18,6 +18,7 @@ public sealed class AskAiDiagnosticTests
     [InlineData("""{"kind":"DocumentAnswer","answer":"Unsupported claim.","evidenceIds":[]}""", "MissingEvidence")]
     [InlineData("""{"kind":"NoEvidence","answer":"No matches [1].","evidenceIds":[]}""", "CitationMismatch")]
     [InlineData("""{"kind":"Conversation","answer":"","evidenceIds":[]}""", "InvalidModelAnswer")]
+    [InlineData("""{"kind":"DocumentAnswer","answer":"A document [1].","evidenceIds":["invented-id"]}""", "UnknownCitation")]
     public async Task Replay_Classifies_Failures_Without_Printing_Content_Or_Modifying_The_Saved_Run(
         string response, string code)
     {

@@ -31,7 +31,7 @@ public static class AskAiRunDiagnostic
         if (source.TenantId != tenantId || source.RunId != runId)
             throw new InvalidDataException("The stored diagnostic run does not match the selected tenant/run.");
         var code = source.ErrorCode is "ExecutionFailed" or "MissingEvidence" or "CitationMismatch" or
-            "InvalidModelAnswer" or "InvalidToolArguments" or "RetrievalFailed" or "ToolCallLimit" or
+            "InvalidModelAnswer" or "UnknownCitation" or "InvalidToolArguments" or "RetrievalFailed" or "ToolCallLimit" or
             "EvidenceLimit" or "TimedOut" or "AccessRevoked" ? source.ErrorCode : "StoredFailure";
         await WriteAsync(output, "Stored", source, code);
         if (!replay) return 0;

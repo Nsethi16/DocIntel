@@ -469,6 +469,28 @@ public static class AskAiPromptBuilder
 /// </summary>
 public sealed class AskAiOrchestrator
 {
+    private static readonly JsonElement AnswerSchema = JsonSerializer.Deserialize<JsonElement>("""
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "answer", "evidenceIds"],
+          "properties": {
+            "kind": {
+              "type": "string",
+              "enum": ["Conversation", "Clarification", "NoEvidence", "DocumentAnswer"]
+            },
+            "answer": {
+              "type": "string",
+              "description": "A non-empty Markdown answer. Every document-specific answer, including a document list, cites inspected evidence with [1], [2], etc."
+            },
+            "evidenceIds": {
+              "type": "array",
+              "description": "Only exact evidenceId values returned by inspect_document_slice, in citation order. Never jobId values, filenames or invented IDs. Other answer kinds use [].",
+              "items": { "type": "string" }
+            }
+          }
+        }
+        """);
     private static readonly JsonElement SearchToolSchema = JsonSerializer.Deserialize<JsonElement>("""
         {
           "type": "object",
@@ -751,7 +773,9 @@ public sealed class AskAiOrchestrator
         {
             AIFunctionFactory.Create(SearchDocumentsAsync, "search_documents",
                 "Search completed tenant documents. Conditions are ANDed. Follow continuation tokens; " +
-                "a single page is not a total count. Empty results mean no matches."),
+                "a single page is not a total count. Empty results mean no matches. " +
+                "Results are document references, not citation evidence. Before listing or describing a matching document, " +
+                "call inspect_document_slice with its jobId; never use a jobId as an evidenceId."),
             AIFunctionFactory.Create(InspectDocumentSliceAsync, "inspect_document_slice",
                 "Read one previously found document slice and receive a server evidenceId. " +
                 "Results include original text, insights, entities, structured data, and prompt-column outcomes. " +
@@ -774,6 +798,12 @@ public sealed class AskAiOrchestrator
                 Use [] for unused entities and null for unused searchText, documentType and continuationToken.
                 Start name-based searches with searchText and entities=[] unless exact entity labels are known.
                 Entity conditions are exact and ANDed; do not invent entity names or continuation tokens.
+                Search results alone are not citation evidence. For a document list as well as a factual answer,
+                inspect each document you include using inspect_document_slice with the returned jobId,
+                normally starting with sliceIndex=0 and textOffset=0. Use the exact evidenceId returned by inspection.
+                A jobId identifies a document; it is NEVER an evidenceId. Do not invent evidence IDs from search results.
+                Example sequence: search_documents, then inspect_document_slice, then a DocumentAnswer with
+                answer="A matching document is available [1]." and evidenceIds=["e1"], only if inspection returned e1.
                 Do not generate or execute raw SQL. Never claim a task, verification, or tool action was completed
                 unless its result supports the claim. No matches must not be replaced by unrelated documents.
                 Keep currencies separate. Distinguish source text from derived AI results. Disclose pagination
@@ -793,7 +823,9 @@ public sealed class AskAiOrchestrator
             Tools = tools.Select(tool => (AITool)new GuardedFunction(
                 tool, CheckBudget, exception => retrievalFailure = exception,
                 tool.Name == "search_documents" ? SearchToolSchema : null)).ToList(),
-            ResponseFormat = ChatResponseFormat.ForJsonSchema<AgentAnswer>()
+            ResponseFormat = ChatResponseFormat.ForJsonSchema(AnswerSchema,
+                schemaName: "ask_ai_answer",
+                schemaDescription: "A grounded answer using only inspected server-issued evidence IDs")
         };
         using var agentClient = new FunctionInvokingChatClient(chatClient)
         {
@@ -829,11 +861,12 @@ public sealed class AskAiOrchestrator
         if (answer is null || answer.Kind is null || !Enum.IsDefined(answer.Kind.Value) ||
             String.IsNullOrWhiteSpace(answer.Answer) ||
             answer.Answer.Length > 64_000 || answer.EvidenceIds is null ||
-            answer.EvidenceIds.Distinct(StringComparer.Ordinal).Count() != answer.EvidenceIds.Count ||
-            answer.EvidenceIds.Any(id => !evidence.ContainsKey(id)))
+            answer.EvidenceIds.Distinct(StringComparer.Ordinal).Count() != answer.EvidenceIds.Count)
         {
             throw new InvalidOperationException("The model returned an invalid answer or unrecognized citation.");
         }
+        if (answer.EvidenceIds.Any(id => !evidence.ContainsKey(id)))
+            throw new InvalidOperationException("The model cited evidence that was not inspected.");
         if ((answer.Kind == AgentAnswerKind.DocumentAnswer && answer.EvidenceIds.Count == 0) ||
             (answer.Kind != AgentAnswerKind.DocumentAnswer && answer.EvidenceIds.Count > 0))
         {
