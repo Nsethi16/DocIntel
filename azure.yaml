@@ -1,7 +1,50 @@
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+#
+# Deploy DocIntel into any customer's own Azure subscription with a single
+# `azd up`. Provisioning is driven by the hardened infra/main.bicep (managed
+# identity, Key Vault envelope encryption, passwordless storage/Cosmos). The
+# Entra app registrations, delegated scope, redirect URI, managed-identity
+# federation and the first tenant-admin grant are prepared automatically by the
+# pre/post-provision hooks below, using the credentials of the admin running
+# `azd up`. See docs/Deploy-to-customer-Azure-with-azd.md.
 name: docintel-agent-harness
+metadata:
+  template: docintel-agent-harness@1.0.0
+
+infra:
+  provider: bicep
+  path: infra
+  module: main
+
 services:
-  app:
-    language: dotnet
-    project: ./src/DocIntel.AppHost/DocIntel.AppHost.csproj
+  api:
+    project: .
+    language: docker
     host: containerapp
+    docker:
+      path: ./Dockerfile
+      context: .
+
+hooks:
+  preprovision:
+    posix:
+      shell: pwsh
+      run: infra/hooks/preprovision.ps1
+      interactive: true
+      continueOnError: false
+    windows:
+      shell: pwsh
+      run: infra/hooks/preprovision.ps1
+      interactive: true
+      continueOnError: false
+  postprovision:
+    posix:
+      shell: pwsh
+      run: infra/hooks/postprovision.ps1
+      interactive: true
+      continueOnError: false
+    windows:
+      shell: pwsh
+      run: infra/hooks/postprovision.ps1
+      interactive: true
+      continueOnError: false

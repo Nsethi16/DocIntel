@@ -1,0 +1,27 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "environmentName": {
+      "value": "${AZURE_ENV_NAME}"
+    },
+    "location": {
+      "value": "${AZURE_LOCATION}"
+    },
+    "directoryTenantId": {
+      "value": "${DIRECTORY_TENANT_ID}"
+    },
+    "webClientId": {
+      "value": "${WEB_CLIENT_ID}"
+    },
+    "apiClientId": {
+      "value": "${API_CLIENT_ID}"
+    },
+    "adminObjectId": {
+      "value": "${DOCINTEL_ADMIN_OBJECT_ID}"
+    },
+    "appTenantSlug": {
+      "value": "${DOCINTEL_APP_TENANT}"
+    }
+  }
+}

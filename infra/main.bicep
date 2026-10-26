@@ -22,6 +22,12 @@ param apiClientId string
 @secure()
 param identityGrants object = {}
 
+@description('Deploying admin directory object ID used to seed the first tenant admin when identityGrants is empty (azd path). Empty seeds no user.')
+param adminObjectId string = ''
+
+@description('Application tenant slug for the seeded admin membership. Lowercase, 1-128 chars.')
+param appTenantSlug string = 'default'
+
 @description('Container image to deploy (e.g. <acr>.azurecr.io/docintel-api:latest).')
 param containerImage string = 'mcr.microsoft.com/dotnet/samples:aspnetapp'
 
@@ -132,6 +138,26 @@ var foundryName = !empty(foundryAccountNameOverride)
   : 'aif-docintel-${environmentName}-${uniqueSuffix}'
 var keyVaultName = !empty(keyVaultNameOverride) ? keyVaultNameOverride : 'kv-di-${take(environmentName, 3)}-${uniqueSuffix}'
 var effectiveAcrName = !empty(acrName) ? acrName : take('acrdocintel${environmentName}${uniqueSuffix}', 50)
+var seededAdminGrants = empty(adminObjectId) ? {} : {
+  Memberships: [
+    {
+      DirectoryTenantId: directoryTenantId
+      ObjectId: adminObjectId
+      ApplicationTenantId: appTenantSlug
+      Role: 'Admin'
+      AllDocuments: true
+      DocumentIds: []
+    }
+  ]
+  PlatformAdministrators: [
+    {
+      DirectoryTenantId: directoryTenantId
+      ObjectId: adminObjectId
+    }
+  ]
+}
+// Explicit identityGrants wins; otherwise seed the deploying admin when provided; otherwise seed nothing.
+var effectiveIdentityGrants = !empty(identityGrants) ? identityGrants : seededAdminGrants
 var hasFoundryAccount = reuseFoundryAccount || !empty(foundryAccountNameOverride) || empty(foundryInferenceEndpoint)
 var createFoundryResource = hasFoundryAccount && !reuseFoundryAccount
 var createEnvironment = empty(existingEnvironmentId)
@@ -685,6 +711,9 @@ resource newCae 'Microsoft.App/managedEnvironments@2024-03-01' = if (createEnvir
 resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployApplication) {
   name: appName
   location: location
+  tags: {
+    'azd-service-name': 'api'
+  }
   identity: {
     type: 'UserAssigned'
     userAssignedIdentities: {
@@ -796,7 +825,7 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
             }
             {
               name: 'DOCINTEL_IDENTITY_GRANTS'
-              value: string(identityGrants)
+              value: string(effectiveIdentityGrants)
             }
             {
               name: 'AskAi__RecoveryPollSeconds'
@@ -907,3 +936,8 @@ output containerEnvironmentId string = effectiveEnvironmentId
 output identityKeyIdentifier string = '${keyVault.properties.vaultUri}keys/${identityEncryptionKey.name}'
 output requiredWebRedirectUri string = '${effectivePublicOrigin}/signin-oidc'
 output requiredFederationSubject string = uami.properties.principalId
+
+// azd integration outputs (consumed by `azd deploy` and the provisioning hooks).
+output AZURE_CONTAINER_REGISTRY_ENDPOINT string = acr.properties.loginServer
+output AZURE_RESOURCE_GROUP string = resourceGroup().name
+output AZURE_CONTAINER_APP_NAME string = appName

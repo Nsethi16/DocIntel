@@ -137,6 +137,29 @@ If NuGet.org fails with a TLS/certificate/network error, fix the machine's netwo
 or run validation on an approved network/runner. Do not disable certificate validation, package
 auditing or warnings, add an unknown mirror, or silently use a private-feed fallback.
 
+### Deploy to any customer's Azure with `azd up` (fastest path)
+
+To stand DocIntel up in a **customer's own subscription and directory** without
+GitHub, use the Azure Developer CLI:
+
+```bash
+az login --tenant <your-directory-tenant-id>   # the hooks use az for Entra setup
+azd auth login
+azd up
+```
+
+`azd up` provisions the hardened `infra/main.bicep` stack (managed identity,
+Key Vault envelope encryption, passwordless storage/Cosmos, `gpt-5-mini`
+deployment, RBAC) and, in its pre/post-provision hooks, automatically prepares
+the `docintel-web` / `docintel-api` registrations, the `DocIntel.Access` scope,
+the HTTPS redirect URI, the managed-identity federated credential, and the
+first tenant-admin grant (seeded from the deploying admin). No client secrets
+or connection strings are deployed. Full prerequisites, knobs, and verification
+steps are in [docs/Deploy-to-customer-Azure-with-azd.md](docs/Deploy-to-customer-Azure-with-azd.md).
+
+Pick one path per environment: `azd up` here, or the GitHub workflows below —
+do not run both against the same target at once.
+
 ### Set up Azure from GitHub (recommended)
 
 Use **Actions > Set up DocIntel Azure** for infrastructure and runtime configuration, then
