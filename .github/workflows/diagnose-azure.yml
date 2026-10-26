@@ -82,6 +82,11 @@ jobs:
           if (-not $replicas.Count) { throw 'The latest revision has no active replicas.' }
           $errorTypes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
           $runtimeErrors = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+          $failedStages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+          $knownStages = @('ExtractPageLayoutsExecutor', 'DetectSliceBoundariesExecutor', 'WritePdfSlicesExecutor',
+            'IdentifyDocumentsExecutor', 'TranslateDocumentsExecutor', 'GenerateDocumentInsightsExecutor',
+            'ExtractEntitiesExecutor', 'ExtractDocumentDataExecutor', 'EvaluatePromptColumnsExecutor',
+            'GroundExtractedValuesExecutor')
           $knownTypes = @('InvalidOperationException', 'NotSupportedException', 'CosmosException',
             'RequestFailedException', 'AuthenticationFailedException', 'CredentialUnavailableException',
             'ClientResultException', 'JsonException', 'HttpRequestException', 'IOException',
@@ -93,6 +98,13 @@ jobs:
               --container $container.name --type console --tail 300 --follow false `
               --format json --only-show-errors
             foreach ($line in $lines) {
+              $stage = [regex]::Match($line,
+                'Operation Executor\.(?<stage>[A-Za-z0-9_]{1,80}) failed after [0-9.]+ ms; error type (?<type>[A-Za-z0-9_]{1,80})\.')
+              if ($stage.Success -and $stage.Groups['stage'].Value -cin $knownStages) {
+                $type = $stage.Groups['type'].Value
+                $safeType = if ($type -cin $knownTypes) { $type } else { 'UnclassifiedException' }
+                $failedStages.Add($stage.Groups['stage'].Value + ': ' + $safeType) | Out-Null
+              }
               $match = [regex]::Match($line,
                 'Startup provider verification failed with (?<type>[A-Za-z_][A-Za-z0-9_]{0,79});')
               if ($match.Success) {
@@ -133,6 +145,7 @@ jobs:
             Write-Warning 'No request or document failure was found in the bounded log sample. No upload diagnosis is assumed.'
           }
           foreach ($runtimeError in $runtimeErrors) { Write-Output ('Runtime failure: ' + $runtimeError) }
+          foreach ($stage in $failedStages) { Write-Output ('Failed processing stage: ' + $stage) }
           $accounts = @(az cognitiveservices account list --resource-group $env:AZURE_RESOURCE_GROUP `
             --only-show-errors --output json | ConvertFrom-Json -Depth 100)
           $knownModels = @('gpt-5-mini', 'gpt-5.1', 'gpt-4o', 'Microsoft-Decision-1')

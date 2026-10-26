@@ -67,6 +67,8 @@ function az {
             Write-Output '{"Log":"Request secret-id failed with CustomerException; code 500; site SensitiveCustomerIdentifier.Read."}'
             Write-Output '{"Log":"Request private-correlation-id failed with InvalidOperationException; code 5385; site ThrowHelper.ThrowInvalidOperationException."}'
             Write-Output '{"Log":"Document private-job-id failed with InvalidDataException; code 5377; site <RecognizeAsync>d__11.MoveNext."}'
+            Write-Output '{"Log":"Operation Executor.ExtractPageLayoutsExecutor failed after 12.4 ms; error type InvalidDataException."}'
+            Write-Output '{"Log":"Operation Executor.PrivateCustomerIdentifier failed after 12.4 ms; error type CustomerException."}'
             $type = if ($global:DocIntelDiagnosticsFixture.scenario -eq 'unknown-type') {
                 'SensitiveCustomerIdentifier'
             } else { 'NotSupportedException' }
@@ -124,6 +126,8 @@ try {
         $output -notmatch 'Runtime failure: Request: UnclassifiedException; code 500; component Other' -or
         $output -notmatch 'site ThrowHelper.ThrowInvalidOperationException' -or
         $output -notmatch 'Document: InvalidDataException; code 5377; component ContentUnderstanding; site RecognizeAsync.MoveNext' -or
+        $output -notmatch 'Failed processing stage: ExtractPageLayoutsExecutor: InvalidDataException' -or
+        $output -match 'PrivateCustomerIdentifier' -or
         $output -match 'private-correlation-id|private-job-id|secret-id|SensitiveCustomerIdentifier|CustomerException') {
         throw 'Runtime error output must report only known types, numeric codes and fixed component categories.'
     }
