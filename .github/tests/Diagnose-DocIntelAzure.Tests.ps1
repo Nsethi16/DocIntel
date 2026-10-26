@@ -65,6 +65,7 @@ function az {
             Write-Output '{"Log":"Request private-correlation-id failed with RequestFailedException; code 403; site BlobRestClient.UploadAsync."}'
             Write-Output '{"Log":"Document private-job-id failed with RequestFailedException; code 404; site ContentUnderstandingRestClient.AnalyzeBinaryAsync."}'
             Write-Output '{"Log":"Request secret-id failed with CustomerException; code 500; site SensitiveCustomerIdentifier.Read."}'
+            Write-Output '{"Log":"Request private-correlation-id failed with InvalidOperationException; code 5385; site ThrowHelper.ThrowInvalidOperationException."}'
             $type = if ($global:DocIntelDiagnosticsFixture.scenario -eq 'unknown-type') {
                 'SensitiveCustomerIdentifier'
             } else { 'NotSupportedException' }
@@ -103,6 +104,7 @@ try {
     if ($output -notmatch 'Runtime failure: Request: RequestFailedException; code 403; component BlobStorage' -or
         $output -notmatch 'Runtime failure: Document: RequestFailedException; code 404; component ContentUnderstanding' -or
         $output -notmatch 'Runtime failure: Request: UnclassifiedException; code 500; component Other' -or
+        $output -notmatch 'site ThrowHelper.ThrowInvalidOperationException' -or
         $output -match 'private-correlation-id|private-job-id|secret-id|SensitiveCustomerIdentifier|CustomerException') {
         throw 'Runtime error output must report only known types, numeric codes and fixed component categories.'
     }

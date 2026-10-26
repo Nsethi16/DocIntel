@@ -114,8 +114,11 @@ jobs:
                   'Pdf|PDF' { 'PdfValidation'; break }
                   default { 'Other' }
                 }
-                $runtimeErrors.Add(('{0}: {1}; code {2}; component {3}' -f
-                  $runtime.Groups['kind'].Value, $safeType, $runtime.Groups['code'].Value, $component)) | Out-Null
+                $safeSite = if ($site -match '^(?:ThrowHelper|JsonThrowHelper|FormFeature|DefaultAntiforgery|HttpRequestStream|FileBufferingReadStream|DefaultHttpRequest|JsonSerializer|JsonSerializerOptions|CosmosSerializerCore|RequestDelegateFactory|BlobRestClient|ContentUnderstandingRestClient)\.[A-Za-z_][A-Za-z0-9_]{0,99}$') {
+                  $site
+                } else { 'UnclassifiedSite' }
+                $runtimeErrors.Add(('{0}: {1}; code {2}; component {3}; site {4}' -f
+                  $runtime.Groups['kind'].Value, $safeType, $runtime.Groups['code'].Value, $component, $safeSite)) | Out-Null
               }
             }
           }
