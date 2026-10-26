@@ -63,6 +63,14 @@ test('normal validation executes setup and readiness guards without requiring Az
   assert.match(release, /Wait-DocIntelReady\.ps1/);
 });
 
+test('queue discovery uses the paginated management API without storage keys or data-plane access', () => {
+  assert.doesNotMatch(script, /queue-rm|storage['", ]+queue['", ]+list|--account-key/);
+  assert.match(script, /management\.azure\.com[\s\S]*?queueServices\/default\/queues\?api-version=2023-05-01/);
+  assert.match(script, /'rest', '--method', 'GET', '--url', \$queueUrl/);
+  assert.match(script, /\$queuePage\.nextLink/);
+  assert.match(script, /outside the selected account management endpoint/);
+});
+
 test('browser deployment preflight no longer demands a conflicting same-valued API application role', () => {
   const legacy = read('Deploy-DocIntelAzure.ps1');
   assert.match(legacy, /oauth2PermissionScopes/);

@@ -278,9 +278,35 @@ try {
                 $blobContainers += $name
             }
         }
-        $queues = @(Invoke-SetupAzure @('storage', 'queue-rm', 'list', '--subscription', $SubscriptionId,
-            '--resource-group', $ResourceGroup, '--storage-account', $storage.Name) |
-            ForEach-Object { ($_.name -split '/')[-1] })
+        $queueUrl = "https://management.azure.com$($storage.Resource.id)/queueServices/default/queues?api-version=2023-05-01"
+        $queueEndpoint = [uri]$queueUrl
+        $visitedQueuePages = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+        do {
+            if (-not $visitedQueuePages.Add($queueUrl)) {
+                throw 'Storage queue inventory contains a repeated continuation URL.'
+            }
+            $queuePage = Invoke-SetupAzure @('rest', '--method', 'GET', '--url', $queueUrl)
+            if ($queuePage.value -isnot [array]) {
+                throw 'Storage queue inventory did not return a valid value array. No empty inventory is assumed.'
+            }
+            foreach ($queue in $queuePage.value) {
+                $name = ($queue.name -split '/')[-1]
+                if ($name.Length -lt 3 -or $name.Length -gt 63 -or $name -notmatch '^[a-z0-9]+(?:-[a-z0-9]+)*$') {
+                    throw 'Storage queue inventory returned an invalid queue name.'
+                }
+                $queues += $name
+            }
+            $queueUrl = [string]$queuePage.nextLink
+            if ($queueUrl) {
+                $nextPageUri = $null
+                if (-not [uri]::TryCreate($queueUrl, [UriKind]::Absolute, [ref]$nextPageUri) -or
+                    $nextPageUri.Scheme -ne 'https' -or $nextPageUri.Host -ine $queueEndpoint.Host -or
+                    $nextPageUri.Port -ne 443 -or $nextPageUri.UserInfo -or $nextPageUri.Fragment -or
+                    $nextPageUri.AbsolutePath -ine $queueEndpoint.AbsolutePath) {
+                    throw 'Storage queue pagination points outside the selected account management endpoint.'
+                }
+            }
+        } while ($queueUrl)
     }
     $keyRing = Get-ExistingSetting 'Identity__DataProtectionBlobUri'
     if ($keyRing) {

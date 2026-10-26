@@ -198,6 +198,9 @@ Preview performs reads and ARM what-if only, not Azure/Entra writes. Setup refus
 repointing, ambiguous/cross-group data adoption, nonstandard partition keys, incompatible resource
 types, local-only state overrides, and silently collapsing multiple AI accounts. Such migrations
 need an explicit separately reviewed configuration, not guesses or duplicate resources.
+Existing queues are discovered through the paginated Azure management API, without storage account
+keys or deployment-identity queue data access. An incomplete inventory stops setup rather than
+treating unread queues as missing and overwriting their configuration.
 
 #### Apply and release
 

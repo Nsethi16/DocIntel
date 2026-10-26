@@ -15,6 +15,8 @@ $global:DocIntelSetupFixture.prefix = "/subscriptions/$($global:DocIntelSetupFix
 $global:DocIntelSetupFixture.appId = "$($global:DocIntelSetupFixture.prefix)/Microsoft.App/containerApps/ca-docintel-dev"
 $global:DocIntelSetupFixture.environmentId = "$($global:DocIntelSetupFixture.prefix)/Microsoft.App/managedEnvironments/keep-this-environment"
 $global:DocIntelSetupFixture.runtimeId = "$($global:DocIntelSetupFixture.prefix)/Microsoft.ManagedIdentity/userAssignedIdentities/uami-docintel-dev"
+$global:DocIntelSetupFixture.queueUrl = "https://management.azure.com$($global:DocIntelSetupFixture.prefix)/Microsoft.Storage/storageAccounts/sadocinteltest/queueServices/default/queues?api-version=2023-05-01"
+$global:DocIntelSetupFixture.nextQueueUrl = $global:DocIntelSetupFixture.queueUrl + '&$skipToken=second'
 $global:DocIntelSetupFixture.origin = 'https://ca-docintel-dev.example.azurecontainerapps.io'
 $global:DocIntelSetupFixture.calls = [Collections.Generic.List[object]]::new()
 $global:DocIntelSetupFixture.mutations = [Collections.Generic.List[object]]::new()
@@ -75,9 +77,42 @@ function az {
         'storage container-rm list --subscription' {
             @(@{ name = 'ask-ai-runs'; publicAccess = 'None' }, @{ name = 'identity-keys'; publicAccess = 'None' }); break
         }
-        'storage queue-rm list --subscription' {
-            @(@{ name = 'ask-ai' }, @{ name = 'ask-ai-poison' },
-                @{ name = 'document-jobs' }, @{ name = 'document-jobs-poison' }); break
+        'rest --method GET --url' {
+            $url = $Arguments[4]
+            if ($url -notin @($global:DocIntelSetupFixture.queueUrl, $global:DocIntelSetupFixture.nextQueueUrl)) {
+                throw 'Unexpected storage queue management URL.'
+            }
+            $isNextPage = $url -eq $global:DocIntelSetupFixture.nextQueueUrl
+            if ($global:DocIntelSetupFixture.scenario -eq 'queue-read-failure' -or
+                ($isNextPage -and $global:DocIntelSetupFixture.scenario -eq 'queue-page-failure')) {
+                $global:LASTEXITCODE = 1
+                @{ error = @{ code = 'AuthorizationFailed' } }; break
+            }
+            $items = @(@{ name = 'ask-ai' }, @{ name = 'ask-ai-poison' },
+                @{ name = 'document-jobs' }, @{ name = 'document-jobs-poison' })
+            $page = @{ value = $items }
+            switch ($global:DocIntelSetupFixture.scenario) {
+                'empty-queues' { $page.value = @() }
+                'invalid-queue-response' { $page = @{ unexpected = @() } }
+                'invalid-queue-name' { $page.value = @(@{ name = '' }) }
+                'paged-queues' {
+                    if ($isNextPage) { $page.value = $items[2..3] }
+                    else {
+                        $page.value = $items[0..1]
+                        $page.nextLink = $global:DocIntelSetupFixture.nextQueueUrl
+                    }
+                }
+                'queue-page-failure' {
+                    $page.value = $items[0..1]
+                    $page.nextLink = $global:DocIntelSetupFixture.nextQueueUrl
+                }
+                'foreign-queue-nextlink' { $page.nextLink = 'https://untrusted.example/queues' }
+                'wrong-account-nextlink' {
+                    $page.nextLink = $global:DocIntelSetupFixture.queueUrl.Replace('sadocinteltest', 'otheraccount')
+                }
+                'repeated-queue-nextlink' { $page.nextLink = $global:DocIntelSetupFixture.queueUrl }
+            }
+            $page; break
         }
         'cognitiveservices account show --subscription' {
             @{ kind = 'AIServices'; properties = @{ customSubDomainName = 'aif-docintel-test' } }; break
@@ -240,6 +275,11 @@ try {
     if (($plan | ConvertTo-Json -Depth 100) -match [regex]::Escape($global:DocIntelSetupFixture.adminId)) {
         throw 'The shareable setup plan must not expose the bootstrap administrator identity.'
     }
+    Assert-Equal 4 @($global:DocIntelSetupFixture.parameters.parameters.existingQueues.value).Count 'Existing queues must be adopted through the management API.'
+    if (@($global:DocIntelSetupFixture.calls | Where-Object {
+        ($_ -contains 'queue-rm') -or ($_ -contains '--account-key') -or
+        ($_ -join ' ') -match 'storage queue list|storage account keys'
+    }).Count) { throw 'Queue discovery must not use unsupported CLI groups, storage keys or data-plane listing.' }
     $apply = $base.Clone(); $apply.Mode = 'Apply'; $apply.Confirmation = 'APPLY'; $apply.ExpectedPlanHash = $plan.planHash
     Reset-Calls
     & $scriptPath @apply | Out-Null
@@ -270,6 +310,33 @@ try {
         $message = switch ($scenario) { 'delete' { 'includes deletion' } 'replace-app' { 'must not replace' } default { 'changed since Preview' } }
         Assert-Failure $apply $message
         Assert-Equal 0 $global:DocIntelSetupFixture.mutations.Count 'Invalid/changed preview must block every mutation.'
+    }
+    Reset-Calls; $global:DocIntelSetupFixture.scenario = 'paged-queues'
+    & $scriptPath @base | Out-Null
+    $discoveredQueues = @($global:DocIntelSetupFixture.parameters.parameters.existingQueues.value)
+    Assert-Equal 4 $discoveredQueues.Count 'All queue pages must be read before determining which queues already exist.'
+    if ('document-jobs' -notin $discoveredQueues -or 'document-jobs-poison' -notin $discoveredQueues) {
+        throw 'Later-page queues must not be treated as missing and redeployed.'
+    }
+    Assert-Equal 0 $global:DocIntelSetupFixture.mutations.Count 'Paged queue discovery must remain read-only.'
+    Reset-Calls; $global:DocIntelSetupFixture.scenario = 'empty-queues'
+    & $scriptPath @base | Out-Null
+    Assert-Equal 0 @($global:DocIntelSetupFixture.parameters.parameters.existingQueues.value).Count 'An explicitly empty inventory must allow missing queues to be planned.'
+    Assert-Equal 0 $global:DocIntelSetupFixture.mutations.Count 'An empty queue inventory must not create queues during Preview.'
+    foreach ($case in @(
+        @{ scenario = 'queue-read-failure'; message = 'rest --method GET' },
+        @{ scenario = 'queue-page-failure'; message = 'rest --method GET' },
+        @{ scenario = 'invalid-queue-response'; message = 'valid value array' },
+        @{ scenario = 'invalid-queue-name'; message = 'invalid queue name' },
+        @{ scenario = 'foreign-queue-nextlink'; message = 'outside the selected account' },
+        @{ scenario = 'wrong-account-nextlink'; message = 'outside the selected account' },
+        @{ scenario = 'repeated-queue-nextlink'; message = 'repeated continuation URL' }
+    )) {
+        Reset-Calls; $global:DocIntelSetupFixture.scenario = $case.scenario
+        Assert-Failure $base $case.message
+        Assert-Equal 0 $global:DocIntelSetupFixture.mutations.Count 'A failed or unsafe queue inventory must not mutate resources.'
+        $previews = @($global:DocIntelSetupFixture.calls | Where-Object { $_[0..2] -join ' ' -eq 'deployment group what-if' })
+        Assert-Equal 0 $previews.Count 'An incomplete queue inventory must not be used for an infrastructure plan.'
     }
     Reset-Calls; $global:DocIntelSetupFixture.scenario = 'wrong-partition'
     Assert-Failure $base 'different partition key'
