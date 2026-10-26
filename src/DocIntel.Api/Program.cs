@@ -55,6 +55,7 @@ app.UseExceptionHandler(new ExceptionHandlerOptions
 {
     SuppressDiagnosticsCallback = _ => true
 });
+app.UseDocIntelIngress(builder.Configuration, app.Environment);
 app.UseStatusCodePages(async status =>
     await DocIntelExceptionHandler.CreateProblem(status.HttpContext, status.HttpContext.Response.StatusCode)
         .ExecuteAsync(status.HttpContext));

@@ -443,25 +443,40 @@ let tenants = [];
     async function uploadAndRunTenantDocument(inputEl) {
       if (!currentTenant || !inputEl.files || !inputEl.files[0]) return;
       const file = inputEl.files[0];
+      const tenantId = currentTenant.tenantId;
       const lbl = document.getElementById('uploadBtnLabel');
       lbl.textContent = 'Uploading...';
+      inputEl.disabled = true;
 
       try {
         const fd = new FormData();
         fd.append('file', file);
-        const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/jobs`, {
+        const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(tenantId)}/jobs`, {
           method: 'POST',
           body: fd
         });
         if (resp.ok) {
           const accepted = await resp.json();
           showToast(`Submitted ${file.name}`);
-          await loadTenantJobs(accepted.jobId);
+          if (currentTenant?.tenantId === tenantId) await loadTenantJobs(accepted.jobId);
         } else {
-          showToast('Upload failed');
+          const messages = {
+            400: 'Upload rejected. Select one valid PDF up to 25 MiB, or refresh to renew request verification.',
+            401: 'Sign in again before uploading.',
+            403: 'Your account does not have permission to upload to this tenant.',
+            413: 'The PDF is too large. The maximum file size is 25 MiB.',
+            429: 'The upload allowance was exceeded. Wait before trying again.'
+          };
+          const correlation = resp.headers.get('X-DocIntel-Correlation-Id');
+          const reference = correlation && /^[A-Za-z0-9:._-]{1,160}$/.test(correlation)
+            ? ` Reference: ${correlation}.` : '';
+          showToast((messages[resp.status] || `Upload failed (HTTP ${resp.status}). Contact your administrator.`) + reference);
         }
+      } catch {
+        showToast('The upload could not be confirmed. Check your connection and sign-in, then refresh the document list before retrying.');
       } finally {
         lbl.textContent = 'Upload PDF';
+        inputEl.disabled = false;
         inputEl.value = '';
       }
     }

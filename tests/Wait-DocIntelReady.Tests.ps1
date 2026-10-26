@@ -11,6 +11,8 @@ $global:DocIntelReadinessFixture = @{
     mode = 'Single'
     traffic = @()
     environment = @()
+    transport = 'auto'
+    additionalPorts = @()
 }
 function az {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
@@ -29,7 +31,11 @@ function az {
             }) }
             configuration = @{
                 activeRevisionsMode = $global:DocIntelReadinessFixture.mode
-                ingress = @{ fqdn = 'fixture.azurecontainerapps.io'; traffic = $global:DocIntelReadinessFixture.traffic }
+                ingress = @{
+                    fqdn = 'fixture.azurecontainerapps.io'; traffic = $global:DocIntelReadinessFixture.traffic
+                    transport = $global:DocIntelReadinessFixture.transport
+                    additionalPortMappings = $global:DocIntelReadinessFixture.additionalPorts
+                }
             }
         }
     } | ConvertTo-Json -Depth 20 -Compress
@@ -91,6 +97,16 @@ try {
         DOCINTEL_IDENTITY_GRANTS = '{"Memberships":[{"ObjectId":"fixture"}]}'
     }.GetEnumerator() | ForEach-Object { @{ name = $_.Key; value = $_.Value } })
     & $file -ConfigurationOnly -ResourceGroup fixture -ContainerAppName fixture | Out-Null
+    foreach ($scenario in 'tcp', 'additional-port') {
+        $global:DocIntelReadinessFixture.transport = if ($scenario -eq 'tcp') { 'tcp' } else { 'auto' }
+        $global:DocIntelReadinessFixture.additionalPorts = if ($scenario -eq 'additional-port') {
+            @(@{ external = $true; targetPort = 8080; exposedPort = 8080 })
+        } else { @() }
+        $failed = $false
+        try { & $file -ConfigurationOnly -ResourceGroup fixture -ContainerAppName fixture | Out-Null }
+        catch { $failed = $true; if ($_.Exception.Message -notlike '*HTTP ingress without additional TCP ports*') { throw } }
+        if (-not $failed) { throw 'Release must refuse TCP ingress bypasses of protocol-header verification.' }
+    }
     Write-Output 'Release image, latest-revision, traffic and bounded health checks passed without Azure or network calls.'
 }
 finally {

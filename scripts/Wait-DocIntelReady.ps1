@@ -21,6 +21,11 @@ for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
     $selected = if ($ContainerName) { @($containers | Where-Object { $_.name -ceq $ContainerName }) } else { $containers }
     if ($selected.Count -ne 1) { throw 'Select exactly one application container before releasing.' }
     if ($ConfigurationOnly) {
+        if ($app.properties.configuration.ingress.transport -eq 'tcp' -or
+            @($app.properties.configuration.ingress.additionalPortMappings |
+                Where-Object { $null -ne $_ }).Count) {
+            throw 'DocIntel requires HTTP ingress without additional TCP ports so ingress protocol headers cannot be bypassed.'
+        }
         $settings = @{}
         foreach ($entry in $selected[0].env) { $settings[$entry.name] = $entry }
         $missing = @(@(

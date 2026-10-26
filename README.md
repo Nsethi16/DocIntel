@@ -226,6 +226,15 @@ request/document failure categories. It does not
 deploy, change settings or print raw application logs, endpoint values, secrets or tenant data.
 A successful diagnostics run means evidence was collected, not that application readiness passed.
 
+Container Apps terminates TLS before forwarding HTTP to Kestrel. In non-development ACA hosting
+(identified by `CONTAINER_APP_NAME` and `CONTAINER_APP_ENV_DNS_SUFFIX`), the app restores only the
+HTTPS scheme from the single `X-Forwarded-Proto: https` header that ACA overwrites at ingress,
+and only for `Identity:PublicOrigin`'s host. Forwarded client IP, host and prefix headers are not
+trusted. Other hosting environments retain normal proxy trust defaults. Keep the application port
+behind ACA HTTP ingress, without additional TCP ingress; release preflight enforces that boundary.
+Secure session/CSRF cookies and CSRF checks remain required. Upload failures show an HTTP-specific
+message and a safe correlation reference rather than silently failing.
+
 The older Fabrikam sample used `deepseek-r1`, whose legacy inference adapter cannot serve Ask AI
 tool calls. New samples use `gpt-5-mini`, but saved profiles are not reset during deployment.
 For the original version-1 Fabrikam sample only, the release workflow offers
