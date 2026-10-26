@@ -331,6 +331,119 @@ public sealed class AskAiAgentTests
         Assert.Contains(captured.Tools!, tool => tool.Name == "inspect_document_slice");
     }
 
+    [Fact]
+    public async Task Search_Tool_Advertises_The_Exact_Server_Bounds_Without_Model_Control_Of_Access()
+    {
+        // Arrange
+        var tenant = new TenantHarness { TenantId = "tenant-one", DisplayName = "Test" };
+        var harness = new Mock<IHarnessStore>();
+        harness.Setup(s => s.GetTenantAsync(tenant.TenantId, It.IsAny<CancellationToken>())).ReturnsAsync(tenant);
+        ChatOptions? captured = null;
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(), It.IsAny<ChatOptions>(),
+                It.IsAny<CancellationToken>()))
+            .Callback<IEnumerable<ChatMessage>, ChatOptions, CancellationToken>((_, options, _) => captured = options)
+            .ReturnsAsync(Final("Conversation", "Hello"));
+        var catalog = new ModelCatalog(customClients: new Dictionary<string, IChatClient>
+        {
+            [tenant.DefaultModelId] = client.Object
+        });
+        var store = new Mock<IJobStore>(MockBehavior.Strict);
+        var orchestrator = new AskAiOrchestrator(harness.Object, store.Object, catalog, [],
+            NullLogger<AskAiOrchestrator>.Instance);
+
+        // Act
+        await orchestrator.ExecuteRunAsync(CreateRun("Hi"));
+
+        // Assert
+        var function = Assert.IsAssignableFrom<AIFunction>(Assert.Single(captured!.Tools!,
+            tool => tool.Name == "search_documents"));
+        var schema = function.JsonSchema;
+        Assert.False(schema.GetProperty("additionalProperties").GetBoolean());
+        var query = schema.GetProperty("properties").GetProperty("query");
+        Assert.False(query.GetProperty("additionalProperties").GetBoolean());
+        var properties = query.GetProperty("properties");
+        var fields = properties.EnumerateObject().Select(property => property.Name).Order().ToArray();
+        Assert.Equal(new[] { "continuationToken", "documentType", "entities", "pageSize", "searchText" }, fields);
+        var required = query.GetProperty("required").EnumerateArray()
+            .Select(value => Assert.IsType<string>(value.GetString())).Order().ToArray();
+        Assert.Equal(fields, required);
+        var sizes = properties.GetProperty("pageSize").GetProperty("enum").EnumerateArray()
+            .Select(value => value.GetInt32()).ToArray();
+        Assert.Equal(Enumerable.Range(1, 20).ToArray(), sizes);
+        foreach (var size in sizes) new DocumentQuery { PageSize = size }.Validate();
+        Assert.Equal("array", properties.GetProperty("entities").GetProperty("type").GetString());
+        Assert.Contains("never null", properties.GetProperty("entities").GetProperty("description").GetString());
+        Assert.False(properties.GetProperty("entities").GetProperty("items")
+            .GetProperty("additionalProperties").GetBoolean());
+        Assert.DoesNotContain("authorizedJobIds", schema.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("tenantId", schema.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("\"sql\"", schema.GetRawText(), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("pageSize must be 1 through 20", captured.Instructions);
+        Assert.Contains("entities=[]", captured.Instructions);
+        store.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("""{"searchText":"Sample customer","entities":[],"pageSize":0}""")]
+    [InlineData("""{"searchText":"Sample customer","entities":[],"pageSize":100}""")]
+    [InlineData("""{"searchText":"Sample customer","entities":null,"pageSize":10}""")]
+    [InlineData("""{"entities":[{"name":"","value":"Sample customer"}],"pageSize":10}""")]
+    public async Task Invalid_Model_Search_Arguments_Still_Fail_Before_Reading_Any_Documents(string query)
+    {
+        // Arrange
+        var store = new Mock<IJobStore>(MockBehavior.Strict);
+        var call = ToolCall("search_documents", new Dictionary<string, object?>
+        {
+            ["query"] = JsonSerializer.Deserialize<JsonElement>(query)
+        });
+        var orchestrator = CreateOrchestrator(store.Object, call,
+            Final("NoEvidence", "No documents found."));
+        var run = CreateRun("Find documents for Sample customer");
+
+        // Act
+        var failure = await Record.ExceptionAsync(() => orchestrator.ExecuteRunAsync(run));
+
+        // Assert
+        Assert.NotNull(failure);
+        Assert.IsAssignableFrom<ArgumentException>(failure.GetBaseException());
+        Assert.Null(run.Answer);
+        Assert.Empty(run.Citations);
+        store.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(1)]
+    [InlineData(10)]
+    [InlineData(20)]
+    public async Task A_Valid_Customer_Name_Search_Uses_The_Original_Text_And_Bounded_Page_Size(int pageSize)
+    {
+        // Arrange
+        const string name = "Sample customer";
+        var store = new Mock<IJobStore>(MockBehavior.Strict);
+        store.Setup(s => s.SearchDocumentsAsync("tenant-one",
+                It.Is<DocumentQuery>(query => query.SearchText == name && query.PageSize == pageSize &&
+                    query.Entities.Count == 0 && query.DocumentType == null && query.ContinuationToken == null),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DocumentQueryPage([], null));
+        var call = ToolCall("search_documents", new Dictionary<string, object?>
+        {
+            ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery { SearchText = name, PageSize = pageSize })
+        });
+        var orchestrator = CreateOrchestrator(store.Object, call, Final("NoEvidence", "No matching documents found."));
+
+        // Act
+        var run = await orchestrator.ExecuteRunAsync(CreateRun("Find documents for " + name));
+
+        // Assert
+        Assert.Equal(JobStatus.Completed, run.Status);
+        Assert.Empty(run.Citations);
+        Assert.Single(run.ExecutedCosmosQueries);
+        Assert.DoesNotContain(name, run.ExecutedCosmosQueries[0]);
+        store.VerifyAll();
+        store.VerifyNoOtherCalls();
+    }
+
     private static async Task<InMemoryJobStore> CreateDocumentStoreAsync()
     {
         var store = new InMemoryJobStore();

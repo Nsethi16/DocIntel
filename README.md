@@ -242,6 +242,11 @@ does not support the `minLength`, `minimum` and `maximum` keywords. Invalid mode
 output still fails validation; it is not silently dropped, normalized from percentages or replaced
 with simulated data. Slice entity results are published together only after every response validates.
 
+Ask AI's `search_documents` tool advertises a closed query schema with page sizes restricted to
+1-20, non-null entity arrays, and explicit filter/token limits. Unused filters are null and unused
+entities are `[]`. Tenant identity and document access scopes remain server-owned; invalid tool
+arguments fail before storage access and cannot be reported as successful empty searches.
+
 The older Fabrikam sample used `deepseek-r1`, whose legacy inference adapter cannot serve Ask AI
 tool calls. New samples use `gpt-5-mini`, but saved profiles are not reset during deployment.
 For the original version-1 Fabrikam sample only, the release workflow offers
