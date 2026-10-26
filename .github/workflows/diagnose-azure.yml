@@ -1,0 +1,107 @@
+name: Diagnose DocIntel Azure
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docintel-azure-${{ vars.AZURE_RESOURCE_GROUP || 'Docintel' }}-${{ vars.AZURE_CONTAINER_APP_NAME || 'ca-docintel-dev' }}
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: docintel-dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'Docintel' }}
+      AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME || 'ca-docintel-dev' }}
+      DOCINTEL_CONTAINER_NAME: ${{ vars.DOCINTEL_CONTAINER_NAME }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify diagnostic safety without Azure calls
+        shell: pwsh
+        run: ./.github/tests/Diagnose-DocIntelAzure.Tests.ps1
+      - name: Prevent mixed Azure identity settings
+        shell: pwsh
+        env:
+          PERSONAL_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          PERSONAL_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          PERSONAL_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          $values = @($env:PERSONAL_CLIENT_ID, $env:PERSONAL_TENANT_ID, $env:PERSONAL_SUBSCRIPTION_ID)
+          $present = @($values | Where-Object { -not [String]::IsNullOrWhiteSpace($_) }).Count
+          if ($present -ne 0 -and $present -ne 3) { throw 'Configure all three AZURE identity secrets together.' }
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID || secrets.CADOCINTELDEV_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || secrets.CADOCINTELDEV_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || secrets.CADOCINTELDEV_AZURE_SUBSCRIPTION_ID }}
+      - name: Inspect revision and privacy-safe startup diagnostics
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $app = az containerapp show --resource-group $env:AZURE_RESOURCE_GROUP `
+            --name $env:AZURE_CONTAINER_APP_NAME --only-show-errors --output json |
+            ConvertFrom-Json -Depth 100
+          $containers = @($app.properties.template.containers)
+          $selected = if ($env:DOCINTEL_CONTAINER_NAME) {
+            @($containers | Where-Object { $_.name -ceq $env:DOCINTEL_CONTAINER_NAME })
+          } else { $containers }
+          if ($selected.Count -ne 1) { throw 'Select exactly one application container.' }
+          $revision = $app.properties.latestRevisionName
+          if (-not $revision) { throw 'The application has no latest revision.' }
+          $container = $selected[0]
+          [pscustomobject]@{
+            revision = $revision
+            latestReadyRevision = $app.properties.latestReadyRevisionName
+            container = $container.name
+            image = $container.image
+          } | ConvertTo-Json
+          foreach ($name in @('AzureAI__AzureOpenAIEndpoint', 'AzureAI__FoundryInferenceEndpoint',
+            'AzureAI__ContentUnderstandingEndpoint', 'AzureAI__TranslatorEndpoint')) {
+            $entry = $container.env | Where-Object { $_.name -ceq $name } | Select-Object -First 1
+            [pscustomobject]@{
+              setting = $name
+              configured = -not [String]::IsNullOrWhiteSpace($entry.value) -or [bool]$entry.secretRef
+            } | ConvertTo-Json -Compress
+          }
+          $probe = $container.env | Where-Object { $_.name -ceq 'Readiness__ProbeModelsOnStartup' } |
+            Select-Object -First 1
+          Write-Output ('Live model probe explicitly enabled: ' + ($probe.value -ieq 'true'))
+          $replicas = @(az containerapp replica list --resource-group $env:AZURE_RESOURCE_GROUP `
+            --name $env:AZURE_CONTAINER_APP_NAME --revision $revision --only-show-errors --output json |
+            ConvertFrom-Json -Depth 100)
+          if (-not $replicas.Count) { throw 'The latest revision has no active replicas.' }
+          $errorTypes = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+          $knownTypes = @('InvalidOperationException', 'NotSupportedException', 'CosmosException',
+            'RequestFailedException', 'AuthenticationFailedException', 'CredentialUnavailableException',
+            'ClientResultException', 'JsonException', 'HttpRequestException', 'IOException',
+            'TimeoutException', 'ArgumentException', 'ArgumentNullException', 'TypeInitializationException')
+          foreach ($replica in $replicas | Select-Object -First 3) {
+            $lines = az containerapp logs show --resource-group $env:AZURE_RESOURCE_GROUP `
+              --name $env:AZURE_CONTAINER_APP_NAME --revision $revision --replica $replica.name `
+              --container $container.name --type console --tail 300 --follow false `
+              --format json --only-show-errors
+            foreach ($line in $lines) {
+              $match = [regex]::Match($line,
+                'Startup provider verification failed with (?<type>[A-Za-z_][A-Za-z0-9_]{0,79});')
+              if ($match.Success) {
+                $type = $match.Groups['type'].Value
+                $safeType = if ($type -cin $knownTypes) { $type } else { 'UnclassifiedException' }
+                $errorTypes.Add($safeType) | Out-Null
+              }
+            }
+          }
+          if (-not $errorTypes.Count) {
+            Write-Warning 'No startup provider error type was found in the bounded log sample. No diagnosis is assumed.'
+          }
+          foreach ($errorType in $errorTypes) { Write-Output ('Startup provider error type: ' + $errorType) }
+          Write-Output 'Read-only diagnostics completed. No resources, settings, permissions or tenant profiles were changed.'

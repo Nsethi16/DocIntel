@@ -220,6 +220,11 @@ Then run **Validate and deploy DocIntel** on `main`. This builds/pushes the vali
 the app, and checks the exact image/latest-ready revision and `/health/ready` before claiming success.
 Setup and release serialize on the same Azure target so they cannot race.
 
+If a release fails readiness, **Actions > Diagnose DocIntel Azure > Run workflow > main**
+reads the latest revision, endpoint-presence flags and bounded startup error types. It does not
+deploy, change settings or print raw application logs, endpoint values, secrets or tenant data.
+A successful diagnostics run means evidence was collected, not that application readiness passed.
+
 #### Optional directory registration automation
 
 The setup input **configure directory applications** enables permission-gated creation/configuration

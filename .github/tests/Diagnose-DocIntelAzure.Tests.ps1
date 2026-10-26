@@ -1,0 +1,129 @@
+#Requires -Version 7.3
+$ErrorActionPreference = 'Stop'
+$workflowPath = Join-Path $PSScriptRoot '..\workflows\diagnose-azure.yml'
+$workflow = Get-Content -LiteralPath $workflowPath -Raw
+$match = [regex]::Match($workflow,
+    '(?ms)      - name: Inspect revision[^\r\n]*\r?\n        shell: pwsh\r?\n        run: \|\r?\n(?<script>(?:          [^\r\n]*(?:\r?\n|$))+)')
+if (-not $match.Success) { throw 'The runtime diagnostic command block is missing.' }
+$source = $match.Groups['script'].Value -replace '(?m)^          ', ''
+$command = [scriptblock]::Create($source)
+if ($workflow -notmatch "if: github.ref == 'refs/heads/main'" -or
+    $workflow -notmatch 'environment: docintel-dev' -or
+    $workflow -notmatch 'workflow_dispatch:') {
+    throw 'Diagnostics must remain manual, main-only and protected by the deployment environment.'
+}
+if ($source -match 'az (?:deployment|role|ad|storage)|containerapp (?:update|exec)|--account-key') {
+    throw 'Runtime diagnostics must not mutate resources, inspect keys or execute in the application.'
+}
+$savedGroup = $env:AZURE_RESOURCE_GROUP
+$savedApp = $env:AZURE_CONTAINER_APP_NAME
+$savedContainer = $env:DOCINTEL_CONTAINER_NAME
+$global:DocIntelDiagnosticsFixture = @{
+    scenario = ''; calls = [Collections.Generic.List[object]]::new()
+}
+
+function az {
+    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+    $global:DocIntelDiagnosticsFixture.calls.Add($Arguments)
+    $global:LASTEXITCODE = 0
+    switch ($Arguments[0..1] -join ' ') {
+        'containerapp show' {
+            if ($global:DocIntelDiagnosticsFixture.scenario -eq 'azure-failure') {
+                throw 'Azure inspection failed.'
+            }
+            $containers = @(@{
+                name = 'api'; image = 'registry.example/app:expected'
+                env = @(
+                    @{ name = 'AzureAI__AzureOpenAIEndpoint'; value = 'https://private-endpoint.example/' },
+                    @{ name = 'AzureAI__ContentUnderstandingEndpoint'; secretRef = 'private-secret-reference' },
+                    @{ name = 'UnrelatedPrivateSetting'; value = 'customer-private-value' }
+                )
+            })
+            if ($global:DocIntelDiagnosticsFixture.scenario -eq 'multiple-containers') {
+                $containers += @{ name = 'sidecar'; image = 'registry.example/sidecar:expected' }
+            }
+            @{
+                properties = @{
+                    latestRevisionName = 'revision-current'; latestReadyRevisionName = 'revision-current'
+                    template = @{ containers = $containers }
+                }
+            } | ConvertTo-Json -Depth 20 -Compress
+        }
+        'containerapp replica' {
+            if ($global:DocIntelDiagnosticsFixture.scenario -eq 'no-replicas') { '[]'; return }
+            @(@{ name = 'replica-one' }, @{ name = 'replica-two' }) |
+                ConvertTo-Json -Depth 10 -Compress
+        }
+        'containerapp logs' {
+            if ($Arguments -notcontains 'revision-current' -or $Arguments -notcontains 'api' -or
+                $Arguments -notcontains '--replica' -or
+                $Arguments[[Array]::IndexOf($Arguments, '--follow') + 1] -ne 'false' -or
+                $Arguments[[Array]::IndexOf($Arguments, '--tail') + 1] -ne '300') {
+                throw 'Logs must target the selected revision/container/replica and remain bounded.'
+            }
+            Write-Output '{"Log":"customer-private-value should never be printed"}'
+            $type = if ($global:DocIntelDiagnosticsFixture.scenario -eq 'unknown-type') {
+                'SensitiveCustomerIdentifier'
+            } else { 'NotSupportedException' }
+            if ($global:DocIntelDiagnosticsFixture.scenario -ne 'no-startup-error') {
+                Write-Output ('{"Log":"Startup provider verification failed with ' + $type +
+                    '; no provider details were returned."}')
+            }
+        }
+        default { throw 'Unexpected Azure command in diagnostic tests.' }
+    }
+}
+
+function Assert-DiagnosticFailure([string]$Scenario, [string]$Message) {
+    $global:DocIntelDiagnosticsFixture.scenario = $Scenario
+    $failed = $false
+    try { & $command | Out-Null }
+    catch {
+        $failed = $true
+        if ($_.Exception.Message -notlike "*$Message*") { throw }
+    }
+    if (-not $failed) { throw "Expected diagnostic failure: $Message." }
+}
+
+try {
+    $env:AZURE_RESOURCE_GROUP = 'test-group'
+    $env:AZURE_CONTAINER_APP_NAME = 'test-app'
+    $env:DOCINTEL_CONTAINER_NAME = ''
+    $output = & $command 3>&1 | Out-String
+    if ($output -notmatch 'Startup provider error type: NotSupportedException' -or
+        $output -notmatch 'revision-current' -or $output -notmatch '"configured":true') {
+        throw 'Diagnostics must report the selected revision, configured flags and actual startup error type.'
+    }
+    if ($output -match 'private-endpoint|private-secret-reference|customer-private-value|UnrelatedPrivateSetting') {
+        throw 'Diagnostics leaked raw configuration, logs or customer data.'
+    }
+    $logs = @($global:DocIntelDiagnosticsFixture.calls | Where-Object { $_[0..1] -join ' ' -eq 'containerapp logs' })
+    if ($logs.Count -ne 2) { throw 'Each sampled replica must be inspected.' }
+
+    Assert-DiagnosticFailure 'multiple-containers' 'Select exactly one'
+    $env:DOCINTEL_CONTAINER_NAME = 'api'
+    & $command | Out-Null
+    $env:DOCINTEL_CONTAINER_NAME = ''
+    Assert-DiagnosticFailure 'no-replicas' 'no active replicas'
+    Assert-DiagnosticFailure 'azure-failure' 'Azure inspection failed'
+
+    $global:DocIntelDiagnosticsFixture.scenario = 'unknown-type'
+    $output = & $command 3>&1 | Out-String
+    if ($output -match 'SensitiveCustomerIdentifier' -or $output -notmatch 'UnclassifiedException') {
+        throw 'Unrecognized log text must not be copied into diagnostic output.'
+    }
+    $global:DocIntelDiagnosticsFixture.scenario = 'no-startup-error'
+    $output = & $command 3>&1 | Out-String
+    if ($output -notmatch 'No startup provider error type was found' -or
+        $output -match 'Startup provider error type:') {
+        throw 'Missing startup evidence must be reported explicitly without assuming a diagnosis.'
+    }
+    Write-Output 'Runtime diagnostic privacy, read-only operation and explicit failure tests passed without Azure calls.'
+}
+finally {
+    Remove-Item Function:\az
+    Remove-Variable -Name DocIntelDiagnosticsFixture -Scope Global
+    $env:AZURE_RESOURCE_GROUP = $savedGroup
+    $env:AZURE_CONTAINER_APP_NAME = $savedApp
+    $env:DOCINTEL_CONTAINER_NAME = $savedContainer
+}
