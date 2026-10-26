@@ -6,6 +6,8 @@ using DocIntel.Core.Ocr;
 using DocIntel.Core.Telemetry;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
+using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 
 namespace DocIntel.Api.Workers;
 
