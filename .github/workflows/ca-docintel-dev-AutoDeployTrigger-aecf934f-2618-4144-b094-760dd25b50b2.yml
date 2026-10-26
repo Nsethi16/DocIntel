@@ -32,6 +32,11 @@ on:
       - '.github/workflows/ca-docintel-dev-AutoDeployTrigger-aecf934f-2618-4144-b094-760dd25b50b2.yml'
       - '.github/workflows/setup-azure.yml'
   workflow_dispatch:
+    inputs:
+      upgrade_legacy_sample_defaults:
+        description: One-time upgrade of the original version-1 Fabrikam sample to gpt-5-mini; customized profiles are not changed.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -105,6 +110,7 @@ jobs:
       AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME || 'ca-docintel-dev' }}
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'Docintel' }}
       DOCINTEL_CONTAINER_NAME: ${{ vars.DOCINTEL_CONTAINER_NAME }}
+      LEGACY_SAMPLE_REPAIR: ${{ inputs.upgrade_legacy_sample_defaults && 'true' || 'false' }}
     steps:
       - uses: actions/checkout@v4
       - name: Prevent mixed personal and legacy Azure identities
@@ -150,6 +156,7 @@ jobs:
             --name "$AZURE_CONTAINER_APP_NAME" \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --image "${AZURE_CONTAINER_REGISTRY}.azurecr.io/${AZURE_CONTAINER_APP_NAME}:${GITHUB_SHA}" \
+            --set-env-vars "Readiness__UpgradeLegacySampleDefaults=${LEGACY_SAMPLE_REPAIR:-false}" \
             "${container_args[@]}"
       - name: Verify the released image and revision readiness
         shell: pwsh

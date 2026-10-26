@@ -225,6 +225,16 @@ reads the latest revision, endpoint-presence flags and bounded startup error typ
 deploy, change settings or print raw application logs, endpoint values, secrets or tenant data.
 A successful diagnostics run means evidence was collected, not that application readiness passed.
 
+The older Fabrikam sample used `deepseek-r1`, whose legacy inference adapter cannot serve Ask AI
+tool calls. New samples use `gpt-5-mini`, but saved profiles are not reset during deployment.
+For the original version-1 Fabrikam sample only, the release workflow offers
+**upgrade legacy sample defaults** (off by default). It verifies the seed identity, initial version,
+allowed models and feature-routing defaults, validates the replacement client, and persists only
+the default-model change through the normal optimistic-concurrency store. Edited/custom profiles
+are never upgraded. A concurrent edit is re-read and is not overwritten. A qualifying upgrade is
+logged and increments the harness version; readiness must still pass normally. Ordinary releases
+turn this one-time startup option off.
+
 #### Optional directory registration automation
 
 The setup input **configure directory applications** enables permission-gated creation/configuration

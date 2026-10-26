@@ -138,19 +138,27 @@ test('the actual deployment command passes the selected subscription resources a
     .replace(/^ {10}/gm, '');
   const environment = {
     AZURE_CONTAINER_REGISTRY: 'personalregistry', AZURE_CONTAINER_APP_NAME: 'personal-docintel',
-    AZURE_RESOURCE_GROUP: 'personal-rg', GITHUB_SHA: 'fixture-sha', DOCINTEL_CONTAINER_NAME: ''
+    AZURE_RESOURCE_GROUP: 'personal-rg', GITHUB_SHA: 'fixture-sha', DOCINTEL_CONTAINER_NAME: '',
+    LEGACY_SAMPLE_REPAIR: 'false'
   };
   const result = runBash('az() { printf "%s\\n" "$@"; }\n' + script, environment);
   assert.equal(result.status, 0, result.stderr);
   assert.deepEqual(result.stdout.trim().split(/\r?\n/), [
     'containerapp', 'update', '--name', 'personal-docintel', '--resource-group', 'personal-rg',
-    '--image', 'personalregistry.azurecr.io/personal-docintel:fixture-sha'
+    '--image', 'personalregistry.azurecr.io/personal-docintel:fixture-sha',
+    '--set-env-vars', 'Readiness__UpgradeLegacySampleDefaults=false'
   ]);
   const named = runBash('az() { printf "%s\\n" "$@"; }\n' + script, {
     ...environment, DOCINTEL_CONTAINER_NAME: 'docintel-api'
   });
   assert.equal(named.status, 0, named.stderr);
   assert.deepEqual(named.stdout.trim().split(/\r?\n/).slice(-2), ['--container-name', 'docintel-api']);
+  const repair = runBash('az() { printf "%s\\n" "$@"; }\n' + script, {
+    ...environment, LEGACY_SAMPLE_REPAIR: 'true'
+  });
+  assert.equal(repair.status, 0, repair.stderr);
+  assert.ok(repair.stdout.trim().split(/\r?\n/).includes('Readiness__UpgradeLegacySampleDefaults=true'));
+  assert.match(workflow, /upgrade_legacy_sample_defaults:[\s\S]*?type: boolean[\s\S]*?default: false/);
 });
 
 test('feature-branch validation builds the Linux image without registry or Azure access', () => {

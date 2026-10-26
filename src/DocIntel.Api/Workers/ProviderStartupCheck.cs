@@ -1,3 +1,4 @@
+using System.Text.Json;
 using DocIntel.Core;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Models;
@@ -13,6 +14,9 @@ public sealed class StartupReadinessOptions
 {
     public bool ProbeModelsOnStartup { get; set; }
     public int TimeoutSeconds { get; set; } = 60;
+
+    /// <summary>Opts into a versioned upgrade of the original, unedited Fabrikam sample model default.</summary>
+    public bool UpgradeLegacySampleDefaults { get; set; }
 }
 
 /// <summary>Validates active feature/provider routing and optionally proves model access before becoming ready.</summary>
@@ -36,6 +40,8 @@ public sealed class ProviderStartupCheck(
         try
         {
             var tenants = await harnesses.ListTenantsAsync(timeout.Token);
+            if (options.UpgradeLegacySampleDefaults)
+                tenants = await UpgradeLegacySampleDefaultsAsync(tenants, timeout.Token);
             foreach (var tenant in tenants.Where(tenant => tenant.IsActive))
             {
                 timeout.Token.ThrowIfCancellationRequested();
@@ -96,6 +102,48 @@ public sealed class ProviderStartupCheck(
             Volatile.Write(ref _snapshot, new Snapshot(HealthCheckResult.Unhealthy(
                 "An enabled provider is unconfigured or failed startup verification.")));
         }
+    }
+
+    private async Task<IReadOnlyList<TenantHarness>> UpgradeLegacySampleDefaultsAsync(
+        IReadOnlyList<TenantHarness> tenants, CancellationToken cancellationToken)
+    {
+        var seed = FileHarnessStore.CreateDefaultTenants().Single(tenant => tenant.TenantId == "fabrikam-procurement");
+        var result = tenants.ToList();
+        for (var index = 0; index < result.Count; index++)
+        {
+            var tenant = result[index];
+            if (tenant.TenantId != seed.TenantId || tenant.DisplayName != seed.DisplayName ||
+                tenant.HarnessVersion != 1 || !tenant.IsActive || tenant.DefaultModelId != "deepseek-r1" ||
+                tenant.DecisionModelId != seed.DecisionModelId ||
+                !tenant.AllowedModels.SequenceEqual(seed.AllowedModels, StringComparer.Ordinal) ||
+                JsonSerializer.Serialize(tenant.Agent) != JsonSerializer.Serialize(seed.Agent) ||
+                tenant.Capabilities.Count != seed.Capabilities.Count ||
+                tenant.Capabilities.Any(entry => entry.Value is null ||
+                    !seed.Capabilities.TryGetValue(entry.Key, out var expected) ||
+                    entry.Value.Enabled != expected.Enabled ||
+                    entry.Value.ModelIdOverride != expected.ModelIdOverride ||
+                    entry.Value.CustomSystemPrompt != expected.CustomSystemPrompt))
+                continue;
+
+            var upgraded = JsonSerializer.Deserialize<TenantHarness>(JsonSerializer.Serialize(tenant))
+                ?? throw new InvalidDataException("The legacy sample profile could not be copied.");
+            upgraded.DefaultModelId = seed.DefaultModelId;
+            using var configuredClient = models.ResolveRequiredChatClient(upgraded);
+            try
+            {
+                result[index] = await harnesses.UpsertTenantAsync(upgraded, cancellationToken);
+                logger.LogInformation(
+                    "Legacy Fabrikam sample model default upgraded from harness version 1 to {HarnessVersion}.",
+                    result[index].HarnessVersion);
+            }
+            catch (HarnessConflictException)
+            {
+                result[index] = await harnesses.GetTenantAsync(tenant.TenantId, cancellationToken)
+                    ?? throw new InvalidOperationException("The sample profile was removed during its upgrade.");
+                logger.LogWarning("Concurrent sample profile edit detected; latest settings were not overwritten.");
+            }
+        }
+        return result;
     }
 
     private static bool Enabled(TenantHarness tenant, string key) =>
