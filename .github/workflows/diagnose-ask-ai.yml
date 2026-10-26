@@ -1,0 +1,131 @@
+name: Diagnose saved Ask AI run
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant_id:
+        description: Application tenant containing the failed run.
+        type: string
+        default: contoso-legal
+      run_id:
+        description: Existing run ID from the failure log.
+        type: string
+        required: true
+      mode:
+        description: Inspect is read-only. Replay calls the existing model with the saved question and original actor.
+        type: choice
+        options: [Inspect, Replay]
+        default: Inspect
+      confirmation:
+        description: Type REPLAY to authorize a bounded, in-memory replay. Model usage can incur charges.
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docintel-azure-${{ vars.AZURE_RESOURCE_GROUP || 'Docintel' }}-${{ vars.AZURE_CONTAINER_APP_NAME || 'ca-docintel-dev' }}
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: docintel-dev
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'Docintel' }}
+      AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME || 'ca-docintel-dev' }}
+      DOCINTEL_CONTAINER_NAME: ${{ vars.DOCINTEL_CONTAINER_NAME }}
+      DIAGNOSTIC_TENANT: ${{ inputs.tenant_id }}
+      DIAGNOSTIC_RUN: ${{ inputs.run_id }}
+      DIAGNOSTIC_MODE: ${{ inputs.mode }}
+    steps:
+      - name: Validate explicit diagnostic input and Azure identity consistency
+        shell: pwsh
+        env:
+          DIAGNOSTIC_CONFIRMATION: ${{ inputs.confirmation }}
+          PERSONAL_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          PERSONAL_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          PERSONAL_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          if ($env:DIAGNOSTIC_MODE -eq 'Replay' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'REPLAY') {
+            throw 'Replay requires the exact confirmation REPLAY.'
+          }
+          if ($env:DIAGNOSTIC_TENANT -notmatch '^[a-z0-9][a-z0-9-]{0,127}$' -or
+            $env:DIAGNOSTIC_RUN -notmatch '^[a-fA-F0-9]{32}$') { throw 'Invalid tenant/run identifiers.' }
+          $values = @($env:PERSONAL_CLIENT_ID, $env:PERSONAL_TENANT_ID, $env:PERSONAL_SUBSCRIPTION_ID)
+          $present = @($values | Where-Object { -not [String]::IsNullOrWhiteSpace($_) }).Count
+          if ($present -ne 0 -and $present -ne 3) { throw 'Configure all three AZURE identity secrets together.' }
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID || secrets.CADOCINTELDEV_AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID || secrets.CADOCINTELDEV_AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || secrets.CADOCINTELDEV_AZURE_SUBSCRIPTION_ID }}
+      - name: Run the bounded operator diagnostic in the active app identity
+        shell: python
+        run: |
+          import json
+          import os
+          import re
+          import shlex
+          import subprocess
+          import sys
+
+          def inspect(arguments):
+              result = subprocess.run(
+                  ["az", *arguments, "--only-show-errors", "--output", "json"],
+                  capture_output=True, text=True, timeout=45)
+              if result.returncode:
+                  raise RuntimeError("Azure target inspection failed; no runtime diagnostic was executed.")
+              return json.loads(result.stdout)
+
+          target = ["--resource-group", os.environ["AZURE_RESOURCE_GROUP"],
+                    "--name", os.environ["AZURE_CONTAINER_APP_NAME"]]
+          app = inspect(["containerapp", "show", *target])
+          revision = app["properties"]["latestRevisionName"]
+          containers = app["properties"]["template"]["containers"]
+          configured = os.environ.get("DOCINTEL_CONTAINER_NAME")
+          selected = [item for item in containers if not configured or item["name"] == configured]
+          if len(selected) != 1:
+              raise RuntimeError("Select exactly one DocIntel container.")
+          replicas = inspect(["containerapp", "replica", "list", *target, "--revision", revision])
+          if not replicas:
+              raise RuntimeError("The current revision has no active replica.")
+          replay = "true" if os.environ["DIAGNOSTIC_MODE"] == "Replay" else "false"
+          diagnostic = shlex.join([
+              "dotnet", "/app/DocIntel.Api.dll",
+              "--diagnose-ask-run", os.environ["DIAGNOSTIC_RUN"],
+              "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"],
+              "--diagnose-replay", replay])
+          command = ["az", "containerapp", "exec", *target, "--revision", revision,
+                     "--replica", replicas[0]["name"], "--container", selected[0]["name"],
+                     "--command", diagnostic, "--only-show-errors"]
+          result = subprocess.run(
+              ["script", "-q", "-e", "-c", shlex.join(command), "/dev/null"],
+              capture_output=True, text=True, timeout=180,
+              env={**os.environ, "TERM": "dumb"})
+          records = []
+          for line in result.stdout.splitlines():
+              line = re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", line)
+              marker = line.find("DOCINTEL_DIAGNOSTIC ")
+              if marker < 0:
+                  continue
+              value = json.loads(line[marker + len("DOCINTEL_DIAGNOSTIC "):])
+              safe = {key: value[key] for key in (
+                  "phase", "status", "failureCode", "searches", "inspections",
+                  "matchedDocuments", "citations") if key in value}
+              print(json.dumps(safe))
+              records.append(safe)
+          if not records:
+              raise RuntimeError("The runtime diagnostic returned no verified result. Raw process output was not published.")
+          expected_phase = "Replay" if replay == "true" else "Stored"
+          if records[-1].get("phase") != expected_phase:
+              raise RuntimeError("The requested diagnostic did not complete.")
+          if records[-1].get("status") in ("Refused", "NotFound") or (
+                  replay == "true" and records[-1].get("status") == "Failed"):
+              sys.exit(1)

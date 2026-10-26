@@ -247,6 +247,13 @@ Ask AI's `search_documents` tool advertises a closed query schema with page size
 entities are `[]`. Tenant identity and document access scopes remain server-owned; invalid tool
 arguments fail before storage access and cannot be reported as successful empty searches.
 
+For a saved failed Ask AI question, **Diagnose saved Ask AI run** can inspect only status and progress
+counts. Its explicit **Replay** mode requires `REPLAY` confirmation and may incur model usage charges.
+It runs the CLI inside the active app replica using the existing runtime identity and the original
+actor's current document permissions. Replay is limited to failed web runs with built-in read-only
+tools, has a 120-second deadline, never delivers messages, and does not modify the saved run or persist
+its answer. Only fixed failure codes/counts are printed. No public diagnostic endpoint is exposed.
+
 The older Fabrikam sample used `deepseek-r1`, whose legacy inference adapter cannot serve Ask AI
 tool calls. New samples use `gpt-5-mini`, but saved profiles are not reset during deployment.
 For the original version-1 Fabrikam sample only, the release workflow offers

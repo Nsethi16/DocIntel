@@ -183,12 +183,15 @@ public sealed class AskAiRunProcessor(
         catch (Exception exception)
         {
             operation.Fail(exception);
-            run.ErrorCode = "ExecutionFailed";
-            run.ErrorMessage = "Ask AI could not complete this request. Check the model configuration or try again.";
+            run.ErrorCode = AskAiFailureDiagnostics.GetCode(exception);
+            run.ErrorMessage = AskAiFailureDiagnostics.GetMessage(run.ErrorCode);
             var cause = exception.GetBaseException();
-            logger.LogError("Ask AI run {RunId} failed with {ErrorType}; root cause {CauseType}; code {Code}; site {Site}.",
+            logger.LogError("Ask AI run {RunId} failed with {ErrorType}; root cause {CauseType}; code {Code}; site {Site}. " +
+                "Failure code {FailureCode}; searches {Searches}; inspections {Inspections}; matched documents {Documents}.",
                 run.RunId, exception.GetType().Name, cause.GetType().Name, cause.HResult & 0xffff,
-                cause.TargetSite?.DeclaringType?.Name + "." + cause.TargetSite?.Name);
+                cause.TargetSite?.DeclaringType?.Name + "." + cause.TargetSite?.Name, run.ErrorCode,
+                run.Steps.Count(step => step.StepName == "search_documents"),
+                run.Steps.Count(step => step.StepName == "inspect_document_slice"), run.DocumentsEvaluated);
         }
 
         run.Status = stoppingToken.IsCancellationRequested ? JobStatus.Queued : JobStatus.Failed;

@@ -5,11 +5,18 @@ using DocIntel.Api.Identity;
 using DocIntel.Api.Workers;
 using DocIntel.Api.Channels;
 using DocIntel.Api.Http;
+using DocIntel.Api.Diagnostics;
 using DocIntel.Core;
 using DocIntel.ServiceDefaults;
 using Microsoft.AspNetCore.Http.Features;
 
 var builder = WebApplication.CreateBuilder(args);
+var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal);
+if (diagnosticMode)
+{
+    builder.Logging.ClearProviders();
+    builder.Logging.SetMinimumLevel(LogLevel.None);
+}
 
 builder.AddServiceDefaults();
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = HttpSafetyExtensions.MaximumRequestBodyBytes);
@@ -49,6 +56,18 @@ builder.Services.AddHostedService<AskAiRunWorker>();
 builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);
 
 var app = builder.Build();
+if (diagnosticMode)
+{
+    Environment.ExitCode = await AskAiRunDiagnostic.ExecuteAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty,
+        builder.Configuration["diagnose-ask-run"] ?? String.Empty,
+        String.Equals(builder.Configuration["diagnose-replay"], "true", StringComparison.Ordinal),
+        app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.IAskAiRunStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.AskAiOrchestrator>(),
+        Console.Out);
+    await app.DisposeAsync();
+    return;
+}
 
 app.UseDocIntelResponseHeaders();
 app.UseExceptionHandler(new ExceptionHandlerOptions
