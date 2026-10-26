@@ -7,7 +7,6 @@ namespace DocIntel.Api.Diagnostics;
 /// <summary>Operator-only CLI diagnostics; no public endpoint, stored-run mutation or channel delivery.</summary>
 public static class AskAiRunDiagnostic
 {
-    ArgumentNullException.ThrowIfNull(tenantId);
     private const string Prefix = "DOCINTEL_DIAGNOSTIC ";
 
     /// <summary>Inspects a stored run or replays a failed web question in memory with its original actor.</summary>
@@ -15,6 +14,7 @@ public static class AskAiRunDiagnostic
         IAskAiRunStore store, AskAiOrchestrator orchestrator, TextWriter output,
         CancellationToken cancellationToken = default)
     {
+        ArgumentNullException.ThrowIfNull(tenantId);
         if (tenantId.Length is < 1 or > 128 ||
             tenantId.Any(character => !Char.IsAsciiLetterOrDigit(character) && character != '-') ||
             !Guid.TryParseExact(runId, "N", out _))
