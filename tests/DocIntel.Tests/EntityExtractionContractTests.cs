@@ -36,7 +36,7 @@ public sealed class EntityExtractionContractTests
         var item = entities.GetProperty("items");
         Assert.False(item.GetProperty("additionalProperties").GetBoolean());
         Assert.Equal(["name", "value", "category", "confidence"],
-            item.GetProperty("required").EnumerateArray().Select(value => value.GetString()).ToArray());
+            item.GetProperty("required").EnumerateArray().Select(value => Assert.IsType<string>(value.GetString())).ToArray());
         var properties = item.GetProperty("properties");
         foreach (var field in new[] { "name", "value", "category" })
         {
