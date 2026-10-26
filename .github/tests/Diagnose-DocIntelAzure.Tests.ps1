@@ -66,6 +66,7 @@ function az {
             Write-Output '{"Log":"Document private-job-id failed with RequestFailedException; code 404; site ContentUnderstandingRestClient.AnalyzeBinaryAsync."}'
             Write-Output '{"Log":"Request secret-id failed with CustomerException; code 500; site SensitiveCustomerIdentifier.Read."}'
             Write-Output '{"Log":"Request private-correlation-id failed with InvalidOperationException; code 5385; site ThrowHelper.ThrowInvalidOperationException."}'
+            Write-Output '{"Log":"Document private-job-id failed with InvalidDataException; code 5377; site <RecognizeAsync>d__11.MoveNext."}'
             $type = if ($global:DocIntelDiagnosticsFixture.scenario -eq 'unknown-type') {
                 'SensitiveCustomerIdentifier'
             } else { 'NotSupportedException' }
@@ -73,6 +74,19 @@ function az {
                 Write-Output ('{"Log":"Startup provider verification failed with ' + $type +
                     '; no provider details were returned."}')
             }
+        }
+        'cognitiveservices account' {
+            if ($Arguments[2] -eq 'list') {
+                @(
+                    @{ name = 'test-account'; kind = 'AIServices'; properties = @{ customSubDomainName = 'test-account' } },
+                    @{ name = 'other-account'; kind = 'AIServices'; properties = @{ customSubDomainName = 'other-account' } }
+                ) | ConvertTo-Json -Depth 10 -Compress
+            } elseif ($Arguments[2..3] -join ' ' -eq 'deployment list') {
+                @(
+                    @{ name = 'gpt-5-mini'; properties = @{ model = @{ name = 'gpt-5-mini' } } },
+                    @{ name = 'PrivateCustomDeployment'; properties = @{ model = @{ name = 'PrivateCustomModel' } } }
+                ) | ConvertTo-Json -Depth 10 -Compress
+            } else { throw 'Diagnostics must only list management-plane accounts and deployments.' }
         }
         default { throw 'Unexpected Azure command in diagnostic tests.' }
     }
@@ -101,10 +115,15 @@ try {
     if ($output -match 'private-endpoint|private-secret-reference|customer-private-value|UnrelatedPrivateSetting') {
         throw 'Diagnostics leaked raw configuration, logs or customer data.'
     }
+    if ($output -notmatch 'test-account' -or $output -notmatch 'gpt-5-mini' -or
+        $output -match 'PrivateCustomDeployment|PrivateCustomModel') {
+        throw 'Model diagnostics must mask custom deployment/model names and show known deployments.'
+    }
     if ($output -notmatch 'Runtime failure: Request: RequestFailedException; code 403; component BlobStorage' -or
         $output -notmatch 'Runtime failure: Document: RequestFailedException; code 404; component ContentUnderstanding' -or
         $output -notmatch 'Runtime failure: Request: UnclassifiedException; code 500; component Other' -or
         $output -notmatch 'site ThrowHelper.ThrowInvalidOperationException' -or
+        $output -notmatch 'Document: InvalidDataException; code 5377; component ContentUnderstanding; site RecognizeAsync.MoveNext' -or
         $output -match 'private-correlation-id|private-job-id|secret-id|SensitiveCustomerIdentifier|CustomerException') {
         throw 'Runtime error output must report only known types, numeric codes and fixed component categories.'
     }

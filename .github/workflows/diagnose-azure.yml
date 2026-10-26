@@ -85,7 +85,8 @@ jobs:
           $knownTypes = @('InvalidOperationException', 'NotSupportedException', 'CosmosException',
             'RequestFailedException', 'AuthenticationFailedException', 'CredentialUnavailableException',
             'ClientResultException', 'JsonException', 'HttpRequestException', 'IOException',
-            'TimeoutException', 'ArgumentException', 'ArgumentNullException', 'TypeInitializationException')
+            'TimeoutException', 'ArgumentException', 'ArgumentNullException', 'TypeInitializationException',
+            'InvalidDataException')
           foreach ($replica in $replicas | Select-Object -First 3) {
             $lines = az containerapp logs show --resource-group $env:AZURE_RESOURCE_GROUP `
               --name $env:AZURE_CONTAINER_APP_NAME --revision $revision --replica $replica.name `
@@ -109,13 +110,15 @@ jobs:
                   'Blob|BlockBlob' { 'BlobStorage'; break }
                   'Queue' { 'QueueStorage'; break }
                   'Cosmos|ContainerCore|DocumentClient' { 'CosmosStorage'; break }
-                  'ContentUnderstanding' { 'ContentUnderstanding'; break }
+                  'ContentUnderstanding|<RecognizeAsync>' { 'ContentUnderstanding'; break }
                   'OpenAI|ChatClient|ChatCompletion' { 'LanguageModel'; break }
                   'Pdf|PDF' { 'PdfValidation'; break }
                   default { 'Other' }
                 }
-                $safeSite = if ($site -match '^(?:ThrowHelper|JsonThrowHelper|FormFeature|DefaultAntiforgery|HttpRequestStream|FileBufferingReadStream|DefaultHttpRequest|JsonSerializer|JsonSerializerOptions|CosmosSerializerCore|RequestDelegateFactory|BlobRestClient|ContentUnderstandingRestClient)\.[A-Za-z_][A-Za-z0-9_]{0,99}$') {
+                $safeSite = if ($site -match '^(?:ThrowHelper|JsonThrowHelper|FormFeature|DefaultAntiforgery|HttpRequestStream|FileBufferingReadStream|DefaultHttpRequest|JsonSerializer|JsonSerializerOptions|CosmosSerializerCore|RequestDelegateFactory|BlobRestClient|ContentUnderstandingRestClient|AzureContentUnderstandingLayoutProvider|PdfPigLayoutExtractor|DocumentLayoutCodec)\.[A-Za-z_][A-Za-z0-9_]{0,99}$') {
                   $site
+                } elseif ($site -match '^<(?<method>RecognizeAsync|ExtractAsync|ExecuteAsync|GetLayoutAsync|SaveLayoutAsync)>d__[0-9]+\.MoveNext$') {
+                  $Matches.method + '.MoveNext'
                 } else { 'UnclassifiedSite' }
                 $runtimeErrors.Add(('{0}: {1}; code {2}; component {3}; site {4}' -f
                   $runtime.Groups['kind'].Value, $safeType, $runtime.Groups['code'].Value, $component, $safeSite)) | Out-Null
@@ -130,4 +133,35 @@ jobs:
             Write-Warning 'No request or document failure was found in the bounded log sample. No upload diagnosis is assumed.'
           }
           foreach ($runtimeError in $runtimeErrors) { Write-Output ('Runtime failure: ' + $runtimeError) }
+          $accounts = @(az cognitiveservices account list --resource-group $env:AZURE_RESOURCE_GROUP `
+            --only-show-errors --output json | ConvertFrom-Json -Depth 100)
+          $knownModels = @('gpt-5-mini', 'gpt-5.1', 'gpt-4o', 'Microsoft-Decision-1')
+          $knownDeployments = @('gpt-5-mini', 'gpt-5.1', 'gpt-4o', 'Decision-1', 'decision-1')
+          foreach ($account in $accounts | Where-Object { $_.kind -eq 'AIServices' }) {
+            $bindings = @()
+            $subdomain = $account.properties.customSubDomainName
+            if ($subdomain) {
+              foreach ($name in @('AzureAI__AzureOpenAIEndpoint', 'AzureAI__FoundryInferenceEndpoint',
+                'AzureAI__ContentUnderstandingEndpoint', 'AzureAI__TranslatorEndpoint')) {
+                $entry = $container.env | Where-Object { $_.name -ceq $name } | Select-Object -First 1
+                $endpoint = $null
+                if ([uri]::TryCreate([string]$entry.value, [UriKind]::Absolute, [ref]$endpoint) -and
+                  $endpoint.Host -in @("$subdomain.openai.azure.com", "$subdomain.services.ai.azure.com",
+                    "$subdomain.cognitiveservices.azure.com")) { $bindings += $name }
+              }
+            }
+            $deployments = @(az cognitiveservices account deployment list `
+              --resource-group $env:AZURE_RESOURCE_GROUP --name $account.name `
+              --only-show-errors --output json | ConvertFrom-Json -Depth 100)
+            [pscustomobject]@{
+              resource = $account.name
+              boundProviders = $bindings
+              deployedModels = @($deployments | ForEach-Object {
+                @{
+                  deployment = if ($_.name -cin $knownDeployments) { $_.name } else { 'OtherDeployment' }
+                  model = if ($_.properties.model.name -cin $knownModels) { $_.properties.model.name } else { 'OtherModel' }
+                }
+              })
+            } | ConvertTo-Json -Depth 10 -Compress
+          }
           Write-Output 'Read-only diagnostics completed. No resources, settings, permissions or tenant profiles were changed.'
