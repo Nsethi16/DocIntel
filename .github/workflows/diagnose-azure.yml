@@ -113,9 +113,11 @@ jobs:
                 $errorTypes.Add($safeType) | Out-Null
               }
               $runtime = [regex]::Match($line,
-                '(?<kind>Request|Document) [A-Za-z0-9:._-]{1,160} failed with (?<type>[A-Za-z_][A-Za-z0-9_]{0,79}); code (?<code>[0-9]{1,10}); site (?<site>[A-Za-z0-9_+.<>,]{1,200})\.')
+                '(?<kind>Request|Document|Ask AI run) [A-Za-z0-9:._-]{1,160} failed with (?<type>[A-Za-z_][A-Za-z0-9_]{0,79}); (?:root cause (?<cause>[A-Za-z_][A-Za-z0-9_]{0,79}); )?code (?<code>[0-9]{1,10}); site (?<site>[A-Za-z0-9_+.<>,]{1,200})\.')
               if ($runtime.Success) {
-                $type = $runtime.Groups['type'].Value
+                $type = if ($runtime.Groups['cause'].Success) {
+                  $runtime.Groups['cause'].Value
+                } else { $runtime.Groups['type'].Value }
                 $safeType = if ($type -cin $knownTypes) { $type } else { 'UnclassifiedException' }
                 $site = $runtime.Groups['site'].Value
                 $component = switch -Regex ($site) {
@@ -129,11 +131,14 @@ jobs:
                 }
                 $safeSite = if ($site -match '^(?:ThrowHelper|JsonThrowHelper|FormFeature|DefaultAntiforgery|HttpRequestStream|FileBufferingReadStream|DefaultHttpRequest|JsonSerializer|JsonSerializerOptions|CosmosSerializerCore|RequestDelegateFactory|BlobRestClient|ContentUnderstandingRestClient|AzureContentUnderstandingLayoutProvider|PdfPigLayoutExtractor|DocumentLayoutCodec)\.[A-Za-z_][A-Za-z0-9_]{0,99}$') {
                   $site
-                } elseif ($site -match '^<(?<method>RecognizeAsync|ExtractAsync|ExecuteAsync|GetLayoutAsync|SaveLayoutAsync)>d__[0-9]+\.MoveNext$') {
+                } elseif ($site -match '^<(?<method>RecognizeAsync|ExtractAsync|ExecuteAsync|ExecuteRunAsync|SearchDocumentsAsync|GetLayoutAsync|SaveLayoutAsync)>d__[0-9]+\.MoveNext$') {
                   $Matches.method + '.MoveNext'
                 } else { 'UnclassifiedSite' }
+                $kind = if ($runtime.Groups['kind'].Value -eq 'Ask AI run') { 'AskAI' } else {
+                  $runtime.Groups['kind'].Value
+                }
                 $runtimeErrors.Add(('{0}: {1}; code {2}; component {3}; site {4}' -f
-                  $runtime.Groups['kind'].Value, $safeType, $runtime.Groups['code'].Value, $component, $safeSite)) | Out-Null
+                  $kind, $safeType, $runtime.Groups['code'].Value, $component, $safeSite)) | Out-Null
               }
             }
           }
