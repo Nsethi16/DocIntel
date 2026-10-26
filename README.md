@@ -235,6 +235,11 @@ behind ACA HTTP ingress, without additional TCP ingress; release preflight enfor
 Secure session/CSRF cookies and CSRF checks remain required. Upload failures show an HTTP-specific
 message and a safe correlation reference rather than silently failing.
 
+Entity extraction requests a closed structured-output schema: non-empty entity names/values,
+confidence between 0 and 1, and an empty entity list when requested fields are absent. Invalid model
+output still fails validation; it is not silently dropped, normalized from percentages or replaced
+with simulated data. Slice entity results are published together only after every response validates.
+
 The older Fabrikam sample used `deepseek-r1`, whose legacy inference adapter cannot serve Ask AI
 tool calls. New samples use `gpt-5-mini`, but saved profiles are not reset during deployment.
 For the original version-1 Fabrikam sample only, the release workflow offers

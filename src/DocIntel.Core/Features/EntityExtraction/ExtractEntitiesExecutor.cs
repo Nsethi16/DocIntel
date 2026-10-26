@@ -17,6 +17,35 @@ namespace DocIntel.Core.Features.EntityExtraction;
 [SendsMessage(typeof(SplittingState))]
 public sealed class ExtractEntitiesExecutor : Executor<SplittingState, SplittingState>
 {
+    private static readonly JsonElement ResponseSchema = JsonSerializer.Deserialize<JsonElement>("""
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["entities"],
+          "properties": {
+            "entities": {
+              "type": "array",
+              "description": "Only entities supported by the document. Omit absent values; return [] if none are found.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "value", "category", "confidence"],
+                "properties": {
+                  "name": { "type": "string", "minLength": 1 },
+                  "value": { "type": "string", "minLength": 1 },
+                  "category": { "type": "string", "minLength": 1 },
+                  "confidence": {
+                    "type": "number",
+                    "minimum": 0,
+                    "maximum": 1,
+                    "description": "An uncalibrated confidence signal from 0 to 1, never a percentage from 0 to 100."
+                  }
+                }
+              }
+            }
+          }
+        }
+        """);
     private readonly IModelCatalog _modelCatalog;
 
     public ExtractEntitiesExecutor(IModelCatalog modelCatalog)
@@ -58,8 +87,14 @@ public sealed class ExtractEntitiesExecutor : Executor<SplittingState, Splitting
         var chatOptions = new ChatOptions
         {
             Instructions = $"[TASK:ENTITY_EXTRACTION]\nYou are a structured entity extraction specialist.\n" +
-                $"{extractionPrompt}\n{DocumentPromptBoundary.Policy}",
-            ResponseFormat = ChatResponseFormat.ForJsonSchema<EntityExtractionEnvelopeDto>(
+                $"{extractionPrompt}\n" +
+                "Return only entities whose non-empty values are present in the document. " +
+                "Omit requested entities that are absent; do not emit null, empty, unknown or not-found placeholders. " +
+                "If none are found, return {\"entities\":[]}. " +
+                "Use confidence from 0 to 1 (for example, 0.95), never a percentage such as 95. " +
+                "These are uncalibrated signals, not verified probabilities.\n" +
+                DocumentPromptBoundary.Policy,
+            ResponseFormat = ChatResponseFormat.ForJsonSchema(ResponseSchema,
                 schemaName: "extracted_entities_response",
                 schemaDescription: "Structured list of entities extracted from the document slice")
         };
@@ -74,6 +109,7 @@ public sealed class ExtractEntitiesExecutor : Executor<SplittingState, Splitting
             });
 
         var allEntities = new List<ExtractedEntity>();
+        var stagedEntities = new List<(DocumentSlice Slice, List<ExtractedEntity> Entities)>();
 
         foreach (var slice in message.Slices)
         {
@@ -108,10 +144,12 @@ public sealed class ExtractEntitiesExecutor : Executor<SplittingState, Splitting
                     slice.SegmentIndex))
                 .ToList();
 
-            slice.ExtractedEntities = sliceEntities;
+            stagedEntities.Add((slice, sliceEntities));
             allEntities.AddRange(sliceEntities);
         }
 
+        cancellationToken.ThrowIfCancellationRequested();
+        foreach (var staged in stagedEntities) staged.Slice.ExtractedEntities = staged.Entities;
         message.ExtractedEntities = allEntities;
         sw.Stop();
 
