@@ -106,6 +106,34 @@ public sealed class AskAiRunTests
         Assert.Null(failed.Answer);
     }
 
+    [Theory]
+    [InlineData("""{"kind":"DocumentAnswer","answer":"A claim without evidence.","evidenceIds":[]}""", "MissingEvidence")]
+    [InlineData("""{"kind":"NoEvidence","answer":"No matches [1].","evidenceIds":[]}""", "CitationMismatch")]
+    [InlineData("""{"kind":"Conversation","answer":"","evidenceIds":[]}""", "InvalidModelAnswer")]
+    public async Task Known_Answer_Validation_Failures_Persist_Specific_Safe_Codes(string response, string code)
+    {
+        // Arrange
+        var store = new InMemoryAskAiRunStore();
+        var run = CreateRun();
+        await store.UpsertRunAsync(run);
+        var client = new Mock<IChatClient>();
+        client.Setup(c => c.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, response)));
+
+        // Act
+        await CreateProcessor(store, client.Object).ProcessAsync(new AskAiQueueTicket(run.RunId, run.TenantId));
+        var failed = await store.GetRunAsync(run.TenantId, run.RunId);
+
+        // Assert
+        Assert.Equal(JobStatus.Failed, failed?.Status);
+        Assert.Equal(code, failed?.ErrorCode);
+        Assert.NotEqual("ExecutionFailed", failed?.ErrorCode);
+        Assert.Null(failed?.Answer);
+        Assert.Empty(failed!.Citations);
+        Assert.DoesNotContain(response, failed.ErrorMessage);
+    }
+
     [Fact]
     public async Task Execution_Timeout_Does_Not_Leave_A_Run_Running_Forever()
     {
