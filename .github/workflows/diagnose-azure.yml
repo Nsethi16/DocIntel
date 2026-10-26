@@ -129,7 +129,7 @@ jobs:
                   'Pdf|PDF' { 'PdfValidation'; break }
                   default { 'Other' }
                 }
-                $safeSite = if ($site -match '^(?:ThrowHelper|JsonThrowHelper|FormFeature|DefaultAntiforgery|HttpRequestStream|FileBufferingReadStream|DefaultHttpRequest|JsonSerializer|JsonSerializerOptions|CosmosSerializerCore|RequestDelegateFactory|BlobRestClient|ContentUnderstandingRestClient|AzureContentUnderstandingLayoutProvider|PdfPigLayoutExtractor|DocumentLayoutCodec)\.[A-Za-z_][A-Za-z0-9_]{0,99}$') {
+                $safeSite = if ($site -match '^(?:ThrowHelper|JsonThrowHelper|FormFeature|DefaultAntiforgery|HttpRequestStream|FileBufferingReadStream|DefaultHttpRequest|JsonSerializer|JsonSerializerOptions|CosmosSerializerCore|RequestDelegateFactory|BlobRestClient|ContentUnderstandingRestClient|AzureContentUnderstandingLayoutProvider|PdfPigLayoutExtractor|DocumentLayoutCodec|DocumentQuery|DocumentQueryCompiler|AIFunctionFactory|AIJsonUtilities|ChatResponseFormat|ArgumentException|ArgumentNullException|ReflectionAIFunction)\.[A-Za-z_][A-Za-z0-9_]{0,99}$') {
                   $site
                 } elseif ($site -match '^<(?<method>RecognizeAsync|ExtractAsync|ExecuteAsync|ExecuteRunAsync|SearchDocumentsAsync|GetLayoutAsync|SaveLayoutAsync)>d__[0-9]+\.MoveNext$') {
                   $Matches.method + '.MoveNext'
