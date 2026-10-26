@@ -85,7 +85,7 @@ public sealed class ProviderStartupCheckTests
             case "feature-disabled": tenant.Capabilities[FeatureHarness.DocumentInsightKey].Enabled = false; break;
             case "feature-override": tenant.Capabilities[FeatureHarness.AskAiKey].ModelIdOverride = "gpt-5-mini"; break;
             case "feature-instructions": tenant.Capabilities[FeatureHarness.AskAiKey].CustomSystemPrompt = "Custom"; break;
-            case "personality": tenant.Agent.Instructions = "Custom guidance"; break;
+            case "personality": tenant.Agent = tenant.Agent with { Instructions = "Custom guidance" }; break;
             default: throw new InvalidOperationException("Unknown test customization.");
         }
         var original = JsonSerializer.Serialize(tenant);
@@ -128,7 +128,7 @@ public sealed class ProviderStartupCheckTests
         var concurrent = Copy(tenant);
         concurrent.HarnessVersion = 2;
         concurrent.DefaultModelId = concurrentModel;
-        concurrent.Agent.Instructions = "Concurrent operator choice";
+        concurrent.Agent = concurrent.Agent with { Instructions = "Concurrent operator choice" };
         store.Setup(s => s.UpsertTenantAsync(It.IsAny<TenantHarness>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new HarnessConflictException());
         store.Setup(s => s.GetTenantAsync(tenant.TenantId, It.IsAny<CancellationToken>())).ReturnsAsync(concurrent);

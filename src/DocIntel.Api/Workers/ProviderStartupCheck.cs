@@ -118,7 +118,7 @@ public sealed class ProviderStartupCheck(
                 tenant.HarnessVersion != 1 || !tenant.IsActive || tenant.DefaultModelId != "deepseek-r1" ||
                 tenant.DecisionModelId != seed.DecisionModelId ||
                 !tenant.AllowedModels.SequenceEqual(seed.AllowedModels, StringComparer.Ordinal) ||
-                JsonSerializer.Serialize(tenant.Agent) != JsonSerializer.Serialize(seed.Agent) ||
+                tenant.Agent != seed.Agent ||
                 tenant.Capabilities.Count != seed.Capabilities.Count ||
                 tenant.Capabilities.Any(entry => entry.Value is null ||
                     !seed.Capabilities.TryGetValue(entry.Key, out var expected) ||
