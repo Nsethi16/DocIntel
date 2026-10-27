@@ -16,6 +16,8 @@ on:
       - 'Deploy-DocIntelAzure.ps1'
       - '.github/workflows/ca-docintel-dev-AutoDeployTrigger-aecf934f-2618-4144-b094-760dd25b50b2.yml'
       - '.github/workflows/setup-azure.yml'
+      - '.github/workflows/release-customer.yml'
+      - 'Start-DocIntelSetup.ps1'
   pull_request:
     branches: [main]
     paths:
@@ -31,8 +33,19 @@ on:
       - 'Deploy-DocIntelAzure.ps1'
       - '.github/workflows/ca-docintel-dev-AutoDeployTrigger-aecf934f-2618-4144-b094-760dd25b50b2.yml'
       - '.github/workflows/setup-azure.yml'
+      - '.github/workflows/release-customer.yml'
+      - 'Start-DocIntelSetup.ps1'
+  workflow_call:
+    inputs:
+      validation_only:
+        type: boolean
+        default: true
   workflow_dispatch:
     inputs:
+      validation_only:
+        description: Run all validation without deploying the existing Azure application.
+        type: boolean
+        default: false
       upgrade_legacy_sample_defaults:
         description: One-time upgrade of the original version-1 Fabrikam sample to gpt-5-mini; customized profiles are not changed.
         type: boolean
@@ -88,18 +101,40 @@ jobs:
           ./tests/Setup-DocIntelGitHub.Tests.ps1
           ./tests/Wait-DocIntelReady.Tests.ps1
           ./tests/Install-DocIntelCustomer.Tests.ps1
+          ./tests/DocIntelCustomerBundle.Tests.ps1
       - uses: docker/setup-buildx-action@v3
       - name: Build the container without publishing
+        id: validation_image
         uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile
           push: false
           tags: docintel:validation
+          platforms: linux/amd64
+          outputs: type=oci,dest=${{ runner.temp }}/docintel-validation-image.tar
+          provenance: mode=max
+          sbom: true
+      - name: Build a review-only installer candidate for the exact validation image
+        shell: pwsh
+        env:
+          IMAGE_DIGEST: ${{ steps.validation_image.outputs.digest }}
+        run: |
+          ./scripts/Build-DocIntelCustomerBundle.ps1 -Version "v0.0.0-ci.$env:GITHUB_RUN_ID" `
+            -Image "ghcr.io/nsethi16/docintel-api@$env:IMAGE_DIGEST" `
+            -SourceCommit $env:GITHUB_SHA -OutputDirectory (Join-Path $env:RUNNER_TEMP 'customer-candidate')
+          'Review-only candidate: its OCI image was built but NOT pushed to GHCR. It is not installable until an approved release publishes that exact image.' |
+            Set-Content (Join-Path $env:RUNNER_TEMP 'customer-candidate\CANDIDATE.txt')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: customer-setup-candidate
+          path: ${{ runner.temp }}/customer-candidate/
+          if-no-files-found: error
+          overwrite: true
 
   deploy:
     needs: validate
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DOCINTEL_DEPLOY_ENABLED == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.DOCINTEL_DEPLOY_ENABLED == 'true' && !inputs.validation_only
     runs-on: ubuntu-latest
     timeout-minutes: 25
     environment: docintel-dev

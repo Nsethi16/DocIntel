@@ -115,6 +115,10 @@ public static class ServiceCollectionExtensions
         var azureOptions = new AzureIntegrationOptions();
         configuration?.GetSection(AzureIntegrationOptions.SectionName).Bind(azureOptions);
         services.TryAddSingleton(azureOptions);
+        var bootstrapOptions = new HarnessBootstrapOptions();
+        configuration?.GetSection(HarnessBootstrapOptions.SectionName).Bind(bootstrapOptions);
+        bootstrapOptions.Validate();
+        services.TryAddSingleton(bootstrapOptions);
         var askAiOptions = new AskAiExecutionOptions();
         configuration?.GetSection(AskAiExecutionOptions.SectionName).Bind(askAiOptions);
         askAiOptions.Validate();
@@ -160,10 +164,11 @@ public static class ServiceCollectionExtensions
                 });
 
             services.TryAddSingleton(cosmosClient);
-            services.TryAddSingleton<IHarnessStore>(_ => new CosmosHarnessStore(
-                cosmosClient,
+            services.TryAddSingleton<IHarnessStore>(sp => new CosmosHarnessStore(
+                sp.GetRequiredService<CosmosClient>(),
                 azureOptions.CosmosDatabaseName,
-                azureOptions.CosmosHarnessesContainer));
+                azureOptions.CosmosHarnessesContainer,
+                sp.GetRequiredService<HarnessBootstrapOptions>()));
             services.TryAddSingleton<IJobStore>(sp => new CosmosJobStore(
                 cosmosClient,
                 azureOptions.CosmosDatabaseName,
@@ -178,7 +183,8 @@ public static class ServiceCollectionExtensions
         {
             if (!string.IsNullOrWhiteSpace(harnessFilePath))
             {
-                services.TryAddSingleton<IHarnessStore>(_ => new FileHarnessStore(harnessFilePath));
+                services.TryAddSingleton<IHarnessStore>(sp => new FileHarnessStore(
+                    harnessFilePath, sp.GetRequiredService<HarnessBootstrapOptions>()));
             }
 
             if (!String.IsNullOrWhiteSpace(harnessFilePath) || !String.IsNullOrWhiteSpace(documentOptions.DatabasePath))

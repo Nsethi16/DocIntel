@@ -140,11 +140,13 @@ auditing or warnings, add an unknown mirror, or silently use a private-feed fall
 ### Customer installations
 
 For a new customer's subscription, see [Guided customer deployment](docs/customer-deployment.md).
-The fresh-install script previews an isolated stack, configures separate Entra registrations and
-runtime federation, and deploys a reviewed public image by digest. It does not require the customer
-to configure GitHub OIDC or build the application. This is the first implementation milestone;
-public release-bundle distribution, the Portal wizard, resumable recovery, and sample-free
-workspace onboarding are tracked in that guide. Existing installations use the flow below.
+The versioned installer bundle provides one guided Cloud Shell setup: choose a customer/subscription,
+review the plan, and approve. It configures isolated resources, Entra sign-in and the first customer
+workspace, with saved-state recovery after a completed foundation. Customers do not clone the source,
+build the application, copy app-registration GUIDs, or configure GitHub OIDC. The release workflow
+packages the exact image digest and compiled ARM with integrity hashes. Public publisher configuration
+and clean-subscription acceptance are still required before this is a published customer release.
+Existing installations use the flow below.
 
 ### Set up an existing Azure deployment from GitHub
 

@@ -309,11 +309,17 @@ public sealed class CosmosHarnessStore : IHarnessStore
 {
     private readonly Container _container;
     private readonly string _endpointDescription;
+    private readonly HarnessBootstrapOptions _bootstrap;
+    private readonly SemaphoreSlim _seedGate = new(1, 1);
     private bool _seeded;
 
-    public CosmosHarnessStore(CosmosClient cosmosClient, string databaseName = "DocIntel", string containerName = "harnesses")
+    public CosmosHarnessStore(
+        CosmosClient cosmosClient, string databaseName = "DocIntel", string containerName = "harnesses",
+        HarnessBootstrapOptions? bootstrapOptions = null)
     {
         ArgumentNullException.ThrowIfNull(cosmosClient);
+        _bootstrap = bootstrapOptions ?? new HarnessBootstrapOptions();
+        _bootstrap.Validate();
         _container = cosmosClient.GetContainer(databaseName, containerName);
         _endpointDescription = $"CosmosDB ({cosmosClient.Endpoint} -> {databaseName}/{containerName} [PK: /tenantId])";
     }
@@ -369,6 +375,7 @@ public sealed class CosmosHarnessStore : IHarnessStore
     {
         ArgumentNullException.ThrowIfNull(harness);
         ArgumentException.ThrowIfNullOrWhiteSpace(harness.TenantId);
+        await EnsureSeededAsync(cancellationToken).ConfigureAwait(false);
 
         var saved = JsonSerializer.Deserialize<TenantHarness>(JsonSerializer.Serialize(harness))!;
         var existing = await GetTenantWithoutSeedCheckAsync(harness.TenantId, cancellationToken);
@@ -400,35 +407,40 @@ public sealed class CosmosHarnessStore : IHarnessStore
 
     private async Task EnsureSeededAsync(CancellationToken cancellationToken)
     {
-        if (_seeded) return;
-
-        var query = new QueryDefinition("SELECT VALUE COUNT(1) FROM c");
-        using var iterator = _container.GetItemQueryIterator<int>(query);
-        var count = 0;
-        if (iterator.HasMoreResults)
+        if (Volatile.Read(ref _seeded)) return;
+        await _seedGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
         {
-            var page = await iterator.ReadNextAsync(cancellationToken).ConfigureAwait(false);
-            count = page.FirstOrDefault();
-        }
-
-        if (count == 0)
-        {
-            foreach (var tenant in FileHarnessStore.CreateDefaultTenants())
+            if (_seeded) return;
+            var existing = new List<string>();
+            using (var iterator = _container.GetItemQueryIterator<string>(
+                new QueryDefinition("SELECT VALUE c.tenantId FROM c")))
             {
-                tenant.Id = tenant.TenantId;
+                while (iterator.HasMoreResults)
+                {
+                    var page = await iterator.ReadNextAsync(cancellationToken).ConfigureAwait(false);
+                    existing.AddRange(page);
+                }
+            }
+
+            foreach (var tenant in _bootstrap.CreateMissingTenants(existing))
+            {
                 try
                 {
                     await _container.CreateItemAsync(tenant, new PartitionKey(tenant.TenantId),
-                        cancellationToken: cancellationToken);
+                        cancellationToken: cancellationToken).ConfigureAwait(false);
                 }
                 catch (CosmosException exception) when (exception.StatusCode == HttpStatusCode.Conflict)
                 {
                     // Another replica has already initialized this tenant; never reset its configuration.
                 }
             }
+            Volatile.Write(ref _seeded, true);
         }
-
-        _seeded = true;
+        finally
+        {
+            _seedGate.Release();
+        }
     }
 
     private async Task<ItemResponse<TenantHarness>?> GetTenantWithoutSeedCheckAsync(

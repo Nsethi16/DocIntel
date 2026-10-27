@@ -1,15 +1,17 @@
 #Requires -Version 7.3
 <#
 .SYNOPSIS
-    Preview and provision an isolated, fresh customer installation using a public, digest-pinned image.
+    Preview, install or safely resume a customer installation using a public, digest-pinned image.
 .DESCRIPTION
     No mutation occurs in Preview. Apply requires the reviewed plan hash and APPLY confirmation.
-    Existing nonempty resource groups are refused; this is not an adoption or upgrade tool.
+    Existing resources require the original journal and matching completed Azure foundation.
+    This is not an arbitrary-resource adoption or upgrade tool.
 #>
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$CustomerSlug,
     [Parameter(Mandatory)][string]$Image,
+    [string]$CustomerName = '',
     [string]$Location = 'westus',
     [string]$EnvironmentName = 'prod',
     [string]$SubscriptionId = '',
@@ -18,7 +20,8 @@ param(
     [ValidateSet('Preview', 'Apply')][string]$Mode = 'Preview',
     [string]$Confirmation = '',
     [string]$ExpectedPlanHash = '',
-    [string]$OutputDirectory = ''
+    [string]$OutputDirectory = '',
+    [switch]$Resume
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -37,6 +40,9 @@ if ($Image -cnotmatch '^ghcr\.io/nsethi16/docintel-api@(?<digest>sha256:[a-f0-9]
     throw 'Image must be the reviewed public ghcr.io/nsethi16/docintel-api image pinned by SHA-256 digest, not a tag.'
 }
 $digest = $Matches.digest
+if (-not $CustomerName) { $CustomerName = $CustomerSlug }
+if ($CustomerName.Length -gt 120 -or [String]::IsNullOrWhiteSpace($CustomerName) -or
+    $CustomerName -match '[\x00-\x1f\x7f]') { throw 'CustomerName must be 1-120 printable characters.' }
 # Published CU region list, reviewed 2026-10-26; model availability/quota are separately checked below.
 $regions = @('australiaeast', 'canadacentral', 'eastus', 'eastus2', 'japaneast', 'southcentralus',
     'southeastasia', 'swedencentral', 'uksouth', 'westeurope', 'westus', 'westus3')
@@ -53,15 +59,33 @@ if ($Mode -eq 'Apply' -and ($Confirmation -cne 'APPLY' -or $ExpectedPlanHash -cn
 }
 $root = Split-Path $PSScriptRoot -Parent
 $template = Join-Path $root 'infra\customer.bicep'
+if (Test-Path -LiteralPath (Join-Path $root 'infra\customer.json')) { $template = Join-Path $root 'infra\customer.json' }
 $privateFiles = [Collections.Generic.List[string]]::new()
 $receipt = @{ Status = 'Incomplete'; Stage = 'Preflight'; Customer = $CustomerSlug; ResourceGroup = $ResourceGroup }
+$writeReceipt = $false
+$journal = $null
+if ($Resume) {
+    if (-not $OutputDirectory -or
+        -not (Test-Path -LiteralPath (Join-Path $OutputDirectory 'customer-installation.json'))) {
+        throw 'Resume requires the original setup state directory and customer-installation.json.'
+    }
+    $journal = Get-Content -LiteralPath (Join-Path $OutputDirectory 'customer-installation.json') -Raw |
+        ConvertFrom-Json -AsHashtable -Depth 100
+    if ($journal.SchemaVersion -ne 1) { throw 'The installation journal format is unsupported.' }
+    if (-not $InitialOwnerObjectId) { $InitialOwnerObjectId = $journal.Request.Owner }
+}
 
-function Invoke-CustomerAzure([string[]]$Arguments) {
+function Invoke-CustomerAzure([string[]]$Arguments, [switch]$AllowMissingDeployment) {
     $scope = if ($SubscriptionId) { @('--subscription', $SubscriptionId) } else { @() }
     $lines = & az @Arguments @scope --only-show-errors --output json 2>&1
     if ($LASTEXITCODE -ne 0) {
         $code = 'UnclassifiedAzureError'
         $errorText = $lines -join "`n"
+        if ($AllowMissingDeployment -and ($Arguments[0..2] -join ' ') -ceq 'deployment sub show' -and
+            $errorText -match '\bDeploymentNotFound\b') {
+            Write-Verbose 'The foundation command was not admitted; the group must still pass the empty-group guard.'
+            return $null
+        }
         foreach ($candidate in @('Authorization_RequestDenied', 'AuthorizationFailed',
             'InvalidAuthenticationToken', 'Request_BadRequest', 'InvalidResourceName',
             'InvalidTemplateDeployment', 'InvalidTemplate', 'InsufficientQuota',
@@ -106,6 +130,69 @@ function ConvertTo-CustomerCanonicalJson([object]$Value) {
 function Get-CustomerHash([object]$Value) {
     return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
         [Text.Encoding]::UTF8.GetBytes((ConvertTo-CustomerCanonicalJson $Value)))).ToLowerInvariant()
+}
+
+function Save-CustomerJournal {
+    $path = Join-Path $OutputDirectory 'customer-installation.json'
+    $pending = Join-Path $OutputDirectory ('journal-' + [guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        $journal | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $pending -Encoding utf8
+        Move-Item -LiteralPath $pending -Destination $path -Force
+    } finally {
+        if (Test-Path -LiteralPath $pending) { Remove-Item -LiteralPath $pending }
+    }
+}
+
+function Assert-CustomerRuntime([object]$App) {
+    $containers = @($App.properties.template.containers | Where-Object name -CEQ 'docintel-api')
+    if ($containers.Count -ne 1 -or $containers[0].image -cne $Image) {
+        throw 'The existing application does not match the saved image. Resume never upgrades or overwrites it.'
+    }
+    $settings = @{}
+    foreach ($setting in $containers[0].env) { $settings[$setting.name] = $setting }
+    $runtimeId = [string]$foundation.properties.outputs.managedIdentityResourceId.value
+    $runtimeClient = [string]$foundation.properties.outputs.managedIdentityClientId.value
+    $runtimePrincipal = [string]$foundation.properties.outputs.managedIdentityPrincipalId.value
+    $identityScope = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.ManagedIdentity/userAssignedIdentities/"
+    $assigned = @($App.identity.userAssignedIdentities.PSObject.Properties | Where-Object Name -IEQ $runtimeId)
+    if (-not $runtimeId.StartsWith($identityScope, [StringComparison]::OrdinalIgnoreCase) -or
+        -not (Test-CustomerGuid $runtimeClient) -or -not (Test-CustomerGuid $runtimePrincipal) -or
+        $assigned.Count -ne 1 -or $assigned[0].Value.clientId -ine $runtimeClient -or
+        $assigned[0].Value.principalId -ine $runtimePrincipal) {
+        throw 'The assigned runtime identity does not match the saved Azure foundation.'
+    }
+    foreach ($entry in @{
+        Identity__DirectoryTenantId = $directoryId; Identity__ClientId = $web.appId
+        Identity__ApiClientId = $api.appId; Identity__PublicOrigin = $foundation.properties.outputs.publicOrigin.value
+        HarnessBootstrap__TenantId = $CustomerSlug
+        AZURE_CLIENT_ID = $runtimeClient; Identity__ManagedIdentityClientId = $runtimeClient
+    }.GetEnumerator()) {
+        if ($settings[$entry.Key].secretRef -or $settings[$entry.Key].value -cne $entry.Value) {
+            throw 'The application identity/workspace binding changed. Resume will not repoint an existing application.'
+        }
+    }
+    if ($settings.DOCINTEL_IDENTITY_GRANTS.secretRef) { throw 'Resume cannot inspect secret-backed owner configuration.' }
+    $grants = $settings.DOCINTEL_IDENTITY_GRANTS.value | ConvertFrom-Json -Depth 20
+    if (-not @($grants.PlatformAdministrators | Where-Object {
+        $_.DirectoryTenantId -ieq $directoryId -and $_.ObjectId -ieq $InitialOwnerObjectId
+    }).Count) { throw 'The selected owner no longer has the saved platform grant. Explicit operator recovery is required.' }
+    return @{ Image = $containers[0].image; Directory = $directoryId; Web = $web.appId; Api = $api.appId
+        RuntimeResource = $runtimeId; RuntimeClient = $runtimeClient; RuntimePrincipal = $runtimePrincipal
+        OwnerGrantsHash = Get-CustomerHash $grants; Revision = $App.properties.latestRevisionName }
+}
+
+function Complete-CustomerReadiness([object]$Outputs) {
+    $arguments = @{
+        SubscriptionId = $SubscriptionId; ResourceGroup = $ResourceGroup
+        ContainerAppName = $Outputs.containerAppName.value; ContainerName = 'docintel-api'
+    }
+    & (Join-Path $PSScriptRoot 'Wait-DocIntelReady.ps1') @arguments -ConfigurationOnly
+    & (Join-Path $PSScriptRoot 'Wait-DocIntelReady.ps1') @arguments -ExpectedImage $Image
+    $receipt.Status = 'InfrastructureReady'
+    $receipt.WorkspaceUrl = [string]$Outputs.workspaceUrl.value
+    $receipt.PublicOrigin = [string]$Outputs.publicOrigin.value
+    Write-Host "Customer workspace ready for sign-in: $($receipt.WorkspaceUrl)"
+    Write-Host 'Complete acceptance with a representative PDF and an Ask AI answer with source citations.'
 }
 
 function Invoke-CustomerGraph([string]$Method, [string]$Path, [object]$Body = $null) {
@@ -182,6 +269,11 @@ try {
     }
     $SubscriptionId = $account.id
     $directoryId = $account.tenantId
+    $files = @('infra\main.bicep', 'infra\customer.bicep', 'scripts\Install-DocIntelCustomer.ps1',
+        'scripts\Wait-DocIntelReady.ps1')
+    if ($template.EndsWith('.json', [StringComparison]::Ordinal)) { $files += 'infra\customer.json' }
+    $fileHashes = @{}
+    foreach ($file in $files) { $fileHashes[$file] = (Get-FileHash (Join-Path $root $file) -Algorithm SHA256).Hash }
     $graphTenant = Invoke-CustomerAzure @('account', 'get-access-token', '--resource-type', 'ms-graph', '--query', 'tenant')
     if ($graphTenant -ine $directoryId) { throw 'The Graph credential and customer subscription must use the same directory.' }
     if (-not $InitialOwnerObjectId) {
@@ -193,11 +285,43 @@ try {
     if ($owner.id -ine $InitialOwnerObjectId -or $owner.accountEnabled -ne $true) {
         throw 'The initial owner must be an enabled user in the customer directory.'
     }
+    $request = @{
+        Subscription = $SubscriptionId; Directory = $directoryId; Group = $ResourceGroup; Location = $Location
+        Customer = $CustomerSlug; Name = $CustomerName; Environment = $EnvironmentName
+        Owner = $InitialOwnerObjectId; Image = $Image; Files = $fileHashes
+    }
+    $requestHash = Get-CustomerHash $request
+    $key = (Get-CustomerHash @($directoryId, $SubscriptionId, $ResourceGroup, $CustomerSlug, $EnvironmentName)).Substring(0, 16)
+    $foundation = $null
+    if ($Resume) {
+        if ($journal.RequestHash -cne $requestHash -or (Get-CustomerHash $journal.Request) -cne $requestHash) {
+            throw 'Resume requires the original customer, owner, region, image and installer version. Use the original release bundle.'
+        }
+        if ($journal.FoundationStarted) {
+            $foundation = Invoke-CustomerAzure @('deployment', 'sub', 'show', '--name', "docintel-$key-foundation") `
+                -AllowMissingDeployment
+            if ($foundation) {
+            if ($foundation.properties.provisioningState -cne 'Succeeded') {
+                throw 'The foundation is still running or partially failed. An operator must resolve that Azure deployment before resume.'
+            }
+            foreach ($entry in $journal.FoundationParameters.GetEnumerator()) {
+                if ((Get-CustomerHash $foundation.properties.parameters.($entry.Key).value) -cne
+                    (Get-CustomerHash $entry.Value.value)) {
+                    throw 'The saved foundation does not match the live Azure deployment. No existing resources will be adopted.'
+                }
+            }
+            if ($foundation.properties.parameters.installationRequestHash.value -cne $requestHash) {
+                throw 'The Azure foundation belongs to a different installation request.'
+            }
+            }
+        }
+    }
     foreach ($provider in @('Microsoft.App', 'Microsoft.OperationalInsights', 'Microsoft.ManagedIdentity',
         'Microsoft.Storage', 'Microsoft.DocumentDB', 'Microsoft.KeyVault', 'Microsoft.CognitiveServices')) {
         $state = Invoke-CustomerAzure @('provider', 'show', '--namespace', $provider, '--query', 'registrationState')
         if ($state -cne 'Registered') { throw "Have the Azure administrator register $provider before previewing setup." }
     }
+    if (-not $foundation) {
     $models = @(Invoke-CustomerAzure @('cognitiveservices', 'model', 'list', '--location', $Location))
     $model = @($models | Where-Object {
         $_.model.format -ceq 'OpenAI' -and $_.model.name -ceq 'gpt-5-mini' -and $_.model.version -ceq '2025-08-07'
@@ -216,6 +340,7 @@ try {
     if ($quota.Count -ne 1 -or $null -eq $quota[0].limit -or $null -eq $quota[0].currentValue -or
         [double]$quota[0].limit - [double]$quota[0].currentValue -lt 10) {
         throw 'At least 10 deployment-capacity units of the model quota are required. Obtain quota before applying.'
+    }
     }
     $tokenResponse = Invoke-WebRequest -Uri (
         'https://ghcr.io/token?service=ghcr.io&scope=repository:nsethi16/docintel-api:pull'
@@ -238,40 +363,75 @@ try {
         $group = Invoke-CustomerAzure @('group', 'show', '--name', $ResourceGroup)
         if ($group.location -ine $Location) { throw 'The existing empty resource group has a different location.' }
         $inventory = @(Invoke-CustomerAzure @('resource', 'list', '--resource-group', $ResourceGroup))
-        if ($inventory.Count) { throw 'The resource group is not empty. Use the existing-deployment setup path; nothing will be adopted.' }
+        if ($inventory.Count -and -not $foundation) {
+            throw 'The resource group is not empty. Use the existing-deployment setup path; nothing will be adopted.'
+        }
         foreach ($property in $group.tags.PSObject.Properties) { $groupTags[$property.Name] = $property.Value }
     } elseif ($groupExists -ne $false) { throw 'Unable to establish whether the customer resource group exists.' }
     if (($groupTags.ContainsKey('docintel-customer') -and $groupTags['docintel-customer'] -cne $CustomerSlug) -or
         ($groupTags.ContainsKey('docintel-environment') -and $groupTags['docintel-environment'] -cne $EnvironmentName)) {
         throw 'The resource group is tagged for a different customer/environment.'
     }
-    $key = (Get-CustomerHash @($directoryId, $SubscriptionId, $ResourceGroup, $CustomerSlug, $EnvironmentName)).Substring(0, 16)
+    if ($foundation -and ($groupExists -ne $true -or $groupTags['docintel-request'] -cne $requestHash)) {
+        throw 'The customer group is missing or its installation binding changed.'
+    }
     $installationTag = "docintel-installation:$key"
     $webName = "DocIntel $CustomerSlug $EnvironmentName Web $key"
     $apiName = "DocIntel $CustomerSlug $EnvironmentName API $key"
     $web = Get-CustomerApplication $webName
     $api = Get-CustomerApplication $apiName
+    if ($Resume -and (($journal.WebClientId -and $web.appId -cne $journal.WebClientId) -or
+        ($journal.ApiClientId -and $api.appId -cne $journal.ApiClientId))) {
+        throw 'The installation applications changed or were deleted. Resume will not create replacement identities.'
+    }
     $parameters = @{
         customerSlug = @{ value = $CustomerSlug }; environmentName = @{ value = $EnvironmentName }
         location = @{ value = $Location }; resourceGroupName = @{ value = $ResourceGroup }
         resourceGroupTags = @{ value = $groupTags }; directoryTenantId = @{ value = $directoryId }
         initialOwnerObjectId = @{ value = $InitialOwnerObjectId }; containerImage = @{ value = $Image }
+        customerDisplayName = @{ value = $CustomerName }; installationRequestHash = @{ value = $requestHash }
         webClientId = @{ value = $(if ($web) { $web.appId } else { '11111111-1111-1111-1111-111111111111' }) }
         apiClientId = @{ value = $(if ($api) { $api.appId } else { '22222222-2222-2222-2222-222222222222' }) }
-        deployApplication = @{ value = $true }; infrastructureReady = @{ value = $false }
+        deployApplication = @{ value = $true }; infrastructureReady = @{ value = [bool]$foundation }
+    }
+    if ($foundation) {
+        foreach ($entry in $parameters.GetEnumerator() | Where-Object {
+            $_.Key -notin @('resourceGroupTags', 'deployApplication', 'infrastructureReady')
+        }) {
+            if ((Get-CustomerHash $foundation.properties.parameters.($entry.Key).value) -cne
+                (Get-CustomerHash $entry.Value.value)) {
+                throw 'The live foundation identity/request parameters do not match this setup. No resources will be repointed.'
+            }
+        }
+        if ($foundation.properties.parameters.deployApplication.value -ne $false -or
+            $foundation.properties.parameters.infrastructureReady.value -ne $false) {
+            throw 'The recorded deployment is not the original infrastructure-only foundation.'
+        }
     }
     $parameterFile = Write-CustomerParameterFile @{ parameters = $parameters }
     $whatIfArguments = @('deployment', 'sub', 'what-if', '--location', $Location,
-        '--name', "docintel-$key", '--template-file', $template, '--parameters', "@$parameterFile",
+        '--name', "docintel-$key-application", '--template-file', $template, '--parameters', "@$parameterFile",
         '--result-format', 'FullResourcePayloads', '--no-pretty-print')
-    $whatIf = Invoke-CustomerAzure $whatIfArguments
-    Assert-CustomerChanges $whatIf
-    $files = @('infra\main.bicep', 'infra\customer.bicep', 'scripts\Install-DocIntelCustomer.ps1',
-        'scripts\Wait-DocIntelReady.ps1')
-    $fileHashes = @{}
-    foreach ($file in $files) { $fileHashes[$file] = (Get-FileHash (Join-Path $root $file) -Algorithm SHA256).Hash }
+    $existingApp = $null
+    $runtimeSnapshot = $null
+    $operation = if ($foundation) { 'ResumeAfterFoundation' } else { 'FreshInstall' }
+    if ($foundation) {
+        $appResources = @($inventory | Where-Object {
+            $_.type -ieq 'Microsoft.App/containerApps' -and $_.name -ceq $foundation.properties.outputs.containerAppName.value
+        })
+        if ($appResources.Count -gt 1) { throw 'The application inventory is ambiguous.' }
+        if ($appResources.Count) {
+            $existingApp = Invoke-CustomerAzure @('containerapp', 'show', '--resource-group', $ResourceGroup,
+                '--name', $foundation.properties.outputs.containerAppName.value)
+            $runtimeSnapshot = Assert-CustomerRuntime $existingApp
+            $operation = 'VerifyExistingApplication'
+        }
+    }
+    $whatIf = if ($existingApp) { @{ changes = @() } } else { Invoke-CustomerAzure $whatIfArguments }
+    if (-not $existingApp) { Assert-CustomerChanges $whatIf -ApplicationOnly:([bool]$foundation) }
     $plan = @{
-        Version = 1; Parameters = $parameters; Web = $web; Api = $api
+        Version = 1; Operation = $operation; Parameters = $parameters; Web = $web; Api = $api
+        Runtime = $runtimeSnapshot; RequestHash = $requestHash
         ResourceGroupExists = $groupExists; Files = $fileHashes; Changes = @($whatIf.changes)
         Diagnostics = @($whatIf.diagnostics | Where-Object { $null -ne $_ })
         PotentialChanges = @($whatIf.potentialChanges | Where-Object { $null -ne $_ })
@@ -297,9 +457,21 @@ try {
         return
     }
 
+    $writeReceipt = $true
+    if (-not $journal) { $journal = @{ SchemaVersion = 1; Request = $request; RequestHash = $requestHash } }
+    Save-CustomerJournal
+    if ($existingApp) {
+        $receipt.Stage = 'Readiness'
+        Complete-CustomerReadiness $foundation.properties.outputs
+        return
+    }
     $receipt.Stage = 'DirectoryApplications'
     if (-not $web) { $web = New-CustomerApplication $webName }
+    $journal.WebClientId = $web.appId
+    Save-CustomerJournal
     if (-not $api) { $api = New-CustomerApplication $apiName }
+    $journal.ApiClientId = $api.appId
+    Save-CustomerJournal
     if ($web.appId -ieq $api.appId) { throw 'Web and API applications must be separate.' }
     foreach ($app in @($web, $api)) {
         $principals = Invoke-CustomerGraph GET ('servicePrincipals?$filter=' +
@@ -343,13 +515,20 @@ try {
         }).Count) { throw 'API scope/preauthorization readback failed. Infrastructure was not provisioned.' }
     $parameters.webClientId.value = $web.appId
     $parameters.apiClientId.value = $api.appId
-    $parameters.deployApplication.value = $false
-    $receipt.Stage = 'SharedInfrastructure'
-    $parameterFile = Write-CustomerParameterFile @{ parameters = $parameters }
-    $deploymentArguments = @('deployment', 'sub', 'create', '--location', $Location, '--name', "docintel-$key",
-        '--template-file', $template, '--parameters', "@$parameterFile")
-    $foundation = Invoke-CustomerAzure $deploymentArguments
-    if ($foundation.properties.provisioningState -cne 'Succeeded') { throw 'Shared infrastructure did not finish successfully.' }
+    $deploymentArguments = @('deployment', 'sub', 'create', '--location', $Location,
+        '--name', "docintel-$key-foundation", '--template-file', $template)
+    if (-not $foundation) {
+        $parameters.deployApplication.value = $false
+        $parameters.infrastructureReady.value = $false
+        $receipt.Stage = 'SharedInfrastructure'
+        $parameterFile = Write-CustomerParameterFile @{ parameters = $parameters }
+        $journal.FoundationParameters = (@{ parameters = $parameters } | ConvertTo-Json -Depth 100 |
+            ConvertFrom-Json -AsHashtable -Depth 100).parameters
+        $journal.FoundationStarted = $true
+        Save-CustomerJournal
+        $foundation = Invoke-CustomerAzure ($deploymentArguments + @('--parameters', "@$parameterFile"))
+        if ($foundation.properties.provisioningState -cne 'Succeeded') { throw 'Shared infrastructure did not finish successfully.' }
+    }
     $outputs = $foundation.properties.outputs
     $redirect = [string]$outputs.requiredWebRedirectUri.value
     $principalId = [string]$outputs.managedIdentityPrincipalId.value
@@ -389,24 +568,19 @@ try {
     $whatIfArguments[[Array]::IndexOf($whatIfArguments, '--parameters') + 1] = "@$parameterFile"
     $finalPlan = Invoke-CustomerAzure $whatIfArguments
     Assert-CustomerChanges $finalPlan -ApplicationOnly
-    $deploymentArguments[[Array]::IndexOf($deploymentArguments, '--parameters') + 1] = "@$parameterFile"
-    $deployed = Invoke-CustomerAzure $deploymentArguments
+    $deploymentArguments[[Array]::IndexOf($deploymentArguments, '--name') + 1] = "docintel-$key-application"
+    $deployed = Invoke-CustomerAzure ($deploymentArguments + @('--parameters', "@$parameterFile"))
     if ($deployed.properties.provisioningState -cne 'Succeeded') { throw 'Application deployment did not finish successfully.' }
+    $liveApp = Invoke-CustomerAzure @('containerapp', 'show', '--resource-group', $ResourceGroup,
+        '--name', $outputs.containerAppName.value)
+    Assert-CustomerRuntime $liveApp | Out-Null
     $receipt.Stage = 'Readiness'
-    $readinessArguments = @{
-        SubscriptionId = $SubscriptionId; ResourceGroup = $ResourceGroup
-        ContainerAppName = $outputs.containerAppName.value; ContainerName = 'docintel-api'
-    }
-    & (Join-Path $PSScriptRoot 'Wait-DocIntelReady.ps1') @readinessArguments -ConfigurationOnly
-    & (Join-Path $PSScriptRoot 'Wait-DocIntelReady.ps1') @readinessArguments -ExpectedImage $Image
-    $receipt.Status = 'InfrastructureReady'
-    Write-Host "Infrastructure and provider readiness passed: $origin"
-    Write-Host 'Customer acceptance remains: sign in as the chosen owner, create the customer workspace, upload a PDF and verify a cited Ask AI answer.'
+    Complete-CustomerReadiness $outputs
 }
 finally {
     $publicToken = $null
     foreach ($file in $privateFiles) { if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file } }
-    if ($Mode -eq 'Apply' -and $OutputDirectory -and (Test-Path -LiteralPath $OutputDirectory -PathType Container)) {
+    if ($writeReceipt) {
         $receipt | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath (Join-Path $OutputDirectory 'customer-result.json') -Encoding utf8
     }
 }

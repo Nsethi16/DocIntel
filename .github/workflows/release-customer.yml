@@ -1,0 +1,180 @@
+name: Build customer release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Immutable release version, for example v0.2.0 or v0.2.0-rc.1.
+        type: string
+        required: true
+      publish:
+        description: Publish the image and bundle (main only; requires explicitly configured public distribution).
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docintel-customer-release-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    permissions:
+      contents: read
+      id-token: write
+    uses: ./.github/workflows/ca-docintel-dev-AutoDeployTrigger-aecf934f-2618-4144-b094-760dd25b50b2.yml
+    with:
+      validation_only: true
+
+  bundle:
+    needs: validate
+    if: github.ref == 'refs/heads/main'
+    environment: docintel-distribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate release input
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if ($env:RELEASE_VERSION -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9]+(?:[.-][a-zA-Z0-9]+)*)?$') {
+            throw 'An immutable semantic release version is required.'
+          }
+      - name: Validate the approved public destination before pushing an image
+        if: inputs.publish
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.DOCINTEL_DISTRIBUTION_TOKEN }}
+          DISTRIBUTION_REPOSITORY: ${{ vars.DOCINTEL_DISTRIBUTION_REPOSITORY }}
+          SOURCE_OWNER: ${{ github.repository_owner }}
+        run: |
+          if (-not $env:GH_TOKEN -or $env:DISTRIBUTION_REPOSITORY -cnotmatch '^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$') {
+            throw 'Approve/configure the separate public distribution repository before image publication.'
+          }
+          $repository = gh api "repos/$env:DISTRIBUTION_REPOSITORY" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $repository.visibility -cne 'public' -or
+              $repository.owner.login -ine $env:SOURCE_OWNER -or $repository.name -ieq 'DocIntel') {
+            throw 'The distribution destination must be explicitly configured, public, separately owned, and not the source repository.'
+          }
+      - uses: docker/setup-buildx-action@v3
+      - name: Log in to the source repository package registry
+        if: inputs.publish
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Refuse to overwrite an existing image version
+        if: inputs.publish
+        shell: pwsh
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY_ACTOR: ${{ github.actor }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          $basic = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("$env:REGISTRY_ACTOR`:$env:REGISTRY_TOKEN"))
+          Write-Output "::add-mask::$basic"
+          $token = Invoke-RestMethod `
+            -Uri 'https://ghcr.io/token?service=ghcr.io&scope=repository:nsethi16/docintel-api:pull,push' `
+            -Headers @{ Authorization = "Basic $basic" } -MaximumRedirection 0 -TimeoutSec 30
+          Write-Output "::add-mask::$($token.token)"
+          $response = Invoke-WebRequest -Method Head `
+            -Uri "https://ghcr.io/v2/nsethi16/docintel-api/manifests/$env:RELEASE_VERSION" `
+            -Headers @{ Authorization = "Bearer $($token.token)"
+              Accept = 'application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json' } `
+            -MaximumRedirection 0 -SkipHttpErrorCheck -TimeoutSec 30
+          if ($response.StatusCode -eq 200) { throw 'This image version exists. Publish a new version instead of overwriting it.' }
+          if ($response.StatusCode -ne 404) { throw 'Unable to verify that this image version is unused.' }
+      - name: Build exact image with provenance
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          platforms: linux/amd64
+          tags: ghcr.io/nsethi16/docintel-api:${{ inputs.version }}
+          outputs: ${{ inputs.publish && 'type=registry' || format('type=oci,dest={0}/docintel-image.tar', runner.temp) }}
+          provenance: mode=max
+          sbom: true
+      - name: Attest the published image
+        if: inputs.publish
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-name: ghcr.io/nsethi16/docintel-api
+          subject-digest: ${{ steps.image.outputs.digest }}
+          push-to-registry: true
+      - name: Assemble the matching installer bundle
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.digest }}
+        run: |
+          ./scripts/Build-DocIntelCustomerBundle.ps1 -Version $env:RELEASE_VERSION `
+            -Image "ghcr.io/nsethi16/docintel-api@$env:IMAGE_DIGEST" `
+            -SourceCommit $env:GITHUB_SHA -OutputDirectory (Join-Path $env:RUNNER_TEMP 'customer-release')
+      - uses: actions/upload-artifact@v4
+        with:
+          name: customer-release
+          path: ${{ runner.temp }}/customer-release/
+          if-no-files-found: error
+          overwrite: true
+
+  publish:
+    needs: bundle
+    if: inputs.publish && github.ref == 'refs/heads/main'
+    environment: docintel-distribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: customer-release
+          path: customer-release
+      - name: Require anonymous access to the exact image
+        shell: pwsh
+        run: |
+          $release = Get-Content customer-release/release.json -Raw | ConvertFrom-Json
+          if ($release.image -cnotmatch '^ghcr\.io/nsethi16/docintel-api@(?<digest>sha256:[a-f0-9]{64})$') {
+            throw 'The packaged image must be pinned to the trusted publisher.'
+          }
+          $digest = $Matches.digest
+          $token = Invoke-RestMethod -Uri 'https://ghcr.io/token?service=ghcr.io&scope=repository:nsethi16/docintel-api:pull' -MaximumRedirection 0 -TimeoutSec 30
+          $response = Invoke-WebRequest -Method Head -Uri "https://ghcr.io/v2/nsethi16/docintel-api/manifests/$digest" `
+            -MaximumRedirection 0 -TimeoutSec 30 -Headers @{ Authorization = "Bearer $($token.token)"
+              Accept = 'application/vnd.oci.image.index.v1+json, application/vnd.oci.image.manifest.v1+json' }
+          if ([string]$response.Headers['Docker-Content-Digest'] -cne $digest) {
+            throw 'The release image is not anonymously accessible by its exact digest. Package visibility requires publisher setup.'
+          }
+      - name: Publish only to the explicitly configured public distribution repository
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.DOCINTEL_DISTRIBUTION_TOKEN }}
+          DISTRIBUTION_REPOSITORY: ${{ vars.DOCINTEL_DISTRIBUTION_REPOSITORY }}
+          SOURCE_OWNER: ${{ github.repository_owner }}
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          if (-not $env:GH_TOKEN -or $env:DISTRIBUTION_REPOSITORY -cnotmatch '^[A-Za-z0-9-]+/[A-Za-z0-9_.-]+$') {
+            throw 'Configure the approved distribution repository and its narrowly scoped publication credential.'
+          }
+          $repository = gh api "repos/$env:DISTRIBUTION_REPOSITORY" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $repository.visibility -cne 'public' -or
+              $repository.owner.login -ine $env:SOURCE_OWNER -or $repository.name -ieq 'DocIntel') {
+            throw 'Distribution must be an explicitly selected, separate public repository owned by this publisher.'
+          }
+          $assets = @(Get-ChildItem customer-release -File | Select-Object -ExpandProperty FullName)
+          $arguments = @('release', 'create', $env:RELEASE_VERSION, '--repo', $env:DISTRIBUTION_REPOSITORY,
+            '--title', "DocIntel $env:RELEASE_VERSION", '--notes-file', 'customer-release/INSTALL.md')
+          if ($env:RELEASE_VERSION.Contains('-')) { $arguments += '--prerelease' }
+          gh @arguments @assets
+          if ($LASTEXITCODE -ne 0) { throw 'Release publication failed; existing releases are never overwritten.' }

@@ -576,11 +576,14 @@ public sealed class FileHarnessStore : IHarnessStore
     };
 
     private readonly string _filePath;
+    private readonly HarnessBootstrapOptions _bootstrap;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public FileHarnessStore(string filePath)
+    public FileHarnessStore(string filePath, HarnessBootstrapOptions? bootstrapOptions = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
+        _bootstrap = bootstrapOptions ?? new HarnessBootstrapOptions();
+        _bootstrap.Validate();
         _filePath = Path.GetFullPath(filePath);
     }
 
@@ -595,7 +598,7 @@ public sealed class FileHarnessStore : IHarnessStore
         {
             await using var fileLock = await AcquireFileLockAsync(cancellationToken);
             var map = await EnsureLoadedAsync(cancellationToken);
-            return map.TryGetValue(tenantId, out var found) ? Clone(found) : null;
+            return map.TryGetValue(tenantId, out var found) ? CloneForRead(found) : null;
         }
         finally
         {
@@ -612,7 +615,7 @@ public sealed class FileHarnessStore : IHarnessStore
             var map = await EnsureLoadedAsync(cancellationToken);
             return map.Values
                 .OrderBy(t => t.DisplayName, StringComparer.OrdinalIgnoreCase)
-                .Select(Clone)
+                .Select(CloneForRead)
                 .ToList();
         }
         finally
@@ -657,60 +660,48 @@ public sealed class FileHarnessStore : IHarnessStore
 
     private async Task<Dictionary<string, TenantHarness>> EnsureLoadedAsync(CancellationToken cancellationToken)
     {
+        Dictionary<string, TenantHarness> loaded = new(StringComparer.OrdinalIgnoreCase);
         if (File.Exists(_filePath))
         {
             await using var stream = File.OpenRead(_filePath);
             var list = await JsonSerializer.DeserializeAsync<List<TenantHarness>>(stream, JsonOptions, cancellationToken) ?? [];
-            var templateCapabilities = new TenantHarness { TenantId = "template", DisplayName = "Template" }.Capabilities;
-
-            foreach (var tenant in list)
+            if (String.IsNullOrWhiteSpace(_bootstrap.TenantId))
             {
-                if (!tenant.AllowedModels.Contains("decision-1", StringComparer.OrdinalIgnoreCase))
-                {
-                    tenant.AllowedModels.Insert(0, "decision-1");
-                }
-                if (!tenant.AllowedModels.Contains("mai-reasoning", StringComparer.OrdinalIgnoreCase))
-                {
-                    tenant.AllowedModels.Insert(1, "mai-reasoning");
-                }
-                if (!tenant.AllowedModels.Contains("phi-4", StringComparer.OrdinalIgnoreCase))
-                {
-                    tenant.AllowedModels.Insert(2, "phi-4");
-                }
-
-                TenantHarness.EnsureDefaultCapabilities(tenant);
-
-                if (string.IsNullOrWhiteSpace(tenant.DecisionModelId))
-                {
-                    tenant.DecisionModelId = "decision-1";
-                }
-                if (string.IsNullOrWhiteSpace(tenant.DefaultModelId) ||
-                    string.Equals(tenant.DefaultModelId, "decision-1", StringComparison.OrdinalIgnoreCase))
-                {
-                    tenant.DefaultModelId = "phi-4";
-                }
-
-                if (tenant.Capabilities.TryGetValue(FeatureHarness.IdentifyDocumentsKey, out var idCap))
-                {
-                    idCap.ModelIdOverride = tenant.DecisionModelId;
-                    if (idCap.IdentifyDocuments is not null)
-                    {
-                        idCap.IdentifyDocuments.DecisionModelId = tenant.DecisionModelId;
-                    }
-                }
+                foreach (var tenant in list)
+                    ApplyLegacyModelDefaults(tenant);
             }
-
-            var loaded = list.ToDictionary(t => t.TenantId, t => t, StringComparer.OrdinalIgnoreCase);
-            if (loaded.Count > 0)
-            {
-                return loaded;
-            }
+            loaded = list.ToDictionary(t => t.TenantId, t => t, StringComparer.OrdinalIgnoreCase);
         }
 
-        var defaults = CreateDefaultTenants();
-        var created = defaults.ToDictionary(t => t.TenantId, t => t, StringComparer.OrdinalIgnoreCase);
-        await FlushAsync(created, cancellationToken);
-        return created;
+        var missing = _bootstrap.CreateMissingTenants(loaded.Keys);
+        foreach (var tenant in missing)
+            loaded.Add(tenant.TenantId, tenant);
+        if (missing.Count > 0)
+            await FlushAsync(loaded, cancellationToken);
+        return loaded;
+    }
+
+    private static void ApplyLegacyModelDefaults(TenantHarness tenant)
+    {
+        if (!tenant.AllowedModels.Contains("decision-1", StringComparer.OrdinalIgnoreCase))
+            tenant.AllowedModels.Insert(0, "decision-1");
+        if (!tenant.AllowedModels.Contains("mai-reasoning", StringComparer.OrdinalIgnoreCase))
+            tenant.AllowedModels.Insert(1, "mai-reasoning");
+        if (!tenant.AllowedModels.Contains("phi-4", StringComparer.OrdinalIgnoreCase))
+            tenant.AllowedModels.Insert(2, "phi-4");
+
+        TenantHarness.EnsureDefaultCapabilities(tenant);
+        if (String.IsNullOrWhiteSpace(tenant.DecisionModelId))
+            tenant.DecisionModelId = "decision-1";
+        if (String.IsNullOrWhiteSpace(tenant.DefaultModelId) ||
+            String.Equals(tenant.DefaultModelId, "decision-1", StringComparison.OrdinalIgnoreCase))
+            tenant.DefaultModelId = "phi-4";
+        if (tenant.Capabilities.TryGetValue(FeatureHarness.IdentifyDocumentsKey, out var identification))
+        {
+            identification.ModelIdOverride = tenant.DecisionModelId;
+            if (identification.IdentifyDocuments is not null)
+                identification.IdentifyDocuments.DecisionModelId = tenant.DecisionModelId;
+        }
     }
 
     private async Task FlushAsync(Dictionary<string, TenantHarness> map, CancellationToken cancellationToken)
@@ -771,6 +762,13 @@ public sealed class FileHarnessStore : IHarnessStore
     {
         var json = JsonSerializer.Serialize(source, JsonOptions);
         return JsonSerializer.Deserialize<TenantHarness>(json, JsonOptions)!;
+    }
+
+    private static TenantHarness CloneForRead(TenantHarness source)
+    {
+        var tenant = Clone(source);
+        TenantHarness.EnsureDefaultCapabilities(tenant);
+        return tenant;
     }
 
     public static List<TenantHarness> CreateDefaultTenants() =>

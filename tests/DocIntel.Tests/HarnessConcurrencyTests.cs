@@ -175,6 +175,21 @@ public sealed class HarnessConcurrencyTests
 
         public CosmosFixture()
         {
+            // CRUD tests run against an initialized installation containing an unrelated workspace.
+            var ids = new Mock<FeedResponse<string>>();
+            ids.Setup(page => page.GetEnumerator())
+                .Returns(() => ((IEnumerable<string>)["another-workspace"]).GetEnumerator());
+            Container.Setup(c => c.GetItemQueryIterator<string>(
+                    It.IsAny<QueryDefinition>(), It.IsAny<string>(), It.IsAny<QueryRequestOptions>()))
+                .Returns(() =>
+                {
+                    var iterator = new Mock<FeedIterator<string>>();
+                    var read = false;
+                    iterator.SetupGet(value => value.HasMoreResults).Returns(() => !read);
+                    iterator.Setup(value => value.ReadNextAsync(It.IsAny<CancellationToken>()))
+                        .Callback(() => read = true).ReturnsAsync(ids.Object);
+                    return iterator.Object;
+                });
             Container.Setup(c => c.ReadItemAsync<TenantHarness>("tenant", new PartitionKey("tenant"),
                     It.IsAny<ItemRequestOptions>(), It.IsAny<CancellationToken>()))
                 .Returns(() => Persisted is null

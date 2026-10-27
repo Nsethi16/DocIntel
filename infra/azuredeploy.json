@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "15391207991174074000"
+      "templateHash": "4832846257373705137"
     }
   },
   "parameters": {
@@ -41,6 +41,20 @@
       "type": "string",
       "metadata": {
         "description": "Entra directory ID for verified sign-in. Application memberships use separate tenant slugs."
+      }
+    },
+    "bootstrapTenantId": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Empty retains legacy sample seeding. Customer installers select their first workspace explicitly."
+      }
+    },
+    "bootstrapTenantDisplayName": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Display name of the first customer workspace; never overwrites an existing workspace."
       }
     },
     "webClientId": {
@@ -906,6 +920,14 @@
                 {
                   "name": "DOCINTEL_IDENTITY_GRANTS",
                   "value": "[string(parameters('identityGrants'))]"
+                },
+                {
+                  "name": "HarnessBootstrap__TenantId",
+                  "value": "[parameters('bootstrapTenantId')]"
+                },
+                {
+                  "name": "HarnessBootstrap__DisplayName",
+                  "value": "[parameters('bootstrapTenantDisplayName')]"
                 },
                 {
                   "name": "AskAi__RecoveryPollSeconds",

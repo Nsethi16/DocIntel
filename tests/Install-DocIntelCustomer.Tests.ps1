@@ -1,6 +1,7 @@
 #Requires -Version 7.3
+param([string]$ReleaseRoot = '')
 $ErrorActionPreference = 'Stop'
-$root = Split-Path $PSScriptRoot -Parent
+$root = if ($ReleaseRoot) { $ReleaseRoot } else { Split-Path $PSScriptRoot -Parent }
 $scriptPath = Join-Path $root 'scripts\Install-DocIntelCustomer.ps1'
 $tokens = $null
 $parseErrors = $null
@@ -63,11 +64,12 @@ $temporary = Join-Path ([IO.Path]::GetTempPath()) ('docintel-customer-tests-' + 
 New-Item -ItemType Directory -Path $temporary | Out-Null
 $global:DocIntelCustomerFixture = @{}
 $f = $global:DocIntelCustomerFixture
-foreach ($name in @('subscription', 'directory', 'owner', 'webId', 'apiId', 'webObject', 'apiObject', 'principal')) {
+foreach ($name in @('subscription', 'directory', 'owner', 'webId', 'apiId', 'webObject', 'apiObject', 'principal', 'runtimeClient')) {
     $f[$name] = [guid]::NewGuid().ToString()
 }
 $f.image = 'ghcr.io/nsethi16/docintel-api@sha256:' + ('a' * 64)
 $f.groupId = "/subscriptions/$($f.subscription)/resourceGroups/rg-docintel-acme-prod"
+$f.runtimeId = "$($f.groupId)/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-di-acme-prod-fixture"
 $f.calls = [Collections.Generic.List[object]]::new()
 $f.writes = [Collections.Generic.List[object]]::new()
 
@@ -79,6 +81,12 @@ function Reset-CustomerFixture {
     $global:DocIntelCustomerFixture.api = $null
     $global:DocIntelCustomerFixture.federations = @()
     $global:DocIntelCustomerFixture.deployments = 0
+    $global:DocIntelCustomerFixture.foundation = $null
+    $global:DocIntelCustomerFixture.applicationExists = $false
+    foreach ($name in @('customer-installation.json', 'customer-result.json')) {
+        $file = Join-Path $temporary $name
+        if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file }
+    }
 }
 
 function az {
@@ -113,9 +121,17 @@ function az {
             @(@{ name = @{ value = 'OpenAI.GlobalStandard.gpt-5-mini' }
                 currentValue = 0; limit = $(if ($f.scenario -eq 'quota') { 9 } else { 100 }) }); break
         }
-        'group exists --name' { $f.scenario -eq 'occupied'; break }
-        'group show --name' { @{ location = 'westus'; tags = @{} }; break }
-        'resource list --resource-group' { @(@{ name = 'unrelated-existing-data' }); break }
+        'group exists --name' { $f.scenario -eq 'occupied' -or $null -ne $f.foundation; break }
+        'group show --name' {
+            $tags = if ($f.foundation) { @{ 'docintel-customer' = 'acme'; 'docintel-environment' = 'prod'
+                'docintel-request' = $f.foundation.properties.parameters.installationRequestHash.value } } else { @{} }
+            @{ location = 'westus'; tags = $tags }; break
+        }
+        'resource list --resource-group' {
+            $items = @(@{ name = 'unrelated-existing-data'; type = 'Microsoft.Storage/storageAccounts' })
+            if ($f.applicationExists) { $items += @{ name = 'di-acme-prod-fixture'; type = 'Microsoft.App/containerApps' } }
+            $items; break
+        }
         'rest --method *' {
             $method = $Arguments[[Array]::IndexOf($Arguments, '--method') + 1]
             $url = $Arguments[[Array]::IndexOf($Arguments, '--url') + 1]
@@ -136,7 +152,8 @@ function az {
                     if ($f.scenario -eq 'unowned') {
                         @{ value = @(@{ id = $f.webObject; appId = $f.webId; signInAudience = 'AzureADMyOrg'; tags = @() }) }; break
                     }
-                    @{ value = @() }; break
+                    $candidate = if ($path.Contains(' Web ')) { $f.web } else { $f.api }
+                    @{ value = @($candidate | Where-Object { $null -ne $_ }) }; break
                 }
                 'POST applications' {
                     $isWeb = $body.displayName.Contains(' Web ')
@@ -214,16 +231,25 @@ function az {
             if ($f.deployments -eq 2 -and (-not $parameters.parameters.infrastructureReady.value -or -not $f.federations.Count)) {
                 throw 'Application deployment must preserve the shared infrastructure and follow federation.'
             }
-            @{ properties = @{ provisioningState = 'Succeeded'; outputs = @{
+            $deployment = @{ properties = @{ provisioningState = 'Succeeded'
+                parameters = $parameters.parameters; outputs = @{
                 publicOrigin = @{ value = 'https://fixture.azurecontainerapps.io' }
                 requiredWebRedirectUri = @{ value = 'https://fixture.azurecontainerapps.io/signin-oidc' }
                 managedIdentityPrincipalId = @{ value = $f.principal }
+                managedIdentityClientId = @{ value = $f.runtimeClient }
+                managedIdentityResourceId = @{ value = $f.runtimeId }
                 containerAppName = @{ value = 'di-acme-prod-fixture' }
-            } } }; break
+                workspaceUrl = @{ value = 'https://fixture.azurecontainerapps.io/?tenant=acme' }
+            } } }
+            if (-not $parameters.parameters.deployApplication.value) { $f.foundation = $deployment }
+            else { $f.applicationExists = $true }
+            $deployment; break
         }
+        'deployment sub show' { $f.foundation; break }
         'containerapp show --resource-group' {
             $settings = @{
-                AZURE_CLIENT_ID = 'runtime'; Identity__DirectoryTenantId = $f.directory
+                AZURE_CLIENT_ID = $f.runtimeClient; Identity__DirectoryTenantId = $f.directory
+                Identity__ManagedIdentityClientId = $(if ($f.scenario -eq 'wrong-runtime') { [guid]::Empty.ToString() } else { $f.runtimeClient })
                 Identity__ClientId = $f.webId; Identity__ApiClientId = $f.apiId
                 Identity__PublicOrigin = 'https://fixture.azurecontainerapps.io'
                 Identity__Mode = 'Entra'; Identity__UseManagedIdentityAssertion = 'true'
@@ -231,9 +257,14 @@ function az {
                 Identity__DataProtectionKeyIdentifier = 'https://vault.example/keys/key'
                 AzureAI__BlobEndpoint = 'https://storage.example'; AzureAI__QueueEndpoint = 'https://queue.example'
                 AzureAI__CosmosEndpoint = 'https://cosmos.example'; AzureAI__AzureOpenAIEndpoint = 'https://ai.example'
-                AzureAI__ContentUnderstandingEndpoint = 'https://ai.example'; DOCINTEL_IDENTITY_GRANTS = '{"PlatformAdministrators":[]}'
+                AzureAI__ContentUnderstandingEndpoint = 'https://ai.example'; HarnessBootstrap__TenantId = 'acme'
+                DOCINTEL_IDENTITY_GRANTS = (@{ PlatformAdministrators = @(@{
+                    DirectoryTenantId = $f.directory; ObjectId = $f.owner
+                }) } | ConvertTo-Json -Depth 10 -Compress)
             }
-            @{ properties = @{ latestRevisionName = 'new'; latestReadyRevisionName = 'new'
+            @{ identity = @{ userAssignedIdentities = @{ $f.runtimeId = @{
+                clientId = $f.runtimeClient; principalId = $f.principal
+            } } }; properties = @{ latestRevisionName = 'new'; latestReadyRevisionName = 'new'
                 configuration = @{ activeRevisionsMode = 'Single'; ingress = @{ fqdn = 'fixture.azurecontainerapps.io'; transport = 'auto' } }
                 template = @{ containers = @(@{ name = 'docintel-api'
                     image = $(if ($f.scenario -eq 'wrong-image') { 'wrong' } else { $f.image })
@@ -328,9 +359,42 @@ try {
         $f.api.api.preAuthorizedApplications[0].appId -cne $f.webId) {
         throw 'A successful fresh install must wire the exact runtime identity, preserve redirects, and preauthorize the separate API.'
     }
+    $resume = $arguments.Clone()
+    $resume.Resume = $true
+    $f.writes.Clear()
+    & $scriptPath @resume | Out-Null
+    $resumePlan = Get-Content -LiteralPath (Join-Path $temporary 'customer-plan.json') -Raw | ConvertFrom-Json -Depth 100
+    if ($resumePlan.Plan.Operation -cne 'VerifyExistingApplication' -or $f.writes.Count) {
+        throw 'A completed installation must resume as read-only verification, not a redeployment.'
+    }
+    $resume.Mode = 'Apply'; $resume.Confirmation = 'APPLY'; $resume.ExpectedPlanHash = $resumePlan.PlanHash
+    & $scriptPath @resume | Out-Null
+    if ($f.writes.Count -or $f.deployments -ne 2) { throw 'Readiness resume must not mutate Azure/Graph or redeploy roots.' }
+    $originalReceipt = Get-Content -LiteralPath (Join-Path $temporary 'customer-result.json') -Raw
+    $wrongHash = $resume.Clone(); $wrongHash.ExpectedPlanHash = 'b' * 64
+    Assert-CustomerFailure $wrongHash 'plan changed'
+    if ((Get-Content -LiteralPath (Join-Path $temporary 'customer-result.json') -Raw) -cne $originalReceipt) {
+        throw 'A rejected approval must not destroy the previous recovery receipt.'
+    }
+    $otherImage = $resume.Clone(); $otherImage.Image = 'ghcr.io/nsethi16/docintel-api@sha256:' + ('b' * 64)
+    Assert-CustomerFailure $otherImage 'original customer'
+    $f.foundation.properties.parameters.installationRequestHash.value = 'b' * 64
+    Assert-CustomerFailure $resume 'live Azure deployment'
+    $journal = Get-Content -LiteralPath (Join-Path $temporary 'customer-installation.json') -Raw | ConvertFrom-Json -Depth 100
+    $f.foundation.properties.parameters.installationRequestHash.value = $journal.RequestHash
+    $f.applicationExists = $false
+    & $scriptPath @arguments -Resume | Out-Null
+    $resumePlan = Get-Content -LiteralPath (Join-Path $temporary 'customer-plan.json') -Raw | ConvertFrom-Json -Depth 100
+    if ($resumePlan.Plan.Operation -cne 'ResumeAfterFoundation') { throw 'Missing app must resume after the completed foundation.' }
+    $before = $f.deployments
+    $f.scenario = 'quota'
+    & $scriptPath @arguments -Resume -Mode Apply -Confirmation APPLY -ExpectedPlanHash $resumePlan.PlanHash | Out-Null
+    if ($f.deployments -ne $before + 1 -or -not $f.applicationExists) {
+        throw 'Resume after federation must create only the app and must not require another model quota allocation.'
+    }
     foreach ($scenario in @(
         @('lost-api-patch', 'preauthorization readback'), @('shared-modify', 'must not modify'),
-        @('wrong-image', 'does not match')
+        @('wrong-image', 'does not match'), @('wrong-runtime', 'binding changed')
     )) {
         Reset-CustomerFixture
         $f.scenario = $scenario[0]
@@ -338,10 +402,29 @@ try {
         $receipt = Get-Content -LiteralPath (Join-Path $temporary 'customer-result.json') -Raw | ConvertFrom-Json
         if ($receipt.Status -cne 'Incomplete') { throw 'Failed apply must not leave a success-shaped receipt.' }
     }
+    if ($ReleaseRoot) {
+        Reset-CustomerFixture
+        function Read-Host([string]$Prompt) {
+            if ($Prompt -notlike '*Type APPLY*') { throw 'No GUID copying or unexpected prompts are allowed in guided setup.' }
+            return 'APPLY'
+        }
+        $state = Join-Path $temporary 'guided-state'
+        $guided = @{ CustomerSlug = 'acme'; SubscriptionId = $f.subscription; StateDirectory = $state }
+        & (Join-Path $ReleaseRoot 'Start-DocIntelSetup.ps1') @guided -PreviewOnly
+        if ($f.writes.Count) { throw 'Guided Preview must not mutate any cloud resource.' }
+        & (Join-Path $ReleaseRoot 'Start-DocIntelSetup.ps1') @guided
+        $guidedReceipt = Get-Content -LiteralPath (Join-Path $state 'customer-result.json') -Raw | ConvertFrom-Json
+        if ($guidedReceipt.WorkspaceUrl -cne 'https://fixture.azurecontainerapps.io/?tenant=acme') {
+            throw 'The guided bundle must finish at the customer workspace rather than sample tenants.'
+        }
+        $f.writes.Clear()
+        & (Join-Path $ReleaseRoot 'Start-DocIntelSetup.ps1') @guided
+        if ($f.writes.Count) { throw 'Re-running the guided release must safely resume verification.' }
+    }
     Write-Output 'Customer installer execution and infrastructure contract tests passed.'
 }
 finally {
-    Remove-Item Function:\az, Function:\Invoke-WebRequest -ErrorAction SilentlyContinue
+    Remove-Item Function:\az, Function:\Invoke-WebRequest, Function:\Read-Host -ErrorAction SilentlyContinue
     Remove-Variable DocIntelCustomerFixture -Scope Global
     Remove-Item -LiteralPath $temporary -Recurse -Force
 }

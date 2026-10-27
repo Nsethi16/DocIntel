@@ -4,6 +4,10 @@ targetScope = 'subscription'
 @maxLength(16)
 param customerSlug string
 
+@minLength(1)
+@maxLength(120)
+param customerDisplayName string = customerSlug
+
 @minLength(2)
 @maxLength(8)
 param environmentName string = 'prod'
@@ -11,6 +15,7 @@ param environmentName string = 'prod'
 param resourceGroupName string
 param location string
 param resourceGroupTags object = {}
+param installationRequestHash string = ''
 param directoryTenantId string
 param webClientId string
 param apiClientId string
@@ -39,11 +44,12 @@ resource customerGroup 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   tags: union(resourceGroupTags, {
     'docintel-customer': customerSlug
     'docintel-environment': environmentName
+    'docintel-request': installationRequestHash
   })
 }
 
 module installation './main.bicep' = {
-  name: 'docintel-installation'
+  name: deployApplication ? 'docintel-application' : 'docintel-infrastructure'
   scope: customerGroup
   params: {
     location: location
@@ -57,6 +63,8 @@ module installation './main.bicep' = {
     enableContainerRegistry: false
     containerImage: containerImage
     directoryTenantId: directoryTenantId
+    bootstrapTenantId: customerSlug
+    bootstrapTenantDisplayName: customerDisplayName
     webClientId: webClientId
     apiClientId: apiClientId
     identityGrants: {
@@ -92,3 +100,6 @@ output containerAppName string = appName
 output publicOrigin string = installation.outputs.containerAppFqdn
 output requiredWebRedirectUri string = installation.outputs.requiredWebRedirectUri
 output managedIdentityPrincipalId string = installation.outputs.managedIdentityPrincipalId
+output managedIdentityClientId string = installation.outputs.managedIdentityClientId
+output managedIdentityResourceId string = installation.outputs.managedIdentityResourceId
+output workspaceUrl string = '${installation.outputs.containerAppFqdn}/?tenant=${uriComponent(customerSlug)}'

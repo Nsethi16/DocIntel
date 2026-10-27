@@ -15,6 +15,12 @@ param deployRuntimeRoles bool = true
 @description('Entra directory ID for verified sign-in. Application memberships use separate tenant slugs.')
 param directoryTenantId string
 
+@description('Empty retains legacy sample seeding. Customer installers select their first workspace explicitly.')
+param bootstrapTenantId string = ''
+
+@description('Display name of the first customer workspace; never overwrites an existing workspace.')
+param bootstrapTenantDisplayName string = ''
+
 @description('Confidential web application registration ID with managed-identity federation configured.')
 param webClientId string
 
@@ -803,6 +809,14 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
             {
               name: 'DOCINTEL_IDENTITY_GRANTS'
               value: string(identityGrants)
+            }
+            {
+              name: 'HarnessBootstrap__TenantId'
+              value: bootstrapTenantId
+            }
+            {
+              name: 'HarnessBootstrap__DisplayName'
+              value: bootstrapTenantDisplayName
             }
             {
               name: 'AskAi__RecoveryPollSeconds'
