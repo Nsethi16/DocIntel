@@ -62,6 +62,7 @@ public sealed class NativeDecisionStartupTests
         Assert.Equal(providerFails ? HealthStatus.Unhealthy : HealthStatus.Healthy, health.Status);
         native.Verify(value => value.ChooseAsync(It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<CancellationToken>()), Times.Once);
+        native.Verify(value => value.Dispose(), Times.Once);
         models.Verify(value => value.ResolveModelId(tenant, "decision-1"), Times.Once);
         models.Verify(value => value.ResolveDecisionClient(tenant, "decision-1"), Times.Once);
         models.VerifyNoOtherCalls();
