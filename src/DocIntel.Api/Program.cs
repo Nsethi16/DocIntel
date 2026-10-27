@@ -12,21 +12,42 @@ using DocIntel.ServiceDefaults;
 using Microsoft.AspNetCore.Http.Features;
 
 var directoryDiagnosticMode = DirectoryConnectionDiagnostic.IsRequested(args);
+var nativeDecisionDiagnosticMode = NativeDecisionDiagnostic.IsRequested(args);
+var isolatedDiagnosticMode = directoryDiagnosticMode || nativeDecisionDiagnosticMode;
 var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal);
 WebApplicationBuilder builder;
 try
 {
-    builder = WebApplication.CreateBuilder(directoryDiagnosticMode ? [] : args);
+    builder = WebApplication.CreateBuilder(isolatedDiagnosticMode ? [] : args);
 }
-catch (Exception) when (directoryDiagnosticMode)
+catch (Exception) when (isolatedDiagnosticMode)
 {
-    Environment.ExitCode = await DirectoryConnectionDiagnostic.WriteUnavailableAsync(Console.Out);
+    Environment.ExitCode = nativeDecisionDiagnosticMode
+        ? await NativeDecisionDiagnostic.WriteUnavailableAsync(Console.Out)
+        : await DirectoryConnectionDiagnostic.WriteUnavailableAsync(Console.Out);
     return;
 }
-if (diagnosticMode || directoryDiagnosticMode)
+if (diagnosticMode || isolatedDiagnosticMode)
 {
     builder.Logging.ClearProviders();
     builder.Logging.SetMinimumLevel(LogLevel.None);
+}
+
+if (nativeDecisionDiagnosticMode)
+{
+    try
+    {
+        builder.Services.AddDocIntelCore(configuration: builder.Configuration);
+        await using var provider = builder.Services.BuildServiceProvider();
+        Environment.ExitCode = await NativeDecisionDiagnostic.ExecuteAsync(
+            args, provider.GetRequiredService<IModelCatalog>(), builder.Environment,
+            Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"), Console.Out);
+    }
+    catch (Exception)
+    {
+        Environment.ExitCode = await NativeDecisionDiagnostic.WriteUnavailableAsync(Console.Out);
+    }
+    return;
 }
 
 if (directoryDiagnosticMode)

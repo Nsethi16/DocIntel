@@ -27,14 +27,13 @@ class DecisionDiagnosticTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             MODULE.parse_result((MODULE.PREFIX + json.dumps(record) + "\n") * 2)
 
-    def test_remote_code_is_fixed_synthetic_input_and_never_logs_token(self) -> None:
-        compile(MODULE.REMOTE, "<native-diagnostic>", "exec")
-        self.assertIn('"state":"Provider connectivity check."', MODULE.REMOTE)
-        self.assertIn("/providers/microsoft/v1/systemone", MODULE.REMOTE)
-        self.assertNotIn("print(token", MODULE.REMOTE)
-        self.assertNotIn("print(data", MODULE.REMOTE)
-        self.assertNotIn("print(error", MODULE.REMOTE)
-        self.assertNotIn("subprocess", MODULE.REMOTE)
+    def test_only_capability_gated_isolated_dotnet_mode_can_execute(self) -> None:
+        command = MODULE.diagnostic_command()
+        self.assertIn("/app/docintel-decision-probe.v1", command)
+        self.assertIn("exec dotnet /app/DocIntel.Api.dll --diagnose-decision", command)
+        self.assertNotIn("python3", command)
+        self.assertNotIn("IDENTITY_HEADER", command)
+        self.assertNotIn("Authorization", command)
 
 
 if __name__ == "__main__":

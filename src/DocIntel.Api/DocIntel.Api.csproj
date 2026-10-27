@@ -23,6 +23,10 @@
           TargetPath="docintel-directory-probe.v1"
           CopyToOutputDirectory="PreserveNewest"
           CopyToPublishDirectory="PreserveNewest" />
+    <None Update="Diagnostics\docintel-decision-probe.v1"
+          TargetPath="docintel-decision-probe.v1"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -115,8 +115,11 @@ public sealed class ProviderStartupCheck(
         catch (Exception exception)
         {
             operation.Fail(exception);
-            logger.LogError("Startup provider verification failed with {ErrorType}; no provider details were returned.",
-                exception.GetBaseException().GetType().Name);
+            var cause = exception.GetBaseException();
+            var statusCode = cause is HttpRequestException request ? (int?)request.StatusCode ?? 0 : 0;
+            logger.LogError(
+                "Startup provider verification failed with {ErrorType}; HTTP status {StatusCode}; no provider details were returned.",
+                cause.GetType().Name, statusCode);
             Volatile.Write(ref _snapshot, new Snapshot(HealthCheckResult.Unhealthy(
                 "An enabled provider is unconfigured or failed startup verification.")));
         }

@@ -109,6 +109,8 @@ jobs:
           ./tests/Approve-DocIntelDirectory.Tests.ps1
           python3 -B -m unittest discover -s tests -p test_directory_probe.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python3 -B -m unittest discover -s .github/tests -p test_decision_diagnostic.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: docker/setup-buildx-action@v3
       - name: Build the container without publishing
         id: validation_image
@@ -218,6 +220,8 @@ jobs:
             --set-env-vars "Readiness__UpgradeLegacySampleDefaults=${LEGACY_SAMPLE_REPAIR:-false}" \
               "Readiness__ProbeModelsOnStartup=true" \
             "${container_args[@]}"
+      - name: Verify native Decision with the deployed runtime identity
+        run: python3 -B .github/scripts/decision_diagnostic.py
       - name: Verify the released image and revision readiness
         shell: pwsh
         run: |

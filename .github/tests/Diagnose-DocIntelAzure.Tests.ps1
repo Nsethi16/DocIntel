@@ -77,6 +77,7 @@ function az {
             if ($global:DocIntelDiagnosticsFixture.scenario -ne 'no-startup-error') {
                 Write-Output ('{"Log":"Startup provider verification failed with ' + $type +
                     '; no provider details were returned."}')
+                Write-Output '{"Log":"Startup provider verification failed with HttpRequestException; HTTP status 404; no provider details were returned."}'
             }
         }
         'cognitiveservices account' {
@@ -113,6 +114,7 @@ try {
     $env:DOCINTEL_CONTAINER_NAME = ''
     $output = & $command 3>&1 | Out-String
     if ($output -notmatch 'Startup provider error type: NotSupportedException' -or
+        $output -notmatch 'Startup provider HTTP status: 404' -or
         $output -notmatch 'revision-current' -or $output -notmatch '"configured":true') {
         throw 'Diagnostics must report the selected revision, configured flags and actual startup error type.'
     }
