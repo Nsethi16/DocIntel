@@ -146,7 +146,8 @@ test('the actual deployment command passes the selected subscription resources a
   assert.deepEqual(result.stdout.trim().split(/\r?\n/), [
     'containerapp', 'update', '--name', 'personal-docintel', '--resource-group', 'personal-rg',
     '--image', 'personalregistry.azurecr.io/personal-docintel:fixture-sha',
-    '--set-env-vars', 'Readiness__UpgradeLegacySampleDefaults=false'
+    '--set-env-vars', 'Readiness__UpgradeLegacySampleDefaults=false',
+    'Readiness__ProbeModelsOnStartup=true'
   ]);
   const named = runBash('az() { printf "%s\\n" "$@"; }\n' + script, {
     ...environment, DOCINTEL_CONTAINER_NAME: 'docintel-api'
@@ -159,6 +160,17 @@ test('the actual deployment command passes the selected subscription resources a
   assert.equal(repair.status, 0, repair.stderr);
   assert.ok(repair.stdout.trim().split(/\r?\n/).includes('Readiness__UpgradeLegacySampleDefaults=true'));
   assert.match(workflow, /upgrade_legacy_sample_defaults:[\s\S]*?type: boolean[\s\S]*?default: false/);
+});
+
+test('existing releases reconcile native Decision before full preflight and image publication', () => {
+  const deploy = workflow.split(/\r?\n  deploy:/)[1];
+  const prepare = deploy.indexOf('name: Reconcile the native Decision connection');
+  const preflight = deploy.indexOf('name: Check infrastructure setup before publishing');
+  const publish = deploy.indexOf('name: Build and push the validated application image');
+  assert.ok(prepare >= 0 && prepare < preflight && preflight < publish);
+  assert.match(deploy, /Wait-DocIntelReady\.ps1 @target -ConfigurationOnly -BeforeDecisionSetup/);
+  assert.match(deploy, /Sync-DocIntelDecision\.ps1 @target -Mode Apply -Confirmation CONNECT/);
+  assert.match(deploy, /-ExpectedPlanHash \$preview\.PlanHash/);
 });
 
 test('feature-branch validation builds the Linux image without registry or Azure access', () => {
