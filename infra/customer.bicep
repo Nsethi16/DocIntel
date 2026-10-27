@@ -30,6 +30,8 @@ param containerImage string
 param buildImageInCustomerRegistry bool = false
 
 param sourceCommit string = ''
+param decisionEndpoint string = ''
+param decisionDeploymentName string = 'Decision-1'
 
 @description('Provision dependencies first; sign-in federation is configured before the app is created.')
 param deployApplication bool = true
@@ -74,6 +76,8 @@ module installation './main.bicep' = {
     reuseRegistry: infrastructureReady
     containerImage: effectiveImage
     directoryTenantId: directoryTenantId
+    decisionEndpoint: decisionEndpoint
+    decisionDeploymentName: decisionDeploymentName
     bootstrapTenantId: customerSlug
     bootstrapTenantDisplayName: customerDisplayName
     webClientId: webClientId

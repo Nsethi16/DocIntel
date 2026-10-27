@@ -12,9 +12,8 @@ using Microsoft.Extensions.AI;
 namespace DocIntel.Core.Features.DocumentIdentification;
 
 /// <summary>
-/// Feature 2 Executor: Uses a Microsoft Decision Model (<c>phi-4</c> / <c>mai-reasoning</c>) via
-/// <see cref="ChatClientAgent"/> to classify each split PDF slice into one of the tenant's admin-defined
-/// document names (using each document's identification prompt) or <c>"Undefined"</c>.
+/// Classifies split slices using the configured decision model. Microsoft Decision uses its native
+/// closed-choice scoring API; explicitly selected chat models retain their structured-output path.
 /// </summary>
 [SendsMessage(typeof(SplittingState))]
 public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, SplittingState>
@@ -81,7 +80,9 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
             return message;
         }
 
-        using var chatClient = _modelCatalog.ResolveChatClient(message.Tenant, preferredModel);
+        using var nativeDecision = _modelCatalog.ResolveDecisionClient(message.Tenant, preferredModel);
+        using var chatClient = nativeDecision is null
+            ? _modelCatalog.ResolveChatClient(message.Tenant, preferredModel) : null;
         message.HasDevelopmentResults |= _modelCatalog.UsesDevelopmentSimulation(message.Tenant, preferredModel);
         var instructions = BuildDecisionModelInstructions(activeRules, feature.CustomSystemPrompt);
         var chatOptions = new ChatOptions
@@ -92,7 +93,7 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
                 schemaDescription: "Closed-set classification of a PDF slice into a defined document name or Undefined")
         };
 
-        var decisionAgent = new ChatClientAgent(
+        var decisionAgent = chatClient is null ? null : new ChatClientAgent(
             chatClient,
             new ChatClientAgentOptions
             {
@@ -102,6 +103,17 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
             });
 
         var ruleLookup = activeRules.ToDictionary(r => r.DocumentName.Trim(), r => r, StringComparer.OrdinalIgnoreCase);
+        var choiceRules = activeRules.Select((rule, index) => (Key: $"form_{index}", Rule: rule))
+            .ToDictionary(entry => entry.Key, entry => entry.Rule, StringComparer.Ordinal);
+        var criteria = choiceRules.ToDictionary(entry => entry.Key,
+            entry => $"Document name: {entry.Value.DocumentName.Trim()}\nIdentification criteria: {entry.Value.IdentificationPrompt.Trim()}",
+            StringComparer.Ordinal);
+        criteria.Add("undefined", "No defined form matches, or the document evidence is insufficient to identify one.");
+        var nativeInstructions = "Identify the form using the supplied criteria. Select exactly one option. " +
+            "Use undefined when none matches or the supplied evidence is insufficient.\n" +
+            (feature.CustomSystemPrompt ?? String.Empty) + "\n" + DocumentPromptBoundary.Policy;
+        var staged = new List<(DocumentSlice Slice, string Name, double Confidence, string? Rule, bool Inferred)>();
+        string? nativeDeployment = null;
 
         foreach (var slice in message.Slices)
         {
@@ -118,7 +130,22 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
                 {string.Join(Environment.NewLine, topLines)}
                 """;
 
-            var response = await decisionAgent.RunAsync(
+            if (nativeDecision is not null)
+            {
+                var result = await nativeDecision.ChooseAsync(DocumentPromptBoundary.Wrap(slicePrompt),
+                    nativeInstructions, criteria, cancellationToken);
+                if (!Double.IsFinite(result.Probability) || result.Probability is < 0 or > 1)
+                    throw new InvalidDataException("The decision model returned an invalid form probability.");
+                if (choiceRules.TryGetValue(result.Choice, out var nativeRule))
+                    staged.Add((slice, nativeRule.DocumentName, result.Probability, nativeRule.IdentificationPrompt, false));
+                else if (String.Equals(result.Choice, "undefined", StringComparison.Ordinal))
+                    staged.Add((slice, UndefinedDocumentName, result.Probability, null, true));
+                else
+                    throw new InvalidDataException("The decision model returned an unsupported form choice.");
+                nativeDeployment = result.DeploymentName;
+                continue;
+            }
+            var response = await decisionAgent!.RunAsync(
                 DocumentPromptBoundary.Wrap(slicePrompt), cancellationToken: cancellationToken);
             var cleanedJson = ReasoningCleanupChatClient.CleanModelText(response.Text ?? string.Empty);
 
@@ -141,22 +168,22 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
             if (!string.IsNullOrWhiteSpace(candidateName) &&
                 ruleLookup.TryGetValue(candidateName, out var matchedRule))
             {
-                slice.IdentifiedDocumentName = matchedRule.DocumentName;
-                slice.DocumentTypeName = matchedRule.DocumentName;
-                slice.IsInferred = false;
-                slice.IdentificationConfidence = decision.Confidence;
-                slice.MatchedIdentificationRule = matchedRule.IdentificationPrompt;
+                staged.Add((slice, matchedRule.DocumentName, decision.Confidence, matchedRule.IdentificationPrompt, false));
             }
             else
             {
-                slice.IdentifiedDocumentName = UndefinedDocumentName;
-                slice.DocumentTypeName = UndefinedDocumentName;
-                slice.IsInferred = true;
-                slice.IdentificationConfidence = decision.Confidence;
-                slice.MatchedIdentificationRule = null;
+                staged.Add((slice, UndefinedDocumentName, decision.Confidence, null, true));
             }
         }
 
+        foreach (var result in staged)
+        {
+            result.Slice.IdentifiedDocumentName = result.Name;
+            result.Slice.DocumentTypeName = result.Name;
+            result.Slice.IsInferred = result.Inferred;
+            result.Slice.IdentificationConfidence = result.Confidence;
+            result.Slice.MatchedIdentificationRule = result.Rule;
+        }
         sw.Stop();
         message.ModelIdUsed = modelId;
         message.ExecutionTrace.Add(new WorkflowStepTrace(
@@ -165,7 +192,9 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
             Succeeded: true,
             ModelIdUsed: modelId,
             DurationMs: sw.Elapsed.TotalMilliseconds,
-            Notes: $"Classified {message.Slices.Count} slice(s) against {activeRules.Count} defined rule(s) using Microsoft Decision Model '{modelId}'."));
+            Notes: nativeDeployment is not null
+                ? $"Classified {message.Slices.Count} slice(s) with Microsoft Decision deployment '{nativeDeployment}' using native choice scoring."
+                : $"Classified {message.Slices.Count} slice(s) against {activeRules.Count} rules using configured chat model '{modelId}'."));
 
         return message;
     }

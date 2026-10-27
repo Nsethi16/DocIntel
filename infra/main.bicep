@@ -109,6 +109,12 @@ param foundryInferenceEndpoint string = ''
 @description('Optional existing Azure OpenAI endpoint. Defaults to the provisioned Foundry resource when empty.')
 param azureOpenAiEndpoint string = ''
 
+@description('Separate Foundry resource root for native Microsoft Decision scoring. Empty uses the provisioned Foundry resource.')
+param decisionEndpoint string = ''
+
+@description('Case-sensitive native Microsoft-Decision-1 deployment name.')
+param decisionDeploymentName string = 'Decision-1'
+
 @description('Optional existing Azure AI Translator endpoint. Defaults to the provisioned Foundry resource when empty.')
 param translatorEndpoint string = ''
 
@@ -116,7 +122,7 @@ param translatorEndpoint string = ''
 param contentUnderstandingEndpoint string = ''
 
 @description('Foundry model deployments to provision automatically under the Foundry account.')
-param modelDeployments array = [
+param modelDeployments array = concat([
   {
     name: 'gpt-5-mini'
     format: 'OpenAI'
@@ -125,7 +131,16 @@ param modelDeployments array = [
     skuName: 'GlobalStandard'
     capacity: 10
   }
-]
+], empty(decisionEndpoint) ? [
+  {
+    name: decisionDeploymentName
+    format: 'Microsoft'
+    modelName: 'Microsoft-Decision-1'
+    modelVersion: '1'
+    skuName: 'GlobalStandard'
+    capacity: 1
+  }
+] : [])
 
 var uniqueSuffix = uniqueString(resourceGroup().id, environmentName)
 var uamiName = !empty(runtimeIdentityName) ? runtimeIdentityName : 'uami-docintel-${environmentName}'
@@ -306,6 +321,7 @@ var effectiveTranslatorEndpoint = !empty(translatorEndpoint)
 var effectiveContentUnderstandingEndpoint = !empty(contentUnderstandingEndpoint)
   ? contentUnderstandingEndpoint
   : foundryRootEndpoint
+var effectiveDecisionEndpoint = !empty(decisionEndpoint) ? decisionEndpoint : foundryRootEndpoint
 var effectivePublicOrigin = !empty(publicOrigin) ? publicOrigin : 'https://${appName}.${cae.properties.defaultDomain}'
 var effectiveEnvironmentId = !empty(existingEnvironmentId) ? existingEnvironmentId : cae.id
 
@@ -759,6 +775,14 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
               value: effectiveContentUnderstandingEndpoint
             }
             {
+              name: 'AzureAI__DecisionEndpoint'
+              value: effectiveDecisionEndpoint
+            }
+            {
+              name: 'AzureAI__DecisionDeploymentName'
+              value: decisionDeploymentName
+            }
+            {
               name: 'AzureAI__CosmosEndpoint'
               value: cosmosAccount.properties.documentEndpoint
             }
@@ -922,6 +946,8 @@ output foundryEndpoint string = effectiveFoundryEndpoint
 output foundryResourceId string = hasFoundryAccount ? foundry.id : ''
 output azureOpenAiEndpoint string = effectiveOpenAiEndpoint
 output contentUnderstandingEndpoint string = effectiveContentUnderstandingEndpoint
+output decisionEndpoint string = effectiveDecisionEndpoint
+output decisionDeploymentName string = decisionDeploymentName
 output translatorEndpoint string = effectiveTranslatorEndpoint
 output containerEnvironmentId string = effectiveEnvironmentId
 output identityKeyIdentifier string = '${keyVault.properties.vaultUri}keys/${identityEncryptionKey.name}'

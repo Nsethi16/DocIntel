@@ -36,6 +36,12 @@ public sealed class AzureIntegrationOptions
     /// </summary>
     public string? AzureOpenAIEndpoint { get; set; }
 
+    /// <summary>Optional separate Foundry resource root hosting the native Microsoft Decision deployment.</summary>
+    public string? DecisionEndpoint { get; set; }
+
+    /// <summary>Case-sensitive deployment name for Microsoft-Decision-1, not a GPT alias.</summary>
+    public string DecisionDeploymentName { get; set; } = "Decision-1";
+
     /// <summary>
     /// Azure AI Translator endpoint (e.g. "https://trn-dociq-dev-westus.cognitiveservices.azure.com/").
     /// </summary>
@@ -267,10 +273,13 @@ public static class ServiceCollectionExtensions
         var descriptors = modelDescriptors ?? ModelCatalog.CreateDefaultDescriptors(
             azureOptions.FoundryInferenceEndpoint,
             azureOptions.AzureOpenAIEndpoint,
-            azureOptions.LocalOpenAIEndpoint);
+            azureOptions.LocalOpenAIEndpoint,
+            azureOptions.DecisionEndpoint,
+            azureOptions.DecisionDeploymentName);
 
-        services.TryAddSingleton<IModelCatalog>(_ => new ModelCatalog(
-            descriptors, customModelClients, credential, simulationAllowed));
+        services.TryAddSingleton<IModelCatalog>(sp => new ModelCatalog(
+            descriptors, customModelClients, credential, simulationAllowed,
+            sp.GetService<MicrosoftDecisionHttpClientFactory>()));
         services.TryAddSingleton<IDocumentTranslationService>(_ => new AzureDocumentTranslationService(
             credential, allowDevelopmentSimulation: simulationAllowed));
 

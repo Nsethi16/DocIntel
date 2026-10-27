@@ -64,8 +64,24 @@ public sealed class ProviderStartupCheck(
                 {
                     if (!tenant.Capabilities.TryGetValue(key, out var feature) || !NeedsModel(key, feature)) continue;
                     var selected = key == FeatureHarness.IdentifyDocumentsKey
-                        ? tenant.DecisionModelId : feature.ModelIdOverride;
+                        ? !String.IsNullOrWhiteSpace(tenant.DecisionModelId) ? tenant.DecisionModelId
+                            : feature.IdentifyDocuments?.DecisionModelId ?? feature.ModelIdOverride
+                        : feature.ModelIdOverride;
                     var modelId = models.ResolveModelId(tenant, selected);
+                    using var decision = key == FeatureHarness.IdentifyDocumentsKey
+                        ? models.ResolveDecisionClient(tenant, selected) : null;
+                    if (decision is not null)
+                    {
+                        if (options.ProbeModelsOnStartup && probed.Add(modelId))
+                            await decision.ChooseAsync("Provider connectivity check.",
+                                "Select ready for this connectivity check.",
+                                new Dictionary<string, string>(StringComparer.Ordinal)
+                                {
+                                    ["ready"] = "The connectivity-check input is present.",
+                                    ["undefined"] = "The input is absent."
+                                }, timeout.Token);
+                        continue;
+                    }
                     using var client = key == FeatureHarness.AskAiKey
                         ? models.ResolveRequiredChatClient(tenant, selected) : models.ResolveChatClient(tenant, selected);
                     if (key == FeatureHarness.PromptColumnsKey &&

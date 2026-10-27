@@ -80,10 +80,18 @@ environment and subscription. `-StateDirectory` selects another private persiste
 Keep this directory: it contains deployment receipts and directory identifiers, not credentials.
 Do not upload it to the public distribution repository.
 
-The configured customer workspace is created automatically, using only the provisioned
-GPT-5 Mini and decision-1 routes. It does not create Contoso/Fabrikam sample definitions.
+The configured customer workspace is created automatically. Language tasks use GPT-5 Mini;
+form identification uses the separately provisioned native Microsoft-Decision-1 version 1
+deployment (`Decision-1`), not a GPT alias. Native model availability and quota are required
+for fresh installs. It does not create Contoso/Fabrikam sample definitions.
 Existing saved workspace settings are never replaced by customer bootstrap. Installations
 without bootstrap settings retain their existing legacy seeding/migration behavior.
+
+If Decision is already deployed on a different resource, use
+`-DecisionEndpoint 'https://<decision-resource>.services.ai.azure.com/'`
+and `-DecisionDeploymentName '<exact-deployment-name>'`. The runtime identity must have approved
+access to that existing resource. These settings affect only native form identification, not the
+language/OCR endpoints, and the installer does not silently grant external-resource permissions.
 
 ## Optional Microsoft 365 / Entra people lookup
 

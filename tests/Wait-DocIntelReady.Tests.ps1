@@ -94,6 +94,7 @@ try {
         AzureAI__BlobEndpoint = 'https://storage.example'; AzureAI__QueueEndpoint = 'https://queue.example'
         AzureAI__CosmosEndpoint = 'https://cosmos.example'; AzureAI__AzureOpenAIEndpoint = 'https://ai.example'
         AzureAI__ContentUnderstandingEndpoint = 'https://layout.example'
+        AzureAI__DecisionEndpoint = 'https://decision.example'; AzureAI__DecisionDeploymentName = 'Decision-1'
         DOCINTEL_IDENTITY_GRANTS = '{"Memberships":[{"ObjectId":"fixture"}]}'
     }.GetEnumerator() | ForEach-Object { @{ name = $_.Key; value = $_.Value } })
     & $file -ConfigurationOnly -ResourceGroup fixture -ContainerAppName fixture | Out-Null

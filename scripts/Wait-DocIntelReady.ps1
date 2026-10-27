@@ -34,7 +34,8 @@ for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
             'AZURE_CLIENT_ID', 'Identity__DirectoryTenantId', 'Identity__ClientId', 'Identity__ApiClientId',
             'Identity__PublicOrigin', 'Identity__DataProtectionBlobUri', 'Identity__DataProtectionKeyIdentifier',
             'AzureAI__BlobEndpoint', 'AzureAI__QueueEndpoint', 'AzureAI__CosmosEndpoint',
-            'AzureAI__AzureOpenAIEndpoint', 'AzureAI__ContentUnderstandingEndpoint', 'DOCINTEL_IDENTITY_GRANTS'
+            'AzureAI__AzureOpenAIEndpoint', 'AzureAI__ContentUnderstandingEndpoint',
+            'AzureAI__DecisionEndpoint', 'AzureAI__DecisionDeploymentName', 'DOCINTEL_IDENTITY_GRANTS'
         ) | Where-Object { -not $settings[$_] -or (-not $settings[$_].value -and -not $settings[$_].secretRef) })
         if ($missing.Count) {
             throw "Run 'Set up DocIntel Azure' before releasing. Missing runtime settings: $($missing -join ', ')."

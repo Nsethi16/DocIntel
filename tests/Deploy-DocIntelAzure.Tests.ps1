@@ -129,6 +129,14 @@ Assert-Equal $template.parameters.registryPullRoleDefinitionId.type 'string' 'Re
 Assert-Equal $template.parameters.registryPullRoleDefinitionId.defaultValue `
     '7f951dda-4ed3-4680-a7ca-43fe172d538d' 'Registry pull role least-privilege default'
 Assert-Equal $template.parameters.identityGrants.type 'secureObject' 'Bootstrap grants parameter protection'
+Assert-Equal $template.parameters.decisionDeploymentName.defaultValue 'Decision-1' 'Native decision deployment default'
+if (($template.parameters.modelDeployments.defaultValue | ConvertTo-Json -Depth 30 -Compress) -notmatch 'Microsoft-Decision-1') {
+    throw 'Fresh infrastructure must provision the real native Decision model, not reuse GPT as a label.'
+}
+if (-not @($application.properties.template.containers[0].env | Where-Object name -CEQ 'AzureAI__DecisionEndpoint') -or
+    -not @($application.properties.template.containers[0].env | Where-Object name -CEQ 'AzureAI__DecisionDeploymentName')) {
+    throw 'Native Decision endpoint/deployment settings must be wired independently of language/OCR.'
+}
 if (($template.outputs | ConvertTo-Json -Depth 100) -match
     'identityGrants|Memberships|PlatformAdministrators|DOCINTEL_IDENTITY_GRANTS') {
     throw 'Deployment outputs must not expose bootstrap grants.'

@@ -14,6 +14,8 @@ param(
     [string]$Location = 'westus',
     [string]$EnvironmentName = 'prod',
     [string]$InitialOwnerObjectId = '',
+    [string]$DecisionEndpoint = '',
+    [string]$DecisionDeploymentName = 'Decision-1',
     [string]$StateDirectory = '',
     [ValidateSet('Prompt', 'Disabled', 'UseExisting', 'Configure', 'PreserveExisting')]
     [string]$DirectoryMode = 'Prompt',
@@ -82,6 +84,7 @@ $setup = @{
     CustomerSlug = $CustomerSlug; CustomerName = $CustomerName; SubscriptionId = $SubscriptionId
     Image = $release.image; Location = $Location; EnvironmentName = $EnvironmentName
     OutputDirectory = $StateDirectory; InitialOwnerObjectId = $InitialOwnerObjectId
+    DecisionEndpoint = $DecisionEndpoint; DecisionDeploymentName = $DecisionDeploymentName
 }
 if ($release.schemaVersion -ge 2) {
     $setup.ImageSource = $release.imageSource

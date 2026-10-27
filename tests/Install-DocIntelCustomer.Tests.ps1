@@ -123,11 +123,17 @@ function az {
                 format = 'OpenAI'; name = 'gpt-5-mini'
                 version = $(if ($f.scenario -eq 'model') { 'wrong' } else { '2025-08-07' })
                 skus = @(@{ name = 'GlobalStandard'; usageName = 'OpenAI.GlobalStandard.gpt-5-mini' })
+            } }, @{ kind = 'AIServices'; model = @{
+                format = 'Microsoft'; name = 'Microsoft-Decision-1'
+                version = $(if ($f.scenario -eq 'decision-model') { 'wrong' } else { '1' })
+                skus = @(@{ name = 'GlobalStandard'; usageName = 'Microsoft.GlobalStandard.Decision-1' })
             } }); break
         }
         'cognitiveservices usage list' {
             @(@{ name = @{ value = 'OpenAI.GlobalStandard.gpt-5-mini' }
-                currentValue = 0; limit = $(if ($f.scenario -eq 'quota') { 9 } else { 100 }) }); break
+                currentValue = 0; limit = $(if ($f.scenario -eq 'quota') { 9 } else { 100 }) },
+                @{ name = @{ value = 'Microsoft.GlobalStandard.Decision-1' }
+                    currentValue = 0; limit = $(if ($f.scenario -eq 'decision-quota') { 0 } else { 10 }) }); break
         }
         'group exists --name' { $f.scenario -eq 'occupied' -or $null -ne $f.foundation; break }
         'group show --name' {
@@ -306,6 +312,7 @@ function az {
                 AzureAI__BlobEndpoint = 'https://storage.example'; AzureAI__QueueEndpoint = 'https://queue.example'
                 AzureAI__CosmosEndpoint = 'https://cosmos.example'; AzureAI__AzureOpenAIEndpoint = 'https://ai.example'
                 AzureAI__ContentUnderstandingEndpoint = 'https://ai.example'; HarnessBootstrap__TenantId = 'acme'
+                AzureAI__DecisionEndpoint = 'https://decision.example'; AzureAI__DecisionDeploymentName = 'Decision-1'
                 DOCINTEL_IDENTITY_GRANTS = (@{ PlatformAdministrators = @(@{
                     DirectoryTenantId = $f.directory; ObjectId = $f.owner
                 }) } | ConvertTo-Json -Depth 10 -Compress)
@@ -392,6 +399,7 @@ try {
     foreach ($scenario in @(
         @('wrong-directory', 'same directory'), @('disabled-owner', 'enabled user'), @('provider', 'register'),
         @('azure-error', 'AuthorizationFailed'), @('model', 'unavailable'), @('quota', 'quota'),
+        @('decision-model', 'Microsoft-Decision-1'), @('decision-quota', 'Microsoft Decision'),
         @('private-image', 'anonymously pullable'),
         @('occupied', 'not empty'), @('ambiguous', 'Multiple matching'), @('unowned', 'not owned'),
         @('delete', 'deletion'), @('outside', 'outside'), @('diagnostics', 'incomplete'),

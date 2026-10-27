@@ -7,6 +7,7 @@ using DocIntel.Api.Channels;
 using DocIntel.Api.Http;
 using DocIntel.Api.Diagnostics;
 using DocIntel.Core;
+using DocIntel.Core.Models;
 using DocIntel.ServiceDefaults;
 using Microsoft.AspNetCore.Http.Features;
 
@@ -60,6 +61,11 @@ builder.Services.ConfigureHttpJsonOptions(options =>
 });
 
 var harnessFilePath = Path.Combine(builder.Environment.ContentRootPath, "App_Data", "agent-harness-settings.json");
+builder.Services.AddHttpClient(MicrosoftDecisionClient.HttpClientName, client =>
+    client.Timeout = TimeSpan.FromSeconds(60))
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+builder.Services.AddSingleton<MicrosoftDecisionHttpClientFactory>(services =>
+    () => services.GetRequiredService<IHttpClientFactory>().CreateClient(MicrosoftDecisionClient.HttpClientName));
 builder.Services.AddDocIntelCore(configuration: builder.Configuration, harnessFilePath: harnessFilePath);
 var startupReadiness = new StartupReadinessOptions();
 builder.Configuration.GetSection("Readiness").Bind(startupReadiness);

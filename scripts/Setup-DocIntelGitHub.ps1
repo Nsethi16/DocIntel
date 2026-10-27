@@ -27,6 +27,8 @@ param(
     [string]$CosmosAccountName = '',
     [string]$KeyVaultName = '',
     [string]$FoundryAccountName = '',
+    [string]$DecisionEndpoint = $env:DOCINTEL_DECISION_ENDPOINT,
+    [string]$DecisionDeploymentName = $env:DOCINTEL_DECISION_DEPLOYMENT,
     [string]$EnvironmentName = 'dev',
     [switch]$ConfigureDirectoryApplications,
     [string]$OutputDirectory = ''
@@ -347,6 +349,7 @@ try {
     $foundry = Find-Resource 'Microsoft.CognitiveServices/accounts' $FoundryAccountName $aiBound '^(aif-|ai-docintel)'
     $aiEndpoints = @{}
     $modelExists = $false
+    $nativeDecisionExists = $false
     if ($foundry.Resource) {
         $ai = Invoke-SetupAzure @('cognitiveservices', 'account', 'show', '--subscription', $SubscriptionId,
             '--resource-group', $ResourceGroup, '--name', $foundry.Name)
@@ -366,6 +369,28 @@ try {
             throw 'The deployment named gpt-5-mini contains a different model; setup will not replace it.'
         }
         $modelExists = $null -ne $selected
+        $nativeDecisionExists = @($models | Where-Object {
+            $_.name -ceq $(if ($DecisionDeploymentName) { $DecisionDeploymentName } else { 'Decision-1' }) -and
+                $_.properties.model.name -ceq 'Microsoft-Decision-1' -and $_.properties.model.format -ceq 'Microsoft'
+        }).Count -eq 1
+    }
+    if (-not $DecisionEndpoint) { $DecisionEndpoint = Get-ExistingSetting 'AzureAI__DecisionEndpoint' }
+    if (-not $DecisionDeploymentName) { $DecisionDeploymentName = Get-ExistingSetting 'AzureAI__DecisionDeploymentName' }
+    if (-not $DecisionDeploymentName) { $DecisionDeploymentName = 'Decision-1' }
+    if (-not $DecisionEndpoint -and $nativeDecisionExists) {
+        $DecisionEndpoint = $aiEndpoints.contentUnderstandingEndpoint
+    }
+    $DecisionEndpoint = [string]$DecisionEndpoint
+    if ($DecisionDeploymentName -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$') {
+        throw 'The native Decision deployment name is invalid.'
+    }
+    if ($DecisionEndpoint) {
+        $decisionUri = $null
+        if (-not [uri]::TryCreate($DecisionEndpoint, [UriKind]::Absolute, [ref]$decisionUri) -or
+            $decisionUri.Scheme -cne 'https' -or $decisionUri.AbsolutePath -cne '/' -or
+            $decisionUri.Query -or $decisionUri.Fragment -or $decisionUri.UserInfo) {
+            throw 'The native Decision endpoint must be its HTTPS Foundry resource root.'
+        }
     }
     $reuseDatabase = $false
     $cosmosContainers = @()
@@ -439,6 +464,7 @@ try {
         deployModels = -not $modelExists
         directoryTenantId = $DirectoryTenantId; webClientId = $web.appId; apiClientId = $api.appId
         identityGrants = @{}
+        decisionEndpoint = $DecisionEndpoint; decisionDeploymentName = $DecisionDeploymentName
     }
     foreach ($key in $aiEndpoints.Keys) { $parameters[$key] = $aiEndpoints[$key] }
     $wrapped = @{ parameters = @{} }
@@ -464,6 +490,7 @@ try {
         environment = $environmentId; origin = $origin; image = $container.image
         runtimeIdentity = $identity.Name; storage = $storage.Name; cosmos = $cosmos.Name
         vault = $vault.Name; foundry = $foundry.Name; configureDirectory = [bool]$ConfigureDirectoryApplications
+        decisionEndpoint = $DecisionEndpoint; decisionDeployment = $DecisionDeploymentName
         webClientId = $web.appId; apiClientId = $api.appId
         directoryState = $directoryState
         webHasPrincipal = $webHasPrincipal; apiHasPrincipal = $apiHasPrincipal
@@ -484,6 +511,7 @@ try {
         resourceChanges = $resourceChanges; bootstrapAdminWillBeCreated = [bool]$bootstrapGrants
         bootstrapAdminRequired = -not $hasGrants -and -not $bootstrapGrants
         directoryApplicationChanges = [bool]$ConfigureDirectoryApplications
+        nativeDecisionConfigured = [bool]$DecisionEndpoint
         planHash = $planHash
         plannedWebRegistration = [bool]$web.Planned; plannedApiRegistration = [bool]$api.Planned
         missingServicePrincipals = if ($ConfigureDirectoryApplications) {
@@ -495,6 +523,9 @@ try {
     $plan | ConvertTo-Json -Depth 100 | Set-Content (Join-Path $OutputDirectory 'what-if.json') -Encoding utf8
     if ($env:GITHUB_OUTPUT) { "plan_hash=$planHash" | Add-Content -LiteralPath $env:GITHUB_OUTPUT }
     $summary | ConvertTo-Json -Depth 20
+    if (-not $DecisionEndpoint) {
+        Write-Warning 'Native Microsoft Decision is not connected. Set DOCINTEL_DECISION_ENDPOINT and DOCINTEL_DECISION_DEPLOYMENT before releasing the new image; no GPT alias is used.'
+    }
     if ($Mode -eq 'Preview') {
         Write-Output 'Preview only: no Azure resources, identities, roles, registration settings or app configuration were changed.'
         if (-not $hasGrants -and -not $bootstrapGrants) {
@@ -607,6 +638,13 @@ try {
         AzureAI__ContentUnderstandingEndpoint = $outputs.contentUnderstandingEndpoint.value
         AzureAI__FoundryInferenceEndpoint = $outputs.foundryEndpoint.value
         AzureAI__TranslatorEndpoint = $outputs.translatorEndpoint.value
+    }
+    if ($DecisionEndpoint) {
+        $settings.AzureAI__DecisionEndpoint = $DecisionEndpoint
+        $settings.AzureAI__DecisionDeploymentName = $DecisionDeploymentName
+    } elseif (-not $modelExists -and $outputs.decisionEndpoint.value) {
+        $settings.AzureAI__DecisionEndpoint = $outputs.decisionEndpoint.value
+        $settings.AzureAI__DecisionDeploymentName = $DecisionDeploymentName
     }
     foreach ($name in 'Identity__Directory__Enabled', 'Channels__Email__Enabled', 'Channels__Teams__Enabled') {
         if (-not @($script:environment | Where-Object { $_.name -ceq $name }).Count) { $settings[$name] = 'false' }

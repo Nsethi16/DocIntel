@@ -120,6 +120,7 @@ public sealed class DocumentSlice
     [JsonPropertyName("identifiedDocumentName")]
     public string? IdentifiedDocumentName { get; set; }
 
+    /// <summary>Selected-class probability for native Microsoft Decision, or the configured chat model's confidence.</summary>
     [JsonPropertyName("identificationConfidence")]
     public double IdentificationConfidence { get; set; }
 

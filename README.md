@@ -73,11 +73,50 @@ Admins can manage isolated **Tenants** and configure each tenant's **Agent Harne
   - **Language Model** (`Microsoft Phi-4`, `Microsoft MAI-Reasoning`, `Meta Llama 3.3 70B`, `DeepSeek R1`, `Mistral Large`, `GPT-5 Mini`, `GPT-4o`) via `Azure.AI.Inference` and `Azure.AI.OpenAI`.
 - **6 Toggleable & Configurable Capabilities**:
   1. **File Splitting & Grouping**: Deterministic `PdfPig` layout, coordinate, pagination (`Page X of Y`), orientation-shift, and Levenshtein footer clustering that slices multi-document PDFs into standalone PDFs.
-  2. **Identify Documents**: Classifies each PDF slice into admin-defined `(DocumentName, IdentificationPrompt)` rules or `"Undefined"` using **Microsoft Decision 1**.
+  2. **Identify Documents**: Scores extracted slice text against admin-defined `(DocumentName, IdentificationPrompt)`
+     criteria plus `"Undefined"` using the configured **Microsoft-Decision-1** deployment and its native decision API.
   3. **Document Translation**: Translates non-target-language slices using **Azure Document Translation** (`Azure.AI.Translation.Document` / `Text` on the same Microsoft Foundry resource) while honoring `DoNotTranslateTerms`.
   4. **Document Insights**: Generates executive insights guided by custom **Insight instructions**.
   5. **Entity Extraction**: Extracts structured entities guided by a custom **Entity extraction prompt**.
   6. **Data Extraction**: Extracts per-document structured **Key-Value Pairs** and **Tables (with Columns + Instructions)** mapped to each defined document type.
+
+### Native Microsoft Decision form identification
+
+The `decision-1` catalog entry is a **native Microsoft-Decision-1 scorer**, not an alias for
+GPT-5 Mini and not a generative chat client. Identification uses the tenant's configured
+`DecisionModelId`, sends extracted title/top-line/footer text as `state`, and supplies the
+active form rules plus an explicit Undefined option as closed `choice` criteria.
+The native route is `<resource-root>/providers/microsoft/v1/systemone`; it is not chat
+completions or the unrelated OpenAI Decisions API. No PDF/image bytes or generated rationale
+are requested. The chosen class probability is retained, and results publish only after every
+slice has a valid classification. Provider failures or unknown choices never trigger a GPT fallback.
+
+| Runtime setting | Purpose |
+|---|---|
+| `AzureAI__DecisionEndpoint` | Optional separate HTTPS Foundry resource root hosting the native model |
+| `AzureAI__DecisionDeploymentName` | Exact deployment name, default `Decision-1` |
+| Tenant `decisionModelId` | Logical configured decision profile, normally `decision-1` |
+
+When no separate endpoint is supplied, the catalog uses the configured Foundry resource root
+(removing its standard `/models` suffix), never a hidden Azure OpenAI language-model alias.
+For a model on another resource, configure that resource root explicitly and approve runtime
+managed-identity access there. This does not repoint language, translation or Content Understanding
+providers. The request uses the deployment name; the response may identify its underlying model
+as `microsoft-decision-1`.
+For the existing GitHub setup flow, `DOCINTEL_DECISION_ENDPOINT` and
+`DOCINTEL_DECISION_DEPLOYMENT` repository variables supply these settings in the reviewed setup
+plan. Existing configured Decision settings are preserved. Image-release preflight refuses a
+missing native Decision connection before replacing the running image.
+
+Fresh customer infrastructure provisions `Microsoft-Decision-1` version `1`, GlobalStandard
+capacity `1`, alongside the language model. Native model availability and quota are checked before
+apply. An explicit existing Decision endpoint skips that new model deployment; access to that
+existing resource is an operator prerequisite, not silently granted by application startup.
+Microsoft Decision is preview and regional inference availability must be verified, not inferred
+solely from deployment creation. Startup uses a real closed-choice probe when model probing is enabled.
+Explicit offline development simulation remains marked as development, never production model proof.
+
+See [Microsoft's native Decision model API](https://learn.microsoft.com/en-us/azure/foundry/foundry-models/how-to/use-foundry-models-microsoft-decision).
 
 ## Quick Start (Local)
 

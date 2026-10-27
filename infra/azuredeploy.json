@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "4832846257373705137"
+      "templateHash": "11533353696093305915"
     }
   },
   "parameters": {
@@ -258,6 +258,20 @@
         "description": "Optional existing Azure OpenAI endpoint. Defaults to the provisioned Foundry resource when empty."
       }
     },
+    "decisionEndpoint": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Separate Foundry resource root for native Microsoft Decision scoring. Empty uses the provisioned Foundry resource."
+      }
+    },
+    "decisionDeploymentName": {
+      "type": "string",
+      "defaultValue": "Decision-1",
+      "metadata": {
+        "description": "Case-sensitive native Microsoft-Decision-1 deployment name."
+      }
+    },
     "translatorEndpoint": {
       "type": "string",
       "defaultValue": "",
@@ -274,16 +288,7 @@
     },
     "modelDeployments": {
       "type": "array",
-      "defaultValue": [
-        {
-          "name": "gpt-5-mini",
-          "format": "OpenAI",
-          "modelName": "gpt-5-mini",
-          "modelVersion": "2025-08-07",
-          "skuName": "GlobalStandard",
-          "capacity": 10
-        }
-      ],
+      "defaultValue": "[concat(createArray(createObject('name', 'gpt-5-mini', 'format', 'OpenAI', 'modelName', 'gpt-5-mini', 'modelVersion', '2025-08-07', 'skuName', 'GlobalStandard', 'capacity', 10)), if(empty(parameters('decisionEndpoint')), createArray(createObject('name', parameters('decisionDeploymentName'), 'format', 'Microsoft', 'modelName', 'Microsoft-Decision-1', 'modelVersion', '1', 'skuName', 'GlobalStandard', 'capacity', 1)), createArray()))]",
       "metadata": {
         "description": "Foundry model deployments to provision automatically under the Foundry account."
       }
@@ -870,6 +875,14 @@
                   "value": "[if(not(empty(parameters('contentUnderstandingEndpoint'))), parameters('contentUnderstandingEndpoint'), if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), ''))]"
                 },
                 {
+                  "name": "AzureAI__DecisionEndpoint",
+                  "value": "[if(not(empty(parameters('decisionEndpoint'))), parameters('decisionEndpoint'), if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), ''))]"
+                },
+                {
+                  "name": "AzureAI__DecisionDeploymentName",
+                  "value": "[parameters('decisionDeploymentName')]"
+                },
+                {
                   "name": "AzureAI__CosmosEndpoint",
                   "value": "[reference(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')), '2024-05-15').documentEndpoint]"
                 },
@@ -1078,6 +1091,14 @@
     "contentUnderstandingEndpoint": {
       "type": "string",
       "value": "[if(not(empty(parameters('contentUnderstandingEndpoint'))), parameters('contentUnderstandingEndpoint'), if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), ''))]"
+    },
+    "decisionEndpoint": {
+      "type": "string",
+      "value": "[if(not(empty(parameters('decisionEndpoint'))), parameters('decisionEndpoint'), if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), ''))]"
+    },
+    "decisionDeploymentName": {
+      "type": "string",
+      "value": "[parameters('decisionDeploymentName')]"
     },
     "translatorEndpoint": {
       "type": "string",

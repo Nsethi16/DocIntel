@@ -66,7 +66,7 @@ jobs:
             image = $container.image
           } | ConvertTo-Json
           foreach ($name in @('AzureAI__AzureOpenAIEndpoint', 'AzureAI__FoundryInferenceEndpoint',
-            'AzureAI__ContentUnderstandingEndpoint', 'AzureAI__TranslatorEndpoint')) {
+            'AzureAI__ContentUnderstandingEndpoint', 'AzureAI__TranslatorEndpoint', 'AzureAI__DecisionEndpoint')) {
             $entry = $container.env | Where-Object { $_.name -ceq $name } | Select-Object -First 1
             [pscustomobject]@{
               setting = $name
@@ -160,7 +160,7 @@ jobs:
             $subdomain = $account.properties.customSubDomainName
             if ($subdomain) {
               foreach ($name in @('AzureAI__AzureOpenAIEndpoint', 'AzureAI__FoundryInferenceEndpoint',
-                'AzureAI__ContentUnderstandingEndpoint', 'AzureAI__TranslatorEndpoint')) {
+                'AzureAI__ContentUnderstandingEndpoint', 'AzureAI__TranslatorEndpoint', 'AzureAI__DecisionEndpoint')) {
                 $entry = $container.env | Where-Object { $_.name -ceq $name } | Select-Object -First 1
                 $endpoint = $null
                 if ([uri]::TryCreate([string]$entry.value, [UriKind]::Absolute, [ref]$endpoint) -and

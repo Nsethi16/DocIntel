@@ -38,7 +38,10 @@ public enum ModelProvider
     /// <summary>
     /// Built-in deterministic simulator for offline development and unit testing.
     /// </summary>
-    Simulated
+    Simulated,
+
+    /// <summary>Microsoft-Decision-1's typed, text-only decision-scoring API, not chat generation.</summary>
+    MicrosoftDecision
 }
 
 /// <summary>
@@ -52,6 +55,9 @@ public sealed record ModelDescriptor(
     string DeploymentName,
     string? Endpoint = null,
     bool SupportsPdfInputs = false);
+
+/// <summary>Creates an owned HTTP client for native Decision requests without coupling Core to an HTTP factory package.</summary>
+public delegate HttpClient MicrosoftDecisionHttpClientFactory();
 
 /// <summary>
 /// Resolves provider-agnostic <see cref="IChatClient"/> instances for any model in the catalog.
@@ -74,6 +80,9 @@ public interface IModelCatalog
     /// Resolves a configured model without simulated or cross-provider fallback.
     /// </summary>
     IChatClient ResolveRequiredChatClient(TenantHarness tenant, string? modelOverride = null);
+
+    /// <summary>Resolves native Microsoft decision scoring; null denotes an explicitly selected chat/development client.</summary>
+    IMicrosoftDecisionClient? ResolveDecisionClient(TenantHarness tenant, string? modelOverride = null) => null;
 }
 
 /// <summary>
@@ -85,15 +94,18 @@ public sealed class ModelCatalog : IModelCatalog
     private readonly IReadOnlyList<ModelDescriptor> _descriptors;
     private readonly Dictionary<string, IChatClient> _customClients;
     private readonly TokenCredential _credential;
+    private readonly MicrosoftDecisionHttpClientFactory? _decisionHttpClientFactory;
 
     public ModelCatalog(
         IEnumerable<ModelDescriptor>? descriptors = null,
         IDictionary<string, IChatClient>? customClients = null,
         TokenCredential? credential = null,
-        bool allowDevelopmentSimulation = false)
+        bool allowDevelopmentSimulation = false,
+        MicrosoftDecisionHttpClientFactory? decisionHttpClientFactory = null)
     {
         _descriptors = (descriptors ?? CreateDefaultDescriptors()).ToList();
         AllowsDevelopmentSimulation = allowDevelopmentSimulation;
+        _decisionHttpClientFactory = decisionHttpClientFactory;
         _customClients = customClients is not null
             ? new Dictionary<string, IChatClient>(customClients, StringComparer.OrdinalIgnoreCase)
             : new Dictionary<string, IChatClient>(StringComparer.OrdinalIgnoreCase);
@@ -149,6 +161,27 @@ public sealed class ModelCatalog : IModelCatalog
     public IChatClient ResolveRequiredChatClient(TenantHarness tenant, string? modelOverride = null) =>
         ResolveClient(tenant, modelOverride, requireTools: true);
 
+    /// <inheritdoc />
+    public IMicrosoftDecisionClient? ResolveDecisionClient(TenantHarness tenant, string? modelOverride = null)
+    {
+        var id = ResolveModelId(tenant, modelOverride);
+        if (_customClients.ContainsKey(id)) return null;
+        var descriptor = _descriptors.FirstOrDefault(model =>
+            String.Equals(model.ModelId, id, StringComparison.OrdinalIgnoreCase));
+        if (descriptor?.Provider != ModelProvider.MicrosoftDecision) return null;
+        if (AllowsDevelopmentSimulation && String.IsNullOrWhiteSpace(descriptor.Endpoint)) return null;
+        if (!Uri.TryCreate(descriptor.Endpoint, UriKind.Absolute, out var endpoint))
+            throw new InvalidOperationException("Microsoft Decision execution requires its configured Foundry resource endpoint.");
+        var http = _decisionHttpClientFactory?.Invoke() ??
+            new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(60) };
+        try { return new MicrosoftDecisionClient(http, _credential, endpoint, descriptor.DeploymentName); }
+        catch
+        {
+            http.Dispose();
+            throw;
+        }
+    }
+
     private IChatClient ResolveClient(TenantHarness tenant, string? modelOverride, bool requireTools)
     {
         var modelId = ResolveModelId(tenant, modelOverride);
@@ -169,6 +202,9 @@ public sealed class ModelCatalog : IModelCatalog
         {
             return new SimulatedSliceChatClient(modelId);
         }
+        if (descriptor?.Provider == ModelProvider.MicrosoftDecision)
+            throw new NotSupportedException(
+                "Microsoft Decision is a text-only closed-set scorer. Use its decision API, not chat or Ask AI.");
         if (descriptor is null || descriptor.Provider == ModelProvider.Simulated ||
             !Uri.TryCreate(descriptor.Endpoint, UriKind.Absolute, out var endpoint) ||
             (endpoint.Scheme != Uri.UriSchemeHttps &&
@@ -209,9 +245,13 @@ public sealed class ModelCatalog : IModelCatalog
     public static IReadOnlyList<ModelDescriptor> CreateDefaultDescriptors(
         string? foundryInferenceEndpoint = null,
         string? azureOpenAiEndpoint = null,
-        string? localOpenAiEndpoint = null) =>
+        string? localOpenAiEndpoint = null,
+        string? decisionEndpoint = null,
+        string decisionDeploymentName = "Decision-1") =>
     [
-        new("decision-1", "Microsoft Decision 1", "Microsoft", ModelProvider.AzureOpenAI, "gpt-5-mini", azureOpenAiEndpoint ?? foundryInferenceEndpoint, true),
+        new("decision-1", "Microsoft Decision 1", "Microsoft", ModelProvider.MicrosoftDecision,
+            decisionDeploymentName, String.IsNullOrWhiteSpace(decisionEndpoint)
+                ? DecisionResourceRoot(foundryInferenceEndpoint) : decisionEndpoint),
         new("phi-4", "Microsoft Phi-4 (Foundry)", "Microsoft", ModelProvider.FoundryInference, "Phi-4", foundryInferenceEndpoint),
         new("mai-reasoning", "Microsoft MAI-Reasoning (Foundry)", "Microsoft", ModelProvider.FoundryInference, "MAI-Reasoning", foundryInferenceEndpoint),
         new("llama-3.3-70b", "Meta Llama 3.3 70B Instruct (Foundry)", "Meta", ModelProvider.FoundryInference, "Llama-3.3-70B-Instruct", foundryInferenceEndpoint),
@@ -221,6 +261,15 @@ public sealed class ModelCatalog : IModelCatalog
         new("gpt-4o", "GPT-4o (Foundry / Azure OpenAI)", "OpenAI", ModelProvider.AzureOpenAI, "gpt-4o", azureOpenAiEndpoint ?? foundryInferenceEndpoint, true),
         new("foundry-local-phi4", "Phi-4 (On-Device Foundry Local / Ollama)", "Local", ModelProvider.OpenAICompatible, "phi-4", localOpenAiEndpoint)
     ];
+
+    private static string? DecisionResourceRoot(string? endpoint)
+    {
+        if (!Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)) return null;
+        if (!String.IsNullOrEmpty(uri.Query) || !String.IsNullOrEmpty(uri.Fragment) ||
+            !String.IsNullOrEmpty(uri.UserInfo)) return null;
+        if (uri.AbsolutePath is not ("/" or "/models" or "/models/")) return null;
+        return new UriBuilder(uri) { Path = "/", Query = String.Empty, Fragment = String.Empty }.Uri.AbsoluteUri;
+    }
 }
 
 /// <summary>

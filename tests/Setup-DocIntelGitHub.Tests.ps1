@@ -40,6 +40,8 @@ $global:DocIntelSetupFixture.app = @{
                 @{ name = 'AzureAI__CosmosEndpoint'; value = 'https://cosmos-docintel-test.documents.azure.com:443/' }
                 @{ name = 'AzureAI__AzureOpenAIEndpoint'; value = 'https://aif-docintel-test.openai.azure.com/' }
                 @{ name = 'AzureAI__ContentUnderstandingEndpoint'; value = 'https://aif-docintel-test.services.ai.azure.com/' }
+                @{ name = 'AzureAI__DecisionEndpoint'; value = 'https://decision-other.services.ai.azure.com/' }
+                @{ name = 'AzureAI__DecisionDeploymentName'; value = 'Decision-1' }
                 @{ name = 'Identity__DataProtectionKeyIdentifier'; value = 'https://kv-di-test.vault.azure.net/keys/docintel-identity' }
                 @{ name = 'UserOwnedSetting'; value = 'must-survive' }
                 @{ name = 'UserOwnedSecret'; secretRef = 'existing-secret' }

@@ -13,6 +13,8 @@ param(
     [string]$Image = '',
     [ValidateSet('PublicImage', 'CustomerRegistryBuild')][string]$ImageSource = 'PublicImage',
     [string]$SourceCommit = '',
+    [string]$DecisionEndpoint = '',
+    [string]$DecisionDeploymentName = 'Decision-1',
     [string]$CustomerName = '',
     [string]$Location = 'westus',
     [string]$EnvironmentName = 'prod',
@@ -48,6 +50,17 @@ if ($ImageSource -eq 'PublicImage') {
     throw 'CustomerRegistryBuild requires a full SourceCommit and no preselected image.'
 }
 $resolvedImage = $Image
+if ($DecisionDeploymentName -cnotmatch '^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$') {
+    throw 'DecisionDeploymentName must be an explicit supported native deployment name.'
+}
+if ($DecisionEndpoint) {
+    $decisionUri = $null
+    if (-not [uri]::TryCreate($DecisionEndpoint, [UriKind]::Absolute, [ref]$decisionUri) -or
+        $decisionUri.Scheme -cne 'https' -or $decisionUri.AbsolutePath -cne '/' -or
+        $decisionUri.Query -or $decisionUri.Fragment -or $decisionUri.UserInfo) {
+        throw 'DecisionEndpoint must be the HTTPS Foundry resource root, without a path, credentials or query.'
+    }
+}
 if ($RetryFailedBuild -and (-not $Resume -or $ImageSource -ne 'CustomerRegistryBuild')) {
     throw 'RetryFailedBuild requires Resume of a customer registry build and a new reviewed APPLY.'
 }
@@ -418,6 +431,7 @@ try {
         Customer = $CustomerSlug; Name = $CustomerName; Environment = $EnvironmentName
         Owner = $InitialOwnerObjectId; Image = $Image; ImageSource = $ImageSource
         SourceCommit = $SourceCommit; Files = $fileHashes
+        DecisionEndpoint = $DecisionEndpoint; DecisionDeploymentName = $DecisionDeploymentName
     }
     $requestHash = Get-CustomerHash $request
     $key = (Get-CustomerHash @($directoryId, $SubscriptionId, $ResourceGroup, $CustomerSlug, $EnvironmentName)).Substring(0, 16)
@@ -471,6 +485,22 @@ try {
     if ($quota.Count -ne 1 -or $null -eq $quota[0].limit -or $null -eq $quota[0].currentValue -or
         [double]$quota[0].limit - [double]$quota[0].currentValue -lt 10) {
         throw 'At least 10 deployment-capacity units of the model quota are required. Obtain quota before applying.'
+    }
+    if (-not $DecisionEndpoint) {
+        $decisionModels = @($models | Where-Object {
+            $_.model.format -ceq 'Microsoft' -and $_.model.name -ceq 'Microsoft-Decision-1' -and
+                $_.model.version -ceq '1' -and $_.kind -ceq 'AIServices'
+        })
+        $decisionSku = @($decisionModels.model.skus | Where-Object name -CEQ 'GlobalStandard')
+        if ($decisionModels.Count -ne 1 -or $decisionSku.Count -ne 1 -or -not $decisionSku[0].usageName) {
+            throw 'Microsoft-Decision-1 version 1 / GlobalStandard is unavailable in this subscription/region. No GPT substitution is used.'
+        }
+        $decisionQuota = @($usage | Where-Object { $_.name.value -ceq $decisionSku[0].usageName })
+        if ($decisionQuota.Count -ne 1 -or $null -eq $decisionQuota[0].limit -or
+            $null -eq $decisionQuota[0].currentValue -or
+            [double]$decisionQuota[0].limit - [double]$decisionQuota[0].currentValue -lt 1) {
+            throw 'Microsoft Decision requires one deployment-capacity unit. Obtain native model quota before applying.'
+        }
     }
     }
     if ($ImageSource -eq 'CustomerRegistryBuild') {
@@ -533,6 +563,8 @@ try {
         customerDisplayName = @{ value = $CustomerName }; installationRequestHash = @{ value = $requestHash }
         buildImageInCustomerRegistry = @{ value = $ImageSource -eq 'CustomerRegistryBuild' }
         sourceCommit = @{ value = $SourceCommit }
+        decisionEndpoint = @{ value = $DecisionEndpoint }
+        decisionDeploymentName = @{ value = $DecisionDeploymentName }
         webClientId = @{ value = $(if ($web) { $web.appId } else { '11111111-1111-1111-1111-111111111111' }) }
         apiClientId = @{ value = $(if ($api) { $api.appId } else { '22222222-2222-2222-2222-222222222222' }) }
         deployApplication = @{ value = $true }; infrastructureReady = @{ value = [bool]$foundation }
@@ -584,6 +616,10 @@ try {
         Boundaries = @('No Graph admin consent or deployer self-elevation', 'No existing-resource adoption',
             'No email/Teams/private networking', 'Readiness is not a PDF/Ask AI acceptance test')
         ImageSource = $ImageSource; SourceCommit = $SourceCommit
+        DecisionModel = 'Microsoft-Decision-1'; DecisionDeployment = $DecisionDeploymentName
+        DecisionResource = $(if ($DecisionEndpoint) {
+            'Explicit existing endpoint; the runtime identity must already have approved access.'
+        } else { 'Native model provisioned in the customer Foundry resource; separate from language-model routing.' })
         RetryFailedBuild = [bool]$RetryFailedBuild
         BuildCosts = $(if ($ImageSource -eq 'CustomerRegistryBuild') {
             'Customer Basic ACR plus ACR Tasks build compute; maximum build duration 1200 seconds.'
