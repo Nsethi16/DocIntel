@@ -1,6 +1,10 @@
+using System.Globalization;
 using System.Text.Json;
+using DocIntel.Core;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Models;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 
 namespace DocIntel.Api.Diagnostics;
@@ -29,6 +33,47 @@ public static class NativeDecisionDiagnostic
     /// <param name="output">The diagnostic output destination.</param>
     /// <returns>The unsuccessful exit code, 1.</returns>
     public static Task<int> WriteUnavailableAsync(TextWriter output) => WriteAsync(output, 0, success: false);
+
+    /// <summary>
+    /// Owns an isolated diagnostic service provider without building or starting the application host.
+    /// </summary>
+    /// <param name="arguments">The process arguments forwarded to the native diagnostic.</param>
+    /// <param name="configuration">The runtime configuration used to register Core services.</param>
+    /// <param name="environment">The host environment, which must be Production.</param>
+    /// <param name="services">The diagnostic service registrations; unrelated services are never resolved.</param>
+    /// <param name="runtimeClientId">The managed-identity client GUID supplied by the process.</param>
+    /// <param name="output">Receives exactly one sanitized diagnostic record.</param>
+    /// <param name="cancellationToken">Cancels the bounded connectivity check.</param>
+    /// <returns>0 for a validated native response; otherwise 1, including initialization failures.</returns>
+    public static async Task<int> ExecuteConfiguredAsync(
+        string[] arguments,
+        IConfiguration configuration,
+        IHostEnvironment environment,
+        IServiceCollection services,
+        string? runtimeClientId,
+        TextWriter output,
+        CancellationToken cancellationToken = default)
+    {
+        using var record = new StringWriter(CultureInfo.InvariantCulture);
+        int exitCode;
+        try
+        {
+            ArgumentNullException.ThrowIfNull(configuration);
+            services.AddDocIntelCore(configuration: configuration);
+            await using var provider = services.BuildServiceProvider();
+            exitCode = await ExecuteAsync(
+                arguments, provider.GetRequiredService<IModelCatalog>(), environment,
+                runtimeClientId, record, cancellationToken);
+        }
+        catch (Exception)
+        {
+            return await WriteUnavailableAsync(output);
+        }
+
+        // Publish only after isolated-provider cleanup, so even disposal failures produce one fixed record.
+        await output.WriteAsync(record.ToString());
+        return exitCode;
+    }
 
     /// <summary>
     /// Calls only the native Decision adapter using synthetic input and the configured runtime identity.

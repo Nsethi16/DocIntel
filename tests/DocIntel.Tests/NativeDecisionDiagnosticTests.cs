@@ -2,8 +2,11 @@ using System.Globalization;
 using System.Net;
 using System.Text.Json;
 using DocIntel.Api.Diagnostics;
+using DocIntel.Core;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Models;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Moq;
 using Xunit;
@@ -320,6 +323,130 @@ public sealed class NativeDecisionDiagnosticTests
         fixture.Client.Verify(client => client.Dispose(), Times.Once);
     }
 
+    [Theory]
+    [InlineData(200)]
+    [InlineData(403)]
+    [InlineData(404)]
+    [InlineData(500)]
+    public async Task Configured_Probe_Owns_And_Disposes_The_Isolated_Provider_Without_Starting_Other_Services(
+        int status)
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        var ownedCatalog = fixture.Models.As<IAsyncDisposable>();
+        ownedCatalog.Setup(catalog => catalog.DisposeAsync()).Returns(ValueTask.CompletedTask);
+        if (status != 200)
+        {
+            fixture.Client.Setup(client => client.ChooseAsync(
+                    It.IsAny<string>(), It.IsAny<string>(),
+                    It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new HttpRequestException(PrivateMarker, null, (HttpStatusCode)status));
+        }
+        var services = new ServiceCollection();
+        services.AddSingleton<IModelCatalog>(_ => fixture.Models.Object);
+        var unrelatedCalls = 0;
+        services.AddSingleton<IHostedService>(_ =>
+        {
+            unrelatedCalls++;
+            throw new InvalidOperationException(PrivateMarker);
+        });
+        services.AddSingleton<IHarnessStore>(_ =>
+        {
+            unrelatedCalls++;
+            throw new InvalidOperationException(PrivateMarker);
+        });
+        var configuration = new ConfigurationBuilder().Build();
+
+        // Act
+        var exitCode = await NativeDecisionDiagnostic.ExecuteConfiguredAsync(
+            fixture.Arguments, configuration, fixture.Environment.Object, services,
+            fixture.RuntimeClientId, fixture.Output);
+
+        // Assert
+        Assert.Equal(status == 200 ? 0 : 1, exitCode);
+        AssertRecord(fixture.Output, status, success: status == 200);
+        Assert.Contains(services, descriptor => descriptor.ServiceType == typeof(AzureIntegrationOptions));
+        Assert.Equal(0, unrelatedCalls);
+        ownedCatalog.Verify(catalog => catalog.DisposeAsync(), Times.Once);
+        fixture.Client.Verify(client => client.Dispose(), Times.Once);
+    }
+
+    [Fact]
+    public async Task Configured_Registration_Failures_Emit_One_Fixed_Record_Without_Provider_Text()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        var services = new ServiceCollection();
+        services.AddSingleton<IModelCatalog>(_ => fixture.Models.Object);
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(
+            new Dictionary<string, string?> { ["Models:AllowDevelopmentSimulation"] = PrivateMarker }).Build();
+
+        // Act
+        var exitCode = await NativeDecisionDiagnostic.ExecuteConfiguredAsync(
+            fixture.Arguments, configuration, fixture.Environment.Object, services,
+            fixture.RuntimeClientId, fixture.Output);
+
+        // Assert
+        Assert.Equal(1, exitCode);
+        AssertRecord(fixture.Output, 0, success: false);
+        Assert.DoesNotContain(PrivateMarker, fixture.Output.ToString(), StringComparison.Ordinal);
+        fixture.Models.VerifyNoOtherCalls();
+        fixture.Client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Configured_Resolution_Failures_Still_Dispose_Activated_Dependencies()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        var owned = new DisposalProbe();
+        var services = new ServiceCollection();
+        services.AddSingleton(_ => owned);
+        services.AddSingleton<IModelCatalog>(provider =>
+        {
+            provider.GetRequiredService<DisposalProbe>();
+            throw new InvalidOperationException(PrivateMarker);
+        });
+        var configuration = new ConfigurationBuilder().Build();
+
+        // Act
+        var exitCode = await NativeDecisionDiagnostic.ExecuteConfiguredAsync(
+            fixture.Arguments, configuration, fixture.Environment.Object, services,
+            fixture.RuntimeClientId, fixture.Output);
+
+        // Assert
+        Assert.Equal(1, exitCode);
+        AssertRecord(fixture.Output, 0, success: false);
+        Assert.True(owned.Disposed);
+        Assert.DoesNotContain(PrivateMarker, fixture.Output.ToString(), StringComparison.Ordinal);
+        fixture.Client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Configured_Disposal_Failures_Replace_The_Buffered_Success_With_One_Unavailable_Record()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        var ownedCatalog = fixture.Models.As<IAsyncDisposable>();
+        ownedCatalog.Setup(catalog => catalog.DisposeAsync())
+            .Throws(new InvalidOperationException(PrivateMarker));
+        var services = new ServiceCollection();
+        services.AddSingleton<IModelCatalog>(_ => fixture.Models.Object);
+        var configuration = new ConfigurationBuilder().Build();
+
+        // Act
+        var exitCode = await NativeDecisionDiagnostic.ExecuteConfiguredAsync(
+            fixture.Arguments, configuration, fixture.Environment.Object, services,
+            fixture.RuntimeClientId, fixture.Output);
+
+        // Assert
+        Assert.Equal(1, exitCode);
+        AssertRecord(fixture.Output, 0, success: false);
+        Assert.DoesNotContain(PrivateMarker, fixture.Output.ToString(), StringComparison.Ordinal);
+        ownedCatalog.Verify(catalog => catalog.DisposeAsync(), Times.Once);
+        fixture.Client.Verify(client => client.Dispose(), Times.Once);
+    }
+
     private static void AssertRecord(StringWriter output, int httpStatus, bool success)
     {
         var line = Assert.Single(output.ToString().Split(
@@ -362,5 +489,16 @@ public sealed class NativeDecisionDiagnosticTests
                 Arguments, Models.Object, Environment.Object, RuntimeClientId, Output, cancellationToken);
 
         public void Dispose() => Output.Dispose();
+    }
+
+    private sealed class DisposalProbe : IAsyncDisposable
+    {
+        public bool Disposed { get; private set; }
+
+        public ValueTask DisposeAsync()
+        {
+            Disposed = true;
+            return ValueTask.CompletedTask;
+        }
     }
 }

@@ -35,18 +35,9 @@ if (diagnosticMode || isolatedDiagnosticMode)
 
 if (nativeDecisionDiagnosticMode)
 {
-    try
-    {
-        builder.Services.AddDocIntelCore(configuration: builder.Configuration);
-        await using var provider = builder.Services.BuildServiceProvider();
-        Environment.ExitCode = await NativeDecisionDiagnostic.ExecuteAsync(
-            args, provider.GetRequiredService<IModelCatalog>(), builder.Environment,
-            Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"), Console.Out);
-    }
-    catch (Exception)
-    {
-        Environment.ExitCode = await NativeDecisionDiagnostic.WriteUnavailableAsync(Console.Out);
-    }
+    Environment.ExitCode = await NativeDecisionDiagnostic.ExecuteConfiguredAsync(
+        args, builder.Configuration, builder.Environment, builder.Services,
+        Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"), Console.Out);
     return;
 }
 
