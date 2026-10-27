@@ -15,6 +15,10 @@ param(
     [string]$EnvironmentName = 'prod',
     [string]$InitialOwnerObjectId = '',
     [string]$StateDirectory = '',
+    [ValidateSet('Prompt', 'Disabled', 'UseExisting', 'Configure', 'PreserveExisting')]
+    [string]$DirectoryMode = 'Prompt',
+    [switch]$ConnectDirectory,
+    [switch]$DirectoryRequired,
     [switch]$PreviewOnly,
     [switch]$RetryFailedBuild
 )
@@ -48,12 +52,38 @@ if (-not $StateDirectory) {
         [Text.Encoding]::UTF8.GetBytes("$SubscriptionId/$CustomerSlug/$EnvironmentName"))).Substring(0, 12).ToLowerInvariant()
     $StateDirectory = Join-Path $HOME ".docintel\installations\$CustomerSlug-$EnvironmentName-$stateKey"
 }
+if ($ConnectDirectory) {
+    if ($DirectoryMode -notin @('Prompt', 'Configure')) {
+        throw 'ConnectDirectory cannot be combined with a different DirectoryMode.'
+    }
+    $DirectoryMode = 'Configure'
+}
+if ($DirectoryMode -eq 'Prompt') {
+    $previousPath = Join-Path $StateDirectory 'directory-result.json'
+    if (Test-Path -LiteralPath $previousPath) {
+        $previous = Get-Content -LiteralPath $previousPath -Raw | ConvertFrom-Json
+        $DirectoryMode = if ($previous.Status -eq 'Connected' -or $previous.RequestedMode -eq 'Disabled') {
+            'PreserveExisting'
+        } else { $previous.RequestedMode }
+        if ($previous.Required) { $DirectoryRequired = $true }
+    } elseif ($DirectoryRequired) {
+        $DirectoryMode = 'UseExisting'
+    } elseif (Test-Path -LiteralPath (Join-Path $StateDirectory 'customer-installation.json')) {
+        $DirectoryMode = 'PreserveExisting'
+    } elseif ($PreviewOnly) {
+        $DirectoryMode = 'PreserveExisting'
+    } else {
+        $choice = Read-Host 'Connect organization directory for people search? Requires tenant-wide read-only consent [y/N]'
+        $DirectoryMode = if ($choice -in @('y', 'yes')) { 'Configure' } else { 'Disabled' }
+    }
+}
+if ($DirectoryRequired -and $DirectoryMode -eq 'Disabled') { throw 'A required directory cannot be Disabled.' }
 $setup = @{
     CustomerSlug = $CustomerSlug; CustomerName = $CustomerName; SubscriptionId = $SubscriptionId
     Image = $release.image; Location = $Location; EnvironmentName = $EnvironmentName
     OutputDirectory = $StateDirectory; InitialOwnerObjectId = $InitialOwnerObjectId
 }
-if ($release.schemaVersion -eq 2) {
+if ($release.schemaVersion -ge 2) {
     $setup.ImageSource = $release.imageSource
     if ($release.imageSource -ceq 'CustomerRegistryBuild') { $setup.SourceCommit = $release.sourceCommit }
 }
@@ -75,5 +105,33 @@ if ($confirmation -cne 'APPLY') { Write-Host 'Not applied. Re-run the same bundl
 & (Join-Path $PSScriptRoot 'scripts\Install-DocIntelCustomer.ps1') @setup `
     -Mode Apply -Confirmation APPLY -ExpectedPlanHash $plan.PlanHash
 $result = Get-Content -LiteralPath (Join-Path $StateDirectory 'customer-result.json') -Raw | ConvertFrom-Json
+$directoryArguments = @{ StateDirectory = $StateDirectory; DirectoryMode = $DirectoryMode
+    DirectoryRequired = $DirectoryRequired }
+$directoryPlan = & (Join-Path $PSScriptRoot 'scripts\Connect-DocIntelDirectory.ps1') @directoryArguments
+$directoryApproval = ''
+if ($directoryPlan.MutationPlanned) {
+    $review = Get-Content -LiteralPath (Join-Path $StateDirectory 'directory-plan.json') -Raw | ConvertFrom-Json -Depth 50
+    Write-Host "Customer directory: $($review.Plan.Directory); runtime identity: $($review.Plan.RuntimePrincipal)."
+    Write-Host 'Only User.Read.All is requested: tenant-wide directory/profile reading, no mail or directory writes.'
+    $word = if ($directoryPlan.NeedsConsent) { 'CONSENT' } else { 'CONNECT' }
+    $directoryApproval = Read-Host "Review directory-plan.json. Type $word to approve this step, or Enter to leave it pending"
+    if ($directoryApproval -cne $word) {
+        @{ SchemaVersion = 1; Status = 'AwaitingUserApproval'; DirectoryConnected = $false
+            RequestedMode = $DirectoryMode; Required = [bool]$DirectoryRequired } |
+            ConvertTo-Json | Set-Content -LiteralPath (Join-Path $StateDirectory 'directory-result.json') -Encoding utf8
+        Write-Warning 'Core deployment is ready; organization directory setup was not approved and remains pending.'
+        if ($DirectoryRequired) { throw 'Required organization directory setup was not approved.' }
+        Write-Host "Open the core workspace: $($result.WorkspaceUrl)"
+        return
+    }
+}
+$connection = & (Join-Path $PSScriptRoot 'scripts\Connect-DocIntelDirectory.ps1') @directoryArguments `
+    -Mode Apply -Confirmation CONNECT -ExpectedPlanHash $directoryPlan.PlanHash `
+    -ConsentConfirmation $(if ($directoryApproval -ceq 'CONSENT') { 'CONSENT' } else { '' })
+Write-Host "Organization directory status: $($connection.Status)."
+if ($connection.Status -eq 'AwaitingAdminApproval') {
+    Write-Host 'An authorized Entra administrator can approve directory-consent-request.json using scripts\Approve-DocIntelDirectory.ps1.'
+    Write-Host 'That administrator does not need Azure subscription/container access. Re-run this setup after consent.'
+}
 Write-Host "Open your customer workspace: $($result.WorkspaceUrl)"
 Write-Host 'Sign in as the selected owner, process a representative PDF, then verify an Ask AI answer with source citations.'

@@ -27,6 +27,8 @@ New-Item -ItemType Directory -Path $stage | Out-Null
 try {
     $files = @('Start-DocIntelSetup.ps1', 'scripts/Install-DocIntelCustomer.ps1',
         'scripts/Wait-DocIntelReady.ps1', 'scripts/DocIntelRelease.psm1',
+        'scripts/Connect-DocIntelDirectory.ps1', 'scripts/Invoke-DocIntelDirectoryProbe.py',
+        'scripts/Approve-DocIntelDirectory.ps1',
         'infra/customer.bicep', 'infra/main.bicep', 'docs/customer-deployment.md')
     foreach ($relative in $files) {
         $path = $relative.Replace('/', [IO.Path]::DirectorySeparatorChar)
@@ -43,7 +45,7 @@ try {
         $path = Join-Path $stage $relative.Replace('/', [IO.Path]::DirectorySeparatorChar)
         $hashes[$relative] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     }
-    $manifest = [ordered]@{ schemaVersion = 2; version = $Version; sourceCommit = $SourceCommit
+    $manifest = [ordered]@{ schemaVersion = 3; version = $Version; sourceCommit = $SourceCommit
         imageSource = $ImageSource; sourceRepository = 'Nsethi16/DocIntel'; image = $Image; files = $hashes }
     $manifest | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $stage 'release.json') -Encoding utf8
     Import-Module (Join-Path $stage 'scripts\DocIntelRelease.psm1') -Force

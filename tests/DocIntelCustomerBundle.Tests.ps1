@@ -38,7 +38,7 @@ try {
         try {
             $invalid = $originalManifest | ConvertFrom-Json -AsHashtable
             switch ($bad) {
-                'schema' { $invalid.schemaVersion = 3 }
+                'schema' { $invalid.schemaVersion = 4 }
                 'image' { $invalid.image = 'ghcr.io/nsethi16/docintel-api:latest' }
                 'path' { $invalid.files['../escape.ps1'] = 'a' * 64 }
             }

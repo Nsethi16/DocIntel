@@ -102,6 +102,10 @@ jobs:
           ./tests/Wait-DocIntelReady.Tests.ps1
           ./tests/Install-DocIntelCustomer.Tests.ps1
           ./tests/DocIntelCustomerBundle.Tests.ps1
+          ./tests/Connect-DocIntelDirectory.Tests.ps1
+          ./tests/Approve-DocIntelDirectory.Tests.ps1
+          python3 -B -m unittest discover -s tests -p test_directory_probe.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: docker/setup-buildx-action@v3
       - name: Build the container without publishing
         id: validation_image

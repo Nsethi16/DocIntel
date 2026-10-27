@@ -1,13 +1,38 @@
 #Requires -Version 7.3
 Set-StrictMode -Version Latest
 
+function ConvertTo-DocIntelCanonicalJson([object]$Value) {
+    if ($null -eq $Value) { return 'null' }
+    if ($Value -is [Collections.IDictionary]) {
+        $fields = foreach ($key in $Value.Keys | Sort-Object -CaseSensitive) {
+            ($key | ConvertTo-Json -Compress) + ':' + (ConvertTo-DocIntelCanonicalJson $Value[$key])
+        }
+        return '{' + ($fields -join ',') + '}'
+    }
+    if ($Value -is [pscustomobject]) {
+        $fields = foreach ($property in $Value.PSObject.Properties | Sort-Object Name -CaseSensitive) {
+            ($property.Name | ConvertTo-Json -Compress) + ':' + (ConvertTo-DocIntelCanonicalJson $property.Value)
+        }
+        return '{' + ($fields -join ',') + '}'
+    }
+    if ($Value -is [Collections.IEnumerable] -and $Value -isnot [string]) {
+        return '[' + (@($Value | ForEach-Object { ConvertTo-DocIntelCanonicalJson $_ }) -join ',') + ']'
+    }
+    return $Value | ConvertTo-Json -Compress
+}
+
+function Get-DocIntelObjectHash([object]$Value) {
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
+        [Text.Encoding]::UTF8.GetBytes((ConvertTo-DocIntelCanonicalJson $Value)))).ToLowerInvariant()
+}
+
 function Read-DocIntelRelease {
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Root)
     $Root = [IO.Path]::GetFullPath($Root)
     $manifestPath = Join-Path $Root 'release.json'
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -Depth 30
-    if ($manifest.schemaVersion -notin @(1, 2) -or
+    if ($manifest.schemaVersion -notin @(1, 2, 3) -or
         $manifest.version -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9]+(?:[.-][a-zA-Z0-9]+)*)?$' -or
         $manifest.sourceCommit -cnotmatch '^[a-f0-9]{40}$') {
         throw 'The release manifest has an unsupported schema, version or source commit.'
@@ -24,6 +49,10 @@ function Read-DocIntelRelease {
     $required = @('Start-DocIntelSetup.ps1', 'scripts/Install-DocIntelCustomer.ps1',
         'scripts/Wait-DocIntelReady.ps1', 'scripts/DocIntelRelease.psm1',
         'infra/customer.json', 'infra/customer.bicep', 'infra/main.bicep', 'docs/customer-deployment.md')
+    if ($manifest.schemaVersion -eq 3) {
+        $required += @('scripts/Connect-DocIntelDirectory.ps1', 'scripts/Invoke-DocIntelDirectoryProbe.py',
+            'scripts/Approve-DocIntelDirectory.ps1')
+    }
     $properties = @($manifest.files.PSObject.Properties)
     if ($properties.Count -ne $required.Count) { throw 'The release file inventory is incomplete or unexpected.' }
     foreach ($property in $properties) {
@@ -46,4 +75,4 @@ function Read-DocIntelRelease {
     return $manifest
 }
 
-Export-ModuleMember -Function Read-DocIntelRelease
+Export-ModuleMember -Function Read-DocIntelRelease, Get-DocIntelObjectHash

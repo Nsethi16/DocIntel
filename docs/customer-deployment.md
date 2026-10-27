@@ -13,6 +13,10 @@ Use the versioned installer ZIP, not a local application build. In Azure Cloud S
 4. Open the reported customer workspace URL and sign in as the selected owner. Process a
    representative PDF and verify an Ask AI answer with real source citations.
 
+The guided session also offers **Connect organization directory**. It is optional and separate
+from the infrastructure approval. New permission grants need a second, explicit `CONSENT`;
+existing permission can be verified and activated with `CONNECT`.
+
 The default kit uses **CustomerRegistryBuild**: Azure builds the exact reviewed public
 source commit in a new private registry owned by the customer. It does not depend on a public
 GHCR image, another public repository, publisher credentials, or GitHub-to-Azure OIDC.
@@ -80,6 +84,72 @@ The configured customer workspace is created automatically, using only the provi
 GPT-5 Mini and decision-1 routes. It does not create Contoso/Fabrikam sample definitions.
 Existing saved workspace settings are never replaced by customer bootstrap. Installations
 without bootstrap settings retain their existing legacy seeding/migration behavior.
+
+## Optional Microsoft 365 / Entra people lookup
+
+This connects the existing **Users & access** people picker to the customer's Entra directory.
+It does not require Exchange, a mailbox, a Microsoft 365 email license, mail access, or user creation.
+The one application permission is **Microsoft Graph `User.Read.All`**, which reads directory
+profiles tenant-wide; the customer must approve that scope.
+
+```powershell
+# Offer configuration/consent if lookup is not already authorized:
+.\Start-DocIntelSetup.ps1 -CustomerSlug acme -ConnectDirectory
+
+# Require a verified connection before overall setup is considered complete:
+.\Start-DocIntelSetup.ps1 -CustomerSlug acme -ConnectDirectory -DirectoryRequired
+
+# Never grant permissions; use only existing runtime access:
+.\Start-DocIntelSetup.ps1 -CustomerSlug acme -DirectoryMode UseExisting
+```
+
+Advanced `DirectoryMode` controls are `Disabled`, `UseExisting`, `Configure`, and `PreserveExisting`.
+New interactive installs ask before connecting; noninteractive Preview makes no connection changes.
+Reruns preserve established connections by default, or resume their explicit pending intent.
+`Disabled` does not revoke grants and cannot switch off an established connection through this helper.
+Removing a directory grant or disconnecting an enabled connection requires a separate operator action;
+the same read permission might also be used by email sender verification.
+
+After core deployment the helper verifies the exact saved image, directory and assigned managed identity.
+A read-only CLI diagnostic runs inside the latest ready container replica, using the **runtime identity**,
+not the deployment administrator's token. It verifies the owner's enabled/member/work-address eligibility
+and a real bounded people search while the lookup feature is still disabled. It exposes no public endpoint
+and emits only fixed status codes/booleans, never people, addresses, tokens or provider messages.
+Images without the diagnostic capability marker are refused without starting another web host.
+This remote probe uses Python and the Linux `script` PTY utility supplied by Azure Cloud Shell;
+unsupported local hosts report Action required rather than enabling an unverified connection.
+
+The exact directory/identity/permission appears in `directory-plan.json`. Preview never grants or activates.
+Apply is tied to its hash. Only `Configure` can add the one read role, and only with explicit `CONSENT`
+and an already-authorized Entra credential. The installer does not grant itself permission-management
+authority, change Entra administrator roles, or remove unrelated grants. Azure subscription Owner alone
+is not sufficient to approve Microsoft Graph application permissions.
+
+If a separate IT administrator is needed, give that administrator the verified kit and the generated
+`directory-consent-request.json` through an approved channel. No subscription access is required:
+
+```powershell
+az login --tenant '<customer-directory-id>' --allow-no-subscriptions
+.\scripts\Approve-DocIntelDirectory.ps1 -ConsentRequestPath '<path-to-directory-consent-request.json>'
+# Review directory-administrator-plan.json, including the exact runtime identity and read-only scope:
+.\scripts\Approve-DocIntelDirectory.ps1 -ConsentRequestPath '<path-to-directory-consent-request.json>' `
+    -Mode Apply -Confirmation CONSENT -ExpectedPlanHash '<reviewed-administrator-plan-hash>'
+```
+
+The administrator needs appropriate Graph authorization and an Entra role allowed to grant Graph
+application roles (Privileged Role Administrator is the least-privileged supported built-in role;
+Global Administrator also qualifies). The administrator-only helper verifies the target is exactly the
+requested Azure managed identity, discovers the Graph role by value, and never enables the app feature.
+Request hashes detect alteration, not the authenticity of an untrusted request: verify its provenance
+and expected customer/resource details before consenting.
+
+Re-run customer setup afterward. Managed-identity token caches and permission propagation can delay
+effective access. The status remains **AwaitingAdminApproval**, **PendingPropagation**, or **ActionRequired**
+until the runtime probe succeeds. Only then is `Identity__Directory__Enabled=true` applied; the new ready
+revision is probed again before reporting **Connected**. An existing enabled connection is never silently
+disabled to hide an error. When optional, a pending directory step leaves the core deployment available
+with an explicit warning; `DirectoryRequired` instead returns a failed overall setup after saving its status.
+State is in `directory-result.json`, and repeating the step does not duplicate an existing read grant.
 
 ## Resume and conservative recovery
 

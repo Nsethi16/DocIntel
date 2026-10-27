@@ -147,6 +147,10 @@ the first customer workspace. It does not require public binary publishing, a ne
 repository, local Docker/.NET, manual app-registration GUID copying, or GitHub OIDC. Saved-state
 recovery resumes completed foundations and recorded builds without resetting customer data.
 An optional prebuilt public-image channel remains available after explicit publisher setup.
+The guided kit also offers optional organization-directory onboarding: reuse existing permission or
+approve only Graph `User.Read.All`, verify lookup from the runtime identity and administrator eligibility,
+then enable the people picker. A separate Entra-only administrator handoff needs no Azure resource access.
+Use `-ConnectDirectory -DirectoryRequired` when verified directory-backed user maintenance is mandatory.
 Existing installations use the flow below.
 
 ### Set up an existing Azure deployment from GitHub

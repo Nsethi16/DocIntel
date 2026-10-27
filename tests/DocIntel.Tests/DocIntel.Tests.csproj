@@ -24,6 +24,7 @@
     <Compile Include="..\..\src\DocIntel.Api\Workers\ProviderStartupCheck.cs" Link="Workers\ProviderStartupCheck.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Http\ContainerAppsIngressExtensions.cs" Link="Http\ContainerAppsIngressExtensions.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\AskAiRunDiagnostic.cs" Link="Diagnostics\AskAiRunDiagnostic.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Diagnostics\DirectoryConnectionDiagnostic.cs" Link="Diagnostics\DirectoryConnectionDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Identity\IdentityOptions.cs" Link="Identity\IdentityOptions.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Identity\IdentityAccessService.cs" Link="Identity\IdentityAccessService.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Identity\TenantUserService.cs" Link="Identity\TenantUserService.cs" />

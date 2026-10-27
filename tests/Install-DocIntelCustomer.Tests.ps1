@@ -86,6 +86,7 @@ function Reset-CustomerFixture {
     $global:DocIntelCustomerFixture.deployments = 0
     $global:DocIntelCustomerFixture.foundation = $null
     $global:DocIntelCustomerFixture.applicationExists = $false
+    $global:DocIntelCustomerFixture.application = $null
     $global:DocIntelCustomerFixture.sourceMode = $false
     $global:DocIntelCustomerFixture.builds = 0
     $global:DocIntelCustomerFixture.buildRunning = $false
@@ -266,10 +267,14 @@ function az {
                 workspaceUrl = @{ value = 'https://fixture.azurecontainerapps.io/?tenant=acme' }
             } } }
             if (-not $parameters.parameters.deployApplication.value) { $f.foundation = $deployment }
-            else { $f.applicationExists = $true }
+            else { $f.applicationExists = $true; $f.application = $deployment }
             $deployment; break
         }
-        'deployment sub show' { $f.foundation; break }
+        'deployment sub show' {
+            if ($Arguments[[Array]::IndexOf($Arguments, '--name') + 1].EndsWith('-application')) {
+                $f.application
+            } else { $f.foundation }; break
+        }
         'acr build --registry' {
             $f.writes.Add($Arguments); $f.builds++
             $source = "https://github.com/Nsethi16/DocIntel.git#$($f.foundation.properties.parameters.sourceCommit.value)"
@@ -505,13 +510,13 @@ try {
     if ($ReleaseRoot) {
         Reset-CustomerFixture
         $release = Get-Content -LiteralPath (Join-Path $ReleaseRoot 'release.json') -Raw | ConvertFrom-Json
-        $f.sourceMode = $release.schemaVersion -eq 2 -and $release.imageSource -ceq 'CustomerRegistryBuild'
+        $f.sourceMode = $release.schemaVersion -ge 2 -and $release.imageSource -ceq 'CustomerRegistryBuild'
         function Read-Host([string]$Prompt) {
             if ($Prompt -notlike '*Type APPLY*') { throw 'No GUID copying or unexpected prompts are allowed in guided setup.' }
             return 'APPLY'
         }
         $state = Join-Path $temporary 'guided-state'
-        $guided = @{ CustomerSlug = 'acme'; SubscriptionId = $f.subscription; StateDirectory = $state }
+        $guided = @{ CustomerSlug = 'acme'; SubscriptionId = $f.subscription; StateDirectory = $state; DirectoryMode = 'Disabled' }
         & (Join-Path $ReleaseRoot 'Start-DocIntelSetup.ps1') @guided -PreviewOnly
         if ($f.writes.Count) { throw 'Guided Preview must not mutate any cloud resource.' }
         & (Join-Path $ReleaseRoot 'Start-DocIntelSetup.ps1') @guided

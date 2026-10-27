@@ -10,12 +10,30 @@ using DocIntel.Core;
 using DocIntel.ServiceDefaults;
 using Microsoft.AspNetCore.Http.Features;
 
-var builder = WebApplication.CreateBuilder(args);
+var directoryDiagnosticMode = DirectoryConnectionDiagnostic.IsRequested(args);
 var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal);
-if (diagnosticMode)
+WebApplicationBuilder builder;
+try
+{
+    builder = WebApplication.CreateBuilder(directoryDiagnosticMode ? [] : args);
+}
+catch (Exception) when (directoryDiagnosticMode)
+{
+    Environment.ExitCode = await DirectoryConnectionDiagnostic.WriteUnavailableAsync(Console.Out);
+    return;
+}
+if (diagnosticMode || directoryDiagnosticMode)
 {
     builder.Logging.ClearProviders();
     builder.Logging.SetMinimumLevel(LogLevel.None);
+}
+
+if (directoryDiagnosticMode)
+{
+    Environment.ExitCode = await DirectoryConnectionDiagnostic.ExecuteAsync(
+        args, builder.Configuration, builder.Environment, builder.Services,
+        Environment.GetEnvironmentVariable("AZURE_CLIENT_ID"), Console.Out);
+    return;
 }
 
 builder.AddServiceDefaults();

@@ -18,4 +18,11 @@
     <ProjectReference Include="..\DocIntel.ServiceDefaults\DocIntel.ServiceDefaults.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <None Update="Diagnostics\docintel-directory-probe.v1"
+          TargetPath="docintel-directory-probe.v1"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
