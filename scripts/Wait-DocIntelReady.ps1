@@ -1,6 +1,7 @@
 #Requires -Version 7.3
 [CmdletBinding()]
 param(
+    [string]$SubscriptionId = '',
     [string]$ResourceGroup,
     [string]$ContainerAppName,
     [string]$ExpectedImage,
@@ -10,11 +11,12 @@ param(
     [ValidateRange(1, 30)][int]$PollSeconds = 10
 )
 $ErrorActionPreference = 'Stop'
+$subscriptionArguments = if ($SubscriptionId) { @('--subscription', $SubscriptionId) } else { @() }
 if (-not $ResourceGroup -or -not $ContainerAppName -or (-not $ExpectedImage -and -not $ConfigurationOnly)) {
     throw 'The release target and exact expected image are required.'
 }
 for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
-    $json = & az containerapp show --resource-group $ResourceGroup --name $ContainerAppName --output json --only-show-errors
+    $json = & az containerapp show --resource-group $ResourceGroup --name $ContainerAppName @subscriptionArguments --output json --only-show-errors
     if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect the released Container App.' }
     $app = ($json -join "`n") | ConvertFrom-Json -Depth 100
     $containers = @($app.properties.template.containers)

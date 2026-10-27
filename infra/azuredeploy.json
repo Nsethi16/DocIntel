@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "7661632051563873710"
+      "templateHash": "15391207991174074000"
     }
   },
   "parameters": {
@@ -28,6 +28,13 @@
       "defaultValue": true,
       "metadata": {
         "description": "Provision shared infrastructure without replacing the app while preparing its image/identity."
+      }
+    },
+    "deployRuntimeRoles": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Provision runtime resource roles by default. Only skip after this installation has provisioned them successfully."
       }
     },
     "directoryTenantId": {
@@ -67,6 +74,13 @@
       "defaultValue": "",
       "metadata": {
         "description": "Optional Azure Container Registry name for Managed Identity AcrPull."
+      }
+    },
+    "enableContainerRegistry": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Keep the legacy ACR path by default. False pulls an explicitly supplied public image without a registry or pull role."
       }
     },
     "reuseRegistry": {
@@ -346,7 +360,7 @@
       ]
     },
     {
-      "condition": "[variables('hasFoundryAccount')]",
+      "condition": "[and(variables('hasFoundryAccount'), parameters('deployRuntimeRoles'))]",
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName'))]",
@@ -362,7 +376,7 @@
       ]
     },
     {
-      "condition": "[variables('hasFoundryAccount')]",
+      "condition": "[and(variables('hasFoundryAccount'), parameters('deployRuntimeRoles'))]",
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName'))]",
@@ -378,7 +392,7 @@
       ]
     },
     {
-      "condition": "[variables('hasFoundryAccount')]",
+      "condition": "[and(variables('hasFoundryAccount'), parameters('deployRuntimeRoles'))]",
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName'))]",
@@ -394,7 +408,7 @@
       ]
     },
     {
-      "condition": "[not(parameters('reuseRegistry'))]",
+      "condition": "[and(parameters('enableContainerRegistry'), not(parameters('reuseRegistry')))]",
       "type": "Microsoft.ContainerRegistry/registries",
       "apiVersion": "2023-07-01",
       "name": "[variables('effectiveAcrName')]",
@@ -407,6 +421,7 @@
       }
     },
     {
+      "condition": "[and(parameters('enableContainerRegistry'), parameters('deployRuntimeRoles'))]",
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName'))]",
@@ -516,6 +531,7 @@
       ]
     },
     {
+      "condition": "[parameters('deployRuntimeRoles')]",
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
@@ -581,6 +597,7 @@
       ]
     },
     {
+      "condition": "[parameters('deployRuntimeRoles')]",
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[resourceId('Microsoft.KeyVault/vaults/keys', variables('keyVaultName'), 'docintel-identity')]",
@@ -597,6 +614,7 @@
       ]
     },
     {
+      "condition": "[parameters('deployRuntimeRoles')]",
       "type": "Microsoft.Authorization/roleAssignments",
       "apiVersion": "2022-04-01",
       "scope": "[resourceId('Microsoft.Storage/storageAccounts', variables('storageName'))]",
@@ -729,6 +747,7 @@
       ]
     },
     {
+      "condition": "[parameters('deployRuntimeRoles')]",
       "type": "Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments",
       "apiVersion": "2024-05-15",
       "name": "[format('{0}/{1}', variables('cosmosAccountName'), guid(resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '00000000-0000-0000-0000-000000000002'))]",
@@ -796,12 +815,7 @@
             "targetPort": 8080,
             "transport": "auto"
           },
-          "registries": [
-            {
-              "server": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName')), '2023-07-01').loginServer]",
-              "identity": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
-            }
-          ]
+          "registries": "[if(parameters('enableContainerRegistry'), createArray(createObject('server', reference(resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName')), '2023-07-01').loginServer, 'identity', resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')))), createArray())]"
         },
         "template": {
           "containers": [
@@ -989,11 +1003,11 @@
     },
     "containerRegistryName": {
       "type": "string",
-      "value": "[variables('effectiveAcrName')]"
+      "value": "[if(parameters('enableContainerRegistry'), variables('effectiveAcrName'), '')]"
     },
     "containerRegistryLoginServer": {
       "type": "string",
-      "value": "[reference(resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName')), '2023-07-01').loginServer]"
+      "value": "[if(parameters('enableContainerRegistry'), reference(resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName')), '2023-07-01').loginServer, '')]"
     },
     "managedIdentityClientId": {
       "type": "string",

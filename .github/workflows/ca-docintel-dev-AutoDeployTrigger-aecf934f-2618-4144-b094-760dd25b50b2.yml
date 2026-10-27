@@ -87,6 +87,7 @@ jobs:
           ./tests/Deploy-DocIntelAzure.Tests.ps1
           ./tests/Setup-DocIntelGitHub.Tests.ps1
           ./tests/Wait-DocIntelReady.Tests.ps1
+          ./tests/Install-DocIntelCustomer.Tests.ps1
       - uses: docker/setup-buildx-action@v3
       - name: Build the container without publishing
         uses: docker/build-push-action@v6

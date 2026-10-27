@@ -1,0 +1,94 @@
+targetScope = 'subscription'
+
+@minLength(3)
+@maxLength(16)
+param customerSlug string
+
+@minLength(2)
+@maxLength(8)
+param environmentName string = 'prod'
+
+param resourceGroupName string
+param location string
+param resourceGroupTags object = {}
+param directoryTenantId string
+param webClientId string
+param apiClientId string
+
+@description('Explicitly selected directory user who administers all workspaces in this installation.')
+param initialOwnerObjectId string
+
+@description('Public container image pinned by SHA-256 digest; the installer validates its registry and availability.')
+param containerImage string
+
+@description('Provision dependencies first; sign-in federation is configured before the app is created.')
+param deployApplication bool = true
+
+@description('Only the second phase of the same fresh installation may reuse its completed infrastructure.')
+param infrastructureReady bool = false
+
+var suffix = uniqueString(subscription().subscriptionId, resourceGroupName, customerSlug, environmentName)
+var stem = take(replace(customerSlug, '-', ''), 8)
+var environmentKey = take(suffix, 8)
+var appName = 'di-${stem}-${environmentName}-${take(suffix, 6)}'
+var environmentResourceName = 'cae-docintel-${environmentKey}'
+
+resource customerGroup 'Microsoft.Resources/resourceGroups@2024-03-01' = {
+  name: resourceGroupName
+  location: location
+  tags: union(resourceGroupTags, {
+    'docintel-customer': customerSlug
+    'docintel-environment': environmentName
+  })
+}
+
+module installation './main.bicep' = {
+  name: 'docintel-installation'
+  scope: customerGroup
+  params: {
+    location: location
+    environmentName: environmentKey
+    containerAppName: appName
+    runtimeIdentityName: 'id-${appName}'
+    storageAccountName: 'sadi${suffix}'
+    cosmosAccountNameOverride: 'cosmos-di-${stem}-${environmentName}-${suffix}'
+    foundryAccountNameOverride: 'ai-di-${stem}-${environmentName}-${suffix}'
+    keyVaultNameOverride: 'kv-di-${take(stem, 4)}-${suffix}'
+    enableContainerRegistry: false
+    containerImage: containerImage
+    directoryTenantId: directoryTenantId
+    webClientId: webClientId
+    apiClientId: apiClientId
+    identityGrants: {
+      PlatformAdministrators: [
+        {
+          DirectoryTenantId: directoryTenantId
+          ObjectId: initialOwnerObjectId
+        }
+      ]
+    }
+    deployApplication: deployApplication
+    deployRuntimeRoles: !infrastructureReady
+    reuseRuntimeIdentity: infrastructureReady
+    existingEnvironmentId: infrastructureReady
+      ? resourceId(resourceGroupName, 'Microsoft.App/managedEnvironments', environmentResourceName)
+      : ''
+    reuseStorageAccount: infrastructureReady
+    reuseCosmosAccount: infrastructureReady
+    reuseCosmosDatabase: infrastructureReady
+    reuseFoundryAccount: infrastructureReady
+    reuseKeyVault: infrastructureReady
+    reuseIdentityKey: infrastructureReady
+    deployModels: !infrastructureReady
+    existingBlobContainers: infrastructureReady ? ['ask-ai-runs', 'identity-keys'] : []
+    existingQueues: infrastructureReady
+      ? ['ask-ai', 'ask-ai-poison', 'document-jobs', 'document-jobs-poison']
+      : []
+    existingCosmosContainers: infrastructureReady ? ['harnesses', 'jobs', 'ocr-usage', 'review-sessions'] : []
+  }
+}
+
+output containerAppName string = appName
+output publicOrigin string = installation.outputs.containerAppFqdn
+output requiredWebRedirectUri string = installation.outputs.requiredWebRedirectUri
+output managedIdentityPrincipalId string = installation.outputs.managedIdentityPrincipalId

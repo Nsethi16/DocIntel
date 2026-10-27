@@ -120,7 +120,7 @@ foreach ($name in @('existingCosmosContainers', 'existingBlobContainers', 'exist
     Assert-Equal $template.parameters.$name.type 'array' "$name type"
     Assert-Equal @($template.parameters.$name.defaultValue).Count 0 "$name empty default for fresh provisioning"
 }
-foreach ($name in @('deployApplication', 'deployModels')) {
+foreach ($name in @('deployApplication', 'deployModels', 'deployRuntimeRoles')) {
     Assert-Equal $template.parameters.$name.type 'bool' "$name type"
     Assert-Equal $template.parameters.$name.defaultValue $true "$name legacy default"
 }
@@ -136,7 +136,6 @@ if (($template.outputs | ConvertTo-Json -Depth 100) -match
 
 $conditionalResources = @{
     'Microsoft.ManagedIdentity/userAssignedIdentities' = 'reuseRuntimeIdentity'
-    'Microsoft.ContainerRegistry/registries' = 'reuseRegistry'
     'Microsoft.Storage/storageAccounts' = 'reuseStorageAccount'
     'Microsoft.Storage/storageAccounts/blobServices' = 'reuseStorageAccount'
     'Microsoft.Storage/storageAccounts/queueServices' = 'reuseStorageAccount'
@@ -151,6 +150,12 @@ foreach ($entry in $conditionalResources.GetEnumerator()) {
         "$($entry.Key) must never be PUT when its reuse flag is true"
 }
 $registry = Get-ArmResource 'Microsoft.ContainerRegistry/registries'
+Assert-Equal $template.parameters.enableContainerRegistry.defaultValue $true 'Legacy registry path remains enabled'
+Assert-Equal $registry.condition "[and(parameters('enableContainerRegistry'), not(parameters('reuseRegistry')))]" `
+    'Public-image mode must not provision an unnecessary registry'
+Assert-Equal $template.outputs.containerRegistryLoginServer.value `
+    "[if(parameters('enableContainerRegistry'), reference(resourceId('Microsoft.ContainerRegistry/registries', variables('effectiveAcrName')), '2023-07-01').loginServer, '')]" `
+    'Public-image output must not reference a missing registry'
 Assert-Equal $registry.properties.adminUserEnabled $false 'New registry admin authentication'
 Assert-Equal $template.variables.acrPullRoleId `
     "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('registryPullRoleDefinitionId'))]" `
@@ -285,10 +290,16 @@ foreach ($role in $roles) {
     Assert-Dependency $role $identityId
     Assert-Dependency $role $role.scope
     if ($role.scope -ceq $foundryId) {
-        Assert-Equal $role.condition "[variables('hasFoundryAccount')]" 'Foundry RBAC must include adopted accounts'
+        Assert-Equal $role.condition "[and(variables('hasFoundryAccount'), parameters('deployRuntimeRoles'))]" `
+            'Foundry RBAC must include adopted accounts by default'
     }
-    elseif ($role.condition) {
-        throw 'Storage, registry, and key runtime roles must not be skipped when their roots are reused.'
+    elseif ($role.scope -ceq $registryId) {
+        Assert-Equal $role.condition "[and(parameters('enableContainerRegistry'), parameters('deployRuntimeRoles'))]" `
+            'Only explicit public-image mode may skip registry access'
+    }
+    else {
+        Assert-Equal $role.condition "[parameters('deployRuntimeRoles')]" `
+            'Storage and key runtime roles must remain enabled for adoption by default'
     }
 }
 Assert-Equal @($roles | Where-Object scope -CEQ $foundryId).Count 3 'Foundry runtime role count'
@@ -302,7 +313,7 @@ Assert-Equal $cosmosRole.properties.scope $cosmosId 'Cosmos runtime data-plane R
 Assert-Equal $cosmosRole.properties.principalId $roles[0].properties.principalId 'Cosmos runtime role principal'
 Assert-Dependency $cosmosRole $cosmosId
 Assert-Dependency $cosmosRole $identityId
-if ($cosmosRole.condition) { throw 'Cosmos runtime RBAC must include adopted accounts.' }
+Assert-Equal $cosmosRole.condition "[parameters('deployRuntimeRoles')]" 'Cosmos runtime RBAC remains enabled by default'
 foreach ($dependencyToken in @(
     "variables('acrPullRoleId')", "variables('cognitiveServicesUserRoleId')",
     "variables('cognitiveServicesOpenAiUserRoleId')", "variables('foundryAiUserRoleId')",

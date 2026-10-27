@@ -137,7 +137,16 @@ If NuGet.org fails with a TLS/certificate/network error, fix the machine's netwo
 or run validation on an approved network/runner. Do not disable certificate validation, package
 auditing or warnings, add an unknown mirror, or silently use a private-feed fallback.
 
-### Set up Azure from GitHub (recommended)
+### Customer installations
+
+For a new customer's subscription, see [Guided customer deployment](docs/customer-deployment.md).
+The fresh-install script previews an isolated stack, configures separate Entra registrations and
+runtime federation, and deploys a reviewed public image by digest. It does not require the customer
+to configure GitHub OIDC or build the application. This is the first implementation milestone;
+public release-bundle distribution, the Portal wizard, resumable recovery, and sample-free
+workspace onboarding are tracked in that guide. Existing installations use the flow below.
+
+### Set up an existing Azure deployment from GitHub
 
 Use **Actions > Set up DocIntel Azure** for infrastructure and runtime configuration, then
 **Validate and deploy DocIntel** for the application image. You do not need to manually create

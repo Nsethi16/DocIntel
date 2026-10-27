@@ -9,6 +9,9 @@ param environmentName string = 'dev'
 @description('Provision shared infrastructure without replacing the app while preparing its image/identity.')
 param deployApplication bool = true
 
+@description('Provision runtime resource roles by default. Only skip after this installation has provisioned them successfully.')
+param deployRuntimeRoles bool = true
+
 @description('Entra directory ID for verified sign-in. Application memberships use separate tenant slugs.')
 param directoryTenantId string
 
@@ -27,6 +30,9 @@ param containerImage string = 'mcr.microsoft.com/dotnet/samples:aspnetapp'
 
 @description('Optional Azure Container Registry name for Managed Identity AcrPull.')
 param acrName string = ''
+
+@description('Keep the legacy ACR path by default. False pulls an explicitly supplied public image without a registry or pull role.')
+param enableContainerRegistry bool = true
 
 @description('Existing registry reuse leaves its SKU, networking, and authentication settings unchanged.')
 param reuseRegistry bool = false
@@ -201,7 +207,7 @@ var cognitiveServicesUserRoleId = subscriptionResourceId('Microsoft.Authorizatio
 var cognitiveServicesOpenAiUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')
 var foundryAiUserRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')
 
-resource foundryCogUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (hasFoundryAccount) {
+resource foundryCogUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (hasFoundryAccount && deployRuntimeRoles) {
   name: guid(resourceGroup().id, uami.id, cognitiveServicesUserRoleId)
   scope: foundry
   properties: {
@@ -215,7 +221,7 @@ resource foundryCogUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01'
   ]
 }
 
-resource foundryOpenAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (hasFoundryAccount) {
+resource foundryOpenAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (hasFoundryAccount && deployRuntimeRoles) {
   name: guid(resourceGroup().id, uami.id, cognitiveServicesOpenAiUserRoleId)
   scope: foundry
   properties: {
@@ -229,7 +235,7 @@ resource foundryOpenAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-
   ]
 }
 
-resource foundryAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (hasFoundryAccount) {
+resource foundryAiUserRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (hasFoundryAccount && deployRuntimeRoles) {
   name: guid(resourceGroup().id, uami.id, foundryAiUserRoleId)
   scope: foundry
   properties: {
@@ -248,7 +254,7 @@ resource acr 'Microsoft.ContainerRegistry/registries@2023-07-01' existing = {
 }
 
 // 1d. Azure Container Registry (Provisioned automatically + AcrPull RBAC for UAMI)
-resource newAcr 'Microsoft.ContainerRegistry/registries@2023-07-01' = if (!reuseRegistry) {
+resource newAcr 'Microsoft.ContainerRegistry/registries@2023-07-01' = if (enableContainerRegistry && !reuseRegistry) {
   name: effectiveAcrName
   location: location
   sku: {
@@ -260,7 +266,7 @@ resource newAcr 'Microsoft.ContainerRegistry/registries@2023-07-01' = if (!reuse
 }
 
 var acrPullRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', registryPullRoleDefinitionId)
-resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource acrPullRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (enableContainerRegistry && deployRuntimeRoles) {
   name: guid(acr.id, uami.id, acrPullRoleId)
   scope: acr
   properties: {
@@ -406,7 +412,7 @@ resource documentPoisonQueue 'Microsoft.Storage/storageAccounts/queueServices/qu
   ]
 }
 
-resource storageQueueRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource storageQueueRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployRuntimeRoles) {
   name: guid(storage.id, uami.id, '974c5e8b-45b9-4653-ba55-5f855dd0fb88')
   scope: storage
   properties: {
@@ -476,7 +482,7 @@ resource newIdentityEncryptionKey 'Microsoft.KeyVault/vaults/keys@2023-07-01' = 
   ]
 }
 
-resource identityKeyRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource identityKeyRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployRuntimeRoles) {
   name: guid(identityEncryptionKey.id, uami.id, 'e147488a-f6f5-4113-8e2d-b22465e65bf6')
   scope: identityEncryptionKey
   properties: {
@@ -493,7 +499,7 @@ resource identityKeyRole 'Microsoft.Authorization/roleAssignments@2022-04-01' = 
 
 // Storage Blob Data Contributor role for UAMI
 var storageBlobDataContributorRoleId = subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')
-resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+resource storageRoleAssignment 'Microsoft.Authorization/roleAssignments@2022-04-01' = if (deployRuntimeRoles) {
   name: guid(storage.id, uami.id, storageBlobDataContributorRoleId)
   scope: storage
   properties: {
@@ -629,7 +635,7 @@ resource reviewsContainer 'Microsoft.DocumentDB/databaseAccounts/sqlDatabases/co
   ]
 }
 
-resource cosmosSqlRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = {
+resource cosmosSqlRoleAssignment 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments@2024-05-15' = if (deployRuntimeRoles) {
   parent: cosmosAccount
   name: guid(cosmosAccount.id, uami.id, '00000000-0000-0000-0000-000000000002')
   properties: {
@@ -701,12 +707,12 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
         targetPort: 8080
         transport: 'auto'
       }
-      registries: [
+      registries: enableContainerRegistry ? [
         {
           server: acr.properties.loginServer
           identity: uami.id
         }
-      ]
+      ] : []
     }
     template: {
       containers: [
@@ -888,8 +894,8 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
 }
 
 output containerAppFqdn string = effectivePublicOrigin
-output containerRegistryName string = acr.name
-output containerRegistryLoginServer string = acr.properties.loginServer
+output containerRegistryName string = enableContainerRegistry ? acr.name : ''
+output containerRegistryLoginServer string = enableContainerRegistry ? acr.properties.loginServer : ''
 output managedIdentityClientId string = uami.properties.clientId
 output managedIdentityPrincipalId string = uami.properties.principalId
 output managedIdentityResourceId string = uami.id
