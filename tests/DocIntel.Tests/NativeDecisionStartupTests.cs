@@ -4,6 +4,7 @@ using DocIntel.Core.Harness;
 using DocIntel.Core.Models;
 using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.AI;
 using Moq;
 using Xunit;
 
@@ -11,6 +12,47 @@ namespace DocIntel.Tests;
 
 public sealed class NativeDecisionStartupTests
 {
+    [Fact]
+    public async Task Chat_Startup_Probe_Does_Not_Force_An_Unsupported_One_Token_Output_Limit()
+    {
+        // Arrange
+        var tenant = new TenantHarness
+        {
+            TenantId = "chat-startup", DisplayName = "Chat Startup", DefaultModelId = "gpt-5-mini",
+            Capabilities = new Dictionary<string, FeatureHarness>(StringComparer.OrdinalIgnoreCase)
+            {
+                [FeatureHarness.DocumentInsightKey] = new() { Enabled = true }
+            }
+        };
+        var store = new Mock<IHarnessStore>();
+        store.Setup(value => value.ListTenantsAsync(It.IsAny<CancellationToken>()))
+            .ReturnsAsync((IReadOnlyList<TenantHarness>)[tenant]);
+        var chat = new Mock<IChatClient>();
+        chat.Setup(value => value.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+            It.Is<ChatOptions?>(options => options == null || options.MaxOutputTokens == null),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "OK")));
+        var models = new Mock<IModelCatalog>(MockBehavior.Strict);
+        models.Setup(value => value.ResolveModelId(tenant, null)).Returns("gpt-5-mini");
+        models.Setup(value => value.ResolveChatClient(tenant, null)).Returns(chat.Object);
+        models.Setup(value => value.UsesDevelopmentSimulation(tenant, null)).Returns(false);
+        using var check = new ProviderStartupCheck(store.Object, models.Object,
+            new AzureIntegrationOptions { ContentUnderstandingEndpoint = "https://layout.example/" },
+            new StartupReadinessOptions { ProbeModelsOnStartup = true, TimeoutSeconds = 10 },
+            NullLogger<ProviderStartupCheck>.Instance);
+
+        // Act
+        await check.StartAsync(CancellationToken.None);
+        await check.ExecuteTask!.WaitAsync(TimeSpan.FromSeconds(10));
+        var health = await check.CheckHealthAsync(new HealthCheckContext());
+
+        // Assert
+        Assert.Equal(HealthStatus.Healthy, health.Status);
+        chat.Verify(value => value.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+            It.Is<ChatOptions?>(options => options == null || options.MaxOutputTokens == null),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]

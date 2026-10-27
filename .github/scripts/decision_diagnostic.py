@@ -7,6 +7,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import time
 
 PREFIX = "DOCINTEL_DECISION_DIAGNOSTIC "
 CODES = {
@@ -79,9 +80,17 @@ def probe() -> dict:
         "az", "containerapp", "exec", *target, "--revision", revision, "--replica", replicas[0]["name"],
         "--container", selected[0]["name"], "--only-show-errors",
     ]
-    marker = execute([*command, "--command", "cat /app/docintel-decision-probe.v1"])
-    if "Native Decision diagnostic schema 1; isolated synthetic inference only." not in marker:
-        raise ValueError("The exact revision did not return its published native diagnostic capability marker.")
+    for attempt in range(3):
+        try:
+            marker = execute([*command, "--command", "cat /app/docintel-decision-probe.v1"])
+        except ValueError:
+            marker = ""
+        normalized = " ".join(re.sub(r"\x1b\[[0-9;?]*[A-Za-z]", "", marker).split())
+        if "Native Decision diagnostic schema 1; isolated synthetic inference only." in normalized:
+            break
+        if attempt == 2:
+            raise ValueError("The exact revision did not return its published native diagnostic capability marker.")
+        time.sleep(5)
     return parse_result(execute([*command, "--command", diagnostic_command()]))
 
 

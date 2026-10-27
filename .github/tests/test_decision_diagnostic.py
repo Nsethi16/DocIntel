@@ -54,10 +54,15 @@ class DecisionDiagnosticTests(unittest.TestCase):
                 self.assertEqual(execute.call_args_list[1].args[0][-1], MODULE.diagnostic_command())
             with mock.patch.object(MODULE, "inspect", side_effect=metadata), mock.patch.object(
                 MODULE, "execute", return_value="no marker"
-            ) as execute:
+            ) as execute, mock.patch.object(MODULE.time, "sleep"):
                 with self.assertRaises(ValueError):
                     MODULE.probe()
-                self.assertEqual(execute.call_count, 1)
+                self.assertEqual(execute.call_count, 3)
+            with mock.patch.object(MODULE, "inspect", side_effect=metadata), mock.patch.object(
+                MODULE, "execute", side_effect=["", marker, MODULE.PREFIX + json.dumps(record)]
+            ) as execute, mock.patch.object(MODULE.time, "sleep"):
+                self.assertEqual(MODULE.probe(), record)
+                self.assertEqual(execute.call_count, 3)
 
 
 if __name__ == "__main__":

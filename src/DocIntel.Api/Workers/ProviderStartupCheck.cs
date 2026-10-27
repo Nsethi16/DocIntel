@@ -95,7 +95,7 @@ public sealed class ProviderStartupCheck(
                             throw new InvalidOperationException("Live startup probes cannot use simulated responses.");
                         var response = await client.GetResponseAsync(
                             [new ChatMessage(ChatRole.User, "Reply OK.")],
-                            new ChatOptions { MaxOutputTokens = 1 }, timeout.Token);
+                            cancellationToken: timeout.Token);
                         if (response.Messages.Count == 0)
                             throw new InvalidDataException("The startup model probe returned no response.");
                     }
@@ -116,7 +116,13 @@ public sealed class ProviderStartupCheck(
         {
             operation.Fail(exception);
             var cause = exception.GetBaseException();
-            var statusCode = cause is HttpRequestException request ? (int?)request.StatusCode ?? 0 : 0;
+            var statusCode = cause switch
+            {
+                HttpRequestException request => (int?)request.StatusCode ?? 0,
+                System.ClientModel.ClientResultException client => client.Status,
+                Azure.RequestFailedException azure => azure.Status,
+                _ => 0
+            };
             logger.LogError(
                 "Startup provider verification failed with {ErrorType}; HTTP status {StatusCode}; no provider details were returned.",
                 cause.GetType().Name, statusCode);
