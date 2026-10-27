@@ -95,6 +95,7 @@ public static class NativeDecisionDiagnostic
     {
         var httpStatus = 0;
         var success = false;
+        string? nativeErrorCode = null;
         try
         {
             if (arguments is [Flag] &&
@@ -138,6 +139,7 @@ public static class NativeDecisionDiagnostic
         catch (HttpRequestException exception)
         {
             httpStatus = exception.StatusCode is { } status ? (int)status : 0;
+            nativeErrorCode = MicrosoftDecisionClient.GetSafeErrorCode(exception);
             success = false;
         }
         catch (Exception)
@@ -147,17 +149,18 @@ public static class NativeDecisionDiagnostic
             success = false;
         }
 
-        return await WriteAsync(output, httpStatus, success);
+        return await WriteAsync(output, httpStatus, success, nativeErrorCode);
     }
 
-    private static async Task<int> WriteAsync(TextWriter output, int httpStatus, bool success)
+    private static async Task<int> WriteAsync(
+        TextWriter output, int httpStatus, bool success, string? nativeErrorCode = null)
     {
         ArgumentNullException.ThrowIfNull(output);
         await output.WriteLineAsync(Prefix + JsonSerializer.Serialize(new
         {
             schemaVersion = 1,
             httpStatus,
-            providerCode = success ? "None" : "UnclassifiedError",
+            providerCode = success ? "None" : nativeErrorCode ?? "UnclassifiedError",
             answerPresent = success,
             probabilityShape = success ? "Object" : "None"
         }));

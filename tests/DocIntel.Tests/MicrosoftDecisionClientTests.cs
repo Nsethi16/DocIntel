@@ -43,6 +43,12 @@ public sealed class MicrosoftDecisionClientTests
         Assert.Equal("Bearer", fixture.Handler.AuthorizationScheme);
         Assert.Equal(Fixture.TestToken, fixture.Handler.AuthorizationParameter);
         Assert.Equal("application/json", fixture.Handler.MediaType);
+        Assert.Equal("application/json", fixture.Handler.FullContentType);
+        Assert.True(fixture.Handler.ContentLengthBeforeRead is > 0);
+        Assert.True(fixture.Handler.BufferedRequest);
+        Assert.NotEqual(true, fixture.Handler.Chunked);
+        Assert.Equal(Encoding.UTF8.GetByteCount(fixture.Handler.Body!),
+            fixture.Handler.ContentLengthBeforeRead.GetValueOrDefault());
         Assert.Equal("application/json", fixture.Handler.Accept);
         fixture.Credential.Verify(c => c.GetTokenAsync(It.Is<TokenRequestContext>(context =>
             context.Scopes.SequenceEqual(new[] { "https://cognitiveservices.azure.com/.default" })),
@@ -52,12 +58,60 @@ public sealed class MicrosoftDecisionClientTests
         Assert.Equal("Decision-1", body.RootElement.GetProperty("model").GetString());
         Assert.Equal(SensitiveMarker, body.RootElement.GetProperty("state").GetString());
         var question = body.RootElement.GetProperty("questions").GetProperty("document_type");
+        Assert.Single(body.RootElement.GetProperty("questions").EnumerateObject());
+        Assert.Equal(3, question.EnumerateObject().Count());
         Assert.Equal("choice", question.GetProperty("type").GetString());
         Assert.Equal("Identify the form.", question.GetProperty("instructions").GetString());
         Assert.Equal("An invoice form", question.GetProperty("criteria").GetProperty("Invoice").GetString());
         Assert.Equal("A receipt form", question.GetProperty("criteria").GetProperty("Receipt").GetString());
         Assert.Equal(new MicrosoftDecisionResult("Invoice", 0.81, "Decision-1"), result);
         Assert.Equal(1, fixture.Handler.Calls);
+    }
+
+    [Fact]
+    public async Task Buffered_UTF8_Transport_Preserves_Unicode_State_And_The_Exact_Native_Schema()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        const string state = "Synthetic résumé € 合同";
+        const string instructions = "Identify this synthetic form: \"quoted\".";
+
+        // Act
+        await fixture.Client.ChooseAsync(state, instructions, fixture.Criteria);
+
+        // Assert
+        Assert.True(fixture.Handler.ContentLengthBeforeRead is > 0);
+        Assert.True(fixture.Handler.BufferedRequest);
+        Assert.Equal("application/json", fixture.Handler.FullContentType);
+        using var body = JsonDocument.Parse(fixture.Handler.Body!);
+        Assert.Equal(3, body.RootElement.EnumerateObject().Count());
+        Assert.Equal("Decision-1", body.RootElement.GetProperty("model").GetString());
+        Assert.Equal(state, body.RootElement.GetProperty("state").GetString());
+        var question = body.RootElement.GetProperty("questions").GetProperty("document_type");
+        Assert.Equal(3, question.EnumerateObject().Count());
+        Assert.Equal(instructions, question.GetProperty("instructions").GetString());
+        Assert.Equal("choice", question.GetProperty("type").GetString());
+        Assert.Equal(2, question.GetProperty("criteria").EnumerateObject().Count());
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Rejects_Oversized_Requests_Before_Authentication_Or_Http(bool escapedUnicode)
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        var state = escapedUnicode ? new string('\u20ac', 200_000) : new string('x', 1024 * 1024 + 1);
+
+        // Act
+        var error = await Assert.ThrowsAsync<ArgumentException>(() =>
+            fixture.Client.ChooseAsync(state, "Instructions", fixture.Criteria));
+
+        // Assert
+        Assert.Null(error.InnerException);
+        Assert.Equal(0, fixture.Handler.Calls);
+        fixture.Credential.Verify(c => c.GetTokenAsync(
+            It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Theory]
@@ -473,13 +527,130 @@ public sealed class MicrosoftDecisionClientTests
         Assert.Equal(1, fixture.Handler.Calls);
     }
 
+    [Theory]
+    [InlineData("BadRequest")]
+    [InlineData("InvalidRequest")]
+    [InlineData("InvalidRequestContent")]
+    [InlineData("MissingApiVersionParameter")]
+    [InlineData("InvalidApiVersionParameter")]
+    [InlineData("DeploymentNotFound")]
+    [InlineData("ModelNotFound")]
+    [InlineData("unknown_model")]
+    [InlineData("UnsupportedTransferEncoding")]
+    [InlineData("ContentLengthRequired")]
+    public async Task Retains_Only_An_Allowlisted_Error_Code_While_Removing_All_Provider_Text(string code)
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        fixture.Handler.Status = HttpStatusCode.BadRequest;
+        fixture.Handler.ResponseBody = JsonSerializer.Serialize(new
+        {
+            error = new { code, message = SensitiveMarker, token = Fixture.TestToken }
+        });
+
+        // Act
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() => fixture.ChooseAsync());
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, error.StatusCode);
+        Assert.Equal("Microsoft Decision returned HTTP 400.", error.Message);
+        Assert.Single(error.Data);
+        Assert.Equal(code, error.Data["NativeDecisionErrorCode"]);
+        Assert.Equal(code, MicrosoftDecisionClient.GetSafeErrorCode(error));
+        Assert.Null(error.InnerException);
+        Assert.DoesNotContain(SensitiveMarker, error.ToString(), StringComparison.Ordinal);
+        Assert.DoesNotContain(Fixture.TestToken, error.ToString(), StringComparison.Ordinal);
+        Assert.Equal(1, fixture.Handler.Calls);
+    }
+
+    [Theory]
+    [InlineData("{")]
+    [InlineData("<html>synthetic-personal-data-7b6f</html>")]
+    [InlineData("null")]
+    [InlineData("""{"code":"BadRequest"}""")]
+    [InlineData("""{"error":null}""")]
+    [InlineData("""{"error":{"code":42}}""")]
+    [InlineData("""{"error":{"code":{"message":"synthetic-personal-data-7b6f"}}}""")]
+    [InlineData("""{"error":{"code":"synthetic-personal-data-7b6f"}}""")]
+    [InlineData("""{"error":{"code":"BadRequest\nsynthetic-personal-data-7b6f"}}""")]
+    [InlineData("""{"error":{"code":"badrequest"}}""")]
+    [InlineData("""{"error":{"code":"BadRequest","code":"ModelNotFound"}}""")]
+    [InlineData("""{"error":{"code":"BadRequest"},"error":{"code":"ModelNotFound"}}""")]
+    public async Task Malformed_Ambiguous_Or_Unknown_Error_Bodies_Remain_Explicit_Sanitized_Http_Failures(
+        string response)
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        fixture.Handler.Status = HttpStatusCode.BadRequest;
+        fixture.Handler.ResponseBody = response;
+
+        // Act
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() => fixture.ChooseAsync());
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, error.StatusCode);
+        Assert.Null(error.InnerException);
+        Assert.Empty(error.Data);
+        Assert.Null(MicrosoftDecisionClient.GetSafeErrorCode(error));
+        Assert.DoesNotContain(SensitiveMarker, error.ToString(), StringComparison.Ordinal);
+        Assert.Equal(1, fixture.Handler.Calls);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Oversized_Error_Bodies_Do_Not_Leak_Codes_From_An_Unvalidated_Response(bool unknownLength)
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        fixture.Handler.Status = HttpStatusCode.BadRequest;
+        var bytes = Encoding.UTF8.GetBytes(
+            """{"error":{"code":"BadRequest","message":"synthetic-personal-data-7b6f"}}""" +
+            new string(' ', 256 * 1024));
+        fixture.Handler.ResponseContent = unknownLength
+            ? new StreamContent(new NonSeekableReadStream(bytes))
+            : new ByteArrayContent(bytes);
+
+        // Act
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() => fixture.ChooseAsync());
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, error.StatusCode);
+        Assert.Null(error.InnerException);
+        Assert.Empty(error.Data);
+        Assert.DoesNotContain(SensitiveMarker, error.ToString(), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Unreadable_Error_Bodies_Preserve_Only_The_Http_Failure_And_Dispose_The_Stream()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        fixture.Handler.Status = HttpStatusCode.BadRequest;
+        var stream = new FailingReadStream();
+        fixture.Handler.ResponseContent = new StreamContent(stream);
+
+        // Act
+        var error = await Assert.ThrowsAsync<HttpRequestException>(() => fixture.ChooseAsync());
+
+        // Assert
+        Assert.Equal(HttpStatusCode.BadRequest, error.StatusCode);
+        Assert.Null(error.InnerException);
+        Assert.Empty(error.Data);
+        Assert.True(stream.Disposed);
+        Assert.DoesNotContain(SensitiveMarker, error.ToString(), StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Sanitizes_Transport_Exception_Chains_Without_Keeping_Sensitive_Inner_Exceptions()
     {
         // Arrange
         using var fixture = new Fixture();
-        fixture.Handler.Responder = (_, _) => throw new HttpRequestException(
+        var source = new HttpRequestException(
             SensitiveMarker, new IOException(Fixture.TestToken), HttpStatusCode.BadGateway);
+        source.Data["NativeDecisionErrorCode"] = SensitiveMarker;
+        source.Data["token"] = Fixture.TestToken;
+        fixture.Handler.Responder = (_, _) => throw source;
 
         // Act
         var error = await Assert.ThrowsAsync<HttpRequestException>(() => fixture.ChooseAsync());
@@ -487,6 +658,7 @@ public sealed class MicrosoftDecisionClientTests
         // Assert
         Assert.Equal(HttpStatusCode.BadGateway, error.StatusCode);
         Assert.Null(error.InnerException);
+        Assert.Empty(error.Data);
         Assert.DoesNotContain(SensitiveMarker, error.ToString(), StringComparison.Ordinal);
         Assert.DoesNotContain(Fixture.TestToken, error.ToString(), StringComparison.Ordinal);
     }
@@ -635,11 +807,14 @@ public sealed class MicrosoftDecisionClientTests
         Assert.Equal(1, fixture.Handler.Calls);
     }
 
-    [Fact]
-    public async Task Cancels_While_Reading_A_Response_Without_A_Content_Length()
+    [Theory]
+    [InlineData(200)]
+    [InlineData(400)]
+    public async Task Cancels_While_Reading_A_Response_Without_A_Content_Length(int status)
     {
         // Arrange
         using var fixture = new Fixture();
+        fixture.Handler.Status = (HttpStatusCode)status;
         using var cancellation = new CancellationTokenSource();
         var stream = new BlockingReadStream();
         fixture.Handler.ResponseContent = new StreamContent(stream);
@@ -722,6 +897,10 @@ public sealed class MicrosoftDecisionClientTests
         public string? AuthorizationScheme { get; private set; }
         public string? AuthorizationParameter { get; private set; }
         public string? MediaType { get; private set; }
+        public string? FullContentType { get; private set; }
+        public long? ContentLengthBeforeRead { get; private set; }
+        public bool BufferedRequest { get; private set; }
+        public bool? Chunked { get; private set; }
         public string? Accept { get; private set; }
         public string? Body { get; private set; }
 
@@ -736,6 +915,10 @@ public sealed class MicrosoftDecisionClientTests
             AuthorizationParameter = request.Headers.Authorization?.Parameter;
             Accept = request.Headers.Accept.Single().MediaType;
             MediaType = request.Content?.Headers.ContentType?.MediaType;
+            FullContentType = request.Content?.Headers.ContentType?.ToString();
+            ContentLengthBeforeRead = request.Content?.Headers.ContentLength;
+            BufferedRequest = request.Content is ByteArrayContent;
+            Chunked = request.Headers.TransferEncodingChunked;
             Body = await request.Content!.ReadAsStringAsync(cancellationToken);
             if (Responder is not null)
             {

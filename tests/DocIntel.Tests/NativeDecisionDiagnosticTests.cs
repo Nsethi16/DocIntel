@@ -130,6 +130,70 @@ public sealed class NativeDecisionDiagnosticTests
     }
 
     [Theory]
+    [InlineData("BadRequest")]
+    [InlineData("InvalidRequest")]
+    [InlineData("InvalidRequestContent")]
+    [InlineData("MissingApiVersionParameter")]
+    [InlineData("InvalidApiVersionParameter")]
+    [InlineData("DeploymentNotFound")]
+    [InlineData("ModelNotFound")]
+    [InlineData("unknown_model")]
+    [InlineData("UnsupportedTransferEncoding")]
+    [InlineData("ContentLengthRequired")]
+    public async Task Publishes_Only_Allowlisted_Native_Error_Codes_And_Not_Other_Exception_Data(string code)
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        var error = new HttpRequestException(PrivateMarker, new IOException(PrivateMarker),
+            HttpStatusCode.BadRequest);
+        error.Data["NativeDecisionErrorCode"] = code;
+        error.Data["token"] = PrivateMarker;
+        fixture.Client.Setup(client => client.ChooseAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(error);
+
+        // Act
+        var exitCode = await fixture.ExecuteAsync();
+
+        // Assert
+        Assert.Equal(1, exitCode);
+        AssertRecord(fixture.Output, 400, success: false, code);
+        Assert.DoesNotContain(PrivateMarker, fixture.Output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("unknown")]
+    [InlineData("injection")]
+    [InlineData("wrong-case")]
+    [InlineData("not-string")]
+    public async Task Rejects_Arbitrary_Or_NonString_Native_Error_Metadata(string issue)
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        var error = new HttpRequestException(PrivateMarker, null, HttpStatusCode.BadRequest);
+        error.Data["NativeDecisionErrorCode"] = issue switch
+        {
+            "injection" => "BadRequest\n" + PrivateMarker,
+            "wrong-case" => "badrequest",
+            "not-string" => new object(),
+            _ => PrivateMarker
+        };
+        fixture.Client.Setup(client => client.ChooseAsync(
+                It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(error);
+
+        // Act
+        var exitCode = await fixture.ExecuteAsync();
+
+        // Assert
+        Assert.Equal(1, exitCode);
+        AssertRecord(fixture.Output, 400, success: false);
+        Assert.DoesNotContain(PrivateMarker, fixture.Output.ToString(), StringComparison.Ordinal);
+    }
+
+    [Theory]
     [InlineData("empty")]
     [InlineData("suffix")]
     [InlineData("equals")]
@@ -447,7 +511,8 @@ public sealed class NativeDecisionDiagnosticTests
         fixture.Client.Verify(client => client.Dispose(), Times.Once);
     }
 
-    private static void AssertRecord(StringWriter output, int httpStatus, bool success)
+    private static void AssertRecord(
+        StringWriter output, int httpStatus, bool success, string? providerCode = null)
     {
         var line = Assert.Single(output.ToString().Split(
             ['\r', '\n'], StringSplitOptions.RemoveEmptyEntries));
@@ -457,7 +522,8 @@ public sealed class NativeDecisionDiagnosticTests
         Assert.Equal(5, record.EnumerateObject().Count());
         Assert.Equal(1, record.GetProperty("schemaVersion").GetInt32());
         Assert.Equal(httpStatus, record.GetProperty("httpStatus").GetInt32());
-        Assert.Equal(success ? "None" : "UnclassifiedError", record.GetProperty("providerCode").GetString());
+        Assert.Equal(providerCode ?? (success ? "None" : "UnclassifiedError"),
+            record.GetProperty("providerCode").GetString());
         Assert.Equal(success, record.GetProperty("answerPresent").GetBoolean());
         Assert.Equal(success ? "Object" : "None", record.GetProperty("probabilityShape").GetString());
     }

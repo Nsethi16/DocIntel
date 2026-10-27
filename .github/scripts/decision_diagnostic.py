@@ -15,6 +15,8 @@ CODES = {
     "ResourceNotFound", "invalid_request_error", "ModelNotFound", "InvalidRequest",
     "NotFound", "ModelInvocationError", "InternalServerError", "AuthenticationTypeDisabled",
     "DiagnosticUnsupported",
+    "BadRequest", "InvalidRequestContent", "MissingApiVersionParameter", "InvalidApiVersionParameter",
+    "UnsupportedTransferEncoding", "ContentLengthRequired",
 }
 FIELDS = {"schemaVersion", "httpStatus", "providerCode", "answerPresent", "probabilityShape"}
 
