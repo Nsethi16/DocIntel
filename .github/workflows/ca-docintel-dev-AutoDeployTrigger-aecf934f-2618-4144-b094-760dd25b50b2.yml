@@ -97,8 +97,11 @@ jobs:
         run: |
           az bicep build --file infra/main.bicep --outfile infra/azuredeploy.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          az bicep build --file infra/decision-connection.bicep --stdout > $null
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./tests/Deploy-DocIntelAzure.Tests.ps1
           ./tests/Setup-DocIntelGitHub.Tests.ps1
+          ./tests/Sync-DocIntelDecision.Tests.ps1
           ./tests/Wait-DocIntelReady.Tests.ps1
           ./tests/Install-DocIntelCustomer.Tests.ps1
           ./tests/DocIntelCustomerBundle.Tests.ps1
@@ -151,6 +154,9 @@ jobs:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'Docintel' }}
       DOCINTEL_CONTAINER_NAME: ${{ vars.DOCINTEL_CONTAINER_NAME }}
       LEGACY_SAMPLE_REPAIR: ${{ inputs.upgrade_legacy_sample_defaults && 'true' || 'false' }}
+      DOCINTEL_DECISION_RESOURCE_ID: ${{ vars.DOCINTEL_DECISION_RESOURCE_ID }}
+      DOCINTEL_DECISION_ENDPOINT: ${{ vars.DOCINTEL_DECISION_ENDPOINT }}
+      DOCINTEL_DECISION_DEPLOYMENT: ${{ vars.DOCINTEL_DECISION_DEPLOYMENT }}
     steps:
       - uses: actions/checkout@v4
       - name: Prevent mixed personal and legacy Azure identities
@@ -173,6 +179,19 @@ jobs:
           subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID || secrets.CADOCINTELDEV_AZURE_SUBSCRIPTION_ID }}
       - name: Authenticate to the registry with the federated identity
         run: az acr login --name "$AZURE_CONTAINER_REGISTRY"
+      - name: Reconcile the native Decision connection without changing other providers
+        shell: pwsh
+        run: |
+          $target = @{ ResourceGroup = $env:AZURE_RESOURCE_GROUP
+            ContainerAppName = $env:AZURE_CONTAINER_APP_NAME; ContainerName = $env:DOCINTEL_CONTAINER_NAME }
+          ./scripts/Wait-DocIntelReady.ps1 @target -ConfigurationOnly -BeforeDecisionSetup
+          $preview = ./scripts/Sync-DocIntelDecision.ps1 @target
+          '### Native Microsoft Decision deployment plan' >> $env:GITHUB_STEP_SUMMARY
+          '```json' >> $env:GITHUB_STEP_SUMMARY
+          ($preview.Plan | ConvertTo-Json -Depth 30) >> $env:GITHUB_STEP_SUMMARY
+          '```' >> $env:GITHUB_STEP_SUMMARY
+          ./scripts/Sync-DocIntelDecision.ps1 @target -Mode Apply -Confirmation CONNECT `
+            -ExpectedPlanHash $preview.PlanHash
       - name: Check infrastructure setup before publishing a release
         shell: pwsh
         run: |
@@ -197,6 +216,7 @@ jobs:
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --image "${AZURE_CONTAINER_REGISTRY}.azurecr.io/${AZURE_CONTAINER_APP_NAME}:${GITHUB_SHA}" \
             --set-env-vars "Readiness__UpgradeLegacySampleDefaults=${LEGACY_SAMPLE_REPAIR:-false}" \
+              "Readiness__ProbeModelsOnStartup=true" \
             "${container_args[@]}"
       - name: Verify the released image and revision readiness
         shell: pwsh

@@ -103,10 +103,23 @@ For a model on another resource, configure that resource root explicitly and app
 managed-identity access there. This does not repoint language, translation or Content Understanding
 providers. The request uses the deployment name; the response may identify its underlying model
 as `microsoft-decision-1`.
-For the existing GitHub setup flow, `DOCINTEL_DECISION_ENDPOINT` and
-`DOCINTEL_DECISION_DEPLOYMENT` repository variables supply these settings in the reviewed setup
-plan. Existing configured Decision settings are preserved. Image-release preflight refuses a
-missing native Decision connection before replacing the running image.
+Existing-app GitHub releases reconcile this connection before publishing an image. They preserve
+an established selection; otherwise they prefer a native deployment in the app's bound Foundry
+account, or the unique native deployment in its resource group. If none exists, they provision
+version 1 / GlobalStandard / capacity 1 in the bound account after availability/quota checks.
+Only the selected account's Cognitive Services User role is added for the already-assigned runtime
+identity, through the authorized deployment principal. No deployment-principal self-elevation,
+account replacement, language/OCR repointing or GPT fallback is performed.
+
+The exact model/role ARM preview is hash-fenced and included in the deployment summary. The
+`docintel-dev` environment controls release approval; configure its reviewers to require human
+approval. Normal configuration preflight still requires both native settings after reconciliation,
+and the released revision must pass live startup model probes.
+For ambiguous same-group resources, `DOCINTEL_DECISION_RESOURCE_ID` and optionally
+`DOCINTEL_DECISION_DEPLOYMENT` select the intended target. `DOCINTEL_DECISION_ENDPOINT` is
+also supported and must match its verified resource metadata. Conflicting existing settings,
+cross-group automatic discovery, conditional grants, incomplete previews and missing authority
+stop the release explicitly rather than overwriting a connection or bypassing permission checks.
 
 Fresh customer infrastructure provisions `Microsoft-Decision-1` version `1`, GlobalStandard
 capacity `1`, alongside the language model. Native model availability and quota are checked before

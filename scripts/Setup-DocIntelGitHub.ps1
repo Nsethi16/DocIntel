@@ -524,7 +524,7 @@ try {
     if ($env:GITHUB_OUTPUT) { "plan_hash=$planHash" | Add-Content -LiteralPath $env:GITHUB_OUTPUT }
     $summary | ConvertTo-Json -Depth 20
     if (-not $DecisionEndpoint) {
-        Write-Warning 'Native Microsoft Decision is not connected. Set DOCINTEL_DECISION_ENDPOINT and DOCINTEL_DECISION_DEPLOYMENT before releasing the new image; no GPT alias is used.'
+        Write-Warning 'Native Microsoft Decision is not connected yet. Release automation resolves/provisions the native model and wires its runtime connection before image rollout; no GPT alias is used.'
     }
     if ($Mode -eq 'Preview') {
         Write-Output 'Preview only: no Azure resources, identities, roles, registration settings or app configuration were changed.'

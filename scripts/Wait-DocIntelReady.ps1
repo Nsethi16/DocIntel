@@ -6,11 +6,15 @@ param(
     [string]$ContainerAppName,
     [string]$ExpectedImage,
     [switch]$ConfigurationOnly,
+    [switch]$BeforeDecisionSetup,
     [string]$ContainerName = '',
     [ValidateRange(1, 60)][int]$Attempts = 30,
     [ValidateRange(1, 30)][int]$PollSeconds = 10
 )
 $ErrorActionPreference = 'Stop'
+if ($BeforeDecisionSetup -and -not $ConfigurationOnly) {
+    throw 'BeforeDecisionSetup is only valid for the preliminary configuration check, never release readiness.'
+}
 $subscriptionArguments = if ($SubscriptionId) { @('--subscription', $SubscriptionId) } else { @() }
 if (-not $ResourceGroup -or -not $ContainerAppName -or (-not $ExpectedImage -and -not $ConfigurationOnly)) {
     throw 'The release target and exact expected image are required.'
@@ -35,8 +39,13 @@ for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
             'Identity__PublicOrigin', 'Identity__DataProtectionBlobUri', 'Identity__DataProtectionKeyIdentifier',
             'AzureAI__BlobEndpoint', 'AzureAI__QueueEndpoint', 'AzureAI__CosmosEndpoint',
             'AzureAI__AzureOpenAIEndpoint', 'AzureAI__ContentUnderstandingEndpoint',
-            'AzureAI__DecisionEndpoint', 'AzureAI__DecisionDeploymentName', 'DOCINTEL_IDENTITY_GRANTS'
+            'DOCINTEL_IDENTITY_GRANTS'
         ) | Where-Object { -not $settings[$_] -or (-not $settings[$_].value -and -not $settings[$_].secretRef) })
+        if (-not $BeforeDecisionSetup) {
+            $missing += @('AzureAI__DecisionEndpoint', 'AzureAI__DecisionDeploymentName') | Where-Object {
+                -not $settings[$_] -or (-not $settings[$_].value -and -not $settings[$_].secretRef)
+            }
+        }
         if ($missing.Count) {
             throw "Run 'Set up DocIntel Azure' before releasing. Missing runtime settings: $($missing -join ', ')."
         }

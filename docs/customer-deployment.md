@@ -192,6 +192,31 @@ Incomplete or short-circuited ARM what-if analysis is not approval. An explicit 
 confirms the exact plan hash; the installer recalculates it immediately before mutation.
 Receipts survive a rejected or stale approval.
 
+## Existing application's release experience
+
+The existing-app GitHub release now connects native Decision automatically; operators do not
+copy endpoint/deployment values into the Container App. It validates production configuration
+and the actual assigned runtime identity, preserves an existing explicit connection, prefers
+a native model in the bound account, then accepts only a unique same-resource-group native
+deployment. Multiple matches require an explicit `DOCINTEL_DECISION_RESOURCE_ID` and/or
+`DOCINTEL_DECISION_DEPLOYMENT`, not a guessed account.
+
+If no native deployment exists, the release can add Microsoft-Decision-1 version 1,
+GlobalStandard capacity 1 to the app's bound Foundry account after checking availability and
+quota. This capacity is billable. A narrowly scoped Bicep template changes only that missing
+model and, when necessary, the selected account's Cognitive Services User grant for the
+already-assigned runtime identity. It does not change account properties or grant the
+deployment principal any authority. Existing inherited grants are reused; conditional grants
+require explicit operator review. Missing deployment/RBAC authority cannot be self-repaired.
+
+Preview is read-only and its exact model/role scope, application snapshot and template hash
+are fenced before Apply. The workflow summary records this plan. Main-only deployment uses
+the protected `docintel-dev` environment; configure required reviewers if each release needs
+human approval. Only the two native Decision settings are merged; other providers, secrets,
+identities and the current image are preserved. The image is then released with live startup
+model probes enabled, and exact-image/revision readiness remains mandatory. Native API errors
+or permission propagation failures remain explicit failed releases, never GPT fallback.
+
 ## Publisher setup and release plan
 
 The default source-build kit is available without this publisher setup. The repository's

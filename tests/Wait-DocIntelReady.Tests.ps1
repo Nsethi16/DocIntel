@@ -98,6 +98,25 @@ try {
         DOCINTEL_IDENTITY_GRANTS = '{"Memberships":[{"ObjectId":"fixture"}]}'
     }.GetEnumerator() | ForEach-Object { @{ name = $_.Key; value = $_.Value } })
     & $file -ConfigurationOnly -ResourceGroup fixture -ContainerAppName fixture | Out-Null
+    $completeEnvironment = $global:DocIntelReadinessFixture.environment
+    $global:DocIntelReadinessFixture.environment = @($completeEnvironment |
+        Where-Object { $_.name -notlike 'AzureAI__Decision*' })
+    & $file -ConfigurationOnly -BeforeDecisionSetup -ResourceGroup fixture -ContainerAppName fixture | Out-Null
+    $failed = $false
+    try { & $file -ConfigurationOnly -ResourceGroup fixture -ContainerAppName fixture | Out-Null }
+    catch {
+        if ($_.Exception.Message -notlike '*AzureAI__DecisionEndpoint*') { throw }
+        $failed = $true
+    }
+    if (-not $failed) { throw 'Final preflight must still require the reconciled native connection.' }
+    $global:DocIntelReadinessFixture.environment = $completeEnvironment
+    $failed = $false
+    try { & $file -BeforeDecisionSetup -ResourceGroup fixture -ContainerAppName fixture -ExpectedImage fixture | Out-Null }
+    catch {
+        if ($_.Exception.Message -notlike '*never release readiness*') { throw }
+        $failed = $true
+    }
+    if (-not $failed) { throw 'Native preparation cannot bypass final release readiness.' }
     foreach ($scenario in 'tcp', 'additional-port') {
         $global:DocIntelReadinessFixture.transport = if ($scenario -eq 'tcp') { 'tcp' } else { 'auto' }
         $global:DocIntelReadinessFixture.additionalPorts = if ($scenario -eq 'additional-port') {
