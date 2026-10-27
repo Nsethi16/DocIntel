@@ -77,7 +77,8 @@ test('opted-in startup probes make exactly one bounded model request and health 
       const { response, body } = await settled(api);
       assert.equal(response.status, 200, JSON.stringify(body));
       assert.equal(requests.length, 1);
-      assert.equal(requests[0].max_completion_tokens ?? requests[0].max_tokens, 1);
+      assert.equal(Object.hasOwn(requests[0], 'max_completion_tokens'), false);
+      assert.equal(Object.hasOwn(requests[0], 'max_tokens'), false);
       assert.equal(requests[0].messages[0].content, 'Reply OK.');
       for (let i = 0; i < 4; i++) assert.equal((await fetch(api.url + '/health/ready')).status, 200);
       assert.equal(requests.length, 1);
