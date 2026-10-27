@@ -20,17 +20,8 @@ FIELDS = {"schemaVersion", "httpStatus", "providerCode", "answerPresent", "proba
 
 
 def diagnostic_command() -> str:
-    """Require the published capability marker before executing the isolated .NET mode."""
-    unsupported = PREFIX + json.dumps({
-        "schemaVersion": 1, "httpStatus": 0, "providerCode": "DiagnosticUnsupported",
-        "answerPresent": False, "probabilityShape": "None",
-    }, separators=(",", ":"))
-    script = (
-        "if [ ! -f /app/docintel-decision-probe.v1 ]; then "
-        f"printf '%s\\n' {shlex.quote(unsupported)}; exit 2; fi; "
-        'exec dotnet /app/DocIntel.Api.dll --diagnose-decision'
-    )
-    return shlex.join(["sh", "-c", script])
+    """Use a plain argv command, not shell quoting interpreted by the exec proxy."""
+    return "dotnet /app/DocIntel.Api.dll --diagnose-decision"
 
 
 def parse_result(text: str) -> dict:
@@ -84,9 +75,16 @@ def probe() -> dict:
         raise ValueError("The exact deployed revision has no active replica.")
     command = [
         "az", "containerapp", "exec", *target, "--revision", revision, "--replica", replicas[0]["name"],
-        "--container", selected[0]["name"], "--command", diagnostic_command(),
-        "--only-show-errors",
+        "--container", selected[0]["name"], "--only-show-errors",
     ]
+    marker = execute([*command, "--command", "cat /app/docintel-decision-probe.v1"])
+    if "Native Decision diagnostic schema 1; isolated synthetic inference only." not in marker:
+        raise ValueError("The exact revision did not return its published native diagnostic capability marker.")
+    return parse_result(execute([*command, "--command", diagnostic_command()]))
+
+
+def execute(command: list[str]) -> str:
+    """Capture a bounded exec session without disclosing remote or CLI error text."""
     process = subprocess.Popen(
         ["script", "-q", "-e", "-c", shlex.join(command), "/dev/null"],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True,
@@ -102,7 +100,14 @@ def probe() -> dict:
             os.killpg(process.pid, signal.SIGKILL)
             process.communicate(timeout=5)
         raise TimeoutError("The native diagnostic exceeded its deadline.") from None
-    return parse_result(stdout)
+    if process.returncode and PREFIX not in stdout and (
+        "Native Decision diagnostic schema 1; isolated synthetic inference only." not in stdout
+    ):
+        output = stdout.lower()
+        if "authorizationfailed" in output or "does not have authorization" in output:
+            raise PermissionError("The deployment identity lacks container exec diagnostic authority.")
+        raise ValueError(f"The bounded container exec command exited with code {process.returncode}.")
+    return stdout
 
 
 if __name__ == "__main__":
