@@ -2,6 +2,11 @@ name: Diagnose DocIntel Azure
 
 on:
   workflow_dispatch:
+    inputs:
+      probe_decision:
+        description: Make one synthetic native Decision request using the deployed runtime identity; no documents are read.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -27,7 +32,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Verify diagnostic safety without Azure calls
         shell: pwsh
-        run: ./.github/tests/Diagnose-DocIntelAzure.Tests.ps1
+        run: |
+          ./.github/tests/Diagnose-DocIntelAzure.Tests.ps1
+          python3 -B -m unittest discover -s .github/tests -p test_decision_diagnostic.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Prevent mixed Azure identity settings
         shell: pwsh
         env:
@@ -183,3 +191,6 @@ jobs:
             } | ConvertTo-Json -Depth 10 -Compress
           }
           Write-Output 'Read-only diagnostics completed. No resources, settings, permissions or tenant profiles were changed.'
+      - name: Probe synthetic native Decision input with the deployed runtime identity
+        if: inputs.probe_decision
+        run: python3 -B .github/scripts/decision_diagnostic.py
