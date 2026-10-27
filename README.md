@@ -140,12 +140,13 @@ auditing or warnings, add an unknown mirror, or silently use a private-feed fall
 ### Customer installations
 
 For a new customer's subscription, see [Guided customer deployment](docs/customer-deployment.md).
-The versioned installer bundle provides one guided Cloud Shell setup: choose a customer/subscription,
-review the plan, and approve. It configures isolated resources, Entra sign-in and the first customer
-workspace, with saved-state recovery after a completed foundation. Customers do not clone the source,
-build the application, copy app-registration GUIDs, or configure GitHub OIDC. The release workflow
-packages the exact image digest and compiled ARM with integrity hashes. Public publisher configuration
-and clean-subscription acceptance are still required before this is a published customer release.
+The `customer-setup` artifact from validation provides one guided Cloud Shell setup: choose a
+customer/subscription, review the plan/costs, and approve. The default kit builds the exact reviewed
+public source commit inside the customer's own private ACR, then deploys its image digest and creates
+the first customer workspace. It does not require public binary publishing, a new distribution
+repository, local Docker/.NET, manual app-registration GUID copying, or GitHub OIDC. Saved-state
+recovery resumes completed foundations and recorded builds without resetting customer data.
+An optional prebuilt public-image channel remains available after explicit publisher setup.
 Existing installations use the flow below.
 
 ### Set up an existing Azure deployment from GitHub

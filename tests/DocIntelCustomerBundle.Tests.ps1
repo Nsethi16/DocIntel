@@ -38,7 +38,7 @@ try {
         try {
             $invalid = $originalManifest | ConvertFrom-Json -AsHashtable
             switch ($bad) {
-                'schema' { $invalid.schemaVersion = 2 }
+                'schema' { $invalid.schemaVersion = 3 }
                 'image' { $invalid.image = 'ghcr.io/nsethi16/docintel-api:latest' }
                 'path' { $invalid.files['../escape.ps1'] = 'a' * 64 }
             }
@@ -49,6 +49,19 @@ try {
         } finally { $originalManifest | Set-Content -LiteralPath $manifestPath }
     }
     & (Join-Path $PSScriptRoot 'Install-DocIntelCustomer.Tests.ps1') -ReleaseRoot $extracted
+    $sourceArguments = $arguments.Clone()
+    $sourceArguments.Remove('Image')
+    $sourceArguments.ImageSource = 'CustomerRegistryBuild'
+    $sourceArguments.OutputDirectory = Join-Path $temporary 'source-output'
+    $sourceBundle = & (Join-Path $root 'scripts\Build-DocIntelCustomerBundle.ps1') @sourceArguments
+    $sourceRoot = Join-Path $temporary 'source-extracted'
+    Expand-Archive -LiteralPath $sourceBundle.Bundle -DestinationPath $sourceRoot
+    Import-Module (Join-Path $sourceRoot 'scripts\DocIntelRelease.psm1') -Force
+    $sourceRelease = Read-DocIntelRelease -Root $sourceRoot
+    if ($sourceRelease.imageSource -cne 'CustomerRegistryBuild' -or $sourceRelease.image) {
+        throw 'A source-build kit must not depend on an unpublished public image.'
+    }
+    & (Join-Path $PSScriptRoot 'Install-DocIntelCustomer.Tests.ps1') -ReleaseRoot $sourceRoot
     $workflow = Get-Content -LiteralPath (Join-Path $root '.github\workflows\release-customer.yml') -Raw
     if ($workflow -notmatch 'needs: validate' -or $workflow -notmatch 'validation_only: true' -or
         $workflow -notmatch "github.ref == 'refs/heads/main'" -or $workflow -match 'docintel-api:latest' -or

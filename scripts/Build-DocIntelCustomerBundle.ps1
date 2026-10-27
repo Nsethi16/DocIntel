@@ -2,15 +2,19 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$Version,
-    [Parameter(Mandatory)][string]$Image,
+    [string]$Image = '',
+    [ValidateSet('PublicImage', 'CustomerRegistryBuild')][string]$ImageSource = 'PublicImage',
     [Parameter(Mandatory)][string]$SourceCommit,
     [Parameter(Mandatory)][string]$OutputDirectory
 )
 $ErrorActionPreference = 'Stop'
 if ($Version -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9]+(?:[.-][a-zA-Z0-9]+)*)?$' -or
-    $Image -cnotmatch '^ghcr\.io/nsethi16/docintel-api@sha256:[a-f0-9]{64}$' -or
     $SourceCommit -cnotmatch '^[a-f0-9]{40}$') {
-    throw 'A semantic release version, exact image digest and full source commit are required.'
+    throw 'A semantic release version and full source commit are required.'
+}
+if (($ImageSource -eq 'PublicImage' -and $Image -cnotmatch '^ghcr\.io/nsethi16/docintel-api@sha256:[a-f0-9]{64}$') -or
+    ($ImageSource -eq 'CustomerRegistryBuild' -and $Image)) {
+    throw 'PublicImage requires an exact image digest; CustomerRegistryBuild must not preselect an image.'
 }
 $root = Split-Path $PSScriptRoot -Parent
 $stage = Join-Path ([IO.Path]::GetTempPath()) ('docintel-bundle-' + [guid]::NewGuid().ToString('N'))
@@ -39,8 +43,8 @@ try {
         $path = Join-Path $stage $relative.Replace('/', [IO.Path]::DirectorySeparatorChar)
         $hashes[$relative] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     }
-    $manifest = [ordered]@{ schemaVersion = 1; version = $Version; sourceCommit = $SourceCommit
-        image = $Image; files = $hashes }
+    $manifest = [ordered]@{ schemaVersion = 2; version = $Version; sourceCommit = $SourceCommit
+        imageSource = $ImageSource; sourceRepository = 'Nsethi16/DocIntel'; image = $Image; files = $hashes }
     $manifest | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $stage 'release.json') -Encoding utf8
     Import-Module (Join-Path $stage 'scripts\DocIntelRelease.psm1') -Force
     Read-DocIntelRelease -Root $stage | Out-Null
@@ -51,7 +55,8 @@ try {
     $instructions = @"
 # DocIntel $Version
 
-This bundle pairs source commit ``$SourceCommit`` with image ``$Image``.
+This bundle uses image source ``$ImageSource`` and reviewed source commit ``$SourceCommit``.
+Public-image reference (when applicable): ``$Image``.
 Use Azure Cloud Shell **PowerShell**, signed in to your customer's directory.
 
 1. Download ``$zipName`` from this release.
@@ -63,6 +68,8 @@ The installer creates the workspace, infrastructure and application identities. 
 for safe resume. It never grants itself permissions or silently adopts another installation.
 Provider readiness is not proof of PDF/Ask AI behavior; complete those acceptance checks after sign-in.
 Email/Teams, Microsoft 365 licenses and private networking are separate optional onboarding.
+CustomerRegistryBuild creates a private Basic ACR and runs a paid, bounded build in the customer's
+subscription from the existing public source commit. No public binary publishing is required.
 "@
     $instructions | Set-Content -LiteralPath (Join-Path $OutputDirectory 'INSTALL.md') -Encoding utf8
     Write-Output ([pscustomobject]@{ Bundle = $zip; Sha256 = $zipHash; Version = $Version; Image = $Image })

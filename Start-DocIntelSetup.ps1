@@ -15,7 +15,8 @@ param(
     [string]$EnvironmentName = 'prod',
     [string]$InitialOwnerObjectId = '',
     [string]$StateDirectory = '',
-    [switch]$PreviewOnly
+    [switch]$PreviewOnly,
+    [switch]$RetryFailedBuild
 )
 $ErrorActionPreference = 'Stop'
 Import-Module (Join-Path $PSScriptRoot 'scripts\DocIntelRelease.psm1') -Force
@@ -52,10 +53,19 @@ $setup = @{
     Image = $release.image; Location = $Location; EnvironmentName = $EnvironmentName
     OutputDirectory = $StateDirectory; InitialOwnerObjectId = $InitialOwnerObjectId
 }
+if ($release.schemaVersion -eq 2) {
+    $setup.ImageSource = $release.imageSource
+    if ($release.imageSource -ceq 'CustomerRegistryBuild') { $setup.SourceCommit = $release.sourceCommit }
+}
 if (Test-Path -LiteralPath (Join-Path $StateDirectory 'customer-installation.json')) { $setup.Resume = $true }
+if ($RetryFailedBuild) { $setup.RetryFailedBuild = $true }
 Write-Host "DocIntel $($release.version): $CustomerName ($EnvironmentName), region $Location."
 Write-Host 'This creates billable Azure resources and explicitly grants the selected owner installation-wide administration.'
 Write-Host 'Email/Teams and Microsoft 365 subscriptions are not included. Review your Azure pricing and the plan below.'
+if ($setup.ImageSource -ceq 'CustomerRegistryBuild') {
+    Write-Host "Image source: customer-owned Basic ACR and paid build from reviewed public commit $($release.sourceCommit)."
+    Write-Host 'No public container package or additional public distribution repository is required.'
+}
 & (Join-Path $PSScriptRoot 'scripts\Install-DocIntelCustomer.ps1') @setup
 $plan = Get-Content -LiteralPath (Join-Path $StateDirectory 'customer-plan.json') -Raw | ConvertFrom-Json -Depth 100
 Write-Host "Plan: $($plan.Plan.Operation). Resource changes: $(@($plan.Plan.Changes).Count). State: $StateDirectory"

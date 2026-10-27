@@ -26,6 +26,11 @@ param initialOwnerObjectId string
 @description('Public container image pinned by SHA-256 digest; the installer validates its registry and availability.')
 param containerImage string
 
+@description('Explicitly build the pinned public source in the customer registry instead of requiring a public binary.')
+param buildImageInCustomerRegistry bool = false
+
+param sourceCommit string = ''
+
 @description('Provision dependencies first; sign-in federation is configured before the app is created.')
 param deployApplication bool = true
 
@@ -37,6 +42,10 @@ var stem = take(replace(customerSlug, '-', ''), 8)
 var environmentKey = take(suffix, 8)
 var appName = 'di-${stem}-${environmentName}-${take(suffix, 6)}'
 var environmentResourceName = 'cae-docintel-${environmentKey}'
+var registryName = 'acrdi${suffix}'
+var effectiveImage = !empty(containerImage) ? containerImage : (buildImageInCustomerRegistry
+  ? '${registryName}.azurecr.io/docintel-api:source-${take(sourceCommit, 12)}-${take(installationRequestHash, 12)}'
+  : fail('A pinned image or explicit customer-registry build is required.'))
 
 resource customerGroup 'Microsoft.Resources/resourceGroups@2024-03-01' = {
   name: resourceGroupName
@@ -60,8 +69,10 @@ module installation './main.bicep' = {
     cosmosAccountNameOverride: 'cosmos-di-${stem}-${environmentName}-${suffix}'
     foundryAccountNameOverride: 'ai-di-${stem}-${environmentName}-${suffix}'
     keyVaultNameOverride: 'kv-di-${take(stem, 4)}-${suffix}'
-    enableContainerRegistry: false
-    containerImage: containerImage
+    enableContainerRegistry: buildImageInCustomerRegistry
+    acrName: buildImageInCustomerRegistry ? registryName : ''
+    reuseRegistry: infrastructureReady
+    containerImage: effectiveImage
     directoryTenantId: directoryTenantId
     bootstrapTenantId: customerSlug
     bootstrapTenantDisplayName: customerDisplayName
@@ -103,3 +114,8 @@ output managedIdentityPrincipalId string = installation.outputs.managedIdentityP
 output managedIdentityClientId string = installation.outputs.managedIdentityClientId
 output managedIdentityResourceId string = installation.outputs.managedIdentityResourceId
 output workspaceUrl string = '${installation.outputs.containerAppFqdn}/?tenant=${uriComponent(customerSlug)}'
+output containerRegistryName string = installation.outputs.containerRegistryName
+output containerRegistryLoginServer string = installation.outputs.containerRegistryLoginServer
+output containerRegistryResourceId string = buildImageInCustomerRegistry
+  ? resourceId(resourceGroupName, 'Microsoft.ContainerRegistry/registries', registryName)
+  : ''

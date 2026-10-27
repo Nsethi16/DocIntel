@@ -7,11 +7,19 @@ function Read-DocIntelRelease {
     $Root = [IO.Path]::GetFullPath($Root)
     $manifestPath = Join-Path $Root 'release.json'
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json -Depth 30
-    if ($manifest.schemaVersion -ne 1 -or
+    if ($manifest.schemaVersion -notin @(1, 2) -or
         $manifest.version -cnotmatch '^v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9]+(?:[.-][a-zA-Z0-9]+)*)?$' -or
-        $manifest.sourceCommit -cnotmatch '^[a-f0-9]{40}$' -or
-        $manifest.image -cnotmatch '^ghcr\.io/nsethi16/docintel-api@sha256:[a-f0-9]{64}$') {
-        throw 'The release manifest has an unsupported schema, version, source commit or image digest.'
+        $manifest.sourceCommit -cnotmatch '^[a-f0-9]{40}$') {
+        throw 'The release manifest has an unsupported schema, version or source commit.'
+    }
+    $imageSource = if ($manifest.schemaVersion -eq 1) { 'PublicImage' } else { $manifest.imageSource }
+    if ($imageSource -ceq 'PublicImage') {
+        if ($manifest.image -cnotmatch '^ghcr\.io/nsethi16/docintel-api@sha256:[a-f0-9]{64}$') {
+            throw 'The public release image must be pinned by digest.'
+        }
+    } elseif ($imageSource -cne 'CustomerRegistryBuild' -or $manifest.image -cne '' -or
+        $manifest.sourceRepository -cne 'Nsethi16/DocIntel') {
+        throw 'The release image source or source repository is unsupported.'
     }
     $required = @('Start-DocIntelSetup.ps1', 'scripts/Install-DocIntelCustomer.ps1',
         'scripts/Wait-DocIntelReady.ps1', 'scripts/DocIntelRelease.psm1',

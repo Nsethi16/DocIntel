@@ -115,20 +115,20 @@ jobs:
           outputs: type=oci,dest=${{ runner.temp }}/docintel-validation-image.tar
           provenance: mode=max
           sbom: true
-      - name: Build a review-only installer candidate for the exact validation image
+      - name: Build the publication-free customer installer
         shell: pwsh
         env:
           IMAGE_DIGEST: ${{ steps.validation_image.outputs.digest }}
         run: |
           ./scripts/Build-DocIntelCustomerBundle.ps1 -Version "v0.0.0-ci.$env:GITHUB_RUN_ID" `
-            -Image "ghcr.io/nsethi16/docintel-api@$env:IMAGE_DIGEST" `
-            -SourceCommit $env:GITHUB_SHA -OutputDirectory (Join-Path $env:RUNNER_TEMP 'customer-candidate')
-          'Review-only candidate: its OCI image was built but NOT pushed to GHCR. It is not installable until an approved release publishes that exact image.' |
-            Set-Content (Join-Path $env:RUNNER_TEMP 'customer-candidate\CANDIDATE.txt')
+            -ImageSource CustomerRegistryBuild -SourceCommit $env:GITHUB_SHA `
+            -OutputDirectory (Join-Path $env:RUNNER_TEMP 'customer-installer')
+          "The application was validated as OCI image $env:IMAGE_DIGEST. This installer builds the same source commit privately in the customer's ACR; it does not depend on that image being published." |
+            Set-Content (Join-Path $env:RUNNER_TEMP 'customer-installer\BUILD-INFO.txt')
       - uses: actions/upload-artifact@v4
         with:
-          name: customer-setup-candidate
-          path: ${{ runner.temp }}/customer-candidate/
+          name: customer-setup
+          path: ${{ runner.temp }}/customer-installer/
           if-no-files-found: error
           overwrite: true
 

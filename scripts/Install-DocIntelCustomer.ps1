@@ -10,7 +10,9 @@
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)][string]$CustomerSlug,
-    [Parameter(Mandatory)][string]$Image,
+    [string]$Image = '',
+    [ValidateSet('PublicImage', 'CustomerRegistryBuild')][string]$ImageSource = 'PublicImage',
+    [string]$SourceCommit = '',
     [string]$CustomerName = '',
     [string]$Location = 'westus',
     [string]$EnvironmentName = 'prod',
@@ -21,7 +23,8 @@ param(
     [string]$Confirmation = '',
     [string]$ExpectedPlanHash = '',
     [string]$OutputDirectory = '',
-    [switch]$Resume
+    [switch]$Resume,
+    [switch]$RetryFailedBuild
 )
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
@@ -36,10 +39,18 @@ if ($CustomerSlug.Length -lt 3 -or $CustomerSlug.Length -gt 16 -or
     throw 'CustomerSlug must be 3-16 lowercase letters/digits with single, internal hyphens; start with a letter.'
 }
 if ($EnvironmentName -cnotmatch '^[a-z0-9]{2,8}$') { throw 'EnvironmentName must contain 2-8 lowercase letters/digits.' }
-if ($Image -cnotmatch '^ghcr\.io/nsethi16/docintel-api@(?<digest>sha256:[a-f0-9]{64})$') {
-    throw 'Image must be the reviewed public ghcr.io/nsethi16/docintel-api image pinned by SHA-256 digest, not a tag.'
+if ($ImageSource -eq 'PublicImage') {
+    if ($Image -cnotmatch '^ghcr\.io/nsethi16/docintel-api@(?<digest>sha256:[a-f0-9]{64})$') {
+        throw 'Image must be the reviewed public ghcr.io/nsethi16/docintel-api image pinned by SHA-256 digest, not a tag.'
+    }
+    $digest = $Matches.digest
+} elseif ($Image -or $SourceCommit -cnotmatch '^[a-f0-9]{40}$') {
+    throw 'CustomerRegistryBuild requires a full SourceCommit and no preselected image.'
 }
-$digest = $Matches.digest
+$resolvedImage = $Image
+if ($RetryFailedBuild -and (-not $Resume -or $ImageSource -ne 'CustomerRegistryBuild')) {
+    throw 'RetryFailedBuild requires Resume of a customer registry build and a new reviewed APPLY.'
+}
 if (-not $CustomerName) { $CustomerName = $CustomerSlug }
 if ($CustomerName.Length -gt 120 -or [String]::IsNullOrWhiteSpace($CustomerName) -or
     $CustomerName -match '[\x00-\x1f\x7f]') { throw 'CustomerName must be 1-120 printable characters.' }
@@ -143,9 +154,117 @@ function Save-CustomerJournal {
     }
 }
 
+function Get-CustomerRegistry {
+    $outputs = $foundation.properties.outputs
+    $name = [string]$outputs.containerRegistryName.value
+    $server = [string]$outputs.containerRegistryLoginServer.value
+    $id = [string]$outputs.containerRegistryResourceId.value
+    $expected = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.ContainerRegistry/registries/$name"
+    if ($name -cnotmatch '^[a-z0-9]{5,50}$' -or $server -cne "$name.azurecr.io" -or $id -ine $expected) {
+        throw 'The build registry is not the validated customer foundation registry.'
+    }
+    return @{ Name = $name; Server = $server; Id = $id
+        Tag = "source-$($SourceCommit.Substring(0, 12))-$($requestHash.Substring(0, 12))" }
+}
+
+function Read-CustomerBuildRun([hashtable]$Registry, [string]$RunId) {
+    if ($RunId -cnotmatch '^[A-Za-z0-9_-]{1,80}$') { throw 'The saved registry build run ID is invalid.' }
+    $run = Invoke-CustomerAzure @('rest', '--method', 'GET', '--url',
+        "https://management.azure.com$($Registry.Id)/runs/${RunId}?api-version=2019-04-01")
+    if ($run.id -ine "$($Registry.Id)/runs/$RunId" -or $run.properties.runId -cne $RunId -or
+        $run.properties.runType -cne 'QuickBuild') { throw 'The registry run is not the saved customer build.' }
+    return $run
+}
+
+function Read-CustomerBuild([hashtable]$Registry, [string]$RunId) {
+    $run = Read-CustomerBuildRun $Registry $RunId
+    $status = [string]$run.properties.status
+    if ($status -in @('Queued', 'Started', 'Running')) { return $null }
+    if ($status -cnotin @('Succeeded', 'Failed', 'Canceled', 'Error', 'Timeout')) {
+        throw 'The registry returned an unknown build status. No application was deployed.'
+    }
+    if ($status -cne 'Succeeded') {
+        throw "The customer image build finished with status '$status'. Inspect the scoped ACR run; no app was deployed."
+    }
+    $images = @($run.properties.outputImages | Where-Object { $null -ne $_ })
+    if ($images.Count -ne 1 -or $images[0].registry -ine $Registry.Server -or
+        $images[0].repository -cne 'docintel-api' -or $images[0].tag -cne $Registry.Tag -or
+        $images[0].digest -cnotmatch '^sha256:[a-f0-9]{64}$' -or
+        $run.properties.platform.os -cne 'Linux' -or $run.properties.platform.architecture -cne 'amd64') {
+        throw 'The build did not return exactly the approved Linux AMD64 repository/tag and SHA-256 digest.'
+    }
+    return "$($Registry.Server)/docintel-api@$($images[0].digest)"
+}
+
+function Resolve-CustomerBuild([switch]$ApplyBuild) {
+    $registry = Get-CustomerRegistry
+    if ($groupTags['docintel-image-digest']) {
+        if ($RetryFailedBuild) { throw 'A completed customer image must not be rebuilt during resume.' }
+        $builtDigest = [string]$groupTags['docintel-image-digest']
+        if ($builtDigest -cnotmatch '^sha256:[a-f0-9]{64}$') { throw 'The customer image receipt is invalid.' }
+        $bound = "$($registry.Server)/docintel-api@$builtDigest"
+        if ($journal.ResolvedImage -and $journal.ResolvedImage -cne $bound) {
+            throw 'The customer image receipt changed. Resume never replaces its approved build.'
+        }
+        return $bound
+    }
+    $runId = [string]$journal.BuildRunId
+    if ($groupTags['docintel-build-run'] -and $groupTags['docintel-build-run'] -cne $runId) {
+        throw 'The customer registry run binding changed.'
+    }
+    if ($RetryFailedBuild) {
+        if (-not $runId) { throw 'There is no recorded failed build to retry.' }
+        $previous = Read-CustomerBuildRun $registry $runId
+        if ($previous.properties.status -cnotin @('Failed', 'Canceled', 'Error', 'Timeout')) {
+            throw 'RetryFailedBuild only supports a confirmed terminal failed run, never an active or successful build.'
+        }
+        if (-not $ApplyBuild) { return $null }
+        $journal.PreviousBuildRunIds = @($journal.PreviousBuildRunIds | Where-Object { $_ }) + @($runId)
+        $journal.BuildRunId = ''
+        Save-CustomerJournal
+        $runId = ''
+    }
+    if (-not $runId) {
+        if (-not $ApplyBuild) { return $null }
+        $runId = [string](Invoke-CustomerAzure @('acr', 'build', '--registry', $registry.Name,
+            '--resource-group', $ResourceGroup, '--file', 'Dockerfile', '--image', "docintel-api:$($registry.Tag)",
+            '--platform', 'linux/amd64', '--timeout', '1200', '--no-logs', '--no-wait', '--query', 'runId',
+            "https://github.com/Nsethi16/DocIntel.git#$SourceCommit"))
+        if ($runId -cnotmatch '^[A-Za-z0-9_-]{1,80}$') { throw 'ACR did not return a valid build run ID.' }
+        $journal.BuildRunId = $runId
+        Save-CustomerJournal
+    }
+    $attempts = if ($ApplyBuild) { 60 } else { 1 }
+    for ($attempt = 0; $attempt -lt $attempts; $attempt++) {
+        $built = Read-CustomerBuild $registry $runId
+        if ($built) {
+            if ($ApplyBuild) {
+                $builtDigest = ($built -split '@', 2)[1]
+                $tagged = Invoke-CustomerAzure @('tag', 'update', '--resource-id',
+                    "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup", '--operation', 'Merge',
+                    '--tags', "docintel-build-run=$runId", "docintel-image-digest=$builtDigest")
+                if ($tagged.properties.tags.'docintel-image-digest' -cne $builtDigest -or
+                    $tagged.properties.tags.'docintel-build-run' -cne $runId) {
+                    throw 'The customer build receipt was not persisted in Azure.'
+                }
+                $groupTags['docintel-build-run'] = $runId
+                $groupTags['docintel-image-digest'] = $builtDigest
+                $journal.ResolvedImage = $built
+                Save-CustomerJournal
+            }
+            return $built
+        }
+        if ($ApplyBuild -and $attempt + 1 -lt $attempts) { Start-Sleep -Seconds 10 }
+    }
+    if ($ApplyBuild) {
+        throw 'The customer build is still running. Re-run the same setup bundle to resume; no duplicate build is queued.'
+    }
+    return $null
+}
+
 function Assert-CustomerRuntime([object]$App) {
     $containers = @($App.properties.template.containers | Where-Object name -CEQ 'docintel-api')
-    if ($containers.Count -ne 1 -or $containers[0].image -cne $Image) {
+    if ($containers.Count -ne 1 -or -not $resolvedImage -or $containers[0].image -cne $resolvedImage) {
         throw 'The existing application does not match the saved image. Resume never upgrades or overwrites it.'
     }
     $settings = @{}
@@ -160,6 +279,14 @@ function Assert-CustomerRuntime([object]$App) {
         $assigned.Count -ne 1 -or $assigned[0].Value.clientId -ine $runtimeClient -or
         $assigned[0].Value.principalId -ine $runtimePrincipal) {
         throw 'The assigned runtime identity does not match the saved Azure foundation.'
+    }
+    if ($ImageSource -eq 'CustomerRegistryBuild') {
+        $registry = Get-CustomerRegistry
+        $pullBindings = @($App.properties.configuration.registries | Where-Object server -CEQ $registry.Server)
+        if ($pullBindings.Count -ne 1 -or $pullBindings[0].identity -ine $runtimeId -or
+            $pullBindings[0].username -or $pullBindings[0].passwordSecretRef) {
+            throw 'The customer registry pull binding must select the validated runtime managed identity.'
+        }
     }
     foreach ($entry in @{
         Identity__DirectoryTenantId = $directoryId; Identity__ClientId = $web.appId
@@ -187,10 +314,11 @@ function Complete-CustomerReadiness([object]$Outputs) {
         ContainerAppName = $Outputs.containerAppName.value; ContainerName = 'docintel-api'
     }
     & (Join-Path $PSScriptRoot 'Wait-DocIntelReady.ps1') @arguments -ConfigurationOnly
-    & (Join-Path $PSScriptRoot 'Wait-DocIntelReady.ps1') @arguments -ExpectedImage $Image
+    & (Join-Path $PSScriptRoot 'Wait-DocIntelReady.ps1') @arguments -ExpectedImage $resolvedImage
     $receipt.Status = 'InfrastructureReady'
     $receipt.WorkspaceUrl = [string]$Outputs.workspaceUrl.value
     $receipt.PublicOrigin = [string]$Outputs.publicOrigin.value
+    $receipt.Image = $resolvedImage
     Write-Host "Customer workspace ready for sign-in: $($receipt.WorkspaceUrl)"
     Write-Host 'Complete acceptance with a representative PDF and an Ask AI answer with source citations.'
 }
@@ -288,7 +416,8 @@ try {
     $request = @{
         Subscription = $SubscriptionId; Directory = $directoryId; Group = $ResourceGroup; Location = $Location
         Customer = $CustomerSlug; Name = $CustomerName; Environment = $EnvironmentName
-        Owner = $InitialOwnerObjectId; Image = $Image; Files = $fileHashes
+        Owner = $InitialOwnerObjectId; Image = $Image; ImageSource = $ImageSource
+        SourceCommit = $SourceCommit; Files = $fileHashes
     }
     $requestHash = Get-CustomerHash $request
     $key = (Get-CustomerHash @($directoryId, $SubscriptionId, $ResourceGroup, $CustomerSlug, $EnvironmentName)).Substring(0, 16)
@@ -316,8 +445,10 @@ try {
             }
         }
     }
-    foreach ($provider in @('Microsoft.App', 'Microsoft.OperationalInsights', 'Microsoft.ManagedIdentity',
-        'Microsoft.Storage', 'Microsoft.DocumentDB', 'Microsoft.KeyVault', 'Microsoft.CognitiveServices')) {
+    $providers = @('Microsoft.App', 'Microsoft.OperationalInsights', 'Microsoft.ManagedIdentity',
+        'Microsoft.Storage', 'Microsoft.DocumentDB', 'Microsoft.KeyVault', 'Microsoft.CognitiveServices')
+    if ($ImageSource -eq 'CustomerRegistryBuild') { $providers += 'Microsoft.ContainerRegistry' }
+    foreach ($provider in $providers) {
         $state = Invoke-CustomerAzure @('provider', 'show', '--namespace', $provider, '--query', 'registrationState')
         if ($state -cne 'Registered') { throw "Have the Azure administrator register $provider before previewing setup." }
     }
@@ -342,6 +473,15 @@ try {
         throw 'At least 10 deployment-capacity units of the model quota are required. Obtain quota before applying.'
     }
     }
+    if ($ImageSource -eq 'CustomerRegistryBuild') {
+        $source = Invoke-WebRequest -Uri "https://github.com/Nsethi16/DocIntel/archive/$SourceCommit.tar.gz" `
+            -Method Head -MaximumRedirection 5 -TimeoutSec 30 -SkipHttpErrorCheck
+        if ($source.StatusCode -ne 200 -or
+            $source.BaseResponse.RequestMessage.RequestUri.Host -cne 'codeload.github.com' -or
+            [string]$source.Headers['Content-Type'] -notmatch '^application/(x-gzip|gzip|octet-stream)(;|$)') {
+            throw 'The pinned source commit is not publicly available. No credentials or private source are sent to ACR.'
+        }
+    } else {
     $tokenResponse = Invoke-WebRequest -Uri (
         'https://ghcr.io/token?service=ghcr.io&scope=repository:nsethi16/docintel-api:pull'
     ) -MaximumRedirection 0 -TimeoutSec 30 -SkipHttpErrorCheck
@@ -356,6 +496,7 @@ try {
     $publicToken = $null
     if ($manifest.StatusCode -ne 200 -or [string]$manifest.Headers['Docker-Content-Digest'] -cne $digest) {
         throw 'The exact image digest is not anonymously pullable. No image tag or private-registry fallback is used.'
+    }
     }
     $groupExists = Invoke-CustomerAzure @('group', 'exists', '--name', $ResourceGroup)
     $groupTags = @{}
@@ -390,6 +531,8 @@ try {
         resourceGroupTags = @{ value = $groupTags }; directoryTenantId = @{ value = $directoryId }
         initialOwnerObjectId = @{ value = $InitialOwnerObjectId }; containerImage = @{ value = $Image }
         customerDisplayName = @{ value = $CustomerName }; installationRequestHash = @{ value = $requestHash }
+        buildImageInCustomerRegistry = @{ value = $ImageSource -eq 'CustomerRegistryBuild' }
+        sourceCommit = @{ value = $SourceCommit }
         webClientId = @{ value = $(if ($web) { $web.appId } else { '11111111-1111-1111-1111-111111111111' }) }
         apiClientId = @{ value = $(if ($api) { $api.appId } else { '22222222-2222-2222-2222-222222222222' }) }
         deployApplication = @{ value = $true }; infrastructureReady = @{ value = [bool]$foundation }
@@ -416,6 +559,7 @@ try {
     $runtimeSnapshot = $null
     $operation = if ($foundation) { 'ResumeAfterFoundation' } else { 'FreshInstall' }
     if ($foundation) {
+        if ($ImageSource -eq 'CustomerRegistryBuild') { $resolvedImage = Resolve-CustomerBuild }
         $appResources = @($inventory | Where-Object {
             $_.type -ieq 'Microsoft.App/containerApps' -and $_.name -ceq $foundation.properties.outputs.containerAppName.value
         })
@@ -439,6 +583,11 @@ try {
             'Expose and preauthorize DocIntel.Access; configure the final web redirect and runtime federation')
         Boundaries = @('No Graph admin consent or deployer self-elevation', 'No existing-resource adoption',
             'No email/Teams/private networking', 'Readiness is not a PDF/Ask AI acceptance test')
+        ImageSource = $ImageSource; SourceCommit = $SourceCommit
+        RetryFailedBuild = [bool]$RetryFailedBuild
+        BuildCosts = $(if ($ImageSource -eq 'CustomerRegistryBuild') {
+            'Customer Basic ACR plus ACR Tasks build compute; maximum build duration 1200 seconds.'
+        } else { 'No customer registry or build task.' })
     }
     $planHash = Get-CustomerHash $plan
     if ($Mode -eq 'Apply' -and $ExpectedPlanHash -cne $planHash) {
@@ -541,6 +690,10 @@ try {
     $receipt.PublicOrigin = $origin
     $receipt.WebClientId = $web.appId
     $receipt.ApiClientId = $api.appId
+    if ($ImageSource -eq 'CustomerRegistryBuild') {
+        $receipt.Stage = 'CustomerImageBuild'
+        $resolvedImage = Resolve-CustomerBuild -ApplyBuild
+    }
     $redirects = @(@($web.web.redirectUris) + @($redirect) | Where-Object { $_ } | Sort-Object -Unique)
     Invoke-CustomerGraph PATCH "applications/$($web.id)" @{ web = @{ redirectUris = $redirects } } | Out-Null
     $issuer = "https://login.microsoftonline.com/$directoryId/v2.0"
@@ -564,6 +717,7 @@ try {
     $receipt.Stage = 'Application'
     $parameters.deployApplication.value = $true
     $parameters.infrastructureReady.value = $true
+    $parameters.containerImage.value = $resolvedImage
     $parameterFile = Write-CustomerParameterFile @{ parameters = $parameters }
     $whatIfArguments[[Array]::IndexOf($whatIfArguments, '--parameters') + 1] = "@$parameterFile"
     $finalPlan = Invoke-CustomerAzure $whatIfArguments

@@ -11,7 +11,8 @@ $compiled = & az bicep build --file (Join-Path $root 'infra\customer.bicep') --s
 if ($LASTEXITCODE -ne 0) { throw 'Customer Bicep compilation failed.' }
 $template = ($compiled -join "`n") | ConvertFrom-Json -Depth 100
 $module = @($template.resources | Where-Object type -CEQ 'Microsoft.Resources/deployments')[0]
-if ($module.properties.parameters.enableContainerRegistry.value -ne $false -or
+if ($module.properties.parameters.enableContainerRegistry.value -cne "[parameters('buildImageInCustomerRegistry')]" -or
+    $template.parameters.buildImageInCustomerRegistry.defaultValue -ne $false -or
     $module.properties.parameters.reuseIdentityKey.value -cne "[parameters('infrastructureReady')]" -or
     $module.properties.parameters.deployRuntimeRoles.value -cne "[not(parameters('infrastructureReady'))]" -or
     $module.properties.parameters.deployModels.value -cne "[not(parameters('infrastructureReady'))]") {
@@ -70,6 +71,8 @@ foreach ($name in @('subscription', 'directory', 'owner', 'webId', 'apiId', 'web
 $f.image = 'ghcr.io/nsethi16/docintel-api@sha256:' + ('a' * 64)
 $f.groupId = "/subscriptions/$($f.subscription)/resourceGroups/rg-docintel-acme-prod"
 $f.runtimeId = "$($f.groupId)/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-di-acme-prod-fixture"
+$f.registry = 'fixtureacrcustomer'
+$f.registryId = "$($f.groupId)/providers/Microsoft.ContainerRegistry/registries/$($f.registry)"
 $f.calls = [Collections.Generic.List[object]]::new()
 $f.writes = [Collections.Generic.List[object]]::new()
 
@@ -83,6 +86,10 @@ function Reset-CustomerFixture {
     $global:DocIntelCustomerFixture.deployments = 0
     $global:DocIntelCustomerFixture.foundation = $null
     $global:DocIntelCustomerFixture.applicationExists = $false
+    $global:DocIntelCustomerFixture.sourceMode = $false
+    $global:DocIntelCustomerFixture.builds = 0
+    $global:DocIntelCustomerFixture.buildRunning = $false
+    $global:DocIntelCustomerFixture.tags = @{}
     foreach ($name in @('customer-installation.json', 'customer-result.json')) {
         $file = Join-Path $temporary $name
         if (Test-Path -LiteralPath $file) { Remove-Item -LiteralPath $file }
@@ -125,6 +132,7 @@ function az {
         'group show --name' {
             $tags = if ($f.foundation) { @{ 'docintel-customer' = 'acme'; 'docintel-environment' = 'prod'
                 'docintel-request' = $f.foundation.properties.parameters.installationRequestHash.value } } else { @{} }
+            foreach ($entry in $f.tags.GetEnumerator()) { $tags[$entry.Key] = $entry.Value }
             @{ location = 'westus'; tags = $tags }; break
         }
         'resource list --resource-group' {
@@ -135,6 +143,19 @@ function az {
         'rest --method *' {
             $method = $Arguments[[Array]::IndexOf($Arguments, '--method') + 1]
             $url = $Arguments[[Array]::IndexOf($Arguments, '--url') + 1]
+            if ($url.StartsWith("https://management.azure.com$($f.registryId)/runs/", [StringComparison]::Ordinal)) {
+                $tag = "source-$($f.foundation.properties.parameters.sourceCommit.value.Substring(0, 12))-$($f.foundation.properties.parameters.installationRequestHash.value.Substring(0, 12))"
+                $runId = ([uri]$url).Segments[-1]
+                if ($runId -cnotin @('build123', 'build124')) { throw 'Unexpected build run.' }
+                @{ id = "$($f.registryId)/runs/$runId"; properties = @{
+                    runId = $runId; runType = 'QuickBuild'
+                    status = $(if ($f.buildRunning) { 'Running' } elseif ($f.scenario -eq 'build-failed' -and
+                        $runId -ceq 'build123') { 'Failed' } else { 'Succeeded' })
+                    platform = @{ os = 'Linux'; architecture = 'amd64' }
+                    outputImages = @(@{ registry = $(if ($f.scenario -eq 'foreign-build') { 'other.azurecr.io' } else { "$($f.registry).azurecr.io" })
+                        repository = 'docintel-api'; tag = $tag; digest = 'sha256:' + ('a' * 64) })
+                } }; break
+            }
             if (-not $url.StartsWith('https://graph.microsoft.com/v1.0/', [StringComparison]::Ordinal)) {
                 throw 'Graph requests must stay on the fixed Microsoft Graph origin.'
             }
@@ -238,6 +259,9 @@ function az {
                 managedIdentityPrincipalId = @{ value = $f.principal }
                 managedIdentityClientId = @{ value = $f.runtimeClient }
                 managedIdentityResourceId = @{ value = $f.runtimeId }
+                containerRegistryName = @{ value = $f.registry }
+                containerRegistryLoginServer = @{ value = "$($f.registry).azurecr.io" }
+                containerRegistryResourceId = @{ value = $f.registryId }
                 containerAppName = @{ value = 'di-acme-prod-fixture' }
                 workspaceUrl = @{ value = 'https://fixture.azurecontainerapps.io/?tenant=acme' }
             } } }
@@ -246,6 +270,25 @@ function az {
             $deployment; break
         }
         'deployment sub show' { $f.foundation; break }
+        'acr build --registry' {
+            $f.writes.Add($Arguments); $f.builds++
+            $source = "https://github.com/Nsethi16/DocIntel.git#$($f.foundation.properties.parameters.sourceCommit.value)"
+            if ($source -cnotin $Arguments -or '--no-wait' -notin $Arguments -or '--no-logs' -notin $Arguments -or
+                $Arguments[[Array]::IndexOf($Arguments, '--timeout') + 1] -cne '1200') {
+                throw 'Customer builds must use only the pinned public commit with bounded execution and no raw logs.'
+            }
+            "build$($f.builds + 122)"; break
+        }
+        'tag update --resource-id' {
+            $f.writes.Add($Arguments)
+            if ($Arguments[3] -ine $f.groupId) { throw 'Build receipts must stay in the customer resource group.' }
+            for ($i = [Array]::IndexOf($Arguments, '--tags') + 1; $i -lt $Arguments.Count -and
+                -not $Arguments[$i].StartsWith('--', [StringComparison]::Ordinal); $i++) {
+                $name, $value = $Arguments[$i] -split '=', 2
+                $f.tags[$name] = $value
+            }
+            @{ properties = @{ tags = $f.tags } }; break
+        }
         'containerapp show --resource-group' {
             $settings = @{
                 AZURE_CLIENT_ID = $f.runtimeClient; Identity__DirectoryTenantId = $f.directory
@@ -265,9 +308,13 @@ function az {
             @{ identity = @{ userAssignedIdentities = @{ $f.runtimeId = @{
                 clientId = $f.runtimeClient; principalId = $f.principal
             } } }; properties = @{ latestRevisionName = 'new'; latestReadyRevisionName = 'new'
-                configuration = @{ activeRevisionsMode = 'Single'; ingress = @{ fqdn = 'fixture.azurecontainerapps.io'; transport = 'auto' } }
+                configuration = @{ activeRevisionsMode = 'Single'
+                    registries = @($(if ($f.sourceMode) { @{ server = "$($f.registry).azurecr.io"; identity = $f.runtimeId } }))
+                    ingress = @{ fqdn = 'fixture.azurecontainerapps.io'; transport = 'auto' } }
                 template = @{ containers = @(@{ name = 'docintel-api'
-                    image = $(if ($f.scenario -eq 'wrong-image') { 'wrong' } else { $f.image })
+                    image = $(if ($f.scenario -eq 'wrong-image') { 'wrong' } elseif ($f.sourceMode) {
+                        "$($f.registry).azurecr.io/docintel-api@sha256:" + ('a' * 64)
+                    } else { $f.image })
                     env = @($settings.GetEnumerator() | ForEach-Object { @{ name = $_.Key; value = $_.Value } })
                 }) }
             } }; break
@@ -282,6 +329,12 @@ function Invoke-WebRequest {
         [switch]$SkipHttpErrorCheck, [hashtable]$Headers)
     $f = $global:DocIntelCustomerFixture
     if ($Uri -ceq 'https://fixture.azurecontainerapps.io/health/ready') { return @{ StatusCode = 200 } }
+    if ($Uri -match '^https://github\.com/Nsethi16/DocIntel/archive/[a-f0-9]{40}\.tar\.gz$') {
+        if ($Method -cne 'Head' -or $MaximumRedirection -ne 5) { throw 'Source preflight must only inspect the pinned public archive.' }
+        return @{ StatusCode = $(if ($f.scenario -eq 'private-source') { 404 } else { 200 })
+            BaseResponse = @{ RequestMessage = @{ RequestUri = [uri]'https://codeload.github.com/Nsethi16/DocIntel/tar.gz/commit' } }
+            Headers = @{ 'Content-Type' = 'application/x-gzip' } }
+    }
     if ($MaximumRedirection -ne 0 -or $TimeoutSec -ne 30 -or -not $SkipHttpErrorCheck) {
         throw 'Registry verification must be bounded and must not follow redirects with credentials.'
     }
@@ -294,6 +347,10 @@ function Invoke-WebRequest {
             Headers = @{ 'Docker-Content-Digest' = 'sha256:' + ('a' * 64) } }
     }
     throw 'Unexpected HTTP request; customer setup must not access arbitrary origins.'
+}
+
+function Start-Sleep([int]$Seconds) {
+    if ($Seconds -ne 10) { throw 'Unexpected poll interval.' }
 }
 
 function Assert-CustomerFailure([hashtable]$Arguments, [string]$Message, [switch]$AllowWrites) {
@@ -402,8 +459,53 @@ try {
         $receipt = Get-Content -LiteralPath (Join-Path $temporary 'customer-result.json') -Raw | ConvertFrom-Json
         if ($receipt.Status -cne 'Incomplete') { throw 'Failed apply must not leave a success-shaped receipt.' }
     }
+    $sourceArguments = $arguments.Clone()
+    $sourceArguments.Remove('Image')
+    $sourceArguments.ImageSource = 'CustomerRegistryBuild'; $sourceArguments.SourceCommit = 'c' * 40
+    foreach ($scenario in @('private-source', 'build-failed', 'foreign-build', 'running-build')) {
+        Reset-CustomerFixture
+        $f.sourceMode = $true
+        $f.scenario = $scenario
+        if ($scenario -eq 'private-source') {
+            Assert-CustomerFailure $sourceArguments 'not publicly available'
+            continue
+        }
+        & $scriptPath @sourceArguments | Out-Null
+        $sourcePlan = Get-Content -LiteralPath (Join-Path $temporary 'customer-plan.json') -Raw | ConvertFrom-Json -Depth 100
+        $sourceApply = $sourceArguments.Clone()
+        $sourceApply.Mode = 'Apply'; $sourceApply.Confirmation = 'APPLY'; $sourceApply.ExpectedPlanHash = $sourcePlan.PlanHash
+        if ($scenario -eq 'running-build') {
+            $f.buildRunning = $true
+            Assert-CustomerFailure $sourceApply 'still running' -AllowWrites
+            if ($f.builds -ne 1 -or $f.applicationExists) { throw 'An interrupted build must not start an application.' }
+            $f.buildRunning = $false
+            & $scriptPath @sourceArguments -Resume | Out-Null
+            $sourcePlan = Get-Content -LiteralPath (Join-Path $temporary 'customer-plan.json') -Raw | ConvertFrom-Json -Depth 100
+            & $scriptPath @sourceArguments -Resume -Mode Apply -Confirmation APPLY -ExpectedPlanHash $sourcePlan.PlanHash | Out-Null
+            if ($f.builds -ne 1 -or -not $f.applicationExists -or -not $f.tags['docintel-image-digest']) {
+                throw 'Source-build resume must use the recorded run and deploy its digest, never queue a duplicate.'
+            }
+        } else {
+            $message = if ($scenario -eq 'build-failed') { 'status' } else { 'approved Linux' }
+            Assert-CustomerFailure $sourceApply $message -AllowWrites
+            if ($f.applicationExists) { throw 'A failed/unbound build must never become an application.' }
+            if ($scenario -eq 'build-failed') {
+                & $scriptPath @sourceArguments -Resume -RetryFailedBuild | Out-Null
+                $retryPlan = Get-Content -LiteralPath (Join-Path $temporary 'customer-plan.json') -Raw |
+                    ConvertFrom-Json -Depth 100
+                if (-not $retryPlan.Plan.RetryFailedBuild) { throw 'A paid retry must appear in the approved plan.' }
+                & $scriptPath @sourceArguments -Resume -RetryFailedBuild -Mode Apply -Confirmation APPLY `
+                    -ExpectedPlanHash $retryPlan.PlanHash | Out-Null
+                if ($f.builds -ne 2 -or -not $f.applicationExists) {
+                    throw 'Explicitly approved retry must replace only the failed build, not the foundation.'
+                }
+            }
+        }
+    }
     if ($ReleaseRoot) {
         Reset-CustomerFixture
+        $release = Get-Content -LiteralPath (Join-Path $ReleaseRoot 'release.json') -Raw | ConvertFrom-Json
+        $f.sourceMode = $release.schemaVersion -eq 2 -and $release.imageSource -ceq 'CustomerRegistryBuild'
         function Read-Host([string]$Prompt) {
             if ($Prompt -notlike '*Type APPLY*') { throw 'No GUID copying or unexpected prompts are allowed in guided setup.' }
             return 'APPLY'
@@ -424,7 +526,7 @@ try {
     Write-Output 'Customer installer execution and infrastructure contract tests passed.'
 }
 finally {
-    Remove-Item Function:\az, Function:\Invoke-WebRequest, Function:\Read-Host -ErrorAction SilentlyContinue
+    Remove-Item Function:\az, Function:\Invoke-WebRequest, Function:\Read-Host, Function:\Start-Sleep -ErrorAction SilentlyContinue
     Remove-Variable DocIntelCustomerFixture -Scope Global
     Remove-Item -LiteralPath $temporary -Recurse -Force
 }

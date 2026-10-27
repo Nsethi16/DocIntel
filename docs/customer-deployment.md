@@ -2,19 +2,26 @@
 
 ## Customer experience
 
-Use the versioned release ZIP, not the private source repository. In Azure Cloud Shell
+Use the versioned installer ZIP, not a local application build. In Azure Cloud Shell
 **PowerShell**, signed in to the customer directory:
 
-1. Download the ZIP from the approved public distribution release and verify its SHA-256
-   against that release's `checksums.txt`. Extract it into a new directory.
+1. Download the `customer-setup` artifact from the successful validation run, or an approved
+   distribution release. Verify the ZIP against its `checksums.txt` and extract into a new directory.
 2. Run `.\Start-DocIntelSetup.ps1`. Enter a customer short name and select the subscription.
    The production environment and West US region are defaults; parameters override them.
 3. Review the saved resource/directory plan and Azure pricing, then type `APPLY`.
 4. Open the reported customer workspace URL and sign in as the selected owner. Process a
    representative PDF and verify an Ask AI answer with real source citations.
 
-The ZIP includes the application image digest, full source commit, per-file hashes, and
-compiled ARM template. Customers do not need .NET, Docker, Bicep, a package-feed PAT,
+The default kit uses **CustomerRegistryBuild**: Azure builds the exact reviewed public
+source commit in a new private registry owned by the customer. It does not depend on a public
+GHCR image, another public repository, publisher credentials, or GitHub-to-Azure OIDC.
+The existing source repository must remain publicly readable for this explicit mode.
+It never sends a GitHub credential or privately accessible source to the build service.
+
+The ZIP includes the full source commit, image-source contract, per-file hashes, and
+compiled ARM template. The build's final SHA-256 image digest is captured before app deployment.
+Customers do not need .NET, Docker, Bicep, a package-feed PAT,
 GitHub Azure secrets, a GitHub deployment identity, or access to the application source.
 Internal manifest hashes detect corruption; the ZIP checksum from the trusted release
 page is the external trust anchor. Never execute an unverified download.
@@ -34,12 +41,18 @@ The operator needs Azure provisioning and runtime-role-assignment authority at t
 scopes, plus Entra authority to create/update the installation's applications. Those are
 separate permissions. The installer does not grant itself permissions, grant tenant-wide
 Graph application consent, or automatically register resource providers.
+The subscription-scoped entry point also requires permission to create subscription deployments
+and the selected resource group; resource-group Contributor alone is not sufficient for that entry point.
 
 Have the Azure administrator register Microsoft.App, Microsoft.OperationalInsights,
 Microsoft.ManagedIdentity, Microsoft.Storage, Microsoft.DocumentDB, Microsoft.KeyVault,
 and Microsoft.CognitiveServices. Review the region, model quota, data-processing geography
 and usage-dependent costs. The pinned model uses GlobalStandard processing; choosing a
 storage region alone does not establish a data-residency or compliance guarantee.
+CustomerRegistryBuild additionally requires Microsoft.ContainerRegistry registration and
+ACR Tasks availability in the subscription. Basic registry storage and remote build compute
+are billable and appear in the approval plan; a build has a 1,200-second service timeout.
+The normal source Dockerfile restores content-hashed locked packages without feed credentials.
 
 The first install requires a new or empty resource group. Each customer receives separate
 data resources, runtime identity and web/API registrations. The default initial owner is
@@ -82,6 +95,14 @@ keeps the original owner/image/settings and produces a new reviewable plan:
 - If the app already exists with the saved image, owner and identity/workspace bindings,
   resume only verifies production configuration and exact-revision/provider readiness.
   It does not overwrite app settings, change images, remove owners, or update registrations.
+- An interrupted customer-registry build resumes its saved ACR run. No new run is queued
+  once its ID has been recorded. The result must be exactly the requested repository/tag,
+  Linux AMD64 platform and a valid SHA-256 digest in the foundation's registry. The app
+  pulls that digest using its managed identity, never an admin password or mutable tag.
+- A terminal failed/canceled/timed-out build can be retried only with
+  `.\Start-DocIntelSetup.ps1 -CustomerSlug acme -RetryFailedBuild`. Resolve the Azure/build
+  error first, review the new paid-build plan, and approve again. Active or successful runs
+  are not replaced. Ongoing runs can outlive the local polling window; rerun the same kit.
 
 A running or **partially failed foundation** requires operator review of that Azure deployment;
 the tool deliberately does not blindly replay a partial data/key deployment. A changed owner,
@@ -94,6 +115,15 @@ confirms the exact plan hash; the installer recalculates it immediately before m
 Receipts survive a rejected or stale approval.
 
 ## Publisher setup and release plan
+
+The default source-build kit is available without this publisher setup. The repository's
+validation workflow produces a `customer-setup` artifact bound to the exact validated source
+commit. Download its ZIP, `checksums.txt` and instructions together. No application binary is
+published to a public registry, and no new public repository is created.
+
+The optional **PublicImage** channel avoids per-customer builds/registry costs by using an
+approved, digest-pinned public GHCR image. This separate channel requires explicit publication
+approval and the setup below; there is no silent fallback between image sources.
 
 The implementation provides `Build customer release` (`release-customer.yml`):
 
@@ -116,8 +146,10 @@ reviewers and main-only environment deployment policy. The public GHCR package's
 must also be explicitly approved/configured. Private-source GitHub Releases are not public
 distribution, and an ordinary source `GITHUB_TOKEN` cannot publish releases to another repository.
 
-Until that publisher configuration and a clean-subscription acceptance run are completed,
-the code is prepared for distribution, not an already published or proven one-click product.
+Until that publisher configuration is completed, the optional public-image channel is not
+published. The customer-owned build kit remains independently usable. A live deployment still
+requires the customer's permissions and approval; CI and mock execution are not proof of
+an actual customer's sign-in, document processing, or invoice.
 No repository visibility, package visibility, customer resource or existing deployment is
 changed merely by committing this implementation.
 
@@ -130,7 +162,8 @@ $setup = @{
     CustomerSlug = 'acme'
     CustomerName = 'Acme Legal'
     SubscriptionId = '<customer-subscription-id>'
-    Image = 'ghcr.io/nsethi16/docintel-api@sha256:<published-release-digest>'
+    ImageSource = 'CustomerRegistryBuild'
+    SourceCommit = '<reviewed-40-character-public-source-commit>'
     OutputDirectory = (Join-Path $HOME 'docintel-acme-setup')
 }
 .\scripts\Install-DocIntelCustomer.ps1 @setup
@@ -138,6 +171,9 @@ $setup = @{
     -Confirmation APPLY -ExpectedPlanHash '<reviewed-PlanHash>'
 # With the original state/bundle, repeat Preview/Apply with -Resume after interruption.
 ```
+
+For an approved published image instead, omit `ImageSource`/`SourceCommit` and supply
+`-Image ghcr.io/nsethi16/docintel-api@sha256:<published-release-digest>`.
 
 This advanced path compiles Bicep when `infra/customer.json` is absent, so it requires Bicep.
 `scripts/Setup-DocIntelGitHub.ps1` remains the separate existing-deployment adoption path.
