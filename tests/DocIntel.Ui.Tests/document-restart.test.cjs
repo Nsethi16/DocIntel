@@ -96,7 +96,12 @@ test('an uploaded document survives an API crash and resumes under a new fenced 
       } finally {
         clearTimeout(timer);
       }
-      const running = await (await fetch(api.url + accepted.statusUrl)).json();
+      let running;
+      for (let attempt = 0; attempt < 20; attempt++) {
+        running = await (await fetch(api.url + accepted.statusUrl)).json();
+        if (running.layoutAvailable || running.status === 'Failed') break;
+        await new Promise(resolve => setTimeout(resolve, 250));
+      }
       assert.equal(running.status, 'Running');
       assert.equal(running.executionAttempts, 1);
       assert.equal(running.layoutAvailable, true);
