@@ -2193,6 +2193,13 @@ let tenants = [];
       }
     }
 
+    function previousAskAiRunId(chat) {
+      const messages = Array.isArray(chat?.messages) ? chat.messages : [];
+      const latest = messages.findLast(message => message?.role === 'assistant' && !message.isError);
+      return typeof latest?.runId === 'string' && latest.runId.length > 0 && latest.runId.length <= 512
+        ? latest.runId : null;
+    }
+
     async function runCrossDocumentAskAi(customQuestion, resume = false) {
       if (!currentTenant || askAiLoading) return;
       loadTenantChats();
@@ -2229,7 +2236,7 @@ let tenants = [];
 
       try {
         if (!resume) {
-          chat.pendingAskAi.runId = await DocIntelAskAi.submit(tenantId, q);
+          chat.pendingAskAi.runId = await DocIntelAskAi.submit(tenantId, q, previousAskAiRunId(chat));
           saveAskAiChatForTenant(tenantId, chat, chatPartition);
         }
         const finalData = await DocIntelAskAi.waitForRun(tenantId, chat.pendingAskAi.runId, run => {
@@ -2240,12 +2247,15 @@ let tenants = [];
             if (progress) progress.textContent = askAiProgressText;
           }
         });
+        const completedRunId = chat.pendingAskAi.runId;
         delete chat.pendingAskAi;
         chat.messages.push({
           role: 'assistant',
           text: finalData.status === 'Failed' ? finalData.errorMessage || 'Ask AI could not complete this request.'
             : finalData.answer,
           isError: finalData.status === 'Failed',
+          runId: finalData.status === 'Completed' ? completedRunId : null,
+          analyses: finalData.status === 'Completed' && Array.isArray(finalData.analyses) ? finalData.analyses : [],
           citations: finalData.status === 'Completed' ? finalData.citations || [] : [],
           executedCosmosQueries: finalData.executedCosmosQueries || [],
           timestamp: new Date().toISOString()
@@ -2282,6 +2292,14 @@ let tenants = [];
       const args = reviewed ? [String(citation.jobId)] :
         [String(citation.jobId), Number.isSafeInteger(citation.sliceIndex) ? citation.sliceIndex : 0];
       return `data-click="${action}" data-args="${escapeHtml(JSON.stringify(args))}"`;
+    }
+
+    function openAskAiAnalysisCitation(citation) {
+      if (['HumanReviewStatus', 'HumanReviewedField'].includes(citation.evidenceKind)) {
+        jumpToHumanReview(citation.jobId);
+      } else {
+        jumpFromGraphToSlice(citation.jobId, citation.sliceIndex);
+      }
     }
 
     function formatMarkdownBold(text, citations) {
@@ -2328,7 +2346,7 @@ let tenants = [];
         return;
       }
 
-      const threadHtml = messages.map(m => {
+      const threadHtml = messages.map((m, messageIndex) => {
         if (m.role === 'user') {
           return `
             <div style="align-self:flex-end;background:var(--surface-soft);color:var(--text-primary);padding:10px 16px;border-radius:18px;font-size:14px;font-weight:500;max-width:82%;">
@@ -2336,15 +2354,18 @@ let tenants = [];
             </div>
           `;
         }
-        const cites = m.citations || [];
+        const cites = Array.isArray(m.citations)
+          ? m.citations.filter(citation => citation && typeof citation === 'object') : [];
         return `
-          <div style="align-self:stretch;display:flex;flex-direction:column;gap:10px;padding:4px 0 12px 0;border-bottom:1px solid var(--line);">
+          <div class="ask-response" style="align-self:stretch;display:flex;flex-direction:column;gap:10px;padding:4px 0 12px 0;border-bottom:1px solid var(--line);">
             <div class="insight-prose" ${m.isError ? 'role="alert"' : ''} style="margin:0;font-size:14px;line-height:1.65;">${formatMarkdownBold(m.text, cites)}</div>
+            ${!m.isError && Array.isArray(m.analyses) && m.analyses.length
+              ? `<div class="ask-analysis-host" data-ask-analysis="${messageIndex}"></div>` : ''}
             ${cites.length > 0 ? `
               <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
                 ${cites.map(c => `
                   <button type="button" class="text-link-btn" ${citationAction(c)} title="${escapeHtml(c.documentName)} · ${escapeHtml(c.customerName || '')}">
-                    [${c.citationNumber || ''}] ${escapeHtml(c.cleanName)} (${escapeHtml(c.pageRange)}) ↗
+                    [${escapeHtml(c.citationNumber || '')}] ${escapeHtml(c.cleanName)} (${escapeHtml(c.pageRange)}) ↗
                   </button>
                 `).join('')}
               </div>
@@ -2356,7 +2377,7 @@ let tenants = [];
       body.innerHTML = `
         <div class="ask-main-pane" style="justify-content:flex-start;">
           <div class="ask-minimal-stage" style="justify-content:space-between;flex:1;margin:0 auto;gap:24px;">
-            <div style="width:100%;display:flex;flex-direction:column;gap:18px;padding-bottom:28px;">
+            <div class="ask-thread" style="width:100%;display:flex;flex-direction:column;gap:18px;padding-bottom:28px;">
               ${threadHtml}
               ${chatIsLoading ? `<div id="askAiProgress" role="status" style="color:var(--text-secondary);font-size:13.5px;">${escapeHtml(askAiProgressText)}</div>` : ''}
               ${!chatIsLoading && chat?.pendingAskAi?.runId ? '<button type="button" class="text-link-btn" data-click="runCrossDocumentAskAi_arg_arg" data-args="[null,true]">Check pending response</button>' : ''}
@@ -2374,6 +2395,18 @@ let tenants = [];
           </div>
         </div>
       `;
+      const latestRunId = previousAskAiRunId(chat);
+      for (const [index, message] of messages.entries()) {
+        if (message.role === 'user' || message.isError ||
+          !Array.isArray(message.analyses) || !message.analyses.length) continue;
+        const host = body.querySelector(`[data-ask-analysis="${index}"]`);
+        if (!host) continue;
+        DocIntelAnalyses.render(host, message.analyses, message.citations, {
+          onCitation: openAskAiAnalysisCitation,
+          onFollowUp: !askAiLoading && !chat?.pendingAskAi?.runId && message.runId && message.runId === latestRunId
+            ? question => runCrossDocumentAskAi(question) : undefined
+        });
+      }
     }
 
     DocIntelActions.register({

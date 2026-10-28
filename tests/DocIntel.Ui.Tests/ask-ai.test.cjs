@@ -30,7 +30,7 @@ function runtime(responses = []) {
       setItem: (key, value) => storage.set(key, value)
     },
     fetch: async (url, options) => {
-      calls.push({ url, method: options.method || 'GET' });
+      calls.push({ url, method: options.method || 'GET', body: options.body ? JSON.parse(options.body) : undefined });
       const response = responses.shift();
       assert.ok(response, 'Unexpected request');
       if (response instanceof Error) throw response;
@@ -269,4 +269,153 @@ test('action arguments remain JSON data after browser entity decoding', () => {
     assert.equal(result, payload);
     assert.equal(app.context.injected, undefined);
   }
+});
+
+test('submission sends only the optional server run reference, never trusted browser history', async () => {
+  const app = runtime([{ runId: 'one' }, { runId: 'two' }]);
+  await app.context.DocIntelAskAi.submit('first', 'Question');
+  await app.context.DocIntelAskAi.submit('first', 'Follow-up', 'one');
+  assert.deepEqual(app.calls[0].body, { question: 'Question', replyChannel: { channelType: 'Web' } });
+  assert.deepEqual(app.calls[1].body, {
+    question: 'Follow-up', replyChannel: { channelType: 'Web' }, previousRunId: 'one'
+  });
+});
+
+test('completed analyses and run IDs persist, reload and continue only the active conversation', async () => {
+  const analyses = [{ analysisId: 'a1', title: 'Spend', visualization: 'table', rows: [] }];
+  const app = runtime([
+    { runId: 'first-run' }, { status: 'Completed', answer: 'First.', analyses },
+    { runId: 'second-run' }, { status: 'Completed', answer: 'Second.', analyses: [] }
+  ]);
+  loadPage(app);
+  await vm.runInContext("runCrossDocumentAskAi('Analyze spend')", app.context);
+  assert.equal(app.calls[0].body.previousRunId, undefined);
+  const first = JSON.parse(app.storage.get('docintel_chats_v2_test-user_first'))[0];
+  assert.equal(first.messages[1].runId, 'first-run');
+  assert.deepEqual(first.messages[1].analyses, analyses);
+  vm.runInContext('tenantChats = []; activeChatId = null; loadTenantChats(true);', app.context);
+  assert.equal(vm.runInContext('getActiveChat().messages[1].analyses[0].title', app.context), 'Spend');
+  await vm.runInContext("runCrossDocumentAskAi('Why the difference?')", app.context);
+  const secondPost = app.calls.filter(call => call.method === 'POST')[1];
+  assert.equal(secondPost.body.previousRunId, 'first-run');
+  assert.equal(secondPost.body.messages, undefined);
+  const second = JSON.parse(app.storage.get('docintel_chats_v2_test-user_first'))[0];
+  assert.equal(second.messages[3].runId, 'second-run');
+});
+
+test('follow-up context skips failures but never crosses chat, tenant or account boundaries', async () => {
+  const app = runtime();
+  loadPage(app);
+  const submitted = [];
+  app.context.DocIntelAskAi.submit = async (tenant, question, previousRunId) => {
+    submitted.push({ tenant, question, previousRunId });
+    return `new-${submitted.length}`;
+  };
+  app.context.DocIntelAskAi.waitForRun = async () => ({ status: 'Completed', answer: 'Done.', analyses: [] });
+  vm.runInContext(`
+    tenantChats[0].messages = [
+      { role: 'assistant', text: 'Previous answer', runId: 'same-chat-success', analyses: [] },
+      { role: 'assistant', text: 'Failure', runId: 'failed-run', isError: true }
+    ];
+  `, app.context);
+  await vm.runInContext("runCrossDocumentAskAi('Continue')", app.context);
+  assert.equal(submitted[0].previousRunId, 'same-chat-success');
+  vm.runInContext(`
+    tenantChats.push({ id: 'empty', title: 'New chat', messages: [] });
+    activeChatId = 'empty';
+  `, app.context);
+  await vm.runInContext("runCrossDocumentAskAi('Unrelated question')", app.context);
+  assert.equal(submitted[1].previousRunId, null);
+  vm.runInContext(`
+    currentTenant = { tenantId: 'second' };
+    loadTenantChats(true);
+  `, app.context);
+  await vm.runInContext("runCrossDocumentAskAi('Different tenant')", app.context);
+  assert.equal(submitted[2].tenant, 'second');
+  assert.equal(submitted[2].previousRunId, null);
+  vm.runInContext(`
+    DocIntelIdentity.chatPartition = 'another-account';
+    loadTenantChats(true);
+  `, app.context);
+  await vm.runInContext("runCrossDocumentAskAi('Different account')", app.context);
+  assert.equal(submitted[3].previousRunId, null);
+});
+
+test('legacy text-only chats keep rendering and start without a fabricated previous run', async () => {
+  const app = runtime([{ runId: 'fresh' }, { status: 'Completed', answer: 'New answer.' }]);
+  loadPage(app);
+  vm.runInContext(`
+    tenantChats[0].messages.push({ role: 'assistant', text: 'Legacy answer.' });
+    globalThis.body = { innerHTML: '' };
+    renderCrossDocumentAskTab(body);
+  `, app.context);
+  assert.match(app.context.body.innerHTML, /Legacy answer/);
+  assert.doesNotMatch(app.context.body.innerHTML, /data-ask-analysis/);
+  await vm.runInContext("runCrossDocumentAskAi('New question')", app.context);
+  assert.equal(app.calls[0].body.previousRunId, undefined);
+});
+
+test('resuming a pending analytical run persists its original ID and analyses without resubmitting', async () => {
+  const analyses = [{ title: 'Recovered analysis', visualization: 'table', rows: [] }];
+  const app = runtime([{ status: 'Completed', answer: 'Recovered.', analyses }]);
+  loadPage(app);
+  vm.runInContext(`
+    tenantChats[0].messages.push({ role: 'user', text: 'Hi' });
+    tenantChats[0].pendingAskAi = { question: 'Hi', runId: 'original-run' };
+  `, app.context);
+  await vm.runInContext('runCrossDocumentAskAi(null, true)', app.context);
+  const chat = JSON.parse(app.storage.get('docintel_chats_v2_test-user_first'))[0];
+  assert.equal(app.calls.filter(call => call.method === 'POST').length, 0);
+  assert.equal(chat.messages[1].runId, 'original-run');
+  assert.deepEqual(chat.messages[1].analyses, analyses);
+});
+
+test('rich conversation cards use existing citation actions and offer context only on the latest successful answer', () => {
+  const { createDocument, all } = require('./helpers/analysis-dom.cjs');
+  const app = runtime();
+  loadPage(app);
+  app.context.document = createDocument();
+  const hosts = new Map();
+  app.context.body = {
+    innerHTML: '',
+    querySelector(selector) {
+      if (!hosts.has(selector)) hosts.set(selector, app.context.document.createElement('div'));
+      return hosts.get(selector);
+    }
+  };
+  app.context.analysis = {
+    title: 'Totals', visualization: 'bar', xColumn: 'name', yColumn: 'amount',
+    columns: [{ key: 'name', label: 'Name', kind: 'text' }, { key: 'amount', label: 'Amount', kind: 'number' }],
+    rows: [{ cells: { name: 'Vendor', amount: 2 }, citationNumbers: [1, 2] }]
+  };
+  app.context.citations = [
+    { citationNumber: 1, jobId: 'source', sliceIndex: 3 },
+    { citationNumber: 2, jobId: 'review', sliceIndex: 0, evidenceKind: 'HumanReviewedField' }
+  ];
+  const opened = [];
+  const followUps = [];
+  app.context.recordCitation = (...args) => opened.push(args);
+  app.context.recordQuestion = question => followUps.push(question);
+  vm.runInContext(`
+    jumpFromGraphToSlice = (job, slice) => recordCitation(job, slice);
+    jumpToHumanReview = job => recordCitation(job);
+    tenantChats[0].messages = [
+      { role: 'assistant', text: 'Old', runId: 'old', analyses: [analysis], citations },
+      { role: 'assistant', text: 'Latest [1]', runId: 'latest', analyses: [analysis], citations }
+    ];
+    renderCrossDocumentAskTab(body);
+    runCrossDocumentAskAi = question => recordQuestion(question);
+  `, app.context);
+  const old = hosts.get('[data-ask-analysis="0"]');
+  const latest = hosts.get('[data-ask-analysis="1"]');
+  const buttons = host => all(host, item => item.tagName === 'button');
+  assert.equal(buttons(old).filter(item => item.className === 'ask-analysis-followup').length, 0);
+  const sources = buttons(latest).filter(item => item.className === 'ask-analysis-source');
+  sources[0].click();
+  sources[1].click();
+  assert.deepEqual(opened, [['source', 3], ['review']]);
+  buttons(latest).find(item => item.className === 'ask-analysis-followup').click();
+  assert.match(followUps[0], /Totals/);
+  assert.match(app.context.body.innerHTML, /insight-prose/);
+  assert.match(app.context.body.innerHTML, /ask-pill-bar/);
 });

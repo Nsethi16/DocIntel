@@ -25,11 +25,14 @@
     return data;
   }
 
-  async function submit(tenantId, question) {
+  async function submit(tenantId, question, previousRunId = null) {
     const data = await requestJson(runUrl(tenantId), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ question, replyChannel: { channelType: 'Web' } })
+      body: JSON.stringify({
+        question, replyChannel: { channelType: 'Web' },
+        ...(previousRunId ? { previousRunId } : {})
+      })
     });
     if (typeof data.runId !== 'string' || !data.runId) {
       throw new Error('Ask AI did not return a run identifier. The question was not automatically retried.');

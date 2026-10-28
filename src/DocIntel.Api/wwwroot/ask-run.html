@@ -7,7 +7,9 @@
   <script src="/shared/shell.js"></script>
   <link rel="stylesheet" href="/shared/shell.css">
   <link rel="stylesheet" href="/ask-run.css">
+  <link rel="stylesheet" href="/ask-analysis.css">
   <script src="/identity.js" defer></script>
+  <script src="/ask-analysis.js" defer></script>
   <script src="/ask-run.js" defer></script>
 </head>
 <body>
@@ -20,6 +22,7 @@
     <p id="delivery"></p>
     <button id="refresh" type="button">Refresh Status</button>
     <section aria-label="Answer"><div id="answer"></div></section>
+    <div id="analyses" class="ask-analysis-host"></div>
     <section aria-label="Cited Sources"><h2>Cited Sources</h2><ol id="citations"></ol></section>
   </main>
 </body>

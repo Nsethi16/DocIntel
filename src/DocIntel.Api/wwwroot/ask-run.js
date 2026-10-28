@@ -38,6 +38,7 @@
         'The answer will be delivered to the original conversation after processing.';
       const citations = document.getElementById('citations');
       citations.replaceChildren();
+      const citationLinks = new Map();
       for (const citation of result.citations || []) {
         const item = document.createElement('li');
         const link = document.createElement('a');
@@ -48,6 +49,7 @@
             : `${prefix}/jobs/${encodeURIComponent(citation.jobId)}/slices/${citation.sliceIndex}/pdf`;
         }
         item.appendChild(link);
+        citationLinks.set(citation.citationNumber, link);
         if (Number.isSafeInteger(citation.reviewVersion)) {
           const origin = document.createElement('p');
           origin.textContent = `Historical review version ${citation.reviewVersion}; this workflow is retired. Ask a new question.`;
@@ -65,6 +67,10 @@
         }
         citations.appendChild(item);
       }
+      globalThis.DocIntelAnalyses?.render(document.getElementById('analyses'),
+        result.status === 'Completed' ? result.analyses : [], result.citations, {
+          onCitation: citation => citationLinks.get(citation.citationNumber)?.click()
+        });
       const pending = ['Queued', 'Running'].includes(result.status) ||
         (result.status === 'Completed' && ['Pending', 'Sending'].includes(delivery?.status));
       if (pending && Date.now() < deadline) timer = setTimeout(load, 5000);
@@ -74,6 +80,7 @@
       document.getElementById('delivery').textContent = '';
       document.getElementById('answer').textContent = '';
       document.getElementById('citations').replaceChildren();
+      document.getElementById('analyses').replaceChildren();
       status.textContent = `${error.message} Use Refresh status to check this question again; no new question will be submitted.`;
     } finally {
       loading = false;

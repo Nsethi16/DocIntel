@@ -112,6 +112,15 @@ public sealed class AskAiRun
     [JsonPropertyName("answer")]
     public string? Answer { get; set; }
 
+    [JsonPropertyName("previousRunId")]
+    public string? PreviousRunId { get; init; }
+
+    [JsonPropertyName("analyses")]
+    public List<AskAiAnalysis> Analyses { get; set; } = [];
+
+    [JsonPropertyName("sourceVersions")]
+    public Dictionary<string, string> SourceVersions { get; set; } = new(StringComparer.Ordinal);
+
     [JsonPropertyName("executedCosmosQueries")]
     public List<string> ExecutedCosmosQueries { get; set; } = [];
 
@@ -474,7 +483,7 @@ public sealed class AskAiOrchestrator
         {
           "type": "object",
           "additionalProperties": false,
-          "required": ["kind", "answer", "evidenceIds"],
+          "required": ["kind", "answer", "evidenceIds", "analysisIds"],
           "properties": {
             "kind": {
               "type": "string",
@@ -483,6 +492,11 @@ public sealed class AskAiOrchestrator
             "answer": {
               "type": "string",
               "description": "A non-empty Markdown answer. Every document-specific answer, including a document list, cites inspected evidence with [1], [2], etc."
+            },
+            "analysisIds": {
+              "type": "array",
+              "description": "At most four exact analysisId values returned by analyze_evidence. Use [] when no calculation or visualization is helpful. Never invent datasets or chart values.",
+              "items": { "type": "string" }
             },
             "evidenceIds": {
               "type": "array",
@@ -544,6 +558,7 @@ public sealed class AskAiOrchestrator
     private readonly IEnumerable<IAskAiToolProvider> _toolProviders;
     private readonly ILogger<AskAiOrchestrator> _logger;
     private readonly ITenantAccessResolver? _accessResolver;
+    private readonly IAskAiRunStore? _runStore;
 
     public bool CanAutomaticallyReplay => !_toolProviders.Any();
 
@@ -553,7 +568,8 @@ public sealed class AskAiOrchestrator
         IModelCatalog modelCatalog,
         IEnumerable<IAskAiToolProvider>? toolProviders,
         ILogger<AskAiOrchestrator> logger,
-        ITenantAccessResolver? accessResolver = null, ReviewService? reviews = null, IReviewStore? reviewStore = null)
+        ITenantAccessResolver? accessResolver = null, ReviewService? reviews = null, IReviewStore? reviewStore = null,
+        IAskAiRunStore? runStore = null)
     {
         _harnessStore = harnessStore ?? throw new ArgumentNullException(nameof(harnessStore));
         _jobStore = jobStore ?? throw new ArgumentNullException(nameof(jobStore));
@@ -561,6 +577,7 @@ public sealed class AskAiOrchestrator
         _toolProviders = toolProviders?.ToArray() ?? [];
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _accessResolver = accessResolver;
+        _runStore = runStore;
     }
 
     public async Task<AskAiRun> ExecuteRunAsync(
@@ -570,7 +587,8 @@ public sealed class AskAiOrchestrator
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentException.ThrowIfNullOrWhiteSpace(run.TenantId);
-        var validationError = AskAiRequestValidator.GetError(run.Question, run.ReplyChannel.CallbackWebhookUrl);
+        var validationError = AskAiRequestValidator.GetError(
+            run.Question, run.ReplyChannel.CallbackWebhookUrl, run.PreviousRunId);
         if (validationError is not null)
         {
             throw new InvalidOperationException(validationError);
@@ -591,6 +609,10 @@ public sealed class AskAiOrchestrator
         }
 
         var initialAccess = await ResolveAccessAsync(cancellationToken);
+        var history = run.PreviousRunId is null ? Array.Empty<AskAiRun>() :
+            (await AskAiConversationContext.ReadHistoryAsync(run,
+                _runStore ?? throw new InvalidOperationException("Conversation storage is unavailable."),
+                _jobStore, initialAccess, cancellationToken)).ToArray();
         if (tenant.Agent?.IsValid != true) throw new InvalidDataException("The agent presentation settings are invalid.");
         run.AgentProfile = tenant.Agent with { };
         run.AgentHarnessVersion = tenant.HarnessVersion;
@@ -614,6 +636,14 @@ public sealed class AskAiOrchestrator
         var systemPrompt = AskAiPromptBuilder.BuildSystemPrompt(tenant);
         var allowedJobIds = new HashSet<string>(StringComparer.Ordinal);
         var evidence = new Dictionary<string, AskAiCitation>(StringComparer.Ordinal);
+        var analysisEvidence = new Dictionary<string, AskAiAnalysisEvidence>(StringComparer.Ordinal);
+        var computedAnalyses = new Dictionary<string, AskAiAnalysis>(StringComparer.Ordinal);
+        var sourceVersions = new Dictionary<string, string>(StringComparer.Ordinal);
+        var incompleteSearches = new Dictionary<string, bool>(StringComparer.Ordinal);
+        foreach (var previous in history)
+            foreach (var id in previous.ReferencedJobIds.Concat(previous.Citations.Select(citation => citation.JobId)))
+                allowedJobIds.Add(id);
+        run.ReferencedJobIds = allowedJobIds.Order(StringComparer.Ordinal).ToList();
         Exception? retrievalFailure = null;
         var toolCalls = 0;
 
@@ -629,7 +659,7 @@ public sealed class AskAiOrchestrator
         void CheckBudget()
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (++toolCalls > 24)
+            if (++toolCalls > 64)
             {
                 throw new InvalidOperationException("The Ask AI tool-call limit was reached. Narrow the question.");
             }
@@ -649,6 +679,11 @@ public sealed class AskAiOrchestrator
                 {
                     allowedJobIds.Add(document.JobId);
                 }
+                if (allowedJobIds.Count > 200)
+                    throw new InvalidOperationException("The Ask AI document scope limit was reached. Narrow the question.");
+                var searchKey = System.Text.Json.JsonSerializer.Serialize(new
+                    { query.SearchText, query.DocumentType, query.Entities });
+                incompleteSearches[searchKey] = page.ContinuationToken is not null;
 
                 run.ExecutedCosmosQueries.Add(compiled.Sql);
                 run.DocumentsEvaluated = allowedJobIds.Count;
@@ -764,6 +799,9 @@ public sealed class AskAiOrchestrator
                         p.EvaluatedAtUtc
                     })
                 };
+                sourceVersions.TryAdd(job.JobId, AskAiConversationContext.Fingerprint(job));
+                analysisEvidence.Add(evidenceId, new AskAiAnalysisEvidence(sourceText,
+                    $"{job.OriginalSha256 ?? job.JobId}:{slice.StartPage}-{slice.EndPage}"));
                 if (JsonSerializer.Serialize(result).Length > 32_000)
                 {
                     throw new InvalidOperationException("The slice results exceed the supported evidence size.");
@@ -779,6 +817,67 @@ public sealed class AskAiOrchestrator
             }
         }
 
+        async Task<object> BrowseDocumentsAsync(DocumentQuery query, CancellationToken ct)
+        {
+            var page = await SearchDocumentsAsync(query, ct);
+            var overviews = new List<object>();
+            foreach (var reference in page.Documents)
+            {
+                var access = await ResolveAccessAsync(ct);
+                if (!access.CanReadDocument(reference.JobId))
+                    throw new UnauthorizedAccessException("Document access changed during research.");
+                var job = await _jobStore.GetJobAsync(reference.JobId, ct, tenant.TenantId);
+                if (job is not { Status: JobStatus.Completed }) throw new AskAiSourceChangedException();
+                sourceVersions.TryAdd(job.JobId, AskAiConversationContext.Fingerprint(job));
+                overviews.Add(new
+                {
+                    reference.JobId, reference.FileName, reference.TotalPages, reference.SliceCount,
+                    summaryPreview = job.PacketSummary?[..Math.Min(job.PacketSummary.Length, 500)],
+                    summaryShortened = job.PacketSummary?.Length > 500,
+                    documentTypes = job.Segments.Select(slice => slice.IdentifiedDocumentName)
+                        .Where(name => !String.IsNullOrWhiteSpace(name)).Distinct().Take(8),
+                    fieldNames = job.Segments.SelectMany(slice => slice.ExtractedEntities.Select(entity => entity.Name))
+                        .Distinct(StringComparer.OrdinalIgnoreCase).Take(20)
+                });
+            }
+            return new
+            {
+                documents = overviews, page.ContinuationToken,
+                notice = "Overviews support meaning-based discovery, not citations. Inspect original source before using facts."
+            };
+        }
+
+        async Task<object> AnalyzeEvidenceAsync(AskAiAnalysisRequest request, CancellationToken ct)
+        {
+            var timer = Stopwatch.StartNew();
+            var access = await ResolveAccessAsync(ct);
+            foreach (var item in evidence.Values)
+                if (!access.CanReadDocument(item.JobId))
+                    throw new UnauthorizedAccessException("Document access changed during analysis.");
+            if (computedAnalyses.Count >= 4)
+                return new { error = "At most four analytical datasets can be produced per question." };
+            try
+            {
+                var id = $"a{computedAnalyses.Count + 1}";
+                var analysis = AskAiAnalysisEngine.Compute(id, request, analysisEvidence);
+                analysis.Coverage.DocumentsMatched = allowedJobIds.Count;
+                analysis.Coverage.DocumentsInspected = evidence.Values.Select(item => item.JobId).Distinct().Count();
+                analysis.Coverage.HasMoreDocuments = incompleteSearches.Values.Any(incomplete => incomplete);
+                if (JsonSerializer.SerializeToUtf8Bytes(computedAnalyses.Values.Append(analysis)).Length > 256_000)
+                    throw new ArgumentException("Analytical results exceed the supported size; use fewer rows or aggregate them.");
+                computedAnalyses.Add(id, analysis);
+                await RecordStepAsync("analyze_evidence", timer, ct);
+                return analysis;
+            }
+            catch (Exception exception) when (exception is ArgumentException or OverflowException)
+            {
+                run.Steps.Add(new AskAiStepTrace("analyze_evidence", null, timer.Elapsed.TotalMilliseconds,
+                    "Analysis input was rejected. No calculated result was published."));
+                return new { error = exception is OverflowException
+                    ? "The calculation exceeds the supported decimal range." : exception.Message };
+            }
+        }
+
         var tools = new List<AIFunction>
         {
             AIFunctionFactory.Create(SearchDocumentsAsync, "search_documents",
@@ -789,7 +888,23 @@ public sealed class AskAiOrchestrator
             AIFunctionFactory.Create(InspectDocumentSliceAsync, "inspect_document_slice",
                 "Read one previously found document slice and receive a server evidenceId. " +
                 "Results include original text, insights, entities, structured data, and prompt-column outcomes. " +
-                "Use nextTextOffset to read more source text.")
+                "Use nextTextOffset to read more source text."),
+            AIFunctionFactory.Create(BrowseDocumentsAsync, "browse_documents",
+                "Discover relevant documents by meaning from file/document summary previews and field names. " +
+                "Accepts the same bounded query as search_documents; use null searchText and [] entities to browse. " +
+                "Follow continuation tokens and then inspect matching logical documents; previews are not evidence."),
+            AIFunctionFactory.Create(AnalyzeEvidenceAsync, "analyze_evidence",
+                "Compute a source-backed table or chart. Operation: rows, sum, average, count, min, max or outliers. " +
+                "Visualization: table, bar or line. Supply 1-8 columns with unique lowercase keys; kind text/number/date; " +
+                "numberFormat dot-decimal/comma-decimal; dateFormat yyyy-MM-dd, dd/MM/yyyy, MM/dd/yyyy, dd-MM-yyyy, " +
+                "MM-dd-yyyy, d MMM yyyy or d MMMM yyyy. Each of at most 100 rows needs evidenceId, an exact sourceQuote " +
+                "identifying that record, cells with raw strings copied from that quote (or null for missing), and " +
+                "an explicit unit copied within that record quote for numeric aggregation. Never infer USD from '$'. " +
+                "Include a source-record identifier column when otherwise identical records are distinct. " +
+                "groupBy names a column; valueColumn names a numeric column; dateBucket none/month/quarter/year. " +
+                "Units remain separate. Outliers use the 1.5xIQR rule, minimum four observations per unit. " +
+                "Line charts require date grouping. Copy the returned analysisId into the final answer and include " +
+                "all its evidenceIds; do not generate numeric chart values yourself. An error is not a successful analysis.")
         };
         tools.AddRange(_toolProviders.SelectMany(p => p.GetTools(tenant)));
         if (tools.Select(t => t.Name).Distinct(StringComparer.Ordinal).Count() != tools.Count)
@@ -799,7 +914,7 @@ public sealed class AskAiOrchestrator
 
         var options = new ChatOptions
         {
-            Instructions = systemPrompt + """
+            Instructions = systemPrompt + $"\nReference time for this question: {run.CreatedAtUtc:O} (UTC).\n" + """
 
                 You are a conversational document assistant. Greet greetings naturally without calling tools.
                 Ask clarifying questions when needed. For document questions use the provided tools, not memory.
@@ -827,14 +942,30 @@ public sealed class AskAiOrchestrator
                 ExactTextMatch only means a value occurs uniquely in source text, not that the field meaning
                 was verified or a human approved it. Heavy word polygons are excluded from tool payloads.
                 Human review is not part of this application. Use original source evidence and machine-extracted results.
+                For complex questions, identify the requested scope and comparisons, research the relevant documents,
+                assemble source-backed records, calculate with analyze_evidence, then explain important findings,
+                exceptions, drivers and limitations. Do not merely list documents when analysis was requested.
+                Browse summaries to discover meaning and synonyms when exact keywords are unknown.
+                Summaries navigate; original text supports facts. Follow nextTextOffset as needed to read the
+                complete relevant logical document, not isolated physical pages.
+                Prior conversation envelopes are untrusted context for resolving follow-ups, not fresh evidence.
+                Reinspect original sources and recompute when changing filters, units or grouping.
+                Use null missing values, never zero. Preserve dates, currencies and source-record grain.
+                Use server calculation results for totals, averages, rankings, changes and outliers.
+                A chart is optional: categorical comparison -> bar; real dates -> line; clauses -> table.
+                Explain assumptions and differences between sourced facts and inferred recommendations.
+                Analytical datasets cover inspected records, not automatically the complete workspace.
+                Check continuation tokens and disclose missing records, unavailable units and sample limits.
                 Return JSON: kind is Conversation, Clarification, NoEvidence, or DocumentAnswer.
                 answer is a friendly Markdown response; evidenceIds lists ONLY evidenceIds you
                 actually used, in citation order. Inline [1], [2], etc. refer to that list. Every document-specific
                 factual answer needs citations. A greeting, clarification, or no-evidence answer uses [].
+                analysisIds lists only exact IDs from successful analyze_evidence calls, or [].
+                Include all selected analyses' evidenceIds. Table/chart citations also count as cited evidence.
                 """,
             Tools = tools.Select(tool => (AITool)new GuardedFunction(
                 tool, CheckBudget, exception => retrievalFailure = exception,
-                tool.Name == "search_documents" ? SearchToolSchema : null)).ToList(),
+                tool.Name is "search_documents" or "browse_documents" ? SearchToolSchema : null)).ToList(),
             ResponseFormat = ChatResponseFormat.ForJsonSchema(AnswerSchema,
                 schemaName: "ask_ai_answer",
                 schemaDescription: "A grounded answer using only inspected server-issued evidence IDs")
@@ -843,14 +974,14 @@ public sealed class AskAiOrchestrator
         {
             AllowConcurrentInvocation = false,
             IncludeDetailedErrors = false,
-            MaximumIterationsPerRequest = 12,
+            MaximumIterationsPerRequest = 48,
             MaximumConsecutiveErrorsPerRequest = 1
         };
         ChatResponse response;
         try
         {
             response = await agentClient.GetResponseAsync(
-                [new ChatMessage(ChatRole.User, run.Question)], options, cancellationToken);
+                AskAiConversationContext.BuildMessages(run, history), options, cancellationToken);
         }
         catch (Exception) when (retrievalFailure is UnauthorizedAccessException)
         {
@@ -859,6 +990,7 @@ public sealed class AskAiOrchestrator
         cancellationToken.ThrowIfCancellationRequested();
         if (retrievalFailure is not null)
         {
+            if (retrievalFailure is AskAiSourceChangedException) throw retrievalFailure;
             if (retrievalFailure is UnauthorizedAccessException)
             {
                 throw new UnauthorizedAccessException("Document access changed during processing.", retrievalFailure);
@@ -873,20 +1005,33 @@ public sealed class AskAiOrchestrator
         if (answer is null || answer.Kind is null || !Enum.IsDefined(answer.Kind.Value) ||
             String.IsNullOrWhiteSpace(answer.Answer) ||
             answer.Answer.Length > 64_000 || answer.EvidenceIds is null ||
-            answer.EvidenceIds.Distinct(StringComparer.Ordinal).Count() != answer.EvidenceIds.Count)
+            answer.EvidenceIds.Distinct(StringComparer.Ordinal).Count() != answer.EvidenceIds.Count ||
+            answer.AnalysisIds is null || answer.AnalysisIds.Count > 4 ||
+            answer.AnalysisIds.Distinct(StringComparer.Ordinal).Count() != answer.AnalysisIds.Count ||
+            answer.AnalysisIds.Any(id => !computedAnalyses.ContainsKey(id)))
         {
             throw new InvalidOperationException("The model returned an invalid answer or unrecognized citation.");
         }
         if (answer.EvidenceIds.Any(id => !evidence.ContainsKey(id)))
             throw new InvalidOperationException("The model cited evidence that was not inspected.");
         if ((answer.Kind == AgentAnswerKind.DocumentAnswer && answer.EvidenceIds.Count == 0) ||
-            (answer.Kind != AgentAnswerKind.DocumentAnswer && answer.EvidenceIds.Count > 0))
+            (answer.Kind != AgentAnswerKind.DocumentAnswer &&
+                (answer.EvidenceIds.Count > 0 || answer.AnalysisIds.Count > 0)))
         {
             throw new InvalidOperationException("Document answers require evidence; conversational answers do not.");
         }
 
         var citedNumbers = Regex.Matches(answer.Answer, @"\[(\d+)\]")
             .Select(m => Int32.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).ToHashSet();
+        var selectedAnalyses = answer.AnalysisIds.Select(id => computedAnalyses[id]).ToList();
+        foreach (var analysis in selectedAnalyses)
+        {
+            if (analysis.EvidenceIds.Any(id => !answer.EvidenceIds.Contains(id, StringComparer.Ordinal)))
+                throw new InvalidOperationException("The model cited evidence that was not inspected.");
+            foreach (var id in analysis.EvidenceIds) citedNumbers.Add(answer.EvidenceIds.IndexOf(id) + 1);
+            foreach (var row in analysis.Rows)
+                row.CitationNumbers = row.EvidenceIds.Select(id => answer.EvidenceIds.IndexOf(id) + 1).ToList();
+        }
         if (!citedNumbers.SetEquals(Enumerable.Range(1, answer.EvidenceIds.Count)))
         {
             throw new InvalidOperationException("The answer's citation markers do not match its evidence.");
@@ -897,6 +1042,12 @@ public sealed class AskAiOrchestrator
             if (!finalAccess.CanReadDocument(id) ||
                 await _jobStore.GetJobAsync(id, cancellationToken, tenant.TenantId) is not { Status: JobStatus.Completed })
                 throw new UnauthorizedAccessException("A document used by this answer is no longer available.");
+        foreach (var (id, version) in sourceVersions)
+        {
+            var current = await _jobStore.GetJobAsync(id, cancellationToken, tenant.TenantId);
+            if (current is null || AskAiConversationContext.Fingerprint(current) != version)
+                throw new AskAiSourceChangedException();
+        }
         if (run.ChannelDelivery is not null &&
             ChannelDelivery.GetAccessFingerprint(initialAccess) != ChannelDelivery.GetAccessFingerprint(finalAccess))
             throw new UnauthorizedAccessException("Permissions changed before the channel answer completed.");
@@ -908,9 +1059,12 @@ public sealed class AskAiOrchestrator
         if (run.ChannelDelivery is not null)
             run.ChannelDelivery.AccessFingerprint = ChannelDelivery.GetAccessFingerprint(finalAccess);
         run.Answer = answer.Answer;
-        run.EmailHtmlBody = FormatEmailHtmlResponse(run.AgentProfile.DisplayName, run.Question, answer.Answer, run.Citations);
+        run.Analyses = selectedAnalyses;
+        run.SourceVersions = sourceVersions;
+        var channelAnswer = answer.Answer + FormatAnalysisFallback(run.Analyses);
+        run.EmailHtmlBody = FormatEmailHtmlResponse(run.AgentProfile.DisplayName, run.Question, channelAnswer, run.Citations);
         run.TeamsAdaptiveCardJson = FormatTeamsAdaptiveCardJson(
-            run.AgentProfile.DisplayName, run.Question, answer.Answer, run.Citations);
+            run.AgentProfile.DisplayName, run.Question, channelAnswer, run.Citations);
         run.Status = JobStatus.Completed;
         run.CompletedAtUtc = DateTimeOffset.UtcNow;
         _logger.LogInformation("Ask AI run {RunId} completed with {ToolCalls} tool calls and {Citations} citations.",
@@ -972,6 +1126,26 @@ public sealed class AskAiOrchestrator
 
         [JsonPropertyName("evidenceIds")]
         public List<string> EvidenceIds { get; set; } = [];
+        [JsonPropertyName("analysisIds")]
+        public List<string> AnalysisIds { get; set; } = [];
+    }
+
+    internal static string FormatAnalysisFallback(IReadOnlyList<AskAiAnalysis> analyses)
+    {
+        if (analyses.Count == 0) return String.Empty;
+        var blocks = analyses.Select(analysis =>
+        {
+            var rows = analysis.Rows.Take(10).Select(row => String.Join("; ", analysis.Columns.Select(column =>
+            {
+                row.Cells.TryGetValue(column.Key, out var value);
+                var text = Convert.ToString(value, System.Globalization.CultureInfo.InvariantCulture) ?? "Not available";
+                return $"{column.Label}: {(text.Length > 120 ? text[..117] + "..." : text)}";
+            })) + " " + String.Join(" ", row.CitationNumbers.Select(number => $"[{number}]")));
+            return analysis.Title + "\n" + String.Join("\n", rows) + "\n" +
+                $"Showing {Math.Min(analysis.Rows.Count, 10)} of {analysis.Rows.Count} rows. " +
+                "Full tables and visualizations are available in the web answer.\n" + String.Join("\n", analysis.Notes);
+        });
+        return "\n\n" + String.Join("\n\n", blocks);
     }
 
     internal static string FormatEmailHtmlResponse(

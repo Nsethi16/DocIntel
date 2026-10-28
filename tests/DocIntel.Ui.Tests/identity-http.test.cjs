@@ -533,6 +533,29 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         assert.equal((await request(tenantPath + '/ask/runs/now-forbidden-citation', reader)).status, 404);
         assert.equal((await request(tenantPath + '/ask/runs/owned-by-another-user', administrator)).status, 200);
       });
+      await t.test('follow-up requests cannot adopt another actor or workspace conversation', async () => {
+        for (const token of [reader, administrator]) {
+          assert.equal((await request(tenantPath + '/ask/runs', token, 'POST', {
+            question: 'Continue the earlier analysis', previousRunId: 'owned-by-another-user'
+          })).status, 404);
+        }
+        assert.equal((await request(tenantPath + '/ask/runs', reader, 'POST', {
+          question: 'Continue', previousRunId: 'missing-conversation'
+        })).status, 404);
+        assert.equal((await request(tenantPath + '/ask/runs', reader, 'POST', {
+          question: 'Continue', previousRunId: '../invalid'
+        })).status, 400);
+        const response = await request(tenantPath + '/ask', reader, 'POST', {
+          question: 'Say hello again', previousRunId: 'owned-by-reader'
+        });
+        const answer = await response.json();
+        assert.equal(response.status, 200, `${JSON.stringify(answer)}\n${api.getLogs()}`);
+        assert.equal(answer.previousRunId, 'owned-by-reader');
+        assert.deepEqual(answer.analyses, []);
+        const saved = await (await request(tenantPath + '/ask/runs/' + answer.runId, reader)).json();
+        assert.equal(saved.previousRunId, 'owned-by-reader');
+        assert.deepEqual(saved.analyses, []);
+      });
       await t.test('only an explicitly mapped service principal can use app-only access grants', async () => {
         const service = signToken(issuer, apiClientId, { oid: serviceId, sub: serviceId, roles: ['DocIntel.Access'] });
         assert.equal((await request(`${tenantPath}/jobs/${allowedDocumentId}/review/claim`, service, 'POST', {})).status, 403);

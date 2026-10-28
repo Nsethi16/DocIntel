@@ -435,6 +435,46 @@ publicly exposed service: `LocalDevelopment` is refused outside `Development` or
 on wildcard/non-loopback addresses. Ask AI separately requires a real configured tool-calling
 model; missing endpoints do not produce simulated answers.
 
+### Analytical Ask AI
+
+Ask AI can browse bounded document-summary/field overviews to discover relevance by meaning,
+inspect original logical-document text, and build question-specific evidence-backed datasets.
+This first increment uses the existing stores and generative tool-calling model: it does not
+provision a vector/embedding index or silently select a different deployment. Summary previews
+are navigation hints, never source quotations. Continuation tokens and incomplete search scope
+remain visible; browsing a page is not an exhaustive workspace search.
+
+The `analyze_evidence` tool validates record quotations against inspected original text and
+computes `rows`, `sum`, `average`, `count`, `min`, `max` and `outliers` in server-side decimal code.
+Every nonempty cell must occur in that record's quote. Dates and decimal/grouping formats are
+explicit; aggregation units must occur in the same quote. Ambiguous symbols do not imply a
+currency, units remain separate, missing values never become zero, and repeated source records
+are excluded. Include a source-record identifier column when otherwise identical records are
+actually distinct. Outliers use the 1.5xIQR rule with at least four records per unit.
+
+Runs expose additive `analyses` with typed columns, computed rows, server-resolved citation
+numbers, coverage and method notes. The web conversation and standalone run view render local,
+accessible SVG bar/date-line charts plus evidence-linked tables. Chart specifications contain
+only allowlisted types and dataset column references, never executable code or arbitrary HTML.
+Mixed-unit line charts and oversized charts become explicitly disclosed tables. Email/Teams
+payloads retain a bounded textual table preview instead of silently dropping analytical results.
+No new frontend framework, package, cloud resource or change to the workspace navigation is required.
+
+Web submissions may send `previousRunId`. The server loads at most four completed prior turns
+owned by that same actor and workspace, checks current permissions and document fingerprints,
+and supplies bounded prior answers as untrusted context. Follow-ups must reinspect source and
+recompute results; old citation IDs are not reused as fresh evidence. Changed/deleted sources or
+legacy cited runs without source versions require a new chat. Existing text-only answers and
+browser-local chats remain readable.
+
+Each question is bounded to 64 tool calls, 48 model rounds, 48 inspected evidence windows, 200
+document references, four analyses, eight columns and 100 input records per analysis. Charts
+contain at most 40 rows; analytical output is additionally byte-bounded. These limits and the
+existing execution timeout are safeguards, not assertions of complete corpus coverage.
+Quotation checks establish occurrence and calculations are reproducible; they do not prove that
+the model interpreted a clause or assigned a field correctly. Read the sources, assumptions and
+coverage before acting on an inferred recommendation.
+
 Document-processing simulation is an explicit development-only setting:
 `Models:AllowDevelopmentSimulation` (environment variable `Models__AllowDevelopmentSimulation`).
 The Development settings enable it for loopback demos/tests; set it to `false` to require real

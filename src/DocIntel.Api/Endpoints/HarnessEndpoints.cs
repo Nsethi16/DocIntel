@@ -340,10 +340,11 @@ public static class HarnessEndpoints
             [FromBody] AskTenantDocumentsRequest req,
             HttpContext context,
             IHarnessStore harnessStore,
+            IAskAiRunStore runStore,
             AskAiRunProcessor runProcessor,
             CancellationToken ct) =>
         {
-            var validationError = AskAiRequestValidator.GetError(req.Question);
+            var validationError = AskAiRequestValidator.GetError(req.Question, previousRunId: req.PreviousRunId);
             if (validationError is not null)
             {
                 return Results.BadRequest(new { error = validationError });
@@ -355,12 +356,21 @@ public static class HarnessEndpoints
                 return Results.NotFound(new { error = $"Workspace '{tenantId}' not found." });
             }
 
+            if (req.PreviousRunId is not null)
+            {
+                var previous = await runStore.GetRunAsync(tenantId, req.PreviousRunId, ct);
+                if (previous is not { Status: JobStatus.Completed } ||
+                    previous.TenantId != tenantId ||
+                    previous.Actor != IdentityAccessService.GetActor(context.User))
+                    return Results.NotFound(new { error = "The prior conversation is unavailable." });
+            }
             var run = new AskAiRun
             {
                 RunId = Guid.NewGuid().ToString("N"),
                 Actor = IdentityAccessService.GetActor(context.User),
                 TenantId = tenantId,
                 Question = req.Question.Trim(),
+                PreviousRunId = req.PreviousRunId,
                 ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Web }
             };
 
@@ -375,6 +385,8 @@ public static class HarnessEndpoints
                 runId = completed.RunId,
                 question = completed.Question,
                 answer = completed.Answer,
+                completed.Analyses,
+                completed.PreviousRunId,
                 modelIdUsed = completed.ModelIdUsed,
                 documentsEvaluated = completed.DocumentsEvaluated,
                 executedCosmosQueries = completed.ExecutedCosmosQueries,
@@ -396,7 +408,7 @@ public static class HarnessEndpoints
             CancellationToken ct) =>
         {
             var validationError = AskAiRequestValidator.GetError(
-                req.Question, req.ReplyChannel?.CallbackWebhookUrl);
+                req.Question, req.ReplyChannel?.CallbackWebhookUrl, req.PreviousRunId);
             if (validationError is not null)
             {
                 return Results.BadRequest(new { error = validationError });
@@ -408,6 +420,14 @@ public static class HarnessEndpoints
                 return Results.NotFound(new { error = $"Workspace '{tenantId}' not found." });
             }
 
+            if (req.PreviousRunId is not null)
+            {
+                var previous = await runStore.GetRunAsync(tenantId, req.PreviousRunId, ct);
+                if (previous is not { Status: JobStatus.Completed } ||
+                    previous.TenantId != tenantId ||
+                    previous.Actor != IdentityAccessService.GetActor(context.User))
+                    return Results.NotFound(new { error = "The prior conversation is unavailable." });
+            }
             var runId = Guid.NewGuid().ToString("N");
             var run = new AskAiRun
             {
@@ -415,6 +435,7 @@ public static class HarnessEndpoints
                 Actor = IdentityAccessService.GetActor(context.User),
                 TenantId = tenantId,
                 Question = req.Question.Trim(),
+                PreviousRunId = req.PreviousRunId,
                 Status = JobStatus.Queued,
                 ReplyChannel = req.ReplyChannel ?? new AskAiReplyChannel { ChannelType = AskAiChannelType.Web }
             };
@@ -454,6 +475,8 @@ public static class HarnessEndpoints
                 run.ErrorCode,
                 run.ModelIdUsed,
                 run.Answer,
+                run.Analyses,
+                run.PreviousRunId,
                 run.DocumentsEvaluated,
                 run.ExecutedCosmosQueries,
                 run.Citations,
@@ -1333,11 +1356,13 @@ public static class HarnessEndpoints
         string Question,
         string? JobId = null,
         List<string>? EntityNames = null,
-        string? EntityValuePair = null);
+        string? EntityValuePair = null,
+        string? PreviousRunId = null);
 
     public sealed record SubmitAskAiRunRequest(
         string Question,
-        AskAiReplyChannel? ReplyChannel = null);
+        AskAiReplyChannel? ReplyChannel = null,
+        string? PreviousRunId = null);
 
     public sealed record InboundEmailAskRequest(
         string? From,

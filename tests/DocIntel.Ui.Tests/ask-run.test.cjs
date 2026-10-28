@@ -6,6 +6,7 @@ const vm = require('node:vm');
 
 const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'DocIntel.Api', 'wwwroot', 'ask-run.js'), 'utf8')
   .replace(/\r\n/g, '\n');
+const analysisSource = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'DocIntel.Api', 'wwwroot', 'ask-analysis.js'), 'utf8');
 const instrumented = source.replace(/\n  load\(\);\n\}\)\(\);\s*$/, '\n  globalThis.loadRun = load;\n})();');
 assert.notEqual(source, instrumented);
 
@@ -13,9 +14,12 @@ function runtime(search = '?tenant=tenant&run=one') {
   const elements = new Map();
   const calls = [];
   let pending;
-  function node() {
+  function node(tagName) {
     const handlers = new Map();
-    return { textContent: '', disabled: false, children: [],
+    const attributes = new Map();
+    return { tagName, textContent: '', disabled: false, children: [], classList: { add() {} },
+      setAttribute(name, value) { attributes.set(name, String(value)); },
+      getAttribute(name) { return attributes.get(name) ?? null; },
       set innerHTML(value) { throw new Error('Untrusted HTML rendering is forbidden'); },
       appendChild(child) { this.children.push(child); },
       replaceChildren(...children) { this.children = children; },
@@ -31,7 +35,7 @@ function runtime(search = '?tenant=tenant&run=one') {
   };
   const context = vm.createContext({
     URLSearchParams, location: { search }, Date,
-    document: { getElementById: element, createElement: node },
+    document: { getElementById: element, createElement: node, createElementNS: (namespace, tag) => node(tag) },
     setTimeout(callback, delay) { pending = { callback, delay }; return 1; },
     clearTimeout() { pending = null; },
     fetch: async (url, options) => {
@@ -39,6 +43,7 @@ function runtime(search = '?tenant=tenant&run=one') {
       return { ok: app.httpStatus === 200, status: app.httpStatus, json: async () => app.response };
     }
   });
+  vm.runInContext(analysisSource, context);
   vm.runInContext(instrumented, context);
   app.load = context.loadRun;
   return app;
@@ -119,4 +124,29 @@ test('an incomplete run link never makes a request', async () => {
   await app.load();
   assert.equal(app.calls.length, 0);
   assert.equal(app.element('refresh').disabled, true);
+});
+
+test('standalone run details share rich tables, charts and source navigation, then clear them on denied refresh', async () => {
+  const { all } = require('./helpers/analysis-dom.cjs');
+  const app = runtime();
+  app.response = {
+    status: 'Completed', answer: 'Computed answer.', citations: [{ citationNumber: 1, jobId: 'document', sliceIndex: 0 }],
+    analyses: [{
+      title: 'Total', visualization: 'bar', xColumn: 'category', yColumn: 'value',
+      columns: [{ key: 'category', label: 'Supplier', kind: 'text' }, { key: 'value', label: 'Total', kind: 'number' }],
+      rows: [{ cells: { category: 'Vendor', value: -2.5 }, citationNumbers: [1] }],
+      coverage: { scope: 'InspectedEvidence', hasMoreDocuments: false }
+    }]
+  };
+  await app.load();
+  const host = app.element('analyses');
+  assert.equal(all(host, item => item.tagName === 'table').length, 1);
+  assert.equal(all(host, item => item.tagName === 'svg').length, 1);
+  let clicked = 0;
+  app.element('citations').children[0].children[0].click = () => clicked++;
+  all(host, item => item.className === 'ask-analysis-source')[0].click();
+  assert.equal(clicked, 1);
+  app.httpStatus = 403;
+  await app.load();
+  assert.equal(host.children.length, 0);
 });

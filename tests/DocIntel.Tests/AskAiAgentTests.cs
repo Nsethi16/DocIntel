@@ -269,7 +269,7 @@ public sealed class AskAiAgentTests
         var extension = new Mock<IAskAiToolProvider>();
         extension.Setup(p => p.GetTools(It.IsAny<TenantHarness>()))
             .Returns([AIFunctionFactory.Create(() => ++calls, "count_calls")]);
-        var toolCalls = Enumerable.Range(1, 25).Select(i => (AIContent)new FunctionCallContent(
+        var toolCalls = Enumerable.Range(1, 65).Select(i => (AIContent)new FunctionCallContent(
             $"call-{i}", "count_calls", new Dictionary<string, object?>())).ToList();
         var orchestrator = CreateOrchestrator(new InMemoryJobStore(), [extension.Object],
             [new ChatResponse(new ChatMessage(ChatRole.Assistant, toolCalls)),
@@ -280,7 +280,7 @@ public sealed class AskAiAgentTests
         await Assert.ThrowsAnyAsync<Exception>(() => orchestrator.ExecuteRunAsync(run));
 
         // Assert
-        Assert.Equal(24, calls);
+        Assert.Equal(64, calls);
         Assert.Null(run.Answer);
     }
 

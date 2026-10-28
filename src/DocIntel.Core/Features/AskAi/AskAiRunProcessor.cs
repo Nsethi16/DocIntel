@@ -8,7 +8,7 @@ namespace DocIntel.Core.Features.AskAi;
 /// <summary>Shared request checks for the web and channel adapters.</summary>
 public static class AskAiRequestValidator
 {
-    public static string? GetError(string? question, string? callbackUrl = null)
+    public static string? GetError(string? question, string? callbackUrl = null, string? previousRunId = null)
     {
         if (String.IsNullOrWhiteSpace(question))
         {
@@ -22,6 +22,9 @@ public static class AskAiRequestValidator
         {
             return "Callback delivery is not enabled. Poll the run endpoint until approved destinations are configured.";
         }
+        if (previousRunId is not null && (previousRunId.Length is < 1 or > 128 ||
+            previousRunId.Any(character => !Char.IsAsciiLetterOrDigit(character) && character is not ('-' or '_'))))
+            return "The prior run identifier is invalid.";
         return null;
     }
 }
@@ -146,6 +149,8 @@ public sealed class AskAiRunProcessor(
             run.ErrorMessage = null;
             run.Answer = null;
             run.Citations.Clear();
+            run.Analyses.Clear();
+            run.SourceVersions.Clear();
             run.ExecutedCosmosQueries.Clear();
             run.Steps.Clear();
             run.DocumentsEvaluated = 0;
@@ -210,6 +215,8 @@ public sealed class AskAiRunProcessor(
         }
         run.Answer = null;
         run.Citations.Clear();
+        run.Analyses.Clear();
+        run.SourceVersions.Clear();
         run.EmailHtmlBody = null;
         run.TeamsAdaptiveCardJson = null;
     }
