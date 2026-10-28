@@ -636,6 +636,19 @@
       font-weight: 600;
     }
 
+    .ask-failure-meta {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px 14px;
+      color: var(--text-secondary);
+      font-size: 12px;
+    }
+
+    .ask-failure-meta .text-link-btn {
+      font-size: inherit;
+    }
+
     .content-column {
       width: 100%;
       max-width: 100%;

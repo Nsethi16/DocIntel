@@ -377,7 +377,9 @@ public static class HarnessEndpoints
             var completed = await runProcessor.ExecuteInlineAsync(run, ct);
             if (completed.Status == JobStatus.Failed)
             {
-                return Results.Json(new { error = completed.ErrorMessage, completed.RunId }, statusCode: 502);
+                return Results.Json(new
+                    { error = completed.ErrorMessage, completed.RunId, completed.ErrorCode, completed.ProviderFailure },
+                    statusCode: 502);
             }
 
             return Results.Ok(new
@@ -473,6 +475,7 @@ public static class HarnessEndpoints
                 status = run.Status.ToString(),
                 run.ErrorMessage,
                 run.ErrorCode,
+                run.ProviderFailure,
                 run.ModelIdUsed,
                 run.Answer,
                 run.Analyses,

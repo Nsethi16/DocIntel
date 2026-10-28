@@ -2254,7 +2254,10 @@ let tenants = [];
           text: finalData.status === 'Failed' ? finalData.errorMessage || 'Ask AI could not complete this request.'
             : finalData.answer,
           isError: finalData.status === 'Failed',
-          runId: finalData.status === 'Completed' ? completedRunId : null,
+          runId: completedRunId,
+          tenantId,
+          errorCode: finalData.status === 'Failed' ? finalData.errorCode || null : null,
+          providerFailure: finalData.status === 'Failed' ? finalData.providerFailure || null : null,
           analyses: finalData.status === 'Completed' && Array.isArray(finalData.analyses) ? finalData.analyses : [],
           citations: finalData.status === 'Completed' ? finalData.citations || [] : [],
           executedCosmosQueries: finalData.executedCosmosQueries || [],
@@ -2263,11 +2266,14 @@ let tenants = [];
         chat.updatedAt = new Date().toISOString();
         saveAskAiChatForTenant(tenantId, chat, chatPartition);
       } catch (err) {
+        const interruptedRunId = chat.pendingAskAi?.runId || null;
         if (!err.resumable || !chat.pendingAskAi?.runId) delete chat.pendingAskAi;
         chat.messages.push({
           role: 'assistant',
           text: err.message || 'Unable to connect to Ask AI. The question was not automatically resubmitted.',
           isError: true,
+          runId: interruptedRunId,
+          tenantId,
           citations: [],
           timestamp: new Date().toISOString()
         });
@@ -2318,6 +2324,24 @@ let tenants = [];
       return html;
     }
 
+    function askFailureDetails(message) {
+      if (!message.isError) return '';
+      const time = new Date(message.timestamp);
+      const timestamp = Number.isNaN(time.getTime()) ? 'Failure time unavailable'
+        : `<time datetime="${escapeHtml(time.toISOString())}">${escapeHtml(time.toLocaleString())}</time>`;
+      const tenantId = message.tenantId || currentTenant?.tenantId;
+      const runId = typeof message.runId === 'string' && /^[A-Za-z0-9_-]{1,128}$/.test(message.runId)
+        ? message.runId : null;
+      const url = runId && typeof tenantId === 'string'
+        ? `/ask-run.html?tenant=${encodeURIComponent(tenantId)}&run=${encodeURIComponent(runId)}` : null;
+      const providerStatus = message.providerFailure?.httpStatus;
+      return `<div class="ask-failure-meta">
+        <span>Saved failure · ${timestamp}${message.errorCode ? ` · ${escapeHtml(message.errorCode)}` : ''}
+          ${Number.isInteger(providerStatus) && providerStatus >= 100 && providerStatus <= 599 ? ` · HTTP ${providerStatus}` : ''}</span>
+        ${url ? `<a class="text-link-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">View Run Details ↗</a>` : ''}
+      </div>`;
+    }
+
     function renderCrossDocumentAskTab(body) {
       loadTenantChats();
       const chat = getActiveChat();
@@ -2359,6 +2383,7 @@ let tenants = [];
         return `
           <div class="ask-response" style="align-self:stretch;display:flex;flex-direction:column;gap:10px;padding:4px 0 12px 0;border-bottom:1px solid var(--line);">
             <div class="insight-prose" ${m.isError ? 'role="alert"' : ''} style="margin:0;font-size:14px;line-height:1.65;">${formatMarkdownBold(m.text, cites)}</div>
+            ${askFailureDetails(m)}
             ${!m.isError && Array.isArray(m.analyses) && m.analyses.length
               ? `<div class="ask-analysis-host" data-ask-analysis="${messageIndex}"></div>` : ''}
             ${cites.length > 0 ? `

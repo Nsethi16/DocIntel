@@ -146,6 +146,7 @@ public sealed class AskAiRunProcessor(
             run.Status = JobStatus.Running;
             run.StartedAtUtc = DateTimeOffset.UtcNow;
             run.ErrorCode = null;
+            run.ProviderFailure = null;
             run.ErrorMessage = null;
             run.Answer = null;
             run.Citations.Clear();
@@ -189,6 +190,7 @@ public sealed class AskAiRunProcessor(
         {
             operation.Fail(exception);
             run.ErrorCode = AskAiFailureDiagnostics.GetCode(exception);
+            run.ProviderFailure = AskAiProviderFailure.FromException(exception);
             run.ErrorMessage = AskAiFailureDiagnostics.GetMessage(run.ErrorCode);
             var cause = exception.GetBaseException();
             logger.LogError("Ask AI run {RunId} failed with {ErrorType}; root cause {CauseType}; code {Code}; site {Site}. " +
@@ -197,6 +199,10 @@ public sealed class AskAiRunProcessor(
                 cause.TargetSite?.DeclaringType?.Name + "." + cause.TargetSite?.Name, run.ErrorCode,
                 run.Steps.Count(step => step.StepName == "search_documents"),
                 run.Steps.Count(step => step.StepName == "inspect_document_slice"), run.DocumentsEvaluated);
+            if (run.ProviderFailure is { } provider)
+                logger.LogError("Ask AI provider failure for {RunId}: HTTP {ProviderStatus}; code {ProviderCode}; " +
+                    "parameter {ProviderParameter}; schema keyword {SchemaKeyword}.",
+                    run.RunId, provider.HttpStatus, provider.Code, provider.Parameter, provider.SchemaKeyword);
         }
 
         run.Status = stoppingToken.IsCancellationRequested ? JobStatus.Queued : JobStatus.Failed;

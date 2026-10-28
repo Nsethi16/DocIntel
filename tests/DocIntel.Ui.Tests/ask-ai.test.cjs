@@ -139,7 +139,28 @@ test('a failed run shows its explicit error rather than a successful-looking ans
 
   assert.equal(chat.messages[1].text, 'The model is unavailable.');
   assert.equal(chat.messages[1].isError, true);
+  assert.equal(chat.messages[1].runId, 'run-one');
+  assert.equal(chat.messages[1].tenantId, 'first');
   assert.equal(chat.pendingAskAi, undefined);
+});
+
+test('saved failures retain an escaped diagnostic link and timestamp but never become follow-up context', () => {
+  const app = runtime();
+  loadPage(app);
+  app.context.failure = {
+    role: 'assistant', isError: true, runId: 'failed-run', tenantId: 'first',
+    timestamp: '2026-10-28T20:00:00Z', errorCode: '<unsafe>',
+    providerFailure: { httpStatus: 429 }
+  };
+  const html = vm.runInContext('askFailureDetails(failure)', app.context);
+  assert.match(html, /Saved failure/);
+  assert.match(html, /datetime="2026-10-28T20:00:00.000Z"/);
+  assert.match(html, /&lt;unsafe&gt;/);
+  assert.match(html, /HTTP 429/);
+  assert.match(html, /ask-run\.html\?tenant=first&amp;run=failed-run/);
+  assert.match(html, /rel="noopener noreferrer"/);
+  vm.runInContext('tenantChats[0].messages=[failure];', app.context);
+  assert.equal(vm.runInContext('previousAskAiRunId(tenantChats[0])', app.context), null);
 });
 
 test('restoring a pending chat resumes the same run without duplicating its question', async () => {

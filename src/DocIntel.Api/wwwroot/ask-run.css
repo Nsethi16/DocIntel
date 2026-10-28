@@ -11,4 +11,9 @@ button:disabled { opacity:.5; cursor:not-allowed; }
 #answer { margin-top: 2rem; }
 li { margin-bottom: 1rem; }
 details { margin-top: .4rem; }
+.run-diagnostics { display:grid; grid-template-columns:max-content minmax(0,1fr);
+  gap:6px 16px; padding:16px; background:var(--surface-soft); border-radius:8px; font-size:13px; }
+.run-diagnostics[hidden] { display:none; }
+.run-diagnostics dt { color:var(--text-secondary); }
+.run-diagnostics dd { margin:0; overflow-wrap:anywhere; }
 @media (max-width: 650px) { main { margin: 0; padding: 1rem; border-radius: 0; } }

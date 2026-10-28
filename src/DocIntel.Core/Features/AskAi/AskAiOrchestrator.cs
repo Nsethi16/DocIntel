@@ -106,6 +106,9 @@ public sealed class AskAiRun
     [JsonPropertyName("errorCode")]
     public string? ErrorCode { get; set; }
 
+    [JsonPropertyName("providerFailure")]
+    public AskAiProviderFailure? ProviderFailure { get; set; }
+
     [JsonPropertyName("modelIdUsed")]
     public string? ModelIdUsed { get; set; }
 
@@ -922,6 +925,7 @@ public sealed class AskAiOrchestrator
 
         var options = new ChatOptions
         {
+            AllowMultipleToolCalls = false,
             Instructions = systemPrompt + $"\nReference time for this question: {run.CreatedAtUtc:O} (UTC).\n" + """
 
                 You are a conversational document assistant. Greet greetings naturally without calling tools.

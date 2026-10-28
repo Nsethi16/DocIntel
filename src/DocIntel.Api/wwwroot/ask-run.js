@@ -30,6 +30,31 @@
       document.getElementById('answer').textContent = result.status === 'Completed' ? result.answer || '' : '';
       status.textContent = result.status === 'Failed' ? result.errorMessage || 'This question could not be completed.' :
         result.status === 'Completed' ? 'Answer complete.' : 'DocIntel is processing your question. You can return to this link later.';
+      const diagnostics = document.getElementById('diagnostics');
+      diagnostics.replaceChildren();
+      diagnostics.hidden = result.status !== 'Failed';
+      if (result.status === 'Failed') {
+        const created = new Date(result.createdAtUtc);
+        const provider = result.providerFailure;
+        const entries = [
+          ['Run Reference', result.runId || run],
+          ['Failure Code', result.errorCode || 'Unavailable for this older run'],
+          ['Submitted', Number.isNaN(created.getTime()) ? 'Unavailable' : created.toLocaleString()],
+          ['Provider HTTP Status', provider?.httpStatus],
+          ['Provider Code', provider?.code],
+          ['Provider Parameter', provider?.parameter],
+          ['Schema Keyword', provider?.schemaKeyword]
+        ];
+        for (const [label, value] of entries) {
+          if (value === undefined || value === null) continue;
+          const term = document.createElement('dt');
+          const detail = document.createElement('dd');
+          term.textContent = label;
+          detail.textContent = String(value);
+          diagnostics.appendChild(term);
+          diagnostics.appendChild(detail);
+        }
+      }
       const delivery = result.delivery;
       document.getElementById('delivery').textContent = !delivery ? '' :
         delivery.status === 'Sent' ? 'The messaging service acknowledged the answer; this does not confirm receipt.' :
@@ -81,6 +106,8 @@
       document.getElementById('answer').textContent = '';
       document.getElementById('citations').replaceChildren();
       document.getElementById('analyses').replaceChildren();
+      document.getElementById('diagnostics').replaceChildren();
+      document.getElementById('diagnostics').hidden = true;
       status.textContent = `${error.message} Use Refresh status to check this question again; no new question will be submitted.`;
     } finally {
       loading = false;

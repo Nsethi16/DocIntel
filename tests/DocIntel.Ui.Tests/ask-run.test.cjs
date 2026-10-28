@@ -126,6 +126,25 @@ test('an incomplete run link never makes a request', async () => {
   assert.equal(app.element('refresh').disabled, true);
 });
 
+test('failed-run details show safe provider status and references without rendering provider HTML', async () => {
+  const app = runtime();
+  app.response = {
+    runId: 'one', status: 'Failed', errorCode: 'ProviderSchemaRejected',
+    errorMessage: 'The provider rejected the schema.', createdAtUtc: '2026-10-28T20:00:00Z',
+    providerFailure: { httpStatus: 400, code: 'invalid_function_parameters',
+      parameter: '<untrusted>', schemaKeyword: 'additionalProperties' }
+  };
+  await app.load();
+  const diagnostics = app.element('diagnostics');
+  assert.equal(diagnostics.hidden, false);
+  assert.ok(diagnostics.children.some(child => child.textContent === '400'));
+  assert.ok(diagnostics.children.some(child => child.textContent === '<untrusted>'));
+  app.httpStatus = 403;
+  await app.load();
+  assert.equal(diagnostics.hidden, true);
+  assert.equal(diagnostics.children.length, 0);
+});
+
 test('standalone run details share rich tables, charts and source navigation, then clear them on denied refresh', async () => {
   const { all } = require('./helpers/analysis-dom.cjs');
   const app = runtime();

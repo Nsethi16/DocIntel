@@ -345,6 +345,7 @@ public sealed class AskAiAgentTests
 
         // Assert
         Assert.NotNull(captured);
+        Assert.False(captured.AllowMultipleToolCalls);
         Assert.All(captured.Tools!, tool => Assert.InRange(tool.Description?.Length ?? 0, 0, 1_024));
         Assert.Contains("analyze_evidence request rules:", captured.Instructions);
         Assert.Contains("dateBucket is none/month/quarter/year", captured.Instructions);

@@ -464,6 +464,12 @@ No new frontend framework, package, cloud resource or change to the workspace na
 Tool descriptions stay within the provider's 1,024-character limit; detailed analytical request
 guidance lives in the system instructions. Oversized extension descriptions fail locally with an
 explicit configuration error rather than causing an opaque provider rejection.
+Provider requests explicitly disable parallel tool calls alongside structured JSON output;
+serializing local tool execution alone does not set that provider option.
+Failed web responses retain their run reference and saved timestamp with a protected run-details link.
+Provider errors expose only allowlisted HTTP status/code/schema-keyword/parameter diagnostics, never raw
+provider messages, requests or document content. A saved error remains historical; viewing details only
+polls that run and never resubmits the question.
 
 Web submissions may send `previousRunId`. The server loads at most four completed prior turns
 owned by that same actor and workspace, checks current permissions and document fingerprints,

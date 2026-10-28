@@ -21,6 +21,8 @@ test('analytical requests satisfy provider metadata limits and round-trip real S
         for await (const chunk of request) chunks.push(chunk);
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         calls++;
+        assert.equal(body.parallel_tool_calls, false,
+          'Structured JSON responses must explicitly disable parallel tool calls at the provider boundary.');
         const tools = body.tools || [];
         assert.ok(tools.some(tool => tool.function?.name === 'analyze_evidence'));
         const oversized = tools.find(tool => (tool.function?.description || '').length > 1024);
