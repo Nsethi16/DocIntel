@@ -665,7 +665,9 @@ captures its agent profile and harness version for consistent web/email/Teams re
 The section tabs support arrow/Home/End navigation. Switching to Users & Access
 hides harness-only controls without collapsing the header or shifting the section navigation.
 All three settings sections share borderless rows, darker medium-weight titles, gray
-**Manage** controls, dark switches and an 800px content width. Agent fields open one native disclosure
+**Manage** controls, dark switches and one centered 800px content column shared with the workspace
+header and section tabs. Row text remains left-aligned and controls stay right-aligned.
+Agent fields open one native disclosure
 at a time without discarding drafts; the illustrative preview is optional. Channel Manage controls
 only reveal setup guidance: they do not enable a channel, grant permissions or send a test message.
 Changes still require **Save**. Narrow screens stack channel controls without changing the existing

@@ -131,6 +131,12 @@ test('navigation and settings labels use Title Case without transforming documen
   assert.match(index, /<button[^>]+id="drawerUploadLabel"[^>]+data-click="chooseWorkspaceUpload"/);
 });
 
+test('settings use one centered 800px column for the header, navigation and every panel', () => {
+  const css = read('admin.css');
+  assert.match(css, /\.canvas-column\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*800px;[^}]*margin-inline:\s*auto/);
+  assert.doesNotMatch(css.match(/\.canvas-column\s*\{[^}]*\}/)[0], /text-align:\s*center/);
+});
+
 test('people settings use the same unboxed rows, neutral avatars and readable content width', () => {
   const css = read('tenant-users.css');
   assert.match(css, /\.tenant-users\s*\{[^}]*max-width:800px/);

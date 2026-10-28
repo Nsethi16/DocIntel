@@ -262,7 +262,7 @@
       border-color: var(--text-primary);
     }
 
-    /* Right Main Canvas — Left-aligned, full width, minimal */
+    /* Centered settings column; individual rows remain left-aligned. */
     .main-canvas {
       flex: 1;
       min-width: 0;
@@ -276,7 +276,7 @@
 
     .canvas-column {
       width: 100%;
-      max-width: 1160px;
+      max-width: 800px;
       margin-inline: auto;
     }
 
