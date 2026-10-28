@@ -41,7 +41,7 @@ public sealed record TenantUsersSnapshot
 }
 
 public sealed class TenantUsersConflictException() :
-    InvalidOperationException("Tenant access changed. Reload the users before saving again.");
+    InvalidOperationException("Workspace access changed. Reload the users before saving again.");
 
 public interface ITenantUserStore
 {

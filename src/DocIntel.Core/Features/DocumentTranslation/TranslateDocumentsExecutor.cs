@@ -257,7 +257,7 @@ public sealed class TranslateDocumentsExecutor : Executor<SplittingState, Splitt
                 Succeeded: true,
                 ModelIdUsed: null,
                 DurationMs: 0,
-                Notes: "Skipped (Document Translation is disabled for this tenant)."));
+                Notes: "Skipped (Document Translation is disabled for this workspace)."));
             return message;
         }
 
@@ -268,7 +268,7 @@ public sealed class TranslateDocumentsExecutor : Executor<SplittingState, Splitt
              !Uri.TryCreate(_defaultTranslatorEndpoint, UriKind.Absolute, out var trusted) ||
              !String.IsNullOrEmpty(configured.UserInfo) || !configured.Equals(trusted)))
         {
-            throw new InvalidOperationException("Tenant translation endpoints must match the server-configured provider.");
+            throw new InvalidOperationException("Workspace translation endpoints must match the server-configured provider.");
         }
         var targetLang = string.IsNullOrWhiteSpace(config.TargetLanguage) ? "en" : config.TargetLanguage.Trim();
         var endpoint = !string.IsNullOrWhiteSpace(config.AzureTranslatorEndpoint)

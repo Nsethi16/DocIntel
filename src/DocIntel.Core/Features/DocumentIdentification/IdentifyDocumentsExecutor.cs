@@ -44,7 +44,7 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
                 Succeeded: true,
                 ModelIdUsed: null,
                 DurationMs: 0,
-                Notes: "Skipped (Identify Documents is disabled for this tenant)."));
+                Notes: "Skipped (Identify Documents is disabled for this workspace)."));
             return message;
         }
 

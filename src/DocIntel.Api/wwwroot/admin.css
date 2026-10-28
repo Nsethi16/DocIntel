@@ -464,7 +464,7 @@
       align-self: center;
     }
 
-    .chevron-btn {
+    .chevron-btn, .agent-manage-action {
       background: #ededed;
       border: 0;
       width: auto;
@@ -481,7 +481,7 @@
       transition: background 0.12s ease, color 0.12s ease, transform 0.18s ease;
     }
 
-    .chevron-btn:hover {
+    .chevron-btn:hover, .agent-setting-row > summary:hover .agent-manage-action {
       background: #e2e2e2;
       color: #242424;
     }
@@ -1014,12 +1014,13 @@
     }
 
     #processingSettingsPanel { --switch-on: #252525; max-width: 800px; }
-    #processingSettingsPanel .switch { height: 20px; }
-    #processingSettingsPanel .slider { background-color: #8b8b8b; }
-    #processingSettingsPanel .switch input:checked + .slider { background-color: var(--switch-on); }
-    #processingSettingsPanel .slider::before { width: 14px; height: 14px; }
-    #processingSettingsPanel .switch input:checked + .slider::before { transform: translateX(20px); }
-    #processingSettingsPanel .switch input:disabled + .slider { opacity: .5; cursor: not-allowed; }
+    #agentSettingsPanel { --switch-on: #252525; max-width: 800px; }
+    :is(#processingSettingsPanel, #agentSettingsPanel) .switch { height: 20px; }
+    :is(#processingSettingsPanel, #agentSettingsPanel) .slider { background-color: #8b8b8b; }
+    :is(#processingSettingsPanel, #agentSettingsPanel) .switch input:checked + .slider { background-color: var(--switch-on); }
+    :is(#processingSettingsPanel, #agentSettingsPanel) .slider::before { width: 14px; height: 14px; }
+    :is(#processingSettingsPanel, #agentSettingsPanel) .switch input:checked + .slider::before { transform: translateX(20px); }
+    :is(#processingSettingsPanel, #agentSettingsPanel) .switch input:disabled + .slider { opacity: .5; cursor: not-allowed; }
     @media (max-width: 480px) {
       #processingSettingsPanel .feature-tile-header { flex-wrap: wrap; }
       #processingSettingsPanel .feature-tile-left { flex-basis: 100%; }

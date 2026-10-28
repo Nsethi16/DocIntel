@@ -1,6 +1,11 @@
-# DocIntel — Multi-Tenant Agent Harness Studio
+# DocIntel — Document Intelligence Workspaces
 
-A modern **.NET 10 + .NET Aspire + Microsoft Agent Framework (`Microsoft.Agents.AI.Workflows`)** multi-tenant Document Intelligence solution with a clean **Agent Harness Studio** Admin UI.
+A modern **.NET 10 + .NET Aspire + Microsoft Agent Framework (`Microsoft.Agents.AI.Workflows`)** Document Intelligence solution with isolated workspaces and an Admin UI.
+
+The application calls each isolated document and settings space a **workspace**. Existing API routes,
+JSON/storage identifiers such as `tenantId`, and the `TenantAdmin` role value remain compatible;
+the role is displayed as **Workspace admin**. A Microsoft Entra directory tenant and a source-document
+field named **Tenant ID** are separate concepts and keep their original names.
 
 ## Conservative lifecycle controls
 
@@ -73,7 +78,7 @@ writers cannot replace a winning cache entry, original, layout, result snapshot 
 The empty publication lock files remain in place to avoid an unlink/reopen race; locks release when
 the owning process closes/exits. Azure Blob publications retain storage-enforced create-only conditions.
 
-Admins can manage isolated **Tenants** and configure each tenant's **Agent Harness** at runtime:
+Admins can manage isolated **Workspaces** and configure each workspace's **Agent Harness** at runtime:
 
 - **Harness-Level Model Routing**:
   - **Decision Model** (`Microsoft Decision 1` / `decision-1`) for fast, closed-set document classification and routing.
@@ -607,9 +612,9 @@ Original/slice PDFs remain same-origin embeddable. HTML is no-store and JS/CSS r
 
 Production defaults to **Entra** and fails startup when identity configuration is incomplete.
 Browser sign-in uses authorization code + PKCE and an HttpOnly application session; API clients
-use validated bearer tokens. Application tenant slugs are **not** Entra tenant IDs. Server-side
-memberships map `(directory tenant ID, object ID)` to an application tenant and a role.
-Admin-managed people have tenant-wide reading/Ask AI access. Historical operator-configured
+use validated bearer tokens. Application workspace slugs are **not** Entra tenant IDs. Server-side
+memberships map `(directory tenant ID, object ID)` to an application workspace and a role.
+Admin-managed people have workspace-wide reading/Ask AI access. Historical operator-configured
 document restrictions remain enforced and are not broadened by the new two-role interface.
 
 Configure `Identity` through environment/configuration providers:
@@ -627,8 +632,8 @@ Configure `Identity` through environment/configuration providers:
 | `UseManagedIdentityAssertion` | Use managed-identity token exchange instead of a web client secret |
 | `ManagedIdentityClientId` | Optional UAMI ID; otherwise `AZURE_CLIENT_ID` or system-assigned identity |
 | `ApiAccessPermission` | Delegated scope/app role name; default `DocIntel.Access` |
-| `Memberships` | Server-side tenant role/document grants described below |
-| `PlatformAdministrators` | Explicit directory/object pairs allowed to administer every application tenant |
+| `Memberships` | Server-side workspace role/document grants described below |
+| `PlatformAdministrators` | Explicit directory/object pairs allowed to administer every application workspace |
 | `Directory:Enabled` | Enable read-only enterprise people/profile/photo lookup through Microsoft Graph |
 
 The API registration must expose the delegated permission and application role. App-only callers
@@ -650,7 +655,7 @@ this code does not create registrations or consent/permission grants.
 ## Agent identity and channels
 
 Admin Studio has **Document processing**, **Agent & channels**, and **Users & access** tabs. Agent & channels
-stores tenant-versioned `agent.displayName`, `purpose`, `tone` (Professional/Friendly/Concise),
+stores workspace-versioned `agent.displayName`, `purpose`, `tone` (Professional/Friendly/Concise),
 `instructions`, `emailEnabled` and `teamsEnabled`. The style preview is illustrative, not a model
 completion. Channel toggles are distinct from read-only operator connection status; no token,
 password, arbitrary callback URL or privileged role is configured through personality fields.
@@ -659,21 +664,23 @@ authorization, evidence, citation and tool policies always remain in force. Each
 captures its agent profile and harness version for consistent web/email/Teams responses.
 The icon-labeled section tabs support arrow/Home/End navigation. Switching to Users & access
 hides harness-only controls without collapsing the header or shifting the section navigation.
-The settings canvas is capped at 1,440px for readable wide-screen layouts. Personality fields,
-preview and channel cards share aligned columns and collapse into stacked sections on smaller screens.
-Document processing uses the same equal-column grid for models, features and prompt configuration.
-The prompt editor and saved-prompts panel share header/body rows and aligned outer edges.
+Agent & channels and Document processing share borderless rows, regular-weight labels, gray
+**Manage** controls, dark switches and an 800px content width. Agent fields open one native disclosure
+at a time without discarding drafts; the illustrative preview is optional. Channel Manage controls
+only reveal setup guidance: they do not enable a channel, grant permissions or send a test message.
+Changes still require **Save**. Narrow screens stack channel controls without changing the existing
+three-section navigation or individual document result tabs.
 
 ### Enterprise users and unified access
 
 `Users & access` searches existing corporate Entra people; it never creates corporate accounts,
 passwords, or Entra administrator roles. Select one or several people, then assign **User**
-(tenant-wide document reading and Ask AI) or **TenantAdmin** (also document processing, user
+(workspace-wide document reading and Ask AI) or **Workspace admin** (`TenantAdmin`; also document processing, user
 management, harness configuration and channels). All new people have the same document collection;
 there is no document-scope picker. Directory photos, title, department and office help distinguish
 people; initials are shown when no photo exists. Missing/failed directory connections are explicit,
 not simulated employee records. User lists are paged, and search excludes already assigned users
-across all pages. Only tenant-wide admins can search people, read photos or edit memberships.
+across all pages. Only workspace-wide admins can search people, read photos or edit memberships.
 
 Corporate directory identity `(directory tenant ID, user object ID)` is stable even when work
 email changes. DocIntel persists assignment/role/status and reference-only access-change audit
@@ -687,13 +694,13 @@ enabling the UI does not grant Graph access.
 Membership changes use an expected `version` and atomically persist their audit with the change.
 Stale edits return 409; do not retry mutations automatically. Removing/disabling a user leaves
 a tombstone, overriding an old operator bootstrap grant even after restart. The last active
-tenant-wide admin cannot be removed, disabled or demoted; assign a replacement first. Bootstrap
+workspace-wide admin cannot be removed, disabled or demoted; assign a replacement first. Bootstrap
 the first admin using existing `Identity:Memberships` or an explicitly configured platform admin.
-Ordinary tenant admins cannot promote anyone to platform administrator. Existing service principals
+Ordinary workspace admins cannot promote anyone to platform administrator. Existing service principals
 and legacy restricted grants remain operator-owned; restricted assignments cannot be upgraded
 through this UI.
 
-The same current membership is resolved for HTML entry points, tenant lists, backend operations,
+The same current membership is resolved for HTML entry points, workspace lists, backend operations,
 Ask AI tools/final answers, Teams reception and email execution/delivery. Existing session/API
 tokens do not freeze their old role. Membership revocation is checked on subsequent operations;
 directory account state has a bounded 30-second cache and lookup failures never grant access.

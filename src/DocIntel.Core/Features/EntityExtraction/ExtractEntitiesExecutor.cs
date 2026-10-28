@@ -68,7 +68,7 @@ public sealed class ExtractEntitiesExecutor : Executor<SplittingState, Splitting
                 Succeeded: true,
                 ModelIdUsed: null,
                 DurationMs: 0,
-                Notes: "Skipped (Entity Extraction is disabled for this tenant)."));
+                Notes: "Skipped (Entity Extraction is disabled for this workspace)."));
             return message;
         }
 

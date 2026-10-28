@@ -148,7 +148,7 @@ public sealed class ModelCatalog : IModelCatalog
             !tenant.AllowedModels.Contains(target, StringComparer.OrdinalIgnoreCase))
         {
             throw new InvalidOperationException(
-                $"Model '{target}' is not enabled in the allowed model list for tenant '{tenant.TenantId}'.");
+                $"Model '{target}' is not enabled in the allowed model list for workspace '{tenant.TenantId}'.");
         }
 
         return target;

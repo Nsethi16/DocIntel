@@ -42,7 +42,7 @@ public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, Split
                 Succeeded: true,
                 ModelIdUsed: null,
                 DurationMs: 0,
-                Notes: "Skipped (Data Extraction is disabled for this tenant)."));
+                Notes: "Skipped (Data Extraction is disabled for this workspace)."));
             return message;
         }
 

@@ -47,7 +47,7 @@ public sealed class EvaluatePromptColumnsExecutor : Executor<SplittingState, Spl
                 Succeeded: true,
                 ModelIdUsed: null,
                 DurationMs: 0,
-                Notes: "Skipped (Prompt Columns capability is disabled for this tenant)."));
+                Notes: "Skipped (Prompt Columns capability is disabled for this workspace)."));
             return message;
         }
 

@@ -67,10 +67,45 @@ test('models and features use quiet rows while configuration remains in existing
   assert.match(css, /\.model-harness-card\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(css, /\.feature-illustration\s*\{\s*display:\s*none/);
   assert.equal([...read('admin.html').matchAll(/<span>Manage<\/span>/g)].length, 6);
-  assert.match(css, /\.chevron-btn\s*\{[^}]*background:\s*#ededed;[^}]*border:\s*0/);
+  assert.match(css, /\.chevron-btn,\s*\.agent-manage-action\s*\{[^}]*background:\s*#ededed;[^}]*border:\s*0/);
   assert.match(css, /#processingSettingsPanel\s*\{\s*--switch-on:\s*#252525/);
   assert.match(css, /#processingSettingsPanel\s*\{[^}]*max-width:\s*800px/);
   assert.match(css, /\.feature-title\s*\{[^}]*font-weight:\s*400/);
+});
+
+test('Agent and channels share the processing Manage, switch and quiet-row theme', () => {
+  const css = read('admin.css');
+  const agent = read('agent-settings.css');
+  assert.match(css, /#agentSettingsPanel\s*\{[^}]*--switch-on:\s*#252525;[^}]*max-width:\s*800px/);
+  assert.match(css, /\.switch\s*\{[^}]*width:\s*40px/);
+  assert.match(css, /:is\(#processingSettingsPanel, #agentSettingsPanel\)\s+\.switch\s*\{[^}]*height:\s*20px/);
+  assert.match(agent, /\.agent-settings-card\s*\{[^}]*border:\s*0;[^}]*box-shadow:\s*none/);
+  assert.match(agent, /\.agent-setting-copy strong\s*\{[^}]*font-size:\s*14px;[^}]*font-weight:\s*400/);
+  assert.match(agent, /\.agent-channel-card h3\s*\{[^}]*font-weight:\s*400/);
+  assert.doesNotMatch(agent, /\.agent-settings-card label span/);
+  const app = runtime('admin');
+  const calls = [];
+  app.context.DocIntelAgentSettings = { toggleConnection: name => calls.push(name) };
+  app.context.registeredActions.toggleAgentChannel_arg.run(['email']);
+  app.context.registeredActions.toggleAgentChannel_arg.run(['teams']);
+  assert.deepEqual(calls, ['email', 'teams']);
+});
+
+test('workspace labels preserve technical tenant identifiers and source-document Tenant ID fields', () => {
+  for (const file of ['admin.html', 'index.html']) {
+    const html = read(file);
+    const visible = html.replace(/<!--[\s\S]*?-->/g, '').replace(/<[^>]*>/g, '');
+    assert.doesNotMatch(visible, /\btenants?\b/i);
+    const labels = [...html.matchAll(/(?:aria-label|title|placeholder)="([^"]*)"/g)]
+      .map(match => match[1]).join('\n');
+    assert.doesNotMatch(labels, /\btenants?\b/i);
+  }
+  assert.match(read('admin.js'), /`Workspace ID: \$\{currentTenant\.tenantId\}`/);
+  assert.match(read('admin.js'), /'Tenant ID'/);
+  assert.match(read('admin.js'), /\/api\/harness\/tenants/);
+  assert.match(read('tenant-users.js'), /\['TenantAdmin', 'Workspace admin'\]/);
+  assert.match(read('workspace.js'), /<dt>Workspace<\/dt><dd>\$\{escapeHtml\(job\.tenantId\)\}/);
+  assert.match(read('identity.js'), /not assigned to a DocIntel workspace/);
 });
 
 test('opening another feature hides only the previous drawer and preserves its entered values', () => {

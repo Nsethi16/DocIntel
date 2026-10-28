@@ -126,7 +126,7 @@ public sealed class TenantUserService(
                  !EmailChannelOptions.IsAddress(person.Email)))
                 throw new ArgumentException("Only active corporate directory users with a work email can be assigned.");
             if (current is null && change.Status != TenantUserStatus.Active)
-                throw new ArgumentException("This person has no tenant assignment to disable or remove.");
+                throw new ArgumentException("This person has no workspace assignment to disable or remove.");
             if (current?.LegacyRestricted == true && change.Status == TenantUserStatus.Active)
                 throw new ArgumentException("This legacy restricted assignment cannot be broadened in Admin Studio.");
             if (configuration.CurrentValue.Memberships.Any(m => m.ObjectId == change.ObjectId &&
@@ -157,7 +157,7 @@ public sealed class TenantUserService(
             else if (administrator.Source == "Operator") { hasAdministrator = true; break; }
         }
         if (!hasAdministrator)
-            throw new ArgumentException("Keep at least one active tenant admin. Assign another admin before removing or disabling the last one.");
+            throw new ArgumentException("Keep at least one active workspace admin. Assign another admin before removing or disabling the last one.");
         await RequireAdministratorAsync(actor, localDevelopment, tenantId, cancellationToken);
         await store.SaveAsync(saved, version, cancellationToken);
         logger.LogInformation("Tenant {TenantId} access version {Version} saved with {Count} assignment changes.",
@@ -181,11 +181,11 @@ public sealed class TenantUserService(
         ActorIdentity? actor, bool localDevelopment, string tenantId, CancellationToken cancellationToken)
     {
         if (localDevelopment) return;
-        if (actor is null) throw new UnauthorizedAccessException("A verified tenant administrator is required.");
+        if (actor is null) throw new UnauthorizedAccessException("A verified workspace administrator is required.");
         if (await IsPlatformAdministratorAsync(actor, cancellationToken)) return;
         var scope = await GetAccessAsync(actor, tenantId, cancellationToken);
         if (!scope.CanAdmin || scope.AllowedJobIds is not null)
-            throw new UnauthorizedAccessException("Tenant-wide administration is required.");
+            throw new UnauthorizedAccessException("Workspace-wide administration is required.");
     }
 
     private TenantMembership? Baseline(ActorIdentity actor, string tenantId) =>

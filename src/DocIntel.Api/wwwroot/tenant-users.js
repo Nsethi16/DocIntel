@@ -1,7 +1,7 @@
 (function (root) {
   'use strict';
   const node = id => document.getElementById(id);
-  const roles = Object.freeze([['User', 'User'], ['TenantAdmin', 'Tenant admin']]);
+  const roles = Object.freeze([['User', 'User'], ['TenantAdmin', 'Workspace admin']]);
   const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const dialogIds = {
     add: 'tenantUsersAddDialog', details: 'tenantUsersDetailsDialog', confirm: 'tenantUsersConfirmDialog'
@@ -110,11 +110,11 @@
     node('tenantUsersVersion').textContent = snapshot ? `Access v${snapshot.version}` : '';
     node('tenantUsersDirectory').textContent = !snapshot ? '' : snapshot.directoryConfigured
       ? 'Connected to the enterprise directory. Only existing, enabled directory members can be assigned.'
-      : 'Enterprise directory not connected. Ask your operator to configure the tenant directory connection. ' +
+      : 'Enterprise directory not connected. Ask your operator to configure the organization directory connection. ' +
         'Adding and searching people are unavailable; existing memberships below are not a directory listing.';
     if (!snapshot?.users.length) {
       list.append(element('div', 'tenant-users-empty', state?.loading ? 'Loading assigned people…'
-        : snapshot ? 'No people assigned yet.' : 'Load tenant access to view assigned people.'));
+        : snapshot ? 'No people assigned yet.' : 'Load workspace access to view assigned people.'));
     } else {
       for (const user of snapshot.users) {
         const row = element('div', 'tenant-users-row');
@@ -142,8 +142,8 @@
   }
   async function errorMessage(response) {
     const fallback = {
-      400: 'The access change was rejected. At least one active tenant admin must remain.',
-      403: 'You are not authorized to manage this tenant.',
+      400: 'The access change was rejected. At least one active workspace admin must remain.',
+      403: 'You are not authorized to manage this workspace.',
       409: 'Access changed on the server.',
       503: 'The enterprise directory is unavailable.'
     }[response.status] || 'The access request could not be completed.';
@@ -159,7 +159,7 @@
     owner.loading = true;
     owner.snapshot = null;
     closeDialogs();
-    notice(saved ? 'Access changes saved. Refreshing assigned people…' : 'Loading tenant access…');
+    notice(saved ? 'Access changes saved. Refreshing assigned people…' : 'Loading workspace access…');
     renderList();
     try {
       const response = await fetch(`${endpoint(owner)}?offset=0&limit=50`);
@@ -186,7 +186,7 @@
     if (state?.tenant === tenant) return;
     closeDialogs();
     state = tenant ? { tenant, snapshot: null, loading: false, paging: false, busy: false, blocked: false } : null;
-    notice(tenant ? '' : 'Select an administrable tenant to manage people.');
+    notice(tenant ? '' : 'Select a workspace you administer to manage people.');
     renderList();
     if (state) return load(state);
   }
@@ -366,7 +366,7 @@
     const changes = items.map(item => ({ objectId: item.person.objectId, role: item.role, status: 'Active' }));
     const admins = changes.filter(change => change.role === 'TenantAdmin').length;
     review(changes, 'Confirm new assignments',
-      `Assign ${changes.length} people with tenant-wide documents? ${admins} will be tenant admins with full ` +
+      `Assign ${changes.length} people with workspace-wide documents? ${admins} will be workspace admins with full ` +
       'processing, settings and people-management access. Membership applies across web, email and Teams.');
   }
   function selectedUser() {
@@ -400,10 +400,10 @@
       management.append(element('p', '', 'This imported membership has operator-managed restricted access. ' +
         'Only disabling or removing it is supported here. Its role and document access cannot be broadened.'));
     } else if (user.status !== 'Removed') {
-      const label = element('label', '', 'Tenant role');
+      const label = element('label', '', 'Workspace role');
       label.htmlFor = 'tenantUsersDetailRole';
       const select = roleSelect(label.htmlFor, user.role);
-      management.append(label, select, element('p', '', 'User: read and Ask AI. Tenant admin: full tenant management.'));
+      management.append(label, select, element('p', '', 'User: read and Ask AI. Workspace admin: full workspace management.'));
       management.append(action('Review role change', 'tenantUsersReviewRole'));
     }
     const buttons = element('div', 'tenant-users-dialog-actions');
@@ -423,12 +423,12 @@
     const role = node('tenantUsersDetailRole').value;
     if (!roles.some(item => item[0] === role) || role === user.role) return;
     if (role === 'TenantAdmin' && !canActivate(user)) {
-      managementNotice('Cannot grant tenant admin while the directory account is not confirmed active.');
+      managementNotice('Cannot grant workspace admin while the directory account is not confirmed active.');
       return;
     }
     review([{ objectId: user.objectId, role, status: user.status }], 'Confirm role change',
       `Change ${personName(user.profile) || user.objectId} from ${roleName(user.role)} to ${roleName(role)}? ` +
-      (role === 'TenantAdmin' ? 'Tenant admins can process documents and manage tenant settings and people.'
+      (role === 'TenantAdmin' ? 'Workspace admins can process documents and manage workspace settings and people.'
         : 'Users can read documents and Ask AI, but cannot process documents or manage settings and people.'));
   }
   function managementNotice(message) {
@@ -446,7 +446,7 @@
       `Set access for ${personName(user.profile) || user.objectId} to ${status}? ` +
       (status === 'Active' ? 'This restores membership across the workspace, web, email and Teams.'
         : 'This revokes membership across the workspace, Admin Studio, web, email and Teams. ' +
-          'At least one active tenant admin must remain.'));
+          'At least one active workspace admin must remain.'));
   }
   async function confirm() {
     const operation = pending;

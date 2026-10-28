@@ -382,7 +382,7 @@
       }
       state.tenant = tenants.body.find(tenant => tenant.tenantId === query.get('tenant'))?.tenantId ||
         tenants.body[0]?.tenantId;
-      if (!state.tenant) { notice('No application tenant is available for this account.'); return; }
+      if (!state.tenant) { notice('No application workspace is available for this account.'); return; }
       el('tenant').value = state.tenant;
       await loadQueue();
       if (query.get('job')) await selectJob(query.get('job'));

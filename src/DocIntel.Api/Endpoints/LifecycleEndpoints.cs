@@ -41,7 +41,7 @@ public static class LifecycleEndpoints
             CancellationToken cancellationToken) =>
         {
             if (context.Request.Headers["X-DocIntel-Confirm-Delete"] != tenantId)
-                return Results.BadRequest(new { error = "Confirm this tenant ID in X-DocIntel-Confirm-Delete." });
+                return Results.BadRequest(new { error = "Confirm this workspace ID in X-DocIntel-Confirm-Delete." });
             var tenant = await harnesses.GetTenantAsync(tenantId, cancellationToken);
             if (tenant is null) return Results.NotFound();
             if (tenant.IsActive)

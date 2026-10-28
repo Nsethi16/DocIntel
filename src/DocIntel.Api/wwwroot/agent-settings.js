@@ -5,6 +5,10 @@
     tone: 'Professional', instructions: '', emailEnabled: false, teamsEnabled: false
   });
   const node = id => document.getElementById(id);
+  const channelControls = {
+    email: ['agentEmailDetails', 'agentEmailManage'],
+    teams: ['agentTeamsDetails', 'agentTeamsManage']
+  };
   let revision = 0;
 
   function read() {
@@ -22,6 +26,11 @@
     node('agentPreviewName').textContent = profile.displayName.trim() || defaults.displayName;
     node('agentPreviewAvatar').textContent = (profile.displayName.trim() || defaults.displayName)[0].toUpperCase();
     node('agentPreviewPurpose').textContent = profile.purpose;
+    node('agentNameSummary').textContent = profile.displayName.trim() || defaults.displayName;
+    node('agentToneSummary').textContent = profile.tone;
+    node('agentPurposeSummary').textContent = profile.purpose.trim() || 'Describe its purpose and audience';
+    node('agentInstructionsSummary').textContent = profile.instructions.trim()
+      ? 'Custom response guidance is set' : 'Optional instructions for your assistant';
     node('agentPreviewMessage').textContent = profile.tone === 'Friendly'
       ? "Happy to help. I'll look through the documents you can access, explain what I find and include the sources."
       : profile.tone === 'Concise'
@@ -34,6 +43,10 @@
       ['tone', 'agentTone'], ['instructions', 'agentInstructions']]) node(id).value = profile[key];
     node('agentEmailEnabled').checked = profile.emailEnabled;
     node('agentTeamsEnabled').checked = profile.teamsEnabled;
+    for (const [panel, button] of Object.values(channelControls)) {
+      node(panel).hidden = true;
+      node(button).setAttribute('aria-expanded', 'false');
+    }
     preview();
   }
   async function connections(tenant) {
@@ -54,6 +67,15 @@
       if (current !== revision) return;
       for (const id of ['agentEmailStatus', 'agentTeamsStatus'])
         node(id).textContent = 'Connection status unavailable. No connection was changed.';
+    }
+  }
+  function toggleConnection(name) {
+    if (!Object.hasOwn(channelControls, name)) throw new RangeError('Unsupported channel settings.');
+    const opening = node(channelControls[name][0]).hidden;
+    for (const [channel, [panel, button]] of Object.entries(channelControls)) {
+      const expanded = channel === name && opening;
+      node(panel).hidden = !expanded;
+      node(button).setAttribute('aria-expanded', String(expanded));
     }
   }
   function section(name) {
@@ -85,5 +107,5 @@
     section(['processing', 'agent', 'users'][next]);
     node(tabs[next]).focus();
   });
-  root.DocIntelAgentSettings = Object.freeze({ read, render, preview, connections, section });
+  root.DocIntelAgentSettings = Object.freeze({ read, render, preview, connections, toggleConnection, section });
 })(globalThis);

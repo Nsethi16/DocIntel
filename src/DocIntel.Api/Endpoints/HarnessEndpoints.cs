@@ -81,7 +81,7 @@ public static class HarnessEndpoints
                     new
                     {
                         name = FeatureHarness.AskAiKey,
-                        description = "Conversational question answering and synthesis across tenant documents."
+                        description = "Conversational question answering and synthesis across workspace documents."
                     }
                 }
             });
@@ -110,7 +110,7 @@ public static class HarnessEndpoints
             var tenant = await store.GetTenantAsync(tenantId, ct);
             return tenant is not null
                 ? Results.Ok(tenant)
-                : Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+                : Results.NotFound(new { error = $"Workspace '{tenantId}' not found." });
         });
 
         group.MapGet("/tenants/{tenantId}/agent/channels", async (
@@ -286,7 +286,7 @@ public static class HarnessEndpoints
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
             if (tenant is null)
             {
-                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+                return Results.NotFound(new { error = $"Workspace '{tenantId}' not found." });
             }
 
             var job = await jobStore.GetJobAsync(jobId, ct, tenantId);
@@ -370,7 +370,7 @@ public static class HarnessEndpoints
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
             if (tenant is null)
             {
-                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+                return Results.NotFound(new { error = $"Workspace '{tenantId}' not found." });
             }
 
             var run = new AskAiRun
@@ -423,7 +423,7 @@ public static class HarnessEndpoints
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
             if (tenant is null)
             {
-                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+                return Results.NotFound(new { error = $"Workspace '{tenantId}' not found." });
             }
 
             var runId = Guid.NewGuid().ToString("N");
@@ -515,7 +515,7 @@ public static class HarnessEndpoints
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
             if (tenant is null)
             {
-                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+                return Results.NotFound(new { error = $"Workspace '{tenantId}' not found." });
             }
 
             var run = new AskAiRun
@@ -586,7 +586,7 @@ public static class HarnessEndpoints
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
             if (tenant is null)
             {
-                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+                return Results.NotFound(new { error = $"Workspace '{tenantId}' not found." });
             }
 
             var run = new AskAiRun
@@ -647,7 +647,7 @@ public static class HarnessEndpoints
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
             if (tenant is null)
             {
-                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+                return Results.NotFound(new { error = $"Workspace '{tenantId}' not found." });
             }
 
             var (fileName, pdfBytes) = await ResolvePdfBytesAsync(request, ct);
@@ -765,7 +765,7 @@ public static class HarnessEndpoints
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
             if (tenant is null)
             {
-                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+                return Results.NotFound(new { error = $"Workspace '{tenantId}' not found." });
             }
 
             // Use fast deterministic catalog for bulk seeding 26 documents so Cosmos DB seeding completes in <5 seconds
@@ -852,7 +852,7 @@ public static class HarnessEndpoints
             var tenant = await harnessStore.GetTenantAsync(tenantId, ct);
             if (tenant is null)
             {
-                return Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
+                return Results.NotFound(new { error = $"Workspace '{tenantId}' not found." });
             }
 
             var (fileName, pdfBytes) = await ResolvePdfBytesAsync(request, ct);

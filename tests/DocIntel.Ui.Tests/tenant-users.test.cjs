@@ -173,6 +173,7 @@ test('directory search is bounded, excludes ineligible people and never accepts 
   await app.invoke('tenantUsersSelect_arg', [id(5)]);
   const select = app.node(`tenant-user-role-${id(5)}`);
   assert.deepEqual(select.children.map(option => option.value), ['User', 'TenantAdmin']);
+  assert.deepEqual(select.children.map(option => option.textContent), ['User', 'Workspace admin']);
   assert.equal(select.value, 'User');
   assert.equal(app.node('tenantUsersReviewAdd').disabled, false);
 });
@@ -187,7 +188,7 @@ test('multi-person assignment is atomic, defaults User and requires explicit con
   await app.invoke('tenantUsersSelectedRole_arg', [id(2)], { value: 'TenantAdmin' });
   await app.invoke('tenantUsersReviewAdd');
   assert.equal(app.requests.filter(item => item.options.method === 'PUT').length, 0);
-  assert.match(app.node('tenantUsersConfirmText').textContent, /2 people.*1 will be tenant admins/);
+  assert.match(app.node('tenantUsersConfirmText').textContent, /2 people.*1 will be workspace admins/);
   app.handler = async (url, options) => options.method === 'PUT'
     ? response({ version: 5 }) : response(snapshot([user(1), user(2, { role: 'TenantAdmin' })], { version: 5 }));
   await app.invoke('tenantUsersConfirm');
@@ -230,7 +231,7 @@ test('roles and removals require confirmation; cancelled changes never mutate me
   app.node('tenantUsersDetailRole').value = 'TenantAdmin';
   await app.invoke('tenantUsersReviewRole');
   assert.equal(app.node('tenantUsersConfirmDialog').open, true);
-  assert.match(app.node('tenantUsersConfirmText').textContent, /from User to Tenant admin/);
+  assert.match(app.node('tenantUsersConfirmText').textContent, /from User to Workspace admin/);
   await app.invoke('tenantUsersClose_arg', ['confirm']);
   await app.invoke('tenantUsersConfirm');
   assert.equal(app.requests.length, 1);

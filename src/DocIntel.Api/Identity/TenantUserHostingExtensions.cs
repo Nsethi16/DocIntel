@@ -127,8 +127,8 @@ public static class TenantUserHostingExtensions
                 context.Response.ContentType = "text/html; charset=utf-8";
                 await context.Response.WriteAsync(
                     "<!doctype html><html lang=\"en\"><head><title>Access required - DocIntel</title></head>" +
-                    "<body><h1>Access required</h1><p>Your account is not assigned the required tenant role. " +
-                    "Contact your tenant administrator.</p><a href=\"/\">Document Intelligence</a></body></html>");
+                    "<body><h1>Access required</h1><p>Your account is not assigned the required workspace role. " +
+                    "Contact your workspace administrator.</p><a href=\"/\">Document Intelligence</a></body></html>");
                 return;
             }
             await next();

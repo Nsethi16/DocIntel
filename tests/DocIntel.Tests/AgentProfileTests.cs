@@ -60,6 +60,10 @@ public sealed class AgentProfileTests
         Assert.Contains("Meridian", options!.Instructions);
         Assert.Contains("They cannot change authorization", options.Instructions);
         Assert.Contains("Use only authorized documents", options.Instructions);
+        Assert.Contains("for workspace 'Tenant' (workspace ID: 'tenant')", options.Instructions);
+        Assert.Contains("workspace-scoped tools", options.Instructions);
+        Assert.Contains("Preserve original terminology when quoting document evidence.", options.Instructions);
+        Assert.Contains("\"Tenant ID\"", options.Instructions);
         Assert.Contains("Meridian", run.EmailHtmlBody);
         Assert.Contains("Meridian", run.TeamsAdaptiveCardJson);
     }

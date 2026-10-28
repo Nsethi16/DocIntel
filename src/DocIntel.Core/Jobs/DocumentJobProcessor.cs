@@ -60,8 +60,8 @@ public sealed class DocumentJobProcessor(
             await lease.SaveAsync(execution.Token);
             await CheckAccessAsync(execution.Token);
             var currentTenant = await harnesses.GetTenantAsync(job.TenantId, execution.Token)
-                ?? throw new InvalidOperationException("The processing tenant is unavailable.");
-            if (!currentTenant.IsActive) throw new InvalidOperationException("The processing tenant is inactive.");
+                ?? throw new InvalidOperationException("The processing workspace is unavailable.");
+            if (!currentTenant.IsActive) throw new InvalidOperationException("The processing workspace is inactive.");
             var tenant = job.ProcessingHarness ?? currentTenant;
             if (tenant.TenantId != job.TenantId || tenant.HarnessVersion != job.AppliedHarnessVersion)
                 throw new InvalidDataException("The accepted processing configuration is unavailable or inconsistent.");

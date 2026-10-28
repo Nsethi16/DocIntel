@@ -42,7 +42,7 @@ public sealed class GenerateDocumentInsightsExecutor : Executor<SplittingState, 
                 Succeeded: true,
                 ModelIdUsed: null,
                 DurationMs: 0,
-                Notes: "Skipped (Document Insight is disabled for this tenant)."));
+                Notes: "Skipped (Document Insight is disabled for this workspace)."));
             return message;
         }
 

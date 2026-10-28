@@ -64,13 +64,16 @@ function runtime() {
     }
     return elements.get(id);
   };
-  const app = { element, response: { email: { configured: false }, teams: { configured: false } } };
+  const app = { element, requests: [], response: { email: { configured: false }, teams: { configured: false } } };
   element('adminSections').addEventListener = (type, listener) => { app[type] = listener; };
   for (const id of ['processingSettingsTab', 'agentSettingsTab', 'tenantUsersTab'])
     element(id).focus = () => { app.focused = id; };
   const context = vm.createContext({
     document: { getElementById: element },
-    fetch: async () => ({ ok: true, json: async () => typeof app.response === 'function' ? app.response() : app.response })
+    fetch: async url => {
+      app.requests.push(url);
+      return { ok: true, json: async () => typeof app.response === 'function' ? app.response() : app.response };
+    }
   });
   vm.runInContext(source, context);
   app.settings = context.DocIntelAgentSettings;
@@ -90,6 +93,77 @@ test('personality editing roundtrips safely with an illustrative style preview a
   app.element('agentTone').value = 'Concise';
   app.settings.preview();
   assert.match(app.element('agentPreviewMessage').textContent, /lead with the answer/);
+});
+
+test('Manage summaries show current drafts as text without exposing the full response guidance', () => {
+  const app = runtime();
+  app.settings.render({ displayName: '<img onerror=evil()>', purpose: '<script>purpose</script>',
+    tone: 'Friendly', instructions: '<script>guidance</script>' });
+  assert.equal(app.element('agentNameSummary').textContent, '<img onerror=evil()>');
+  assert.equal(app.element('agentPurposeSummary').textContent, '<script>purpose</script>');
+  assert.equal(app.element('agentToneSummary').textContent, 'Friendly');
+  assert.equal(app.element('agentInstructionsSummary').textContent, 'Custom response guidance is set');
+  app.element('agentDisplayName').value = 'Unsaved name';
+  app.element('agentPurpose').value = '';
+  app.element('agentInstructions').value = '  ';
+  app.settings.preview();
+  assert.equal(app.element('agentNameSummary').textContent, 'Unsaved name');
+  assert.equal(app.element('agentPurposeSummary').textContent, 'Describe its purpose and audience');
+  assert.equal(app.element('agentInstructionsSummary').textContent, 'Optional instructions for your assistant');
+  assert.equal(app.settings.read().displayName, 'Unsaved name');
+  assert.equal(app.requests.length, 0);
+});
+
+test('channel Manage only discloses guidance without changing settings, saving or making requests', () => {
+  const app = runtime();
+  app.settings.render({ displayName: 'Unsaved name', emailEnabled: true, teamsEnabled: false });
+  const before = JSON.stringify(app.settings.read());
+  app.settings.toggleConnection('email');
+  assert.equal(app.element('agentEmailDetails').hidden, false);
+  assert.equal(app.element('agentEmailManage')['aria-expanded'], 'true');
+  app.settings.toggleConnection('teams');
+  assert.equal(app.element('agentEmailDetails').hidden, true);
+  assert.equal(app.element('agentEmailManage')['aria-expanded'], 'false');
+  assert.equal(app.element('agentTeamsDetails').hidden, false);
+  assert.equal(app.element('agentTeamsManage')['aria-expanded'], 'true');
+  app.settings.toggleConnection('teams');
+  assert.equal(app.element('agentTeamsDetails').hidden, true);
+  assert.equal(app.element('agentTeamsManage')['aria-expanded'], 'false');
+  assert.throws(() => app.settings.toggleConnection('__proto__'), { name: 'RangeError' });
+  assert.equal(JSON.stringify(app.settings.read()), before);
+  assert.equal(app.requests.length, 0);
+});
+
+test('rendering another workspace resets disclosed channel guidance and all profile summaries', () => {
+  const app = runtime();
+  app.settings.render({ displayName: 'First', instructions: 'First guidance', emailEnabled: true });
+  app.settings.toggleConnection('email');
+  app.settings.render({ displayName: 'Second', teamsEnabled: true });
+  assert.equal(app.element('agentNameSummary').textContent, 'Second');
+  assert.equal(app.element('agentInstructionsSummary').textContent, 'Optional instructions for your assistant');
+  assert.equal(app.settings.read().emailEnabled, false);
+  assert.equal(app.settings.read().teamsEnabled, true);
+  for (const channel of ['Email', 'Teams']) {
+    assert.equal(app.element(`agent${channel}Details`).hidden, true);
+    assert.equal(app.element(`agent${channel}Manage`)['aria-expanded'], 'false');
+  }
+});
+
+test('profile Manage disclosures remain native, exclusive and closed initially', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'DocIntel.Api', 'wwwroot', 'admin.html'), 'utf8');
+  const rows = [...html.matchAll(/<details class="agent-setting-row"[^>]*>[\s\S]*?<\/details>/g)];
+  assert.equal(rows.length, 4);
+  for (const [row] of rows) {
+    assert.match(row.split('>')[0], /name="agent-profile-settings"/);
+    assert.doesNotMatch(row.split('>')[0], /\bopen\b/);
+    assert.match(row, /<summary>[\s\S]*?class="agent-manage-action">Manage<\/span><\/summary>/);
+    assert.match(row, /class="agent-profile-field"/);
+  }
+  assert.match(html, /<details class="agent-style-disclosure">\s*<summary>Preview assistant style/);
+  for (const channel of ['Email', 'Teams']) {
+    assert.match(html, new RegExp(`id="agent${channel}Manage"[\\s\\S]*?aria-controls="agent${channel}Details"`));
+    assert.match(html, new RegExp(`id="agent${channel}Details" class="agent-channel-details" hidden`));
+  }
 });
 
 test('agent settings have a separate discoverable panel from document-processing controls', () => {

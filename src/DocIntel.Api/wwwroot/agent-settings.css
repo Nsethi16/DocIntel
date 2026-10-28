@@ -32,21 +32,32 @@
 }
 @media(prefers-reduced-motion:reduce) { .admin-sections button { transition:none; } }
 [hidden] { display:none !important; }
-.agent-settings-heading h2 { font-size:24px; letter-spacing:-.5px; margin:10px 0 6px; font-weight:600; }
-.agent-settings-heading p { color:var(--text-secondary); margin:0 0 24px; }
+.agent-settings-heading h2 { font-size:22px; letter-spacing:-.4px; margin:10px 0 8px; font-weight:600; }
+.agent-settings-heading p { color:#6c6c6c; margin:0 0 20px; font-size:14px; line-height:1.5; }
 .agent-eyebrow { color:#4b63d8; font:11px var(--font-mono); letter-spacing:1.3px; }
-.agent-identity-grid, .agent-channel-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
-.agent-settings-card { border:1px solid var(--card-border); background:white; border-radius:10px; padding:20px; box-shadow:none; min-width:0; }
-.agent-profile-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:18px; align-content:start; }
-.agent-profile-field { display:flex; flex-direction:column; min-width:0; }
+.agent-identity-grid, .agent-channel-grid { display:grid; grid-template-columns:minmax(0,1fr); gap:0; }
+.agent-settings-card { border:0; background:white; border-radius:0; padding:0; box-shadow:none; min-width:0; }
+.agent-profile-grid { display:block; }
+.agent-setting-row { padding:16px 0; }
+.agent-setting-row > summary { display:flex; align-items:center; justify-content:space-between; gap:16px; list-style:none; cursor:pointer; }
+.agent-setting-row > summary::-webkit-details-marker { display:none; }
+.agent-setting-row > summary::marker { content:""; }
+.agent-setting-copy { display:flex; flex:1; min-width:0; flex-direction:column; gap:3px; }
+.agent-setting-copy strong { font-size:14px; font-weight:400; color:#3b3b3b; }
+.agent-setting-copy > span { font-size:14px; color:#6c6c6c; line-height:1.45; overflow-wrap:anywhere; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.agent-manage-action { flex-shrink:0; }
+.agent-setting-row[open] .agent-manage-action { background:#e2e2e2; color:#242424; }
+.agent-profile-field { display:flex; flex-direction:column; min-width:0; padding:16px; margin-top:14px; background:#f8f9fb; border-radius:8px; }
 .agent-profile-field label { display:block; font-size:13px; font-weight:600; margin:0 0 8px; }
-.agent-settings-card label span { font-weight:400; color:var(--text-muted); margin-left:5px; }
+.agent-profile-field label span { font-weight:400; color:var(--text-muted); margin-left:5px; }
 .agent-profile-field input, .agent-profile-field select, .agent-profile-field textarea { width:100%; font:inherit; }
 .agent-profile-field input, .agent-profile-field select { min-height:40px; }
 .agent-profile-field textarea { flex:1; min-height:144px; line-height:1.6; }
-.agent-profile-note { grid-column:1 / -1; margin:0; }
+.agent-profile-note { margin:0; padding:4px 0 12px; }
 .agent-safety-note, .agent-preview-disclaimer { font-size:12px; line-height:1.6; color:var(--text-secondary); overflow-wrap:anywhere; }
-.agent-preview { display:flex; flex-direction:column; background:linear-gradient(150deg,#f9faff,#fff); }
+.agent-style-disclosure { margin:4px 0 20px; }
+.agent-style-disclosure > summary { cursor:pointer; font-size:13px; color:var(--text-secondary); padding:10px 0; }
+.agent-preview { display:flex; flex-direction:column; background:#f8f9fb; padding:20px; border-radius:8px; margin-top:10px; }
 .agent-preview-identity { display:flex; align-items:center; gap:12px; margin:20px 0; }
 .agent-preview-identity > div { min-width:0; }
 .agent-avatar { display:grid; place-items:center; width:44px; height:44px; flex-shrink:0; border-radius:14px; background:#e8edff; color:#4057ca; font-size:20px; }
@@ -56,22 +67,23 @@
 .agent-preview-message { background:white; border:1px solid #e1e6f7; border-radius:13px 13px 13px 3px; padding:16px; line-height:1.65; font-size:14px; overflow-wrap:anywhere; }
 .agent-preview-footnote { display:flex; gap:8px; margin-top:auto; padding-top:16px; }
 .agent-preview-footnote span { font-size:11px; padding:5px 9px; border-radius:20px; color:#5d6074; background:#eceff8; }
-.agent-channel-heading { font-size:20px; font-weight:600; margin:26px 0 16px; }
+.agent-channel-heading { font-size:14px; font-weight:600; margin:16px 0 8px; }
 .agent-channel-grid { margin-bottom:24px; }
-.agent-channel-card { display:grid; grid-row:span 4; grid-template-rows:subgrid; row-gap:12px; }
-.agent-channel-header { display:flex; align-items:flex-start; gap:12px; }
+.agent-channel-card { display:grid; grid-template-columns:minmax(0,1fr) auto; align-items:center; column-gap:16px; row-gap:14px; padding:16px 0; }
+.agent-channel-header { display:flex; align-items:flex-start; min-width:0; }
 .agent-channel-header > div { min-width:0; }
-.agent-channel-icon { flex-shrink:0; font-size:20px; color:#4b63d8; background:#eef1ff; border-radius:10px; display:inline-grid; place-items:center; width:36px; height:36px; }
-.agent-channel-card h3 { margin:2px 0 6px; font-size:17px; }
-.agent-channel-card p { margin:0; color:var(--text-secondary); line-height:1.65; font-size:13px; overflow-wrap:anywhere; }
+.agent-channel-card h3 { margin:0 0 3px; font-size:14px; font-weight:400; color:#3b3b3b; }
+.agent-channel-card p { margin:0; color:#6c6c6c; line-height:1.45; font-size:14px; overflow-wrap:anywhere; }
 .agent-channel-card .agent-safety-note { font-size:12px; }
-.agent-channel-toggle { display:flex; gap:8px; align-items:center; font-size:13px; font-weight:500; margin:0; cursor:pointer; }
-.agent-connection-state { border-top:1px solid var(--border); padding-top:12px; font-weight:500; }
-@media(max-width:1150px) {
-  .agent-identity-grid { grid-template-columns:1fr; }
-}
-@media(max-width:950px) { .agent-channel-grid { grid-template-columns:1fr; } }
+.agent-channel-controls { display:flex; align-items:center; gap:16px; }
+.agent-channel-card .agent-connection-state { margin-top:6px; font-size:12px; font-weight:400; }
+.agent-channel-details { grid-column:1 / -1; background:#f8f9fb; padding:16px; border-radius:8px; }
+.agent-channel-details p + p { margin-top:10px; }
 @media(max-width:700px) {
-  .agent-profile-grid { grid-template-columns:1fr; }
-  .agent-settings-card { padding:20px; }
+  .agent-profile-field { padding:14px 10px; }
+}
+@media(max-width:480px) {
+  .agent-channel-card { grid-template-columns:minmax(0,1fr); }
+  .agent-channel-controls { justify-content:flex-end; }
+  .agent-setting-row > summary { align-items:flex-start; }
 }

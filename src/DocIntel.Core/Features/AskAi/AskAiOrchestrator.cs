@@ -357,8 +357,9 @@ public static class AskAiPromptBuilder
         var sb = new StringBuilder();
         if (tenant.Agent?.IsValid != true) throw new InvalidDataException("The agent presentation settings are invalid.");
         sb.AppendLine(tenant.Agent.Prompt);
-        sb.AppendLine($"You are the Enterprise Document Intelligence Ask AI Agent for tenant '{tenant.DisplayName}' (tenantId: '{tenant.TenantId}').");
-        sb.AppendLine("Use only authorized documents returned by tenant-scoped tools. Results include original text, extracted entities, structured tables, and Prompt Column results.");
+        sb.AppendLine($"You are the Enterprise Document Intelligence Ask AI Agent for workspace '{tenant.DisplayName}' (workspace ID: '{tenant.TenantId}').");
+        sb.AppendLine("Use only authorized documents returned by workspace-scoped tools. Results include original text, extracted entities, structured tables, and Prompt Column results.");
+        sb.AppendLine("Call the application space a workspace in replies. Preserve original terminology when quoting document evidence.");
         sb.AppendLine();
 
         // 1. Defined Document Types
@@ -576,7 +577,7 @@ public sealed class AskAiOrchestrator
         }
 
         var tenant = await _harnessStore.GetTenantAsync(run.TenantId, cancellationToken)
-            ?? throw new InvalidOperationException($"Tenant '{run.TenantId}' not found.");
+            ?? throw new InvalidOperationException($"Workspace '{run.TenantId}' not found.");
 
         async Task<DocumentAccessScope> ResolveAccessAsync(CancellationToken ct)
         {
@@ -584,7 +585,7 @@ public sealed class AskAiOrchestrator
                 : await _accessResolver.ResolveAsync(run.Actor, run.TenantId, ct);
             if (!access.CanRead)
             {
-                throw new UnauthorizedAccessException("This actor no longer has access to the requested tenant.");
+                throw new UnauthorizedAccessException("This actor no longer has access to the requested workspace.");
             }
             return access;
         }
@@ -595,13 +596,13 @@ public sealed class AskAiOrchestrator
         run.AgentHarnessVersion = tenant.HarnessVersion;
         if (_toolProviders.Any() && (initialAccess.AllowedJobIds is not null || !initialAccess.CanProcess))
         {
-            throw new InvalidOperationException("Extension tools require tenant-wide processing permissions.");
+            throw new InvalidOperationException("Extension tools require workspace-wide processing permissions.");
         }
 
         if (!tenant.IsActive ||
             !tenant.Capabilities.TryGetValue(FeatureHarness.AskAiKey, out var askFeature) || !askFeature.Enabled)
         {
-            throw new InvalidOperationException("Ask AI is not enabled for this tenant.");
+            throw new InvalidOperationException("Ask AI is not enabled for this workspace.");
         }
 
         run.Status = JobStatus.Running;
@@ -682,7 +683,7 @@ public sealed class AskAiOrchestrator
                 if (job is null || job.Status != JobStatus.Completed ||
                     !String.Equals(job.TenantId, tenant.TenantId, StringComparison.Ordinal))
                 {
-                    throw new InvalidOperationException("The requested document is not available in this tenant.");
+                    throw new InvalidOperationException("The requested document is not available in this workspace.");
                 }
 
                 var slice = job.Segments.FirstOrDefault(s => s.SegmentIndex == sliceIndex)
@@ -772,7 +773,7 @@ public sealed class AskAiOrchestrator
         var tools = new List<AIFunction>
         {
             AIFunctionFactory.Create(SearchDocumentsAsync, "search_documents",
-                "Search completed tenant documents. Conditions are ANDed. Follow continuation tokens; " +
+                "Search completed workspace documents. Conditions are ANDed. Follow continuation tokens; " +
                 "a single page is not a total count. Empty results mean no matches. " +
                 "Results are document references, not citation evidence. Before listing or describing a matching document, " +
                 "call inspect_document_slice with its jobId; never use a jobId as an evidenceId."),

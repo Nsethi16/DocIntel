@@ -485,7 +485,7 @@ let tenants = [];
           const messages = {
             400: 'Upload rejected. Select one valid PDF up to 25 MiB, or refresh to renew request verification.',
             401: 'Sign in again before uploading.',
-            403: 'Your account does not have permission to upload to this tenant.',
+            403: 'Your account does not have permission to upload to this workspace.',
             413: 'The PDF is too large. The maximum file size is 25 MiB.',
             429: 'The upload allowance was exceeded. Wait before trying again.'
           };
@@ -1179,7 +1179,7 @@ let tenants = [];
           <div class="content-column">
             <dl class="kv-grid" style="padding-bottom:20px;border-bottom:1px solid var(--line);">
               <div class="kv-item"><dt>Job ID</dt><dd style="font-family:monospace;font-size:12.5px;">${escapeHtml(job.jobId)}</dd></div>
-              <div class="kv-item"><dt>Tenant</dt><dd>${escapeHtml(job.tenantId)}</dd></div>
+              <div class="kv-item"><dt>Workspace</dt><dd>${escapeHtml(job.tenantId)}</dd></div>
               <div class="kv-item"><dt>Harness Version</dt><dd>v${job.appliedHarnessVersion || 1}</dd></div>
               <div class="kv-item"><dt>Language Model</dt><dd>${escapeHtml(job.modelIdUsed || 'gpt-5-mini')}</dd></div>
             </dl>
@@ -1540,7 +1540,7 @@ let tenants = [];
         ];
         const focusTitle = focusedNode
           ? (focusedNode.type === 'entity' ? `${focusedNode.entityValue}` : focusedNode.docName)
-          : (selectedValLabels.length > 0 ? selectedValLabels.join(', ') : 'All Tenant Documents');
+          : (selectedValLabels.length > 0 ? selectedValLabels.join(', ') : 'All Workspace Documents');
         const focusSub = focusedNode
           ? (focusedNode.type === 'entity' ? `Entity Hub · ${focusedNode.entityName}` : `Selected Document · ${focusedNode.pageRange}`)
           : `${edges.length} entity connection${edges.length === 1 ? '' : 's'} active`;
@@ -1598,7 +1598,7 @@ let tenants = [];
           <div style="padding:10px 12px;border-radius:9px;background:var(--bg);border:1px solid var(--line);">
             <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(focusedNode.entityName)}</div>
             <div style="font-size:15.5px;font-weight:600;color:var(--text-primary);margin-top:2px;">${escapeHtml(focusedNode.entityValue)}</div>
-            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Shared across <strong>${focusedNode.connectedDocs.length}</strong> document${focusedNode.connectedDocs.length === 1 ? '' : 's'} in this tenant.</div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Shared across <strong>${focusedNode.connectedDocs.length}</strong> document${focusedNode.connectedDocs.length === 1 ? '' : 's'} in this workspace.</div>
           </div>
 
           ${coEntities.length > 0 ? `

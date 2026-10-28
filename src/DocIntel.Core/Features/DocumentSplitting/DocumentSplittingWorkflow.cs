@@ -68,7 +68,7 @@ public sealed class DocumentSplittingWorkflow
 
         if (!state.Tenant.IsActive)
         {
-            throw new InvalidOperationException($"Tenant '{state.Tenant.TenantId}' is inactive.");
+            throw new InvalidOperationException($"Workspace '{state.Tenant.TenantId}' is inactive.");
         }
 
         var splitEnabled = state.Tenant.Capabilities.TryGetValue(FeatureHarness.SplitAndGroupKey, out var splitFeature) &&
@@ -90,7 +90,7 @@ public sealed class DocumentSplittingWorkflow
                 Succeeded: true,
                 ModelIdUsed: null,
                 DurationMs: 0,
-                Notes: $"All features are disabled in tenant '{state.Tenant.TenantId}' harness."));
+                Notes: $"All features are disabled in workspace '{state.Tenant.TenantId}' configuration."));
             return state;
         }
 

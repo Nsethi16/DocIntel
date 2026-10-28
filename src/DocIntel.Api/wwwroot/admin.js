@@ -42,7 +42,7 @@ let tenants = [];
       }
       const tenantId = currentTenant?.tenantId;
       if (!ocrBudgetSnapshot || tenantId !== ocrBudgetTenantId) {
-        document.getElementById('ocrUsageStatus').textContent = 'Load the current tenant allowance before saving.';
+        document.getElementById('ocrUsageStatus').textContent = 'Load the current workspace allowance before saving.';
         return;
       }
       const limitText = String(document.getElementById('ocrPageLimit').value).trim();
@@ -104,7 +104,7 @@ let tenants = [];
       list.innerHTML = '';
 
       if (tenants.length === 0) {
-        list.innerHTML = '<div class="empty-tenants">No tenants created yet</div>';
+        list.innerHTML = '<div class="empty-tenants">No workspaces created yet</div>';
         return;
       }
 
@@ -534,7 +534,7 @@ let tenants = [];
 
       document.getElementById('harnessVersionChip').textContent = `Harness v${currentTenant.harnessVersion || 1}`;
       document.getElementById('tenantHeading').textContent = `${currentTenant.displayName}`;
-      document.getElementById('tenantIdDisplay').textContent = `Tenant ID: ${currentTenant.tenantId}`;
+      document.getElementById('tenantIdDisplay').textContent = `Workspace ID: ${currentTenant.tenantId}`;
 
       document.getElementById('harnessDecisionModelSelect').value = currentTenant.decisionModelId || 'decision-1';
       document.getElementById('harnessLanguageModelSelect').value =
@@ -1009,8 +1009,8 @@ let tenants = [];
         await loadTenants(tenantId);
         showToast(`Created ${displayName}`);
       } else {
-        showToast(resp.status === 409 ? 'This tenant already exists. Choose another ID or open the existing tenant.'
-          : 'Tenant creation was not confirmed. Check the tenant list before retrying.');
+        showToast(resp.status === 409 ? 'This workspace already exists. Choose another ID or open the existing workspace.'
+          : 'Workspace creation was not confirmed. Check the workspace list before retrying.');
       }
     }
 
@@ -1121,7 +1121,7 @@ let tenants = [];
       if (filtered.length === 0) {
         container.innerHTML = `
           <div style="padding:28px 14px;text-align:center;color:var(--text-secondary);font-size:12.5px;line-height:1.5;">
-            No documents processed for <strong>${escapeHtml(currentTenant ? currentTenant.displayName : 'this tenant')}</strong> yet.<br/><br/>
+            No documents processed for <strong>${escapeHtml(currentTenant ? currentTenant.displayName : 'this workspace')}</strong> yet.<br/><br/>
             Click <strong>Upload File</strong> below to process a document.
           </div>
         `;
@@ -1243,7 +1243,7 @@ let tenants = [];
         body.innerHTML = `
           <div class="result-card" style="text-align:center;padding:48px 24px;color:var(--text-secondary);">
             <div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:6px;">No document selected</div>
-            <div style="font-size:13px;">Upload a PDF using <strong>Upload File</strong> on the left to inspect results for this tenant.</div>
+            <div style="font-size:13px;">Upload a PDF using <strong>Upload File</strong> on the left to inspect results for this workspace.</div>
           </div>
         `;
         return;
@@ -1617,6 +1617,7 @@ let tenants = [];
 
     DocIntelActions.register({
       setAdminSection_arg: { arity: 1, run: function(args) { DocIntelAgentSettings.section(args[0]); } },
+      toggleAgentChannel_arg: { arity: 1, run: function(args) { return DocIntelAgentSettings.toggleConnection(args[0]); } },
       onAgentProfileChanged: { arity: 0, run: function() { onAgentProfileChanged(); } },
       addDataExtractionFieldRow: { arity: 0, run: function(args, event) { return addDataExtractionFieldRow(); } },
       addDataExtractionTableBlock: { arity: 0, run: function(args, event) { return addDataExtractionTableBlock(); } },

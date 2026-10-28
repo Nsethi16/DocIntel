@@ -49,7 +49,7 @@
           if (!identity.chatPartition) throw new Error('Unable to verify the signed-in account.');
           if (identity.hasMembership === false) {
             showAccessError();
-            throw new Error('Your account is not assigned to a DocIntel tenant.');
+            throw new Error('Your account is not assigned to a DocIntel workspace.');
           }
           globalThis.DocIntelIdentity.chatPartition = identity.chatPartition;
           return identity;

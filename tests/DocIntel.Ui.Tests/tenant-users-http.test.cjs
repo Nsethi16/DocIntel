@@ -201,7 +201,7 @@ test('directory-backed tenant membership controls HTML, APIs, roles and revocati
           { objectId: secondAdmin, role: 'User', status: 'Active' }
         ]);
         assert.equal(denied.response.status, 400);
-        assert.match(denied.result.error, /at least one active tenant admin/);
+        assert.match(denied.result.error, /at least one active workspace admin/);
         assert.equal((await (await request(base + '/users')).json()).version, version);
       });
       await t.test('tenant-admin browser sessions require CSRF for membership edits and never retry a rejected edit', async () => {
