@@ -25,7 +25,7 @@ function runtime(search = '?tenant=tenant&run=one') {
   }
   function element(id) { if (!elements.has(id)) elements.set(id, node()); return elements.get(id); }
   const app = {
-    response: { status: 'Queued' }, httpStatus: 200, correlation: null,
+    response: { status: 'Queued' }, httpStatus: 200,
     get pending() { return pending; },
     element, calls
   };
@@ -36,8 +36,7 @@ function runtime(search = '?tenant=tenant&run=one') {
     clearTimeout() { pending = null; },
     fetch: async (url, options) => {
       calls.push({ url, options });
-      return { ok: app.httpStatus === 200, status: app.httpStatus, json: async () => app.response,
-        headers: { get: () => app.correlation } };
+      return { ok: app.httpStatus === 200, status: app.httpStatus, json: async () => app.response };
     }
   });
   vm.runInContext(instrumented, context);
@@ -120,23 +119,4 @@ test('an incomplete run link never makes a request', async () => {
   await app.load();
   assert.equal(app.calls.length, 0);
   assert.equal(app.element('refresh').disabled, true);
-});
-
-test('processing and delivery failures disclose safe status and correlation, never raw service errors', async () => {
-  const app = runtime();
-  app.correlation = 'request-123:abc';
-  app.response = {
-    status: 'Failed', errorMessage: 'SECRET upstream exception',
-    delivery: { status: 'Failed', errorCode: '<untrusted@example.com>' }
-  };
-  await app.load();
-  assert.match(app.element('status').textContent, /Reference: request-123:abc/);
-  assert.doesNotMatch(app.element('status').textContent, /SECRET upstream/);
-  assert.doesNotMatch(app.element('delivery').textContent, /untrusted@example/);
-  assert.equal(app.pending, null);
-  app.httpStatus = 500;
-  app.correlation = '<unsafe@example.com>';
-  await app.load();
-  assert.doesNotMatch(app.element('status').textContent, /unsafe@example/);
-  assert.match(app.element('status').textContent, /no new question will be submitted/);
 });

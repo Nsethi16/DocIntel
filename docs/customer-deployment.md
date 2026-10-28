@@ -13,13 +13,6 @@ Use the versioned installer ZIP, not a local application build. In Azure Cloud S
 4. Open the reported customer workspace URL and sign in as the selected owner. Process a
    representative PDF and verify an Ask AI answer with real source citations.
 
-After sign-in, **Workspace settings → Setup** guides processing configuration, document types,
-people and optional integrations. Connection indicators distinguish missing settings from
-configured-but-unverified providers. **Integrations** explains the authorized operator and
-administrator steps for email/Teams; it does not create a mailbox, grant consent, or claim a
-message was delivered. Complete those real round trips separately. In-app changes require an
-explicit versioned Save; navigation guards protect unsaved processing and agent drafts.
-
 The guided session also offers **Connect organization directory**. It is optional and separate
 from the infrastructure approval. New permission grants need a second, explicit `CONSENT`;
 existing permission can be verified and activated with `CONNECT`.

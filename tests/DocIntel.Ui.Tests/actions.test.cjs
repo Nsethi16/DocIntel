@@ -128,25 +128,20 @@ test('asynchronous failures are visible without logging exception text or source
 });
 
 test('shared clipboard helpers report success only after acknowledgement and preserve zero values', async () => {
-  const toast = { children: [], style: {}, setAttribute() {},
-    replaceChildren() { this.children = []; },
-    appendChild(child) { this.children.push(child); }
-  };
+  const toast = { textContent: '', style: {} };
   const written = [];
   const context = vm.createContext({
-    document: { getElementById: () => toast,
-      createElement: () => ({ textContent: '', addEventListener() {} }) },
-    setTimeout: () => {}, clearTimeout: () => {},
+    document: { getElementById: () => toast }, setTimeout: () => {},
     navigator: { clipboard: { writeText: async value => written.push(value) } }
   });
   vm.runInContext(fs.readFileSync(path.join(root, 'shared', 'ui.js'), 'utf8'), context);
   await context.copyTextValue(0);
   assert.deepEqual(written, ['0']);
-  assert.equal(toast.children[0].textContent, 'Copied to clipboard');
+  assert.equal(toast.textContent, 'Copied to clipboard');
   context.navigator.clipboard.writeText = async () => { throw new Error('Permission denied'); };
   await context.copyTextValue('Value');
-  assert.match(toast.children[0].textContent, /could not be copied/);
+  assert.match(toast.textContent, /could not be copied/);
   context.navigator.clipboard = null;
   await context.copyTextValue('Value');
-  assert.match(toast.children[0].textContent, /unavailable/);
+  assert.match(toast.textContent, /unavailable/);
 });

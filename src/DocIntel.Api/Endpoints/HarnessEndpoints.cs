@@ -2,9 +2,7 @@ using System.Text;
 using System.Security.Cryptography;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Api.Identity;
-using DocIntel.Core;
 using DocIntel.Core.Authorization;
-using DocIntel.Core.Channels;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Features.PromptColumns;
@@ -115,21 +113,6 @@ public static class HarnessEndpoints
                 : Results.NotFound(new { error = $"Tenant '{tenantId}' not found." });
         });
 
-        group.MapGet("/tenants/{tenantId}/setup", async (
-            string tenantId, HttpContext context, IdentityAccessService access, IHarnessStore store,
-            IJobStore jobs, IModelCatalog models, AzureIntegrationOptions azure, IEnterpriseDirectory directory,
-            EmailChannelOptions email, TeamsChannelOptions teams, CancellationToken ct) =>
-        {
-            var scope = await access.GetAccessAsync(context.User, tenantId, ct);
-            if (!scope.CanAdmin) return Results.Forbid();
-            var tenant = await store.GetTenantAsync(tenantId, ct);
-            if (tenant is null) return Results.NotFound();
-            var visible = await GetVisibleJobsAsync(tenantId, scope, jobs, ct);
-            return Results.Ok(TenantSetupReport.Create(
-                tenant, models, azure, directory.IsConfigured, email, teams,
-                visible.Any(job => job.Status == JobStatus.Completed)));
-        });
-
         group.MapGet("/tenants/{tenantId}/agent/channels", async (
             string tenantId, HttpContext context, IdentityAccessService access, IConfiguration configuration, CancellationToken ct) =>
         {
@@ -181,7 +164,7 @@ public static class HarnessEndpoints
             }
         });
 
-        // Projection bounds do not avoid the store's current full visible-job scan.
+        // Lightweight Server-Side Graph Projection API (scalable for 100K+ documents — returns only nodes, edges, and facets)
         group.MapGet("/tenants/{tenantId}/graph", async (
             string tenantId,
             string? entityName,
@@ -264,27 +247,6 @@ public static class HarnessEndpoints
                 degree = kv.Value.Count
             }).OrderByDescending(e => e.degree).ToList();
 
-            var projectedJobs = jobs.Take(Math.Min(cap, 1000)).ToList();
-            var documents = projectedJobs.Select(job => new
-            {
-                job.JobId,
-                job.TenantId,
-                job.FileName,
-                job.TotalPages,
-                segmentCount = job.Segments.Count,
-                job.CreatedAtUtc,
-                entities = job.ExtractedEntities.Concat(job.Segments.SelectMany(slice => slice.ExtractedEntities))
-                    .Where(entity => !String.IsNullOrWhiteSpace(entity.Name) &&
-                        !String.IsNullOrWhiteSpace(entity.Value))
-                    .Select(entity => new { name = entity.Name.Trim(), value = entity.Value.Trim(), entity.Category })
-                    .DistinctBy(entity => (entity.name, entity.value), EntityPairComparer.Instance),
-                documentTypes = job.Segments
-                    .Select(slice => String.IsNullOrEmpty(slice.IdentifiedDocumentName)
-                        ? slice.DocumentTypeName : slice.IdentifiedDocumentName)
-                    .Where(name => !String.IsNullOrWhiteSpace(name))
-                    .Distinct(StringComparer.Ordinal)
-            }).ToArray();
-
             return Results.Ok(new
             {
                 tenantId,
@@ -294,9 +256,7 @@ public static class HarnessEndpoints
                 renderedEdges = edges.Count,
                 docNodes,
                 entityNodes,
-                edges,
-                documents,
-                truncated = projectedJobs.Count < jobs.Count
+                edges
             });
         });
 
@@ -311,18 +271,6 @@ public static class HarnessEndpoints
             var scope = await access.GetAccessAsync(context.User, tenantId, ct);
             var jobs = await GetVisibleJobsAsync(tenantId, scope, jobStore, ct);
             return Results.Ok(jobs.Select(FormatJobResponse));
-        });
-
-        group.MapGet("/tenants/{tenantId}/documents", async (
-            string tenantId, int? offset, int? limit, string? q, string? status,
-            HttpContext context, IdentityAccessService access, IJobStore jobStore, CancellationToken ct) =>
-        {
-            var error = DocumentListProjection.Validate(context.Request, offset, limit, q, status);
-            if (error is not null)
-                return Results.ValidationProblem(new Dictionary<string, string[]> { ["query"] = [error] });
-            var scope = await access.GetAccessAsync(context.User, tenantId, ct);
-            var jobs = await GetVisibleJobsAsync(tenantId, scope, jobStore, ct);
-            return Results.Ok(DocumentListProjection.Create(tenantId, jobs, offset ?? 0, limit ?? 50, q, status));
         });
 
         // Explicitly evaluate or re-evaluate Prompt Columns on a specific job

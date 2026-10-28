@@ -10,11 +10,9 @@ function runtime(responses = []) {
   const calls = [];
   function element(id) {
     if (!elements.has(id)) elements.set(id, {
-      value: '', checked: false, disabled: false, hidden: id === 'promptEditor', dataset: {}, options: [],
+      value: '', checked: false, disabled: false,
       style: {}, children: [],
       addEventListener() {},
-      focus() {},
-      setAttribute(name, value) { this[name] = value; },
       classList: { toggle() {}, add() {}, remove() {} }
     });
     return elements.get(id);
@@ -62,12 +60,12 @@ test('editing and clearing prompts keeps the same field bindings after grouping 
   assert.equal(app.element('editingPromptColumnId').value, 'saved');
   assert.equal(app.element('promptColumnNameInput').value, 'Summary');
   assert.equal(app.element('promptInstructionsInput').value, 'Explain {{Document.Content}} with citations.');
-  assert.equal(app.element('btnSavePromptLabel').textContent, 'Update in changes');
+  assert.equal(app.element('btnSavePromptLabel').textContent, 'Update Prompt');
   assert.equal(app.element('promptFilterRulesContainer').style.display, 'none');
   vm.runInContext('clearPromptColumnForm()', app.context);
   assert.equal(app.element('editingPromptColumnId').value, '');
   assert.equal(app.element('promptColumnNameInput').value, '');
-  assert.equal(app.element('btnSavePromptLabel').textContent, 'Add to changes');
+  assert.equal(app.element('btnSavePromptLabel').textContent, 'Save Prompt');
   assert.equal(vm.runInContext('workingPromptColumns[0].columnName', app.context), 'Summary');
   assert.equal(app.calls.length, 0, 'Opening or clearing an editor must not save or delete a prompt');
 });

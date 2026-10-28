@@ -2,35 +2,6 @@
 
 A modern **.NET 10 + .NET Aspire + Microsoft Agent Framework (`Microsoft.Agents.AI.Workflows`)** multi-tenant Document Intelligence solution with a clean **Agent Harness Studio** Admin UI.
 
-## Customer workspace experience
-
-The document workspace provides one contextual navigation rail for Documents, Relationships and
-Ask AI. Document lists are paginated, searchable and status-filtered; only the selected document
-loads its full results. Server-side authorization and soft-deletion rules apply before search and
-pagination. This bounds response payloads, not the underlying storage scan.
-
-First-use guidance explains upload permissions, the one-PDF/25-MiB limit and processing settings.
-Processing shows reported stages rather than an invented completion percentage. Failures remain
-visible with a support reference; refreshing an operation never automatically uploads or bills again.
-Original source pages can open beside results and citations without replacing the active view.
-Each custom-analysis result retains its own tab. Relationship filters retain strict AND semantics
-and offer a keyboard-accessible document list alongside the graph; projections explicitly disclose
-when their 1,000-document display limit has been reached.
-
-Workspace settings separate Setup, Processing, Custom analysis, Agent, Integrations and People.
-Configuration uses deliberate versioned saves, protected drafts and explicit conflict recovery,
-not autosave. The setup report is admin-only and describes **configuration**, not proof of model
-deployment, inference quality or successful external delivery. An endpoint-configured model remains
-unverified; channel enablement is separate from operator connection and a real delivery test.
-Integration guidance does not grant cloud/Graph permissions, create mailboxes or send a test message.
-
-Shared appearance controls support system/light/dark themes and comfortable/compact density.
-These browser-local visual preferences never change processing or access settings. Registered,
-permission-aware commands are available through Commands or Ctrl+K/Cmd+K; `?` opens keyboard help
-outside editable controls. Ask AI supports multiline questions (Shift+Enter) and uses Enter for an
-explicit submission outside IME composition. Conversation history remains account/workspace-bound
-on the current browser; it is not advertised as cross-device history.
-
 ## Conservative lifecycle controls
 
 `DELETE /api/harness/tenants/{tenantId}/jobs/{jobId}` soft-deletes an available document.

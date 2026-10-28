@@ -6,16 +6,6 @@
   });
   const node = id => document.getElementById(id);
   let revision = 0;
-  let setup = null;
-  let setupTenant = null;
-  const sections = [
-    ['setup', 'setupSettingsTab', 'setupSettingsPanel'],
-    ['processing', 'processingSettingsTab', 'processingSettingsPanel'],
-    ['analysis', 'customAnalysisTab', 'customAnalysisPanel'],
-    ['agent', 'agentSettingsTab', 'agentSettingsPanel'],
-    ['integrations', 'integrationsSettingsTab', 'integrationsSettingsPanel'],
-    ['users', 'tenantUsersTab', 'tenantUsersPanel']
-  ];
 
   function read() {
     return {
@@ -46,133 +36,31 @@
     node('agentTeamsEnabled').checked = profile.teamsEnabled;
     preview();
   }
-  function modelStatus(model) {
-    if (!model || model.state === 'UnknownSelection') return 'Configuration unknown; deployment not verified';
-    if (model.development) return 'Development fallback; production connection not configured';
-    return model.configured ? 'Connection configured; deployment not verified'
-      : 'Connection not configured; operator setup required';
-  }
-  function models() {
-    for (const [purpose, selectId, statusId] of [
-      ['decision', 'harnessDecisionModelSelect', 'decisionModelStatus'],
-      ['language', 'harnessLanguageModelSelect', 'languageModelStatus']
-    ]) {
-      const select = node(selectId);
-      const selected = select.value;
-      const catalog = (setup?.models || []).filter(model => model.purpose === purpose);
-      for (const model of catalog) {
-        if (![...select.options].some(option => option.value === model.modelId)) {
-          const option = document.createElement('option');
-          option.value = model.modelId;
-          option.textContent = model.displayName || model.modelId;
-          select.appendChild(option);
-        }
-      }
-      for (const option of select.options) {
-        const model = catalog.find(item => item.modelId === option.value);
-        option.dataset.displayName ||= option.textContent;
-        const label = modelStatus(model);
-        option.textContent = `${model?.displayName || option.dataset.displayName} — ${label}`;
-        option.disabled = Boolean(model && model.configured === false && model.state !== 'UnknownSelection');
-        option.title = label;
-      }
-      // The setup response must never select a different route or overwrite an in-progress edit.
-      select.value = selected;
-      const model = catalog.find(item => item.modelId === selected);
-      node(statusId).textContent = `${modelStatus(model)}.`;
-      node(purpose + 'ModelDetails').textContent = `${purpose === 'decision' ? 'Decision' : 'Language'} model: ` +
-        (model?.supportsPdfInputs === true ? 'PDF inputs declared; not tested here. '
-          : model ? 'PDF input support is not confirmed here. ' : 'Keep this selection or ask your operator to review it. ') +
-        'Ask your operator to verify the selected route before relying on it.';
-    }
-  }
-  function steps(id, values) {
-    const list = node(id);
-    list.replaceChildren();
-    for (const value of values || []) {
-      const item = document.createElement('li');
-      item.textContent = value;
-      list.appendChild(item);
-    }
-  }
-  function renderConnections() {
-    for (const [key, prefix] of [['email', 'agentEmail'], ['teams', 'agentTeams']]) {
-      const channel = setup?.channels?.[key];
-      node(prefix + 'Status').textContent = !channel
-        ? 'Connection status unavailable. No connection was changed. Refresh status or contact your operator.'
-        : channel.configured
-          ? `Connection configured${key === 'email' && channel.address ? `: ${channel.address}` : ''}; ` +
-            `delivery not verified. ${channel.enabled ? 'Saved workspace preference enabled.' : 'Saved workspace preference disabled.'}`
-          : 'Not connected — secure operator setup required. Delivery not verified.';
-      steps(prefix + 'Steps', channel?.setupSteps);
-    }
-  }
-  function renderChecks() {
-    const list = node('workspaceSetupChecks');
-    list.replaceChildren();
-    for (const check of setup?.checks || []) {
-      const item = document.createElement('li');
-      const body = document.createElement('div');
-      const title = document.createElement('h3');
-      title.textContent = check.title;
-      const state = document.createElement('span');
-      state.className = 'setup-check-state';
-      state.textContent = check.state === 'Configured' ? 'Configured · not live-verified'
-        : check.state === 'ActionRequired' ? 'Action required' : 'Not started';
-      const description = document.createElement('p');
-      description.textContent = check.description;
-      body.append(title, state, description);
-      const action = document.createElement('button');
-      action.type = 'button';
-      action.className = 'btn-mini';
-      const target = check.id === 'people' ? 'users' : check.id === 'channels' ? 'integrations' : 'processing';
-      action.textContent = check.id === 'data' ? 'Try a PDF ↗' : `Review ${target === 'users' ? 'people' : target}`;
-      action.dataset.click = check.id === 'data' ? 'openWorkspaceOnboarding' : 'setAdminSection_arg';
-      if (check.id !== 'data') action.dataset.args = JSON.stringify([target]);
-      item.append(body, action);
-      list.appendChild(item);
-    }
-  }
   async function connections(tenant) {
     const current = ++revision;
-    setupTenant = tenant;
-    setup = null;
-    renderChecks();
-    renderConnections();
-    models();
-    node('workspaceSetupStatus').textContent = tenant
-      ? 'Checking workspace configuration…' : 'Choose a workspace to review setup.';
-    if (!tenant) return;
+    for (const id of ['agentEmailStatus', 'agentTeamsStatus']) node(id).textContent = 'Checking secure connection...';
     try {
-      const response = await fetch(`/api/harness/tenants/${encodeURIComponent(tenant)}/setup`);
-      if (!response.ok) throw new Error('Setup status unavailable');
+      const response = await fetch(`/api/harness/tenants/${encodeURIComponent(tenant)}/agent/channels`);
+      if (!response.ok) throw new Error('Connection state unavailable');
       const result = await response.json();
-      if (current !== revision || setupTenant !== tenant) return;
-      if (result.workspace?.tenantId !== tenant || !Array.isArray(result.models) ||
-          !Array.isArray(result.checks) || !result.channels) throw new Error('Incomplete setup status');
-      setup = result;
-      node('workspaceSetupStatus').textContent =
-        'Configuration checks only. Model deployments and message delivery have not been verified.';
-      renderChecks();
-      renderConnections();
-      models();
+      if (current !== revision) return;
+      node('agentEmailStatus').textContent = result.email.configured
+        ? `Mailbox configured: ${result.email.address} - live delivery must be verified`
+        : 'Not connected - mailbox setup required';
+      node('agentTeamsStatus').textContent = result.teams.configured
+        ? 'Bot connection configured - installation and live delivery must be verified'
+        : 'Not connected - Teams bot setup required';
     } catch {
       if (current !== revision) return;
-      node('workspaceSetupStatus').textContent =
-        'Setup status unavailable. Configuration is unknown, not assumed complete. Refresh or contact your operator.';
-      renderConnections();
-      models();
+      for (const id of ['agentEmailStatus', 'agentTeamsStatus'])
+        node(id).textContent = 'Connection status unavailable. No connection was changed.';
     }
   }
   function section(name) {
-    if (!sections.some(([key]) => key === name)) return;
-    for (const [key, tabId, panelId] of sections) {
-      node(panelId).hidden = name !== key;
-      node(panelId).inert = name !== key;
-      node(tabId).classList.toggle('selected', name === key);
-      node(tabId).setAttribute('aria-selected', String(name === key));
-      node(tabId).setAttribute('tabindex', name === key ? '0' : '-1');
-    }
+    if (!['processing', 'agent', 'users'].includes(name)) return;
+    node('agentSettingsPanel').hidden = name !== 'agent';
+    node('processingSettingsPanel').hidden = name !== 'processing';
+    node('tenantUsersPanel').hidden = name !== 'users';
     for (const id of ['harnessHeaderActions', 'harnessVersionChip']) {
       node(id).classList.toggle('settings-context-hidden', name === 'users');
       node(id).inert = name === 'users';
@@ -180,16 +68,22 @@
     }
     node('harnessSaveNotice').classList.toggle('tenant-users-hidden', name === 'users');
     if (name !== 'users') root.DocIntelTenantUsers?.closeDialogs();
+    for (const [id, selected] of [['processingSettingsTab', name === 'processing'],
+      ['agentSettingsTab', name === 'agent'], ['tenantUsersTab', name === 'users']]) {
+      node(id).classList.toggle('selected', selected);
+      node(id).setAttribute('aria-selected', String(selected));
+      node(id).setAttribute('tabindex', selected ? '0' : '-1');
+    }
   }
   node('adminSections')?.addEventListener?.('keydown', event => {
-    const tabs = sections.map(([, tabId]) => tabId);
+    const tabs = ['processingSettingsTab', 'agentSettingsTab', 'tenantUsersTab'];
     const index = tabs.indexOf(event.target.id);
     if (index < 0 || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
-    const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
-      : (index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
-    section(sections[next][0]);
+    const next = event.key === 'Home' ? 0 : event.key === 'End' ? 2
+      : (index + (event.key === 'ArrowRight' ? 1 : 2)) % 3;
+    section(['processing', 'agent', 'users'][next]);
     node(tabs[next]).focus();
   });
-  root.DocIntelAgentSettings = Object.freeze({ read, render, preview, connections, section, models });
+  root.DocIntelAgentSettings = Object.freeze({ read, render, preview, connections, section });
 })(globalThis);

@@ -109,7 +109,7 @@ function runtime() {
   return app;
 }
 
-test('real markup integrates People navigation, same-origin scripts and separately saved access', () => {
+test('real markup integrates a third tab, same-origin scripts and separately saved access', () => {
   const html = fs.readFileSync(path.join(webroot, 'admin.html'), 'utf8');
   const admin = fs.readFileSync(path.join(webroot, 'admin.js'), 'utf8');
   assert.match(html, /id="tenantUsersTab"[^>]+role="tab"/);
@@ -117,7 +117,7 @@ test('real markup integrates People navigation, same-origin scripts and separate
   assert.match(html, /src="\/tenant-users\.js"/);
   assert.match(html, /href="\/tenant-users\.css"/);
   assert.match(admin, /fetch\('\/api\/harness\/tenants\?adminOnly=true'\)/);
-  assert.match(admin, /function renderMainCanvas\(preserveBudget = false\) \{\s+if \(globalThis.DocIntelTenantUsers\)/);
+  assert.match(admin, /function renderMainCanvas\(\) \{\s+if \(globalThis.DocIntelTenantUsers\)/);
   assert.doesNotMatch(source, /innerHTML|onclick|onerror|Authorization|access_token/i);
   assert.doesNotMatch(html.slice(html.indexOf('id="tenantUsersPanel"'), html.indexOf('id="agentSettingsPanel"')),
     /\bon(?:click|input|change)\s*=/i);

@@ -3,40 +3,21 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Question status — DocIntel</title>
-  <link rel="stylesheet" href="/shared/shell.css">
+  <title>DocIntel question</title>
   <link rel="stylesheet" href="/ask-run.css">
-  <link rel="stylesheet" href="/shared/customer.css">
   <script src="/identity.js" defer></script>
-  <script src="/shared/customer.js" defer></script>
   <script src="/ask-run.js" defer></script>
 </head>
-<body class="di-standalone">
-  <a class="di-skip-link di-button" href="#questionMain">Skip to question</a>
-  <header class="di-page-header">
-    <nav aria-label="DocIntel"><a class="di-brand" href="/" id="workspace">DocIntel <span>Document workspace</span></a></nav>
-    <div class="di-page-actions" data-docintel-ux-host></div>
-  </header>
-  <main id="questionMain" tabindex="-1">
-    <p class="di-eyebrow">Question status</p>
-    <h1>Your document question</h1>
-    <p class="di-page-intro">The same question, answer and cited sources. Refreshing never submits another question.</p>
-    <section aria-labelledby="questionHeading">
-      <h2 id="questionHeading">Question</h2>
-      <p id="question"></p>
-    </section>
-    <section class="di-run-status" aria-label="Processing and delivery status">
-      <p id="status" role="status" aria-live="polite" aria-atomic="true">Loading your question…</p>
-      <p id="delivery" role="status" aria-live="polite" aria-atomic="true"></p>
-      <button class="di-button" id="refresh" type="button">Refresh status</button>
-    </section>
-    <section aria-labelledby="answerHeading"><h2 id="answerHeading">Answer</h2><div id="answer"></div></section>
-    <section aria-labelledby="sourcesHeading">
-      <h2 id="sourcesHeading">Cited sources</h2>
-      <p class="di-muted">Open a source to inspect its evidence. Excerpts stay collapsed until you choose to read them.</p>
-      <ol id="citations"></ol>
-    </section>
+<body>
+  <main>
+    <nav><a href="/" id="workspace">Document workspace</a></nav>
+    <h1>Your DocIntel question</h1>
+    <p id="question"></p>
+    <p id="status" role="status" aria-live="polite">Loading your question...</p>
+    <p id="delivery"></p>
+    <button id="refresh" type="button">Refresh status</button>
+    <section aria-label="Answer"><div id="answer"></div></section>
+    <section aria-label="Cited sources"><h2>Cited sources</h2><ol id="citations"></ol></section>
   </main>
-  <footer class="di-page-footer">AI answers can be incomplete. Verify important details against the cited documents.</footer>
 </body>
 </html>
