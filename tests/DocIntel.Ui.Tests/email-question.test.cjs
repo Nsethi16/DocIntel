@@ -48,6 +48,8 @@ test('opening an email question only reads authorized details; execution require
   assert.match(app.calls[1].url, /\/confirm$/);
   assert.equal(app.element('confirmEmailQuestion').disabled, true);
   assert.match(app.element('emailRunLink').href, /^\/ask-run\.html/);
+  assert.match(app.element('emailNotice').textContent, /attempt to email/);
+  assert.match(app.element('emailNotice').textContent, /delivery is not yet confirmed/);
   await app.element('confirmEmailQuestion').click();
   assert.equal(app.calls.length, 2);
 });
@@ -70,6 +72,7 @@ test('unknown confirmation outcomes remain disabled and do not automatically res
   assert.equal(app.calls.length, 2);
   assert.equal(app.element('confirmEmailQuestion').disabled, true);
   assert.match(app.element('emailNotice').textContent, /No automatic retry/);
+  assert.doesNotMatch(app.element('emailNotice').textContent, /Connection lost/);
 });
 
 test('already-confirmed email links offer the original run rather than creating another question', async () => {

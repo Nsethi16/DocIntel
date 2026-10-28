@@ -9,6 +9,11 @@
   let loading = false;
   const deadline = Date.now() + 60 * 60 * 1000;
 
+  function safeReference(value) {
+    return typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,95}$/.test(value)
+      ? ` Reference: ${value}.` : '';
+  }
+
   async function load() {
     if (loading) return;
     clearTimeout(timer);
@@ -19,23 +24,34 @@
     }
     loading = true;
     refresh.disabled = true;
+    status.textContent = 'Refreshing the same question…';
+    let failure = 'The question could not be refreshed. Check your connection.';
+    let reference = '';
     try {
       const prefix = `/api/harness/tenants/${encodeURIComponent(tenant)}`;
       const response = await fetch(`${prefix}/ask/runs/${encodeURIComponent(run)}`);
-      if (!response.ok) throw new Error(response.status === 404 ? 'This question is unavailable.' :
-        response.status === 403 ? 'Your account cannot access this question.' : 'The question could not be refreshed.');
+      reference = safeReference(response.headers?.get('X-DocIntel-Correlation-Id'));
+      if (!response.ok) {
+        failure = response.status === 404 ? 'This question is unavailable.' :
+          response.status === 403 ? 'Your account cannot access this question.' : 'The question could not be refreshed.';
+        throw new Error(failure);
+      }
       const result = await response.json();
       document.getElementById('workspace').href = `/?tenant=${encodeURIComponent(tenant)}`;
       document.getElementById('question').textContent = result.question || '';
       document.getElementById('answer').textContent = result.status === 'Completed' ? result.answer || '' : '';
-      status.textContent = result.status === 'Failed' ? result.errorMessage || 'This question could not be completed.' :
-        result.status === 'Completed' ? 'Answer complete.' : 'DocIntel is processing your question. You can return to this link later.';
+      status.textContent = result.status === 'Failed' ? 'This question could not be completed. No automatic retry was made.' + reference :
+        result.status === 'Completed' ? 'Answer complete.' :
+        ['Queued', 'Running'].includes(result.status) ? 'DocIntel is processing your question. You can return to this link later.' :
+        result.status === 'AwaitingConfirmation' ? 'This email question still needs confirmation from its original link.' :
+        'The question status is unavailable. Use Refresh status to check again.';
       const delivery = result.delivery;
       document.getElementById('delivery').textContent = !delivery ? '' :
         delivery.status === 'Sent' ? 'The messaging service acknowledged the answer; this does not confirm receipt.' :
         delivery.status === 'OutcomeUnknown' ? 'Message delivery is uncertain. DocIntel will not automatically resend it. The answer is available here.' :
-        delivery.status === 'Failed' ? `Message delivery stopped (${delivery.errorCode || 'DeliveryFailed'}).` :
-        'The answer will be delivered to the original conversation after processing.';
+        delivery.status === 'Failed' ? 'Message delivery stopped. No automatic resend will be made; check the answer here.' :
+        ['Pending', 'Sending'].includes(delivery.status) ? 'Message delivery is pending. Receipt is not yet confirmed.' :
+        'Message delivery status is unavailable. Receipt is not confirmed.';
       const citations = document.getElementById('citations');
       citations.replaceChildren();
       for (const citation of result.citations || []) {
@@ -69,17 +85,24 @@
         (result.status === 'Completed' && ['Pending', 'Sending'].includes(delivery?.status));
       if (pending && Date.now() < deadline) timer = setTimeout(load, 5000);
       else if (pending) status.textContent += ' Automatic checking has paused; refresh to check the same question.';
-    } catch (error) {
+    } catch {
       document.getElementById('question').textContent = '';
       document.getElementById('delivery').textContent = '';
       document.getElementById('answer').textContent = '';
       document.getElementById('citations').replaceChildren();
-      status.textContent = `${error.message} Use Refresh status to check this question again; no new question will be submitted.`;
+      status.textContent = `${failure}${reference} Use Refresh status to check this question again; no new question will be submitted.`;
     } finally {
       loading = false;
       refresh.disabled = false;
     }
   }
   refresh.addEventListener('click', load);
+  globalThis.DocIntelUX?.registerCommands([{
+    id: 'question.refresh',
+    title: 'Refresh this question status',
+    keywords: 'answer delivery sources',
+    enabled: () => !refresh.disabled && !loading,
+    run: load
+  }]);
   load();
 })();

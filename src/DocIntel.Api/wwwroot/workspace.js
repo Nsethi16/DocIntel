@@ -34,6 +34,252 @@ let tenants = [];
     let askInnerSidebarCollapsed = false;
     let askChatSearchQuery = '';
     let jobPollTimer = null;
+    let libraryTotal = 0;
+    let libraryNextOffset = null;
+    let libraryLoading = false;
+    let libraryError = '';
+    let libraryQuery = '';
+    let libraryStatus = '';
+    let libraryRevision = 0;
+    let librarySearchTimer = null;
+    let selectedJobLoading = false;
+    let selectedDocumentRecord = null;
+    let selectedDetailRevision = 0;
+    let sourceRequestRevision = 0;
+    let sourceReturnFocus = null;
+    let graphView = 'graph';
+    let relationshipJobs = [];
+    let relationshipError = '';
+    let relationshipLoading = false;
+    let relationshipTruncated = false;
+    let relationshipRevision = 0;
+    const maximumInteractiveGraphNodes = 300;
+
+    async function loadRelationshipDocuments() {
+      const tenantId = currentTenant?.tenantId;
+      if (!tenantId) return;
+      const revision = ++relationshipRevision;
+      relationshipLoading = true;
+      relationshipError = '';
+      renderSelectedDocument();
+      try {
+        const response = await fetch(`/api/harness/tenants/${encodeURIComponent(tenantId)}/graph?maxDocs=1000`);
+        if (!response.ok) throw new Error('Document relationships could not be loaded. Check your access and refresh.');
+        const projection = await response.json();
+        if (!Array.isArray(projection.documents)) throw new Error('The server did not return a valid relationship projection.');
+        if (currentTenant?.tenantId !== tenantId || revision !== relationshipRevision) return;
+        relationshipJobs = projection.documents.map(job => ({
+          ...job, status: 'Completed',
+          segments: [{ extractedEntities: job.entities || [], documentTypeName: (job.documentTypes || []).join(', ') }]
+        }));
+        relationshipTruncated = projection.truncated === true;
+      } catch (error) {
+        if (currentTenant?.tenantId === tenantId && revision === relationshipRevision) {
+          relationshipError = error.message || 'Relationships could not be loaded.';
+        }
+      } finally {
+        if (currentTenant?.tenantId === tenantId && revision === relationshipRevision) {
+          relationshipLoading = false;
+          if (workspaceMode === 'graph') renderSelectedDocument();
+        }
+      }
+    }
+
+    function setRelationshipView(view) {
+      if (!['graph', 'list'].includes(view)) return;
+      graphView = view;
+      renderSelectedDocument();
+    }
+
+    function customerNotice(message) {
+      if (globalThis.DocIntelUX?.inform) DocIntelUX.inform(message, { kind: 'error', persistent: true });
+      else showToast(message);
+    }
+
+    function updateWorkspaceLocation() {
+      if (!currentTenant || !globalThis.history?.replaceState || !globalThis.location) return;
+      const url = new URL(location.href);
+      url.searchParams.set('tenant', currentTenant.tenantId);
+      url.searchParams.set('mode', workspaceMode);
+      if (selectedJobId) url.searchParams.set('document', selectedJobId);
+      else url.searchParams.delete('document');
+      url.searchParams.set('view', docResultTab);
+      if (selectedSliceIndex >= 0) url.searchParams.set('part', String(selectedSliceIndex));
+      else url.searchParams.delete('part');
+      history.replaceState(null, '', url.pathname + url.search);
+    }
+
+    function selectWorkspaceDocument(jobId) {
+      selectedJobId = jobId;
+      selectedDocumentRecord = null;
+      selectedSliceIndex = -1;
+      workspaceMode = 'documents';
+      syncTenantWorkspaceCapabilities();
+      closeSourceInspector(false);
+      return loadSelectedDocument();
+    }
+
+    function openWorkspaceCommands() {
+      globalThis.DocIntelUX?.openCommands?.();
+    }
+
+    function registerWorkspaceCommands() {
+      if (!globalThis.DocIntelUX?.registerCommands) return;
+      DocIntelUX.registerCommands([
+        { id: 'workspace.documents', title: 'Go to documents', run: () => setWorkspaceMode('documents') },
+        { id: 'workspace.ask', title: 'Ask AI about workspace documents',
+          enabled: () => isAskAiCapabilityEnabled(), run: () => setWorkspaceMode('ask') },
+        { id: 'workspace.relationships', title: 'Explore document relationships',
+          enabled: () => isGraphCapabilityEnabled(), run: () => setWorkspaceMode('graph') },
+        { id: 'workspace.upload', title: 'Upload a PDF', enabled: canUploadDocument, run: chooseDocumentUpload },
+        { id: 'workspace.source', title: 'Inspect the selected document source',
+          enabled: () => selectedDocument()?.status === 'Completed',
+          run: inspectSelectedSource },
+        { id: 'workspace.settings', title: 'Open workspace settings',
+          enabled: () => document.getElementById('adminStudioSwitchLink')?.style.display !== 'none',
+          run: () => { location.assign('/admin.html?tenant=' + encodeURIComponent(currentTenant.tenantId)); } }
+      ]);
+    }
+
+    function canUploadDocument() {
+      const control = document.getElementById('drawerUploadLabel');
+      return !!control && control.style.display !== 'none';
+    }
+
+    function chooseDocumentUpload() {
+      if (canUploadDocument()) document.getElementById('docUploadInput')?.click();
+    }
+
+    function onWorkspaceSearch(value) {
+      if (workspaceMode === 'ask') {
+        askChatSearchQuery = value || '';
+        renderDocumentList();
+        return;
+      }
+      clearTimeout(librarySearchTimer);
+      librarySearchTimer = setTimeout(() => {
+        libraryQuery = String(value || '').trim();
+        loadTenantJobs();
+      }, 250);
+    }
+
+    function onDocumentStatusChanged(value) {
+      libraryStatus = value || '';
+      return loadTenantJobs();
+    }
+
+    function documentDateGroup(value, now = new Date()) {
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return 'Earlier';
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const day = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+      const days = Math.round((today - day) / 86400000);
+      return days <= 0 ? 'Today' : days === 1 ? 'Yesterday' : days < 7 ? 'This week' : 'Earlier';
+    }
+
+    function documentStatusLabel(status) {
+      return ({ Completed: 'Processed', Running: 'Processing', Queued: 'Queued', Failed: 'Failed' })[status] || 'Status unknown';
+    }
+
+    function renderLibraryError(message) {
+      return `<div class="workspace-error" role="alert"><h2>Documents could not be loaded</h2>
+        <p>${escapeHtml(message)}</p><button type="button" class="workspace-secondary"
+        data-click="refreshDocuments">Refresh documents</button></div>`;
+    }
+
+    function selectedDocument() {
+      return selectedDocumentRecord?.jobId === selectedJobId && selectedDocumentRecord?.tenantId === currentTenant?.tenantId
+        ? selectedDocumentRecord : tenantJobs.find(job => job.jobId === selectedJobId);
+    }
+
+    async function loadSelectedDocument() {
+      const tenantId = currentTenant?.tenantId;
+      const jobId = selectedJobId;
+      if (!tenantId || !jobId) { renderSelectedDocument(); return; }
+      const requestRevision = ++selectedDetailRevision;
+      selectedJobLoading = selectedDocumentRecord?.jobId !== jobId || selectedDocumentRecord?.tenantId !== tenantId;
+      renderDocumentList();
+      renderSelectedDocument();
+      try {
+        const response = await fetch(`/api/harness/tenants/${encodeURIComponent(tenantId)}/jobs/${encodeURIComponent(jobId)}`);
+        if (!response.ok) throw new Error(response.status === 404 ? 'This document is no longer available.'
+          : 'This document could not be opened. Check your access and refresh.');
+        const job = await response.json();
+        if (job.jobId !== jobId || job.tenantId !== tenantId) throw new Error('The server returned a different document.');
+        if (currentTenant?.tenantId !== tenantId || selectedJobId !== jobId || requestRevision !== selectedDetailRevision) return;
+        selectedDocumentRecord = job;
+        const index = tenantJobs.findIndex(value => value.jobId === jobId);
+        if (index >= 0) tenantJobs[index] = job;
+        libraryError = '';
+      } catch (error) {
+        if (currentTenant?.tenantId === tenantId && selectedJobId === jobId && requestRevision === selectedDetailRevision) {
+          libraryError = error.message || 'This document could not be opened.';
+          closeSourceInspector(false);
+        }
+      } finally {
+        if (currentTenant?.tenantId === tenantId && selectedJobId === jobId && requestRevision === selectedDetailRevision) {
+          selectedJobLoading = false;
+          renderDocumentList();
+          renderSelectedDocument();
+          updateWorkspaceLocation();
+        }
+      }
+    }
+
+    function loadMoreDocuments() {
+      if (!libraryLoading && libraryNextOffset !== null) return loadTenantJobs(null, true);
+    }
+
+    function closeSourceInspector(restoreFocus = true) {
+      ++sourceRequestRevision;
+      const panel = document.getElementById('sourceInspector');
+      if (!panel) return;
+      panel.hidden = true;
+      document.getElementById('sourceInspectorFrame')?.removeAttribute('src');
+      if (restoreFocus && sourceReturnFocus?.isConnected) sourceReturnFocus.focus();
+      sourceReturnFocus = null;
+    }
+
+    async function inspectSource(jobId, sliceIndex = -1, page = null) {
+      const tenantId = currentTenant?.tenantId;
+      if (!tenantId || typeof jobId !== 'string' || !jobId) return;
+      const panel = document.getElementById('sourceInspector');
+      if (!panel) return;
+      const requestRevision = ++sourceRequestRevision;
+      sourceReturnFocus = document.activeElement;
+      let job = tenantJobs.find(value => value.jobId === jobId && Array.isArray(value.segments));
+      if (!job && selectedDocumentRecord?.jobId === jobId && selectedDocumentRecord?.tenantId === tenantId)
+        job = selectedDocumentRecord;
+      try {
+        if (!job) {
+          const response = await fetch(`/api/harness/tenants/${encodeURIComponent(tenantId)}/jobs/${encodeURIComponent(jobId)}`);
+          if (!response.ok) throw new Error('The cited source is unavailable or your access has changed.');
+          job = await response.json();
+        }
+        if (currentTenant?.tenantId !== tenantId || requestRevision !== sourceRequestRevision) return;
+        if (job.jobId !== jobId || job.tenantId !== tenantId) throw new Error('The cited source identity did not match.');
+        const segment = job.segments?.find(value => value.segmentIndex === sliceIndex);
+        const sourcePage = Number.isSafeInteger(page) && page > 0 && page <= job.totalPages ? page : null;
+        const root = `/api/harness/tenants/${encodeURIComponent(tenantId)}/jobs/${encodeURIComponent(jobId)}`;
+        const source = sourcePage || !segment ? root + '/original' : root + `/slices/${segment.segmentIndex}/pdf`;
+        const url = source + (sourcePage ? `#page=${sourcePage}` : '');
+        document.getElementById('sourceInspectorTitle').textContent = job.fileName || 'Original document';
+        document.getElementById('sourceInspectorNote').textContent = sourcePage ? `Original source, page ${sourcePage}.`
+          : segment ? `Detected document, original pages ${segment.startPage}–${segment.endPage}.`
+            : 'Original PDF. Source presence is separate from the model score; ambiguous matches are not highlighted.';
+        document.getElementById('sourceInspectorOpen').href = url;
+        document.getElementById('sourceInspectorFrame').src = url;
+        panel.hidden = false;
+        panel.querySelector('button')?.focus();
+      } catch (error) {
+        if (currentTenant?.tenantId === tenantId && requestRevision === sourceRequestRevision)
+          customerNotice(error.message || 'The source could not be opened.');
+      }
+    }
+
+    function inspectSelectedSource() {
+      return selectedJobId ? inspectSource(selectedJobId, selectedSliceIndex) : undefined;
+    }
 
     function onAskChatSearchInput(val) {
       askChatSearchQuery = val || '';
@@ -215,10 +461,18 @@ let tenants = [];
       if (btnAsk) btnAsk.classList.toggle('active', workspaceMode === 'ask');
     }
 
-    function setWorkspaceMode(mode) {
+    async function setWorkspaceMode(mode) {
       if (mode === 'graph' && !isGraphCapabilityEnabled()) mode = 'documents';
       if (mode === 'ask' && !isAskAiCapabilityEnabled()) mode = 'documents';
       workspaceMode = mode;
+      if (mode !== 'graph' && graphSimAnimFrame) {
+        cancelAnimationFrame(graphSimAnimFrame);
+        graphSimAnimFrame = null;
+        window.onmouseup = null;
+      }
+      const search = document.getElementById('docSearchInput');
+      if (search) search.value = mode === 'ask' ? askChatSearchQuery : libraryQuery;
+      closeSourceInspector(false);
       syncTenantWorkspaceCapabilities();
 
       if (mode === 'ask') {
@@ -230,6 +484,9 @@ let tenants = [];
       }
       renderDocumentList();
       renderSelectedDocument();
+      updateWorkspaceLocation();
+      if (mode === 'graph') await loadRelationshipDocuments();
+      if (mode === 'documents' && selectedJobId) await loadSelectedDocument();
     }
 
     function getMonogram(name) {
@@ -263,7 +520,8 @@ let tenants = [];
         ? `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/original`
         : null;
       const links = source ? info.pages.map(page =>
-        `<a class="text-link-btn" href="${escapeHtml(source)}#page=${page}" target="_blank" rel="noopener noreferrer">Original p.${page}</a>`
+        `<button type="button" class="text-link-btn" data-click="inspectSource_arg_arg_arg"
+          data-args="[${escapeJsArg(job.jobId)},-1,${page}]">Original p.${page}</button>`
       ).join(' ') : '';
       return `<div style="font-size:11px;color:var(--text-muted);" title="${escapeHtml(info.tooltip)}">${escapeHtml(info.status)}${links ? ' · ' + links : ''}</div>`;
     }
@@ -283,12 +541,34 @@ let tenants = [];
     }
 
     async function init() {
-      const resp = await fetch('/api/harness/tenants');
-      tenants = await resp.json();
-      const urlTenant = new URLSearchParams(window.location.search).get('tenant');
-      currentTenant = tenants.find(t => t.tenantId === urlTenant) || tenants[0] || null;
-      renderTenantSelect();
-      await loadTenantJobs();
+      try {
+        const resp = await fetch('/api/harness/tenants');
+        if (!resp.ok) throw new Error('Your workspaces could not be loaded. Check your sign-in and refresh.');
+        tenants = await resp.json();
+        if (!Array.isArray(tenants)) throw new Error('The workspace list could not be read.');
+        const params = new URLSearchParams(window.location.search);
+        currentTenant = tenants.find(t => t.tenantId === params.get('tenant')) || tenants[0] || null;
+        workspaceMode = ['documents', 'ask', 'graph'].includes(params.get('mode')) ? params.get('mode') : 'documents';
+        selectedJobId = params.get('document');
+        docResultTab = params.get('view') || 'insights';
+        const part = Number(params.get('part'));
+        selectedSliceIndex = params.has('part') && Number.isSafeInteger(part) && part >= 0 ? part : -1;
+        renderTenantSelect();
+        registerWorkspaceCommands();
+        document.addEventListener('keydown', event => {
+          if (event.key === 'Escape' && !document.querySelector('dialog[open]')) closeSourceInspector();
+        });
+        document.addEventListener('docintel:preferences-changed', () => {
+          if (workspaceMode === 'graph') renderSelectedDocument();
+        });
+        if (globalThis.matchMedia?.('(max-width: 600px)').matches) toggleDocListPane();
+        if (!currentTenant) { renderDocumentList(); renderSelectedDocument(); return; }
+        await loadTenantJobs(selectedJobId);
+        if (workspaceMode === 'graph') await loadRelationshipDocuments();
+      } catch (error) {
+        libraryError = error.message || 'The workspace could not be loaded.';
+        renderSelectedDocument();
+      }
     }
 
     function renderTenantSelect() {
@@ -307,29 +587,78 @@ let tenants = [];
     async function onTenantSwitched(tenantId) {
       currentTenant = tenants.find(t => t.tenantId === tenantId) || tenants[0] || null;
       selectedJobId = null;
+      selectedDocumentRecord = null;
       selectedSliceIndex = -1;
       activeChatId = null;
+      tenantJobs = [];
+      relationshipJobs = [];
+      ++relationshipRevision;
+      relationshipError = '';
+      libraryTotal = 0;
+      libraryNextOffset = null;
+      libraryQuery = '';
+      libraryStatus = '';
+      libraryError = '';
+      selectedJobLoading = false;
+      closeSourceInspector(false);
+      for (const id of ['drawerUploadLabel', 'adminStudioSwitchLink']) {
+        const control = document.getElementById(id);
+        if (control) control.style.display = 'none';
+      }
+      const search = document.getElementById('docSearchInput');
+      if (search) search.value = '';
+      const filter = document.getElementById('documentStatusFilter');
+      if (filter) filter.value = '';
       loadTenantChats(true);
       renderTenantSelect();
       await loadTenantJobs();
     }
 
-    async function loadTenantJobs(preferredJobId) {
+    async function loadTenantJobs(preferredJobId, append = false) {
       if (!currentTenant) return;
-      const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/jobs`);
-      if (!resp.ok) return;
-      tenantJobs = await resp.json();
-
-      if (preferredJobId) {
-        selectedJobId = preferredJobId;
-      } else if (!selectedJobId || !tenantJobs.some(j => j.jobId === selectedJobId)) {
-        selectedJobId = tenantJobs.length > 0 ? tenantJobs[0].jobId : null;
-        selectedSliceIndex = -1;
-      }
-
+      const tenantId = currentTenant.tenantId;
+      const revision = ++libraryRevision;
+      const offset = append ? libraryNextOffset : 0;
+      if (append && offset === null) return;
+      libraryLoading = true;
+      libraryError = '';
       renderDocumentList();
-      renderSelectedDocument();
-      scheduleJobPollingIfNeeded();
+      try {
+        const query = new URLSearchParams({ offset: String(offset), limit: '50' });
+        if (libraryQuery) query.set('q', libraryQuery);
+        if (libraryStatus) query.set('status', libraryStatus);
+        const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(tenantId)}/documents?${query}`);
+        if (!resp.ok) throw new Error(resp.status === 403 ? 'Your account cannot open this workspace.'
+          : 'The document list could not be refreshed. Existing results have not been replaced.');
+        const result = await resp.json();
+        if (!Array.isArray(result.items) || !Number.isSafeInteger(result.total) ||
+            (result.nextOffset !== null && (!Number.isSafeInteger(result.nextOffset) || result.nextOffset <= offset))) {
+          throw new Error('The server returned an invalid document page.');
+        }
+        if (currentTenant?.tenantId !== tenantId || revision !== libraryRevision) return;
+        const previous = new Map(tenantJobs.map(job => [job.jobId, job]));
+        const page = result.items.map(item => ({ ...previous.get(item.jobId), ...item }));
+        tenantJobs = append ? [...tenantJobs.filter(job => !page.some(item => item.jobId === job.jobId)), ...page] : page;
+        libraryTotal = result.total;
+        libraryNextOffset = result.nextOffset;
+        if (preferredJobId) selectedJobId = preferredJobId;
+        else if (!selectedJobId || !tenantJobs.some(j => j.jobId === selectedJobId)) {
+          selectedJobId = tenantJobs.length > 0 ? tenantJobs[0].jobId : null;
+          selectedSliceIndex = -1;
+        }
+        if (selectedJobId && workspaceMode === 'documents') await loadSelectedDocument();
+      } catch (error) {
+        if (currentTenant?.tenantId === tenantId && revision === libraryRevision) {
+          libraryError = error.message || 'The document list could not be refreshed.';
+        }
+      } finally {
+        if (currentTenant?.tenantId === tenantId && revision === libraryRevision) {
+          libraryLoading = false;
+          renderDocumentList();
+          renderSelectedDocument();
+          scheduleJobPollingIfNeeded();
+        }
+      }
     }
 
     function scheduleJobPollingIfNeeded() {
@@ -337,7 +666,8 @@ let tenants = [];
         clearTimeout(jobPollTimer);
         jobPollTimer = null;
       }
-      if (tenantJobs.some(j => j.status === 'Queued' || j.status === 'Running')) {
+      if (tenantJobs.some(j => j.status === 'Queued' || j.status === 'Running') ||
+          ['Queued', 'Running'].includes(selectedDocument()?.status)) {
         jobPollTimer = setTimeout(() => loadTenantJobs(selectedJobId), 2000);
       }
     }
@@ -385,56 +715,100 @@ let tenants = [];
 
     function renderDocumentList() {
       const container = document.getElementById('docItemsList');
+      if (!container) return;
+      const newChat = document.getElementById('sidebarNewChat');
+      const filter = document.getElementById('documentStatusFilter');
+      const more = document.getElementById('libraryLoadMore');
+      const search = document.getElementById('docSearchInput');
+      if (newChat) newChat.hidden = workspaceMode !== 'ask';
+      if (filter) filter.hidden = workspaceMode === 'ask';
+      if (search) {
+        search.placeholder = workspaceMode === 'ask' ? 'Search conversations…' : 'Search documents…';
+        search.setAttribute('aria-label', workspaceMode === 'ask' ? 'Search conversations' : 'Search documents');
+      }
+      if (more) { more.hidden = workspaceMode === 'ask' || libraryNextOffset === null; more.disabled = libraryLoading; }
+      if (workspaceMode === 'ask') {
+        loadTenantChats();
+        const chats = tenantChats.filter(chat => (chat.messages || []).length > 0 &&
+          (!askChatSearchQuery || (chat.title || '').toLowerCase().includes(askChatSearchQuery.toLowerCase())));
+        document.getElementById('docListCountLabel').textContent = `${chats.length} conversations · saved on this browser`;
+        container.innerHTML = '';
+        if (!chats.length) container.innerHTML = '<p class="sidebar-guidance">Your conversations will appear here. History is saved on this browser, separately for your account.</p>';
+        chats.forEach(chat => {
+          const holder = document.createElement('div');
+          holder.className = 'conversation-row';
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'doc-row' + (chat.id === activeChatId ? ' selected' : '');
+          row.textContent = chat.title || 'Conversation';
+          row.title = chat.title || 'Conversation';
+          row.setAttribute('aria-current', chat.id === activeChatId ? 'true' : 'false');
+          row.addEventListener('click', () => selectAskAiChat(chat.id));
+          const remove = document.createElement('button');
+          remove.type = 'button';
+          remove.className = 'conversation-remove';
+          remove.textContent = '×';
+          remove.setAttribute('aria-label', `Remove conversation ${chat.title || ''} from this browser`);
+          remove.addEventListener('click', event => {
+            if (globalThis.confirm('Remove this conversation from this browser? This does not cancel a running question.'))
+              deleteAskAiChat(chat.id, event);
+          });
+          holder.append(row, remove);
+          container.appendChild(holder);
+        });
+        return;
+      }
       const rawQuery = (document.getElementById('docSearchInput').value || '').trim();
-      const query = rawQuery.toLowerCase();
-
-      const filtered = tenantJobs.filter(j => {
-        if (!query) return true;
-        const hay = buildJobSearchCorpus(j).toLowerCase();
-        return hay.includes(query);
-      });
-
-      document.getElementById('docListCountLabel').textContent = `${filtered.length} document${filtered.length === 1 ? '' : 's'}`;
+      const filtered = tenantJobs;
+      document.getElementById('docListCountLabel').textContent = libraryLoading ? 'Refreshing documents…'
+        : `${filtered.length} of ${libraryTotal} documents`;
       container.innerHTML = '';
+      container.setAttribute('aria-busy', String(libraryLoading));
 
       if (filtered.length === 0) {
         container.innerHTML = `
-          <div style="padding:28px 12px;text-align:center;color:var(--text-secondary);font-size:12.5px;line-height:1.5;">
-            No documents found.<br/>Upload a PDF below to get started.
+          <div class="sidebar-guidance">
+            ${libraryLoading ? 'Loading your documents…' : libraryError ? escapeHtml(libraryError)
+              : libraryQuery || libraryStatus ? 'No matching documents. Change the search or status filter.'
+                : 'No documents yet. Upload your first PDF to get started.'}
           </div>
         `;
         return;
       }
 
+      let previousGroup = null;
       filtered.forEach(job => {
         const isSelected = job.jobId === selectedJobId;
         const dt = job.createdAtUtc ? new Date(job.createdAtUtc) : new Date();
         const dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const segs = job.segments || [];
+        const group = documentDateGroup(job.createdAtUtc);
+        if (group !== previousGroup) {
+          const heading = document.createElement('h2');
+          heading.className = 'document-date-group';
+          heading.textContent = group;
+          container.appendChild(heading);
+          previousGroup = group;
+        }
         const dotCls = job.status === 'Completed' ? '' : (job.status === 'Failed' ? 'failed' : 'running');
         const snippet = extractContentMatchSnippet(job, rawQuery);
 
-        const row = document.createElement('div');
+        const row = document.createElement('button');
+        row.type = 'button';
         row.className = 'doc-row' + (isSelected ? ' selected' : '');
-        row.title = `${job.fileName} (${job.status})`;
+        row.title = `${job.fileName} (${documentStatusLabel(job.status)})`;
+        row.setAttribute('aria-current', isSelected ? 'true' : 'false');
         row.onclick = () => {
-          selectedJobId = job.jobId;
-          selectedSliceIndex = -1;
-          if (workspaceMode !== 'documents') {
-            setWorkspaceMode('documents');
-            return;
-          }
-          renderDocumentList();
-          renderSelectedDocument();
+          selectWorkspaceDocument(job.jobId);
         };
 
         row.innerHTML = `
           <div class="doc-row-main">
             <div class="doc-row-name">${escapeHtml(job.fileName)}</div>
-            <div class="doc-row-meta">${escapeHtml(dateStr)} · ${job.totalPages || 0} pp${segs.length > 1 ? ` · ${segs.length} slices` : ''}</div>
+            <div class="doc-row-meta">${escapeHtml(dateStr)} · ${job.totalPages || 0} pages${(job.segmentCount ?? segs.length) > 1 ? ` · ${job.segmentCount ?? segs.length} documents` : ''}</div>
             ${snippet ? `<div style="font-size:11px;color:var(--accent-ink);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(snippet)}</div>` : ''}
           </div>
-          <span class="status-dot ${dotCls}" title="${escapeHtml(job.status)}"></span>
+          <span class="document-state ${dotCls}">${escapeHtml(documentStatusLabel(job.status))}</span>
         `;
         container.appendChild(row);
       });
@@ -443,6 +817,11 @@ let tenants = [];
     async function uploadAndRunTenantDocument(inputEl) {
       if (!currentTenant || !inputEl.files || !inputEl.files[0]) return;
       const file = inputEl.files[0];
+      if (!/\.pdf$/i.test(file.name) || (typeof file.size === 'number' && file.size > 25 * 1024 * 1024)) {
+        customerNotice('Select one PDF up to 25 MiB. No file was uploaded.');
+        inputEl.value = '';
+        return;
+      }
       const tenantId = currentTenant.tenantId;
       const lbl = document.getElementById('uploadBtnLabel');
       lbl.textContent = 'Uploading...';
@@ -470,10 +849,10 @@ let tenants = [];
           const correlation = resp.headers.get('X-DocIntel-Correlation-Id');
           const reference = correlation && /^[A-Za-z0-9:._-]{1,160}$/.test(correlation)
             ? ` Reference: ${correlation}.` : '';
-          showToast((messages[resp.status] || `Upload failed (HTTP ${resp.status}). Contact your administrator.`) + reference);
+          customerNotice((messages[resp.status] || `Upload failed (HTTP ${resp.status}). Contact your administrator.`) + reference);
         }
       } catch {
-        showToast('The upload could not be confirmed. Check your connection and sign-in, then refresh the document list before retrying.');
+        customerNotice('The upload could not be confirmed. Check your connection and sign-in, then refresh the document list before retrying.');
       } finally {
         lbl.textContent = 'Upload PDF';
         inputEl.disabled = false;
@@ -487,18 +866,19 @@ let tenants = [];
         btn.classList.toggle('active', btn.dataset.tab === tab);
       });
       renderSelectedDocument();
+      updateWorkspaceLocation();
     }
 
     function jumpToSlicePdf(sliceIndex, evt) {
       if (evt) evt.stopPropagation();
-      selectedSliceIndex = sliceIndex;
-      setDocResultTab('document');
+      return inspectSource(selectedJobId, sliceIndex);
     }
 
     function toggleSliceCard(headEl) {
       const card = headEl.closest('.slice-section');
       if (card) {
-        card.classList.toggle('expanded');
+        const expanded = card.classList.toggle('expanded');
+        card.querySelector('.slice-chevron-btn')?.setAttribute('aria-expanded', String(expanded));
       }
     }
 
@@ -627,15 +1007,16 @@ let tenants = [];
       renderDocumentGraphCanvasOnly();
     }
 
-    function jumpFromGraphToSlice(jobId, sliceIdx) {
+    async function jumpFromGraphToSlice(jobId, sliceIdx) {
+      if (workspaceMode === 'ask') return inspectSource(jobId, sliceIdx);
       selectedJobId = jobId;
       selectedSliceIndex = sliceIdx;
       docResultTab = sliceIdx === -1 ? 'insights' : 'document';
-      setWorkspaceMode('documents');
+      await setWorkspaceMode('documents');
     }
 
     async function reevaluateSelectedJobPrompts() {
-      const job = tenantJobs.find(j => j.jobId === selectedJobId);
+      const job = selectedDocument();
       if (!job || !currentTenant) return;
       showToast('Evaluating Prompt Columns on PDF/Base64...');
       const resp = await fetch(`/api/harness/tenants/${encodeURIComponent(currentTenant.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/evaluate-prompts`, {
@@ -645,6 +1026,7 @@ let tenants = [];
         const updatedJob = await resp.json();
         const idx = tenantJobs.findIndex(j => j.jobId === updatedJob.jobId);
         if (idx >= 0) tenantJobs[idx] = updatedJob;
+        selectedDocumentRecord = updatedJob;
         renderSelectedDocument();
         showToast('Prompt Columns updated');
       } else {
@@ -654,7 +1036,7 @@ let tenants = [];
 
 
     function exportSelectedJobJson() {
-      const job = tenantJobs.find(j => j.jobId === selectedJobId);
+      const job = selectedDocument();
       if (!job) return;
       const blob = new Blob([JSON.stringify(job, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
@@ -672,10 +1054,21 @@ let tenants = [];
       const navRow = document.getElementById('meridianNavRow');
       const exportBtn = document.getElementById('btnHeaderExportJson');
       const headerEl = document.querySelector('.meridian-header');
+      const sourceBtn = document.getElementById('btnInspectSource');
+      const breadcrumb = document.getElementById('workspaceBreadcrumb');
+      document.body?.classList.toggle('workspace-ask', workspaceMode === 'ask');
+      if (breadcrumb) breadcrumb.textContent = `${currentTenant?.displayName || 'Workspace'} / ${
+        workspaceMode === 'ask' ? 'Ask AI' : workspaceMode === 'graph' ? 'Relationships' : 'Documents'}`;
 
       if (workspaceMode === 'ask') {
         body.dataset.tab = 'ask';
-        if (headerEl) headerEl.style.display = 'none';
+        if (headerEl) headerEl.style.display = '';
+        if (navRow) navRow.style.display = 'none';
+        if (exportBtn) exportBtn.hidden = true;
+        if (sourceBtn) sourceBtn.hidden = true;
+        sliceRow.innerHTML = '';
+        document.getElementById('selectedDocTitle').textContent = `Ask ${currentTenant?.agent?.displayName || 'DocIntel'}`;
+        document.getElementById('selectedDocMetaText').textContent = 'Evidence-backed answers from documents you can access';
         renderCrossDocumentAskTab(body);
         return;
       }
@@ -685,30 +1078,64 @@ let tenants = [];
       if (workspaceMode === 'graph') {
         body.dataset.tab = 'graph';
         if (navRow) navRow.style.display = 'none';
-        if (exportBtn) exportBtn.style.display = 'none';
+        if (exportBtn) exportBtn.hidden = true;
+        if (sourceBtn) sourceBtn.hidden = true;
         sliceRow.innerHTML = '';
-        const completedCount = tenantJobs.filter(j => j.status === 'Completed').length;
-        document.getElementById('selectedDocTitle').textContent = currentTenant ? `${currentTenant.displayName} — Document Graph` : 'Document Graph';
-        document.getElementById('selectedDocMetaText').textContent = `${completedCount} document${completedCount === 1 ? '' : 's'}`;
+        const completedCount = relationshipJobs.length;
+        document.getElementById('selectedDocTitle').textContent = 'Document relationships';
+        document.getElementById('selectedDocMetaText').textContent = `${completedCount} processed document${completedCount === 1 ? '' : 's'}${relationshipTruncated ? ' · limited projection' : ''}`;
         renderDocumentGraphTab(body);
         return;
       }
 
       if (navRow) navRow.style.display = '';
-      if (exportBtn) exportBtn.style.display = '';
+      if (exportBtn) { exportBtn.style.display = ''; exportBtn.hidden = false; }
       body.dataset.tab = docResultTab;
 
-      const job = tenantJobs.find(j => j.jobId === selectedJobId);
+      const job = selectedDocument();
+      if (sourceBtn) sourceBtn.hidden = !job || job.status !== 'Completed' || selectedJobLoading;
+      if (exportBtn) exportBtn.hidden = !job || job.status !== 'Completed' || selectedJobLoading;
+      if (libraryError) {
+        if (navRow) navRow.style.display = 'none';
+        if (exportBtn) exportBtn.hidden = true;
+        body.innerHTML = renderLibraryError(libraryError);
+        return;
+      }
+      if (selectedJobLoading || (!job && libraryLoading)) {
+        if (navRow) navRow.style.display = 'none';
+        body.innerHTML = '<div class="workspace-empty" role="status" aria-live="polite"><h2>Opening your documents…</h2><p>Loading authorized results and their source references.</p></div>';
+        return;
+      }
 
       if (!job) {
         document.getElementById('selectedDocTitle').textContent = currentTenant ? currentTenant.displayName : 'Document Intelligence';
         document.getElementById('selectedDocMetaText').textContent = currentTenant ? currentTenant.tenantId : 'Idle';
         sliceRow.innerHTML = '';
+        if (navRow) navRow.style.display = 'none';
         body.innerHTML = `
-          <div class="content-column" style="padding:48px 0;color:var(--text-secondary);font-size:14px;">
-            Select a document from the left drawer or upload a PDF to inspect results.
-          </div>
-        `;
+          <div class="workspace-empty"><span class="empty-eyebrow">Document intelligence, made clear</span>
+            <h2>${libraryQuery || libraryStatus ? 'No matching documents' : 'Start with your first document'}</h2>
+            <p>${libraryQuery || libraryStatus ? 'Change the search or status filter to find documents in this workspace.'
+              : 'Upload a PDF packet. DocIntel identifies the documents inside, extracts the information you configured, and connects answers to their original sources.'}</p>
+            ${canUploadDocument() ? `<div class="upload-drop-zone" data-upload-drop tabindex="0" role="region" aria-label="Upload a PDF">
+              <strong>Drop a PDF here, or choose a file</strong><p>One PDF per upload · up to 25 MiB. Processing uses this workspace’s saved settings.</p>
+              <button type="button" class="workspace-primary" data-click="chooseDocumentUpload">Upload a PDF</button></div>`
+              : '<p>Your role can read documents and use Ask AI. Ask a workspace administrator to upload documents.</p>'}
+            <div class="empty-actions">${isAskAiCapabilityEnabled() ? '<button type="button" class="workspace-secondary" data-click="setWorkspaceMode_arg" data-args="[&quot;ask&quot;]">Open Ask AI</button>' : ''}
+              <a class="workspace-secondary" href="/admin.html?tenant=${encodeURIComponent(currentTenant?.tenantId || '')}"
+                ${document.getElementById('adminStudioSwitchLink')?.style.display === 'none' ? 'hidden' : ''}>Set up this workspace</a></div>
+          </div>`;
+        const drop = body.querySelector('[data-upload-drop]');
+        if (drop) {
+          drop.addEventListener('dragover', event => { event.preventDefault(); drop.classList.add('drag-over'); });
+          drop.addEventListener('dragleave', () => drop.classList.remove('drag-over'));
+          drop.addEventListener('drop', event => {
+            event.preventDefault();
+            drop.classList.remove('drag-over');
+            if (event.dataTransfer?.files?.length !== 1) { customerNotice('Choose one PDF per upload.'); return; }
+            uploadAndRunTenantDocument({ files: event.dataTransfer.files, value: '', disabled: false });
+          });
+        }
         return;
       }
 
@@ -762,7 +1189,7 @@ let tenants = [];
         { id: 'document', label: 'View Document' },
         ...(entityEnabled ? [{ id: 'entities', label: `Entities${totalEntitiesCount > 0 ? ` <span class="tab-count">${totalEntitiesCount}</span>` : ''}` }] : []),
         ...(dataExtEnabled ? [{ id: 'structured', label: `Structured Data${totalStructuredCount > 0 ? ` <span class="tab-count">${totalStructuredCount}</span>` : ''}` }] : []),
-        { id: 'metadata', label: 'Metadata' }
+        { id: 'metadata', label: 'Details' }
       ];
 
       // Ensure docResultTab is valid for the enabled tabs on this tenant/document
@@ -781,20 +1208,35 @@ let tenants = [];
       // Render core tabs + one individual tab per matched Prompt Column (e.g. ✨ Summary, ✨ Highlights)
       const tabBar = document.getElementById('insightsTabBar');
       const coreTabsHtml = coreTabsList.map(t => `
-        <button type="button" class="meridian-tab ${docResultTab === t.id ? 'active' : ''}" data-tab="${t.id}" data-click="setDocResultTab_arg" data-args="[${escapeJsArg(t.id)}]">${t.label}</button>
+        <button type="button" class="meridian-tab ${docResultTab === t.id ? 'active' : ''}" data-tab="${t.id}"
+          role="tab" aria-selected="${docResultTab === t.id}" aria-controls="docCenterBody" data-click="setDocResultTab_arg" data-args="[${escapeJsArg(t.id)}]">${t.label}</button>
       `).join('');
 
       const promptTabsHtml = matchedPromptColumns.map(col => {
         const tabId = `prompt:${col.columnId}`;
         const isActive = docResultTab === tabId;
         return `
-          <button type="button" class="meridian-tab ${isActive ? 'active' : ''}" data-tab="${escapeHtml(tabId)}" data-click="setDocResultTab_arg" data-args="[${escapeJsArg(tabId)}]" title="Prompt Column: ${escapeHtml(col.columnName)}">
+          <button type="button" class="meridian-tab ${isActive ? 'active' : ''}" role="tab" aria-selected="${isActive}"
+            aria-controls="docCenterBody" data-tab="${escapeHtml(tabId)}" data-click="setDocResultTab_arg" data-args="[${escapeJsArg(tabId)}]" title="Custom analysis result: ${escapeHtml(col.columnName)}">
             <span style="color:var(--accent);margin-right:4px;">✦</span>${escapeHtml(col.columnName)}
           </button>
         `;
       }).join('');
 
       tabBar.innerHTML = coreTabsHtml + promptTabsHtml;
+      tabBar.setAttribute('role', 'tablist');
+      tabBar.onkeydown = event => {
+        if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+        const tabs = [...tabBar.querySelectorAll('button')];
+        const index = tabs.indexOf(event.target);
+        if (index < 0) return;
+        event.preventDefault();
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? tabs.length - 1
+          : (index + (event.key === 'ArrowRight' ? 1 : tabs.length - 1)) % tabs.length;
+        const target = tabs[next].dataset.tab;
+        setDocResultTab(target);
+        document.querySelector(`#insightsTabBar button[data-tab="${CSS.escape(target)}"]`)?.focus();
+      };
 
       // Single clean slice dropdown on the right of the tab bar
       sliceRow.innerHTML = '';
@@ -804,7 +1246,7 @@ let tenants = [];
         if (docResultTab !== 'document') {
           const allOpt = document.createElement('option');
           allOpt.value = '-1';
-          allOpt.textContent = `All slices (${segs.length})`;
+          allOpt.textContent = `All detected documents (${segs.length})`;
           if (selectedSliceIndex === -1) allOpt.selected = true;
           select.appendChild(allOpt);
         }
@@ -815,7 +1257,7 @@ let tenants = [];
           const opt = document.createElement('option');
           opt.value = String(s.segmentIndex);
           const labelName = s.identifiedDocumentName || s.documentTypeName || `Slice ${s.segmentIndex + 1}`;
-          opt.textContent = `Slice ${s.segmentIndex + 1}: ${labelName} (p.${s.startPage}–${s.endPage})`;
+          opt.textContent = `${s.segmentIndex + 1}. ${labelName} (p.${s.startPage}–${s.endPage})`;
           if (activePdfSliceIdx === s.segmentIndex) opt.selected = true;
           select.appendChild(opt);
         });
@@ -823,8 +1265,10 @@ let tenants = [];
         select.onchange = (e) => {
           selectedSliceIndex = parseInt(e.target.value, 10);
           renderSelectedDocument();
+          updateWorkspaceLocation();
         };
         sliceRow.appendChild(select);
+        select.setAttribute('aria-label', 'Detected document');
       }
 
       if (docResultTab === 'document' && segs.length > 0) {
@@ -841,19 +1285,35 @@ let tenants = [];
       }
 
       if (job.status === 'Queued' || job.status === 'Running') {
+        if (navRow) navRow.style.display = 'none';
+        const labels = {
+          ExtractPageLayoutsExecutor: 'Read document layout', DetectSliceBoundariesExecutor: 'Find document boundaries',
+          WritePdfSlicesExecutor: 'Create detected documents', IdentifyDocumentsExecutor: 'Identify document types',
+          TranslateDocumentsExecutor: 'Translate documents', GenerateDocumentInsightsExecutor: 'Summarize documents',
+          ExtractEntitiesExecutor: 'Extract entities', ExtractDocumentDataExecutor: 'Extract fields and tables',
+          EvaluatePromptColumnsExecutor: 'Run custom analysis', GroundExtractedValuesExecutor: 'Connect results to source'
+        };
+        const trace = job.executionTrace || [];
         body.innerHTML = `
-          <div class="content-column" style="padding:36px 0;color:var(--text-secondary);font-size:14px;">
-            Processing document through Agent Harness (${(job.executionTrace || []).length} steps completed)...
-          </div>
-        `;
+          <div class="processing-panel" role="status" aria-live="polite"><span class="empty-eyebrow">${documentStatusLabel(job.status)}</span>
+            <h2>${job.status === 'Queued' ? 'Your document is queued' : 'Processing your document'}</h2>
+            <p>You can leave this page and return. This view checks the same operation; it does not submit another upload.</p>
+            <ol class="processing-stage-list">${trace.map(step => `<li><span>${escapeHtml(labels[step.executorName] || 'Processing step')}</span>
+              <small>${!step.executed ? 'Not enabled' : step.succeeded ? 'Completed' : 'Failed'}</small></li>`).join('')}</ol>
+            <p>${trace.length ? `${trace.filter(step => step.executed && step.succeeded).length} completed steps. Waiting for the next processing update.`
+              : 'No completed stages have been reported yet.'}</p>
+            <button type="button" class="workspace-secondary" data-click="refreshDocuments">Refresh status</button>
+          </div>`;
         return;
       }
 
       if (job.status === 'Failed') {
+        if (navRow) navRow.style.display = 'none';
         body.innerHTML = `
-          <div class="content-column" style="padding:24px 0;color:var(--status-err);font-size:14px;">
-            <strong>Processing failed:</strong> ${escapeHtml(job.errorMessage || 'Unknown error')}
-          </div>
+          <div class="workspace-error" role="alert"><h2>This document could not be processed</h2>
+            <p>${escapeHtml(job.errorMessage || 'The operation failed. Ask your workspace administrator to check provider configuration and processing allowances.')}</p>
+            <p>Reference: <code>${escapeHtml(job.jobId)}</code>. No upload was automatically retried.</p>
+            <button type="button" class="workspace-secondary" data-click="refreshDocuments">Refresh status</button></div>
         `;
         return;
       }
@@ -912,8 +1372,8 @@ let tenants = [];
 
         const summaryLineHtml = `
           <div class="packet-summary-line">
-            <span>${job.totalPages || 0} pages · ${segs.length} slice${segs.length === 1 ? '' : 's'} · ${escapeHtml(distinctLangs.join(', '))}${anyTranslated ? ' → EN translated' : ''} · ${totalEntitiesCount} entities extracted</span>
-            <span>Harness v${job.appliedHarnessVersion || 1}</span>
+            <span>${job.totalPages || 0} pages · ${segs.length} detected document${segs.length === 1 ? '' : 's'} · ${escapeHtml(distinctLangs.join(', '))}${anyTranslated ? ' · Translated' : ''} · ${totalEntitiesCount} entities extracted</span>
+            <span title="Saved processing configuration used for this upload">Settings v${job.appliedHarnessVersion || 1}</span>
           </div>
         `;
 
@@ -930,11 +1390,11 @@ let tenants = [];
               <div class="slice-section-head" data-click="toggleSliceCard_self">
                 <div>
                   <h3 class="slice-section-title">${escapeHtml(docName)}</h3>
-                  <div class="slice-section-sub">Slice ${s.segmentIndex + 1} · Pages ${s.startPage}–${s.endPage}${escapeHtml(langNote)}</div>
+                  <div class="slice-section-sub">Document ${s.segmentIndex + 1} · Pages ${s.startPage}–${s.endPage}${escapeHtml(langNote)}</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;">
                   <button type="button" class="text-link-btn" data-click="jumpToSlicePdf_arg_event" data-args="[${s.segmentIndex}]">Pages ${s.startPage}–${s.endPage} ↗</button>
-                  <button type="button" class="slice-chevron-btn" aria-label="Expand or collapse slice">
+                  <button type="button" class="slice-chevron-btn" aria-expanded="${isExpanded}" aria-label="Expand or collapse detected document">
                     <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                       <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>
@@ -974,7 +1434,7 @@ let tenants = [];
           : allEntities.filter(e => (e.category || 'Entity').toUpperCase() === selectedEntityCategory);
 
         body.innerHTML = `
-          <div class="content-column">
+          <div class="content-column table-overflow">
             <div class="filter-pill-bar">
               ${categories.map(cat => `
                 <button type="button" class="filter-pill-btn ${selectedEntityCategory === cat ? 'active' : ''}" data-click="setEntityCategoryFilter_arg" data-args="[${escapeJsArg(cat)}]">
@@ -1002,7 +1462,7 @@ let tenants = [];
                       <td style="color:var(--text-secondary);">${escapeHtml(e.name)}</td>
                       <td style="font-weight:600;color:var(--text-primary);">${escapeHtml(e.value)}</td>
                       <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(e.category || 'Entity')}</td>
-                      <td><button type="button" class="text-link-btn" data-click="jumpToSlicePdf_arg" data-args="[${e.sliceIndex}]">Slice ${e.sliceNum} (p.${escapeHtml(e.pageRange)}) ↗</button>${renderValueProvenance(e, job, 1)}</td>
+                      <td><button type="button" class="text-link-btn" data-click="jumpToSlicePdf_arg" data-args="[${e.sliceIndex}]">Document ${e.sliceNum} (p.${escapeHtml(e.pageRange)}) ↗</button>${renderValueProvenance(e, job, 1)}</td>
                       <td title="${escapeHtml(info.tooltip)}" style="color:var(--text-secondary);font-size:12.5px;">${info.modelPercent === null ? 'Unknown' : info.modelPercent + '%'}</td>
                       <td style="text-align:right;"><button type="button" class="text-link-btn" data-click="copyTextValue_arg" data-args="[${escapeJsArg(e.value)}]">Copy</button></td>
                     </tr>
@@ -1027,7 +1487,9 @@ let tenants = [];
         if (slicesWithData.length === 0) {
           body.innerHTML = `
             <div class="content-column" style="color:var(--text-secondary);font-size:14px;">
-              No structured key-value fields or tables configured for this document type. Configure schemas in <a href="/admin.html" style="color:var(--text-primary);">Admin Studio ↗</a>.
+              No fields or tables were returned for this selection. ${document.getElementById('adminStudioSwitchLink')?.style.display === 'none'
+                ? 'Ask your workspace administrator to check the document type and extraction settings.'
+                : `Configure extraction in <a href="/admin.html?tenant=${encodeURIComponent(currentTenant.tenantId)}">Workspace settings</a>.`}
             </div>
           `;
           return;
@@ -1150,12 +1612,12 @@ let tenants = [];
           <div class="content-column">
             <dl class="kv-grid" style="padding-bottom:20px;border-bottom:1px solid var(--line);">
               <div class="kv-item"><dt>Job ID</dt><dd style="font-family:monospace;font-size:12.5px;">${escapeHtml(job.jobId)}</dd></div>
-              <div class="kv-item"><dt>Tenant</dt><dd>${escapeHtml(job.tenantId)}</dd></div>
-              <div class="kv-item"><dt>Harness Version</dt><dd>v${job.appliedHarnessVersion || 1}</dd></div>
-              <div class="kv-item"><dt>Language Model</dt><dd>${escapeHtml(job.modelIdUsed || 'gpt-5-mini')}</dd></div>
+              <div class="kv-item"><dt>Workspace</dt><dd>${escapeHtml(job.tenantId)}</dd></div>
+              <div class="kv-item"><dt>Processing settings</dt><dd>v${job.appliedHarnessVersion || 1}</dd></div>
+              <div class="kv-item"><dt>Last reported model</dt><dd>${escapeHtml(job.modelIdUsed || 'Not reported')}</dd></div>
             </dl>
 
-            <h3 class="slice-section-title" style="margin:24px 0 12px 0;">Document Slices</h3>
+            <h3 class="slice-section-title" style="margin:24px 0 12px 0;">Detected documents</h3>
             <table class="clean-table" style="margin-bottom:28px;">
               <thead>
                 <tr><th>Slice</th><th>Pages</th><th>Identified Document</th><th>Matched Rule</th><th>Footer Signature</th><th>PDF</th></tr>
@@ -1199,7 +1661,7 @@ let tenants = [];
     }
 
     function computeFilteredGraphData() {
-      const completedJobs = tenantJobs.filter(j => j.status === 'Completed');
+      const completedJobs = (workspaceMode === 'graph' ? relationshipJobs : tenantJobs).filter(j => j.status === 'Completed');
 
       const allEntityNamesMap = new Map();
       const allEntityValuePairsMap = new Map();
@@ -1338,6 +1800,16 @@ let tenants = [];
     }
 
     function renderDocumentGraphTab(body) {
+      if (relationshipLoading) {
+        body.innerHTML = '<div class="workspace-empty" role="status"><h2>Loading document relationships…</h2><p>Reading authorized entity connections, not document bodies.</p></div>';
+        return;
+      }
+      if (relationshipError) {
+        body.innerHTML = `<div class="workspace-error" role="alert"><h2>Relationships are unavailable</h2>
+          <p>${escapeHtml(relationshipError)}</p><button type="button" class="workspace-secondary"
+            data-click="refreshRelationships">Refresh relationships</button></div>`;
+        return;
+      }
       const data = computeFilteredGraphData();
       const totalSelected = graphSelectedEntityNames.size + graphSelectedEntityValues.size;
 
@@ -1371,17 +1843,17 @@ let tenants = [];
         const isTypeSelected = graphSelectedEntityNames.has(groupName);
         return `
           <div class="entity-group-col" data-group="${escapeHtml(groupName)}">
-            <div class="entity-group-header" data-click="toggleGraphEntityNameFilter_arg_event" data-args="[${escapeJsArg(groupName)}]">
+            <button type="button" class="entity-group-header" aria-pressed="${isTypeSelected}" data-click="toggleGraphEntityNameFilter_arg_event" data-args="[${escapeJsArg(groupName)}]">
               <span>${isTypeSelected ? '☑' : '☐'} ${escapeHtml(groupName)}</span>
               <span style="opacity:0.65;">${items.length}</span>
-            </div>
+            </button>
             ${items.map(item => {
               const isValChecked = isTypeSelected || graphSelectedEntityValues.has(item.pairKey);
               return `
-                <div class="entity-value-option ${isValChecked ? 'checked' : ''}" data-search="${escapeHtml(item.value)}" data-click="toggleGraphEntityValueSelection_arg_event" data-args="[${escapeJsArg(item.pairKey)}]">
+                <button type="button" class="entity-value-option ${isValChecked ? 'checked' : ''}" aria-pressed="${isValChecked}" data-search="${escapeHtml(item.value)}" data-click="toggleGraphEntityValueSelection_arg_event" data-args="[${escapeJsArg(item.pairKey)}]">
                   <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${isValChecked ? '✓ ' : ''}${escapeHtml(item.value)}</span>
                   <span style="font-family:var(--font-mono);font-size:10.5px;opacity:0.65;flex-shrink:0;">${item.count} doc${item.count === 1 ? '' : 's'}</span>
-                </div>
+                </button>
               `;
             }).join('')}
           </div>
@@ -1390,8 +1862,16 @@ let tenants = [];
 
       body.innerHTML = `
         <div class="graph-shell" data-click="closeGraphDropdown">
+          <div class="relationship-toolbar"><div><strong>Document relationships</strong>
+            <p class="ask-scope">${relationshipTruncated ? 'Showing up to 1,000 processed documents, not the entire workspace.'
+              : `${relationshipJobs.length} processed documents in this workspace.`} All selected entity conditions must match.</p></div>
+            <div role="group" aria-label="Relationship view">
+              <button type="button" class="ghost-action-btn" aria-pressed="${graphView === 'graph'}"
+                data-click="setRelationshipView_arg" data-args="[&quot;graph&quot;]">Graph</button>
+              <button type="button" class="ghost-action-btn" aria-pressed="${graphView === 'list'}"
+                data-click="setRelationshipView_arg" data-args="[&quot;list&quot;]">List</button></div></div>
           <div class="entity-multiselect-wrap" data-click="stopPropagation">
-            <div class="entity-multiselect-box ${graphEntityDropdownOpen ? 'open' : ''}" id="entityMultiSelectBox" data-click="toggleEntityMultiSelectDropdown_event">
+            <div class="entity-multiselect-box ${graphEntityDropdownOpen ? 'open' : ''}" id="entityMultiSelectBox">
               <div class="entity-tags-flow">
                 <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);margin-right:4px;">Entities:</span>
                 ${totalSelected === 0
@@ -1400,7 +1880,8 @@ let tenants = [];
               </div>
               <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
                 ${totalSelected > 0 ? `<button type="button" class="ghost-action-btn" data-click="resetGraphFilters_event">Clear (${totalSelected})</button>` : ''}
-                <span style="font-size:12px;color:var(--text-secondary);padding:0 4px;">▾</span>
+                <button type="button" class="ghost-action-btn" aria-controls="entityMultiSelectPopover"
+                  aria-expanded="${graphEntityDropdownOpen}" data-click="toggleEntityMultiSelectDropdown_event">Choose filters</button>
               </div>
             </div>
 
@@ -1424,7 +1905,18 @@ let tenants = [];
       if (graphEntityDropdownSearch) {
         filterEntityPopoverOptions(graphEntityDropdownSearch);
       }
-      renderDocumentGraphCanvasOnly();
+      if (graphView === 'list' || data.docNodes.length + data.entityNodes.length > maximumInteractiveGraphNodes) {
+        const list = document.getElementById('graphWorkbenchContainer');
+        list.className = 'relationship-list';
+        const explanation = graphView !== 'list' ? '<p role="status">This selection is too large for an interactive graph. The document list is shown instead; choose entity filters to visualize a smaller selection.</p>' : '';
+        list.innerHTML = explanation + (data.docNodes.length ? data.docNodes.map(node => `
+          <button type="button" data-click="jumpFromGraphToSlice_arg_arg"
+            data-args="[${escapeJsArg(node.jobId)},-1]"><strong>${escapeHtml(node.docName)}</strong>
+            <span>${escapeHtml(node.pageRange || '')} · ${node.entityIds.length} connected entities</span></button>`).join('')
+          : '<p>No documents match all selected conditions.</p>');
+        const strip = document.getElementById('graphInfoStripContainer');
+        if (strip) strip.hidden = true;
+      } else renderDocumentGraphCanvasOnly();
     }
 
     function setGraphDepthMode(mode) {
@@ -1480,9 +1972,9 @@ let tenants = [];
         activeDocIdsSet = new Set([focusedNode.jobId]);
       }
 
-      const activeJobs = tenantJobs.filter(j => activeDocIdsSet.has(j.jobId));
+      const activeJobs = relationshipJobs.filter(j => activeDocIdsSet.has(j.jobId));
       const totalPagesInSelection = activeJobs.reduce((acc, j) => acc + (j.totalPages || 0), 0);
-      const totalSlicesInSelection = activeJobs.reduce((acc, j) => acc + ((j.segments || []).length), 0);
+      const totalSlicesInSelection = activeJobs.reduce((acc, j) => acc + (j.segmentCount || 0), 0);
 
       const selectionEntities = activeJobs.flatMap(j => (j.segments || []).flatMap(s => s.extractedEntities || []));
       const customerSet = [...new Set(selectionEntities.filter(e => e.name === 'Customer Name').map(e => e.value))];
@@ -1511,7 +2003,7 @@ let tenants = [];
         ];
         const focusTitle = focusedNode
           ? (focusedNode.type === 'entity' ? `${focusedNode.entityValue}` : focusedNode.docName)
-          : (selectedValLabels.length > 0 ? selectedValLabels.join(', ') : 'All Tenant Documents');
+          : (selectedValLabels.length > 0 ? selectedValLabels.join(', ') : 'Processed workspace documents');
         const focusSub = focusedNode
           ? (focusedNode.type === 'entity' ? `Entity Hub · ${focusedNode.entityName}` : `Selected Document · ${focusedNode.pageRange}`)
           : `${edges.length} entity connection${edges.length === 1 ? '' : 's'} active`;
@@ -1546,7 +2038,7 @@ let tenants = [];
         // Compute co-occurring entities across the documents connected to this entity hub
         const coEntitiesMap = new Map();
         focusedNode.connectedDocs.forEach(d => {
-          const jobObj = tenantJobs.find(j => j.jobId === d.jobId);
+          const jobObj = relationshipJobs.find(j => j.jobId === d.jobId);
           if (!jobObj) return;
           (jobObj.segments || []).forEach(s => {
             (s.extractedEntities || []).forEach(ent => {
@@ -1589,7 +2081,7 @@ let tenants = [];
             Connected Documents (${focusedNode.connectedDocs.length})
           </div>
           ${focusedNode.connectedDocs.map(d => {
-            const jobObj = tenantJobs.find(j => j.jobId === d.jobId);
+            const jobObj = relationshipJobs.find(j => j.jobId === d.jobId);
             const firstInsight = jobObj && jobObj.segments && jobObj.segments[0] ? cleanInsightText(jobObj.segments[0].insightSummary) : '';
             return `
               <div class="graph-inspector-item" data-click="jumpFromGraphToSlice_arg_arg" data-args="[${escapeJsArg(d.jobId)},-1]">
@@ -1605,7 +2097,7 @@ let tenants = [];
         `;
       } else if (focusedNode && focusedNode.type === 'doc') {
         const connectedEntities = focusedNode.entityIds.map(id => nodeById.get(id)).filter(Boolean);
-        const jobObj = tenantJobs.find(j => j.jobId === focusedNode.jobId);
+        const jobObj = relationshipJobs.find(j => j.jobId === focusedNode.jobId);
         const firstInsight = jobObj && jobObj.segments && jobObj.segments[0] ? cleanInsightText(jobObj.segments[0].insightSummary) : '';
 
         inspectorHtml = `
@@ -1697,11 +2189,16 @@ let tenants = [];
       if (!canvas) return;
       const rect = canvas.parentElement.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
-      const width = Math.max(640, rect.width || 880);
+      const width = Math.max(240, rect.width || 880);
       const height = Math.max(460, rect.height || 560);
       canvas.width = width * dpr;
       canvas.height = height * dpr;
       const ctx = canvas.getContext('2d');
+      const style = getComputedStyle(document.documentElement);
+      const canvasSurface = style.getPropertyValue('--di-surface').trim() || '#ffffff';
+      const canvasText = style.getPropertyValue('--di-text').trim() || '#182230';
+      const canvasMuted = style.getPropertyValue('--di-muted').trim() || '#526071';
+      const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true;
 
       const cx = width / 2;
       const cy = height / 2;
@@ -1748,7 +2245,7 @@ let tenants = [];
           degree,
           radius: d.isCurrentJob ? 5.6 : 4.4,
           color: d.isCurrentJob ? '#4b72fe' : '#64697d',
-          bgColor: '#ffffff',
+          bgColor: canvasSurface,
           x: saved ? saved.x : cx + Math.cos(angle) * outerR,
           y: saved ? saved.y : cy + Math.sin(angle) * outerR,
           vx: 0,
@@ -1862,7 +2359,7 @@ let tenants = [];
       }
 
       function drawFrame() {
-        stepPhysics();
+        if (!reducedMotion) stepPhysics();
 
         ctx.save();
         ctx.scale(dpr, dpr);
@@ -1925,7 +2422,7 @@ let tenants = [];
           ctx.fillStyle = n.color;
           ctx.fill();
           ctx.lineWidth = isFocusedOrHovered ? 1.8 : 1.0;
-          ctx.strokeStyle = '#ffffff';
+          ctx.strokeStyle = canvasSurface;
           ctx.stroke();
 
           // Subtle Obsidian LOD Label Rule: at rest only label shared hubs (degree >= 3); reveal neighbor labels on hover/focus or zoom
@@ -1945,11 +2442,11 @@ let tenants = [];
 
             if (isFocusedOrHovered) {
               const tw = ctx.measureText(text).width + 8;
-              ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+              ctx.fillStyle = canvasSurface;
               ctx.fillRect(n.x - tw / 2, labelY - 1.5, tw, fontSize + 4);
             }
 
-            ctx.fillStyle = isFocusedOrHovered ? '#16161d' : (n.type === 'entity' ? '#454859' : '#6c7086');
+            ctx.fillStyle = isFocusedOrHovered || n.type === 'entity' ? canvasText : canvasMuted;
             ctx.fillText(text, n.x, labelY);
           }
 
@@ -1957,7 +2454,7 @@ let tenants = [];
         }
 
         ctx.restore();
-        graphSimAnimFrame = requestAnimationFrame(drawFrame);
+        if (!reducedMotion) graphSimAnimFrame = requestAnimationFrame(drawFrame);
       }
 
       canvas.onmousedown = (e) => {
@@ -2003,6 +2500,7 @@ let tenants = [];
           graphHoveredNodeId = hit ? hit.id : null;
           canvas.style.cursor = hit ? 'pointer' : 'grab';
         }
+        if (reducedMotion) drawFrame();
       };
 
       window.onmouseup = () => {
@@ -2011,6 +2509,7 @@ let tenants = [];
         }
         draggedNode = null;
         isPanning = false;
+        if (reducedMotion) drawFrame();
       };
 
       canvas.onwheel = (e) => {
@@ -2019,6 +2518,7 @@ let tenants = [];
         graphZoom = Math.min(2.6, Math.max(0.45, +(graphZoom + delta).toFixed(2)));
         const lbl = document.getElementById('graphZoomLabel');
         if (lbl) lbl.textContent = `${Math.round(graphZoom * 100)}%`;
+        if (reducedMotion) drawFrame();
       };
 
       drawFrame();
@@ -2158,78 +2658,10 @@ let tenants = [];
       const chatIsLoading = askAiLoading && askAiLoadingChatId === chat?.id &&
         askAiLoadingTenantId === currentTenant?.tenantId;
       const isEmptyChat = messages.length === 0 && !chatIsLoading;
-      const isDocDrawerCollapsed = document.getElementById('docListPane')?.classList.contains('collapsed');
-
-      // Only list chats that have at least 1 message so "New chat" is never duplicated under Chats
-      const savedChats = tenantChats.filter(c => (c.messages || []).length > 0);
-
-      const chatListHtml = savedChats.map(c => {
-        const isSelected = c.id === activeChatId && !isEmptyChat;
-        return `
-          <div class="chat-history-item ${isSelected ? 'selected' : ''}" title="${escapeHtml(c.title || 'Chat')}" data-click="selectAskAiChat_arg" data-args="[${escapeJsArg(c.id)}]">
-            <span class="chat-history-title">${escapeHtml(c.title || 'Chat')}</span>
-            <button type="button" class="chat-delete-btn" title="Delete chat" data-click="deleteAskAiChat_arg_event" data-args="[${escapeJsArg(c.id)}]">✕</button>
-          </div>
-        `;
-      }).join('');
-
-      const leftChatRailHtml = `
-        <aside class="ask-inner-sidebar ${askInnerSidebarCollapsed ? 'collapsed' : ''}" id="askInnerSidebar">
-          <div class="drawer-top" style="border-bottom:none;padding-bottom:6px;">
-            <div class="drawer-brand-row" style="height:28px;">
-              <div style="display:flex;align-items:center;gap:6px;min-width:0;">
-                ${isDocDrawerCollapsed ? `
-                  <button type="button" class="icon-toggle-btn" title="Expand Documents panel" data-click="toggleDocListPane">
-                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
-                      <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
-                      <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
-                    </svg>
-                  </button>
-                ` : ''}
-                <span class="ask-panel-title">${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')}</span>
-              </div>
-              <button type="button" class="icon-toggle-btn" title="Collapse Ask AI panel" data-click="toggleAskInnerSidebar">
-                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
-                  <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
-                  <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
-                </svg>
-              </button>
-            </div>
-
-            ${isDocDrawerCollapsed ? `
-              <div class="workspace-mode-switcher">
-                <button type="button" class="workspace-mode-btn" data-click="setWorkspaceMode_arg" data-args="[&quot;documents&quot;]">Documents</button>
-                <button type="button" class="workspace-mode-btn" data-click="setWorkspaceMode_arg" data-args="[&quot;graph&quot;]">Graph</button>
-                <button type="button" class="workspace-mode-btn active" data-click="setWorkspaceMode_arg" data-args="[&quot;ask&quot;]">✦ Ask AI</button>
-              </div>
-            ` : ''}
-
-            <button type="button" class="ask-new-chat-pill" data-click="startNewAskAiChat">
-              <svg viewBox="0 0 20 20" fill="currentColor">
-                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
-              </svg>
-              <span>New chat</span>
-            </button>
-          </div>
-
-          <div class="drawer-subbar">
-            <span>Chats</span>
-          </div>
-
-          <div class="doc-items-scroll">
-            ${chatListHtml}
-          </div>
-        </aside>
-      `;
-
-      const floatingExpandBtnHtml = `
-        <button type="button" class="icon-toggle-btn" id="btnExpandAskSidebar" style="position:absolute;top:12px;left:12px;display:${askInnerSidebarCollapsed ? 'inline-flex' : 'none'};" title="Expand Ask AI panel" data-click="toggleAskInnerSidebar">
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
-            <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
-            <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
-          </svg>
-        </button>
-      `;
+      const leftChatRailHtml = '';
+      const floatingExpandBtnHtml = '';
+      const scopeHtml = '<p class="ask-scope">Searches the documents you can access in this workspace. ' +
+        'Answers include supporting sources; missing evidence is disclosed.</p>';
 
       if (isEmptyChat) {
         body.innerHTML = `
@@ -2238,15 +2670,18 @@ let tenants = [];
             ${floatingExpandBtnHtml}
             <div class="ask-minimal-stage">
               <h2 class="ask-minimal-heading">${escapeHtml(currentTenant?.agent?.purpose || 'Explore and answer questions across your documents')}</h2>
-
+              ${scopeHtml}
               <div class="ask-pill-bar">
-                <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Ask ${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')} about your documents..." data-enter="runCrossDocumentAskAi_value" />
-                <button type="button" class="ask-pill-send" title="Send message" data-click="submitAskInput">
+                <label class="sr-only" for="askAiMainInputEl">Question about workspace documents</label>
+                <textarea rows="2" maxlength="8000" class="ask-pill-input" id="askAiMainInputEl" placeholder="Ask ${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')} about your documents..."
+                  aria-describedby="askComposerHelp" data-input="rememberAskDraft_value" data-enter="submitComposer_event">${escapeHtml(askAiQuestionInput)}</textarea>
+                <button type="button" class="ask-pill-send" aria-label="Send question" title="Send message" data-click="submitAskInput">
                   <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                     <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
                   </svg>
                 </button>
               </div>
+              <p class="ask-scope" id="askComposerHelp">Enter to send · Shift + Enter for a new line. No question runs until you send it.</p>
             </div>
           </div>
         `;
@@ -2256,7 +2691,7 @@ let tenants = [];
       const threadHtml = messages.map(m => {
         if (m.role === 'user') {
           return `
-            <div style="align-self:flex-end;background:#f3f3f8;color:var(--text-primary);padding:10px 16px;border-radius:18px;font-size:14px;font-weight:500;max-width:82%;">
+            <div class="ask-user-message" style="align-self:flex-end;background:var(--surface-soft);color:var(--text-primary);padding:10px 16px;border-radius:12px;font-size:14px;font-weight:500;max-width:90%;white-space:pre-wrap;overflow-wrap:anywhere;">
               ${escapeHtml(m.text)}
             </div>
           `;
@@ -2283,6 +2718,7 @@ let tenants = [];
         <div class="ask-main-pane" style="justify-content:flex-start;">
           ${floatingExpandBtnHtml}
           <div class="ask-minimal-stage" style="justify-content:space-between;min-height:100%;margin:0 auto;">
+            ${scopeHtml}
             <div style="width:100%;display:flex;flex-direction:column;gap:18px;padding-bottom:28px;">
               ${threadHtml}
               ${chatIsLoading ? `<div id="askAiProgress" role="status" style="color:var(--text-secondary);font-size:13.5px;">${escapeHtml(askAiProgressText)}</div>` : ''}
@@ -2291,19 +2727,39 @@ let tenants = [];
             </div>
 
             <div class="ask-pill-bar" style="position:sticky;bottom:8px;">
-              <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Ask ${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')} about your documents..." data-enter="runCrossDocumentAskAi_value" />
-              <button type="button" class="ask-pill-send" title="Send message" data-click="submitAskInput">
+              <label class="sr-only" for="askAiMainInputEl">Question about workspace documents</label>
+              <textarea rows="2" maxlength="8000" class="ask-pill-input" id="askAiMainInputEl" placeholder="Ask ${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')} about your documents..."
+                aria-describedby="askComposerHelp" data-input="rememberAskDraft_value" data-enter="submitComposer_event">${escapeHtml(askAiQuestionInput)}</textarea>
+              <button type="button" class="ask-pill-send" aria-label="Send question" title="Send message" data-click="submitAskInput" ${chatIsLoading || chat?.pendingAskAi?.runId ? 'disabled' : ''}>
                 <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
                 </svg>
               </button>
             </div>
+            <p class="ask-scope" id="askComposerHelp">Enter to send · Shift + Enter for a new line.</p>
           </div>
         </div>
       `;
     }
 
     DocIntelActions.register({
+      chooseDocumentUpload: { arity: 0, run: function() { return chooseDocumentUpload(); } },
+      closeSourceInspector: { arity: 0, run: function() { return closeSourceInspector(); } },
+      inspectSelectedSource: { arity: 0, run: function() { return inspectSelectedSource(); } },
+      inspectSource_arg_arg_arg: { arity: 3, run: function(args) { return inspectSource(args[0], args[1], args[2]); } },
+      loadMoreDocuments: { arity: 0, run: function() { return loadMoreDocuments(); } },
+      onWorkspaceSearch_value: { arity: 0, run: function() { return onWorkspaceSearch(this.value); } },
+      onDocumentStatusChanged_value: { arity: 0, run: function() { return onDocumentStatusChanged(this.value); } },
+      openWorkspaceCommands: { arity: 0, run: function() { return openWorkspaceCommands(); } },
+      refreshDocuments: { arity: 0, run: function() { return loadTenantJobs(selectedJobId); } },
+      refreshRelationships: { arity: 0, run: function() { return loadRelationshipDocuments(); } },
+      rememberAskDraft_value: { arity: 0, run: function() { askAiQuestionInput = this.value; } },
+      setRelationshipView_arg: { arity: 1, run: function(args) { return setRelationshipView(args[0]); } },
+      submitComposer_event: { arity: 0, run: function(args, event) {
+        if (event.shiftKey || event.isComposing || event.ctrlKey || event.metaKey || event.altKey) return;
+        event.preventDefault();
+        return runCrossDocumentAskAi(this.value);
+      } },
       closeGraphDropdown: { arity: 0, run: function(args, event) { if(graphEntityDropdownOpen){ graphEntityDropdownOpen=false; document.getElementById('entityMultiSelectPopover')?.classList.remove('open'); document.getElementById('entityMultiSelectBox')?.classList.remove('open'); } } },
       copyTextValue_arg: { arity: 1, run: function(args, event) { return copyTextValue(args[0]); } },
       deleteAskAiChat_arg_event: { arity: 1, run: function(args, event) { return deleteAskAiChat(args[0], event); } },

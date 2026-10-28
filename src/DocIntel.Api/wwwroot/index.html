@@ -11,14 +11,18 @@
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/shared/shell.css" />
   <link rel="stylesheet" href="/index.css" />
+  <link rel="stylesheet" href="/shared/customer.css" />
+  <link rel="stylesheet" href="/workspace-customer.css" />
 </head>
-<body>
+<body class="customer-workspace">
+  <a class="skip-link" href="#docCenterBody">Skip to document workspace</a>
   <!-- Single Collapsible Left Document Drawer -->
   <aside class="doc-drawer" id="docListPane">
     <div class="drawer-top">
       <div class="drawer-brand-row" style="height:28px;">
         <div class="tenant-switcher-wrap">
-          <select class="tenant-select" id="tenantSelectDropdown" data-change="onTenantSwitched_value" title="Select tenant workspace"></select>
+          <label class="sr-only" for="tenantSelectDropdown">Workspace</label>
+          <select class="tenant-select" id="tenantSelectDropdown" data-change="onTenantSwitched_value" title="Select workspace"></select>
         </div>
         <button type="button" class="icon-toggle-btn" title="Hide documents drawer" data-click="toggleDocListPane">
           <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -28,38 +32,49 @@
         </button>
       </div>
 
-      <div class="workspace-mode-switcher" role="tablist" aria-label="Workspace mode">
+      <nav class="workspace-mode-switcher" aria-label="Workspace navigation">
         <button type="button" class="workspace-mode-btn active" id="btnModeDocuments" data-click="setWorkspaceMode_arg" data-args="[&quot;documents&quot;]">Documents</button>
-        <button type="button" class="workspace-mode-btn" id="btnModeGraph" data-click="setWorkspaceMode_arg" data-args="[&quot;graph&quot;]">Graph</button>
+        <button type="button" class="workspace-mode-btn" id="btnModeGraph" data-click="setWorkspaceMode_arg" data-args="[&quot;graph&quot;]">Relationships</button>
         <button type="button" class="workspace-mode-btn" id="btnModeAsk" data-click="setWorkspaceMode_arg" data-args="[&quot;ask&quot;]">✦ Ask AI</button>
-      </div>
+      </nav>
 
       <div class="search-box" id="docSearchBoxWrap">
         <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
           <circle cx="8.5" cy="8.5" r="5.5" />
           <path d="M13 13l4 4" stroke-linecap="round" />
         </svg>
-        <input type="text" id="docSearchInput" placeholder="Search name or content..." data-input="renderDocumentList" />
+        <label class="sr-only" for="docSearchInput">Search documents</label>
+        <input type="search" id="docSearchInput" placeholder="Search documents…" data-input="onWorkspaceSearch_value" />
       </div>
+      <label class="sr-only" for="documentStatusFilter">Document status</label>
+      <select id="documentStatusFilter" class="tenant-select" data-change="onDocumentStatusChanged_value">
+        <option value="">All statuses</option><option value="Completed">Processed</option>
+        <option value="Running">Processing</option><option value="Queued">Queued</option>
+        <option value="Failed">Failed</option>
+      </select>
     </div>
 
     <div class="drawer-subbar">
-      <span id="docListCountLabel">0 documents</span>
+      <span id="docListCountLabel" role="status" aria-live="polite">Loading documents…</span>
+      <button type="button" id="sidebarNewChat" class="text-link-btn" data-click="startNewAskAiChat" hidden>New chat</button>
     </div>
 
     <div class="doc-items-scroll" id="docItemsList"></div>
+    <button type="button" id="libraryLoadMore" class="ghost-action-btn" data-click="loadMoreDocuments" hidden>Load more documents</button>
 
     <div class="drawer-footer">
-      <label class="btn-upload-primary" id="drawerUploadLabel" title="Upload a PDF document">
+      <div class="btn-upload-primary" id="drawerUploadLabel" style="display:none">
+        <button type="button" class="sidebar-upload-button" data-click="chooseDocumentUpload" title="Upload a PDF document">
         <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
           <path d="M10 13V4m0 0L6.5 7.5M10 4l3.5 3.5M4 15.5h12" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
         <span id="uploadBtnLabel">Upload PDF</span>
+        </button>
         <input type="file" id="docUploadInput" accept=".pdf" style="display:none" data-change="uploadAndRunTenantDocument_self" />
-      </label>
-      <a href="/admin.html" id="adminStudioSwitchLink" class="admin-switch-link" title="Open Agent Harness Admin Studio" data-click="openAdminForTenant">
-        <span>Agent Harness Admin</span>
-        <span>↗</span>
+      </div>
+      <a href="/admin.html" id="adminStudioSwitchLink" class="admin-switch-link" style="display:none" title="Workspace settings" data-click="openAdminForTenant">
+        <span>Workspace settings</span>
+        <span aria-hidden="true">↗</span>
       </a>
       <button type="button" id="identitySignOut" class="admin-switch-link" data-click="signOut" hidden>
         Sign out
@@ -70,6 +85,7 @@
   <!-- Main Workspace ("Project Meridian" Header + Floating White-Pill Tabs) -->
   <main class="workspace-main">
     <header class="meridian-header">
+      <nav id="workspaceBreadcrumb" class="workspace-breadcrumb" aria-label="Breadcrumb">Documents</nav>
       <div class="meridian-top-row">
         <div class="meridian-identity">
           <button type="button" class="icon-toggle-btn" id="btnHeaderExpandDocList" style="display:none;align-self:center;" title="Show documents drawer" data-click="toggleDocListPane">
@@ -78,7 +94,7 @@
               <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
             </svg>
           </button>
-          <h1 class="meridian-title" id="selectedDocTitle">Select or upload a document</h1>
+          <h1 class="meridian-title" id="selectedDocTitle">Your document workspace</h1>
           <span class="meridian-folder-meta" id="selectedDocFolderMeta">
             <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
               <path stroke-linecap="round" stroke-linejoin="round" d="M2.5 6a2 2 0 012-2h3.2l1.8 2h6a2 2 0 012 2v6.5a2 2 0 01-2 2h-11a2 2 0 01-2-2V6z" />
@@ -88,7 +104,10 @@
         </div>
 
         <div class="meridian-actions">
+          <details class="workspace-tools-menu"><summary>Workspace tools</summary>
+            <div data-docintel-ux-host></div></details>
           <div id="sliceSelectorRow" style="display:flex;align-items:center;gap:6px;"></div>
+          <button type="button" class="ghost-action-btn" id="btnInspectSource" data-click="inspectSelectedSource" hidden>View source</button>
           <button type="button" class="ghost-action-btn" id="btnHeaderExportJson" data-click="exportSelectedJobJson" title="Download extracted JSON">Export</button>
         </div>
       </div>
@@ -104,7 +123,17 @@
       </div>
     </header>
 
-    <section class="workspace-body" id="docCenterBody" data-tab="insights"></section>
+    <div class="workspace-surface" id="workspaceSurface">
+      <section class="workspace-body" id="docCenterBody" data-tab="insights" tabindex="-1" aria-label="Document workspace"></section>
+      <aside class="source-inspector" id="sourceInspector" aria-labelledby="sourceInspectorTitle" hidden>
+        <div class="source-inspector-header"><div><span class="source-eyebrow">Original evidence</span>
+          <h2 id="sourceInspectorTitle">Document source</h2></div>
+          <button type="button" class="ghost-action-btn" data-click="closeSourceInspector" aria-label="Close source">Close</button></div>
+        <p id="sourceInspectorNote" class="source-inspector-note"></p>
+        <a id="sourceInspectorOpen" target="_blank" rel="noopener noreferrer" class="text-link-btn">Open original PDF in a new tab</a>
+        <iframe id="sourceInspectorFrame" title="Original document source"></iframe>
+      </aside>
+    </div>
   </main>
 
   <div class="toast" id="toast"></div>
@@ -114,6 +143,7 @@
   <script src="/evidence.js"></script>
   <script src="/shared/ui.js"></script>
   <script src="/shared/actions.js"></script>
+  <script src="/shared/customer.js"></script>
   <script src="/workspace.js"></script>
 </body>
 </html>

@@ -1,13 +1,46 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Confirm your email question - DocIntel</title><link rel="stylesheet" href="/ask-run.css">
-  <script src="/identity.js" defer></script><script src="/email-question.js" defer></script></head>
-<body><main><a href="/">Document workspace</a><h1>Confirm your document question</h1>
-  <p id="emailNotice" role="status" aria-live="polite">Verifying the signed-in account...</p>
-  <p id="emailDestination"></p><h2>Question received by email</h2><p id="emailQuestion"></p>
-  <p>Only confirm a question you recognize. Processing uses your current document permissions;
-    the answer is sent only to the verified original sender address. Opening this page does not run the agent.</p>
-  <button type="button" id="confirmEmailQuestion" disabled>Confirm and process</button>
-  <a id="emailRunLink" hidden>View question status</a>
-</main></body></html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Confirm your email question — DocIntel</title>
+  <link rel="stylesheet" href="/shared/shell.css">
+  <link rel="stylesheet" href="/ask-run.css">
+  <link rel="stylesheet" href="/shared/customer.css">
+  <script src="/identity.js" defer></script>
+  <script src="/shared/customer.js" defer></script>
+  <script src="/email-question.js" defer></script>
+</head>
+<body class="di-standalone">
+  <a class="di-skip-link di-button" href="#emailMain">Skip to confirmation</a>
+  <header class="di-page-header">
+    <nav aria-label="DocIntel"><a class="di-brand" href="/">DocIntel <span>Document workspace</span></a></nav>
+    <div class="di-page-actions" data-docintel-ux-host></div>
+  </header>
+  <main id="emailMain" tabindex="-1">
+    <p class="di-eyebrow">Email question</p>
+    <h1>Review before processing</h1>
+    <p class="di-page-intro">Opening this page does not run the agent or send an answer.</p>
+    <section class="di-run-status" aria-label="Confirmation status">
+      <p id="emailNotice" role="status" aria-live="polite" aria-atomic="true">Verifying the signed-in account…</p>
+      <p id="emailDestination"></p>
+    </section>
+    <section aria-labelledby="emailQuestionHeading">
+      <h2 id="emailQuestionHeading">Question received by email</h2>
+      <p id="emailQuestion"></p>
+    </section>
+    <section aria-labelledby="confirmationHeading">
+      <h2 id="confirmationHeading">Your confirmation is required</h2>
+      <p id="confirmationExplanation">Only confirm a question you recognize. Processing uses your current document permissions.
+        Replies are addressed only to the verified original sender. Delivery is not guaranteed; question status
+        will show whether the messaging service acknowledged the answer.</p>
+      <div class="di-confirm-actions">
+        <button class="di-button di-button--primary" type="button" id="confirmEmailQuestion"
+          aria-describedby="confirmationExplanation" disabled>Confirm and process</button>
+        <a id="emailRunLink" hidden>View question status</a>
+      </div>
+    </section>
+  </main>
+  <footer class="di-page-footer">Do not recognize this question? Leave this page without confirming.</footer>
+</body>
+</html>
