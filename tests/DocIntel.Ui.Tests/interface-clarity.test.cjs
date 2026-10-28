@@ -509,6 +509,64 @@ test('the document-first empty state hides irrelevant result tabs and checks exi
   assert.match(app.element('docCenterBody').innerHTML, /workspace administrator/);
 });
 
+test('processing and failure notices use the same content layout across all document result tabs', () => {
+  const app = runtime('index');
+  vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};
+    tenantJobs=[{jobId:'file',tenantId:'one',fileName:'bundle.pdf',status:'Running',totalPages:2,
+      executionTrace:[{},{},{}],segments:[
+        {segmentIndex:0,startPage:1,endPage:2,bodyText:'Source document',promptColumnResults:[
+          {columnId:'custom',columnName:'Custom Result',filterMatched:true,resultText:'Derived result'}]}]}];
+    selectedJobId='file';selectedSliceIndex=-1;`, app.context);
+  const body = app.element('docCenterBody');
+  for (const status of ['Queued', 'Running', 'Failed']) {
+    vm.runInContext(`tenantJobs[0].status='${status}';tenantJobs[0].errorMessage='<provider failure>';`, app.context);
+    let sharedMarkup;
+    for (const tab of ['insights', 'document', 'entities', 'structured', 'metadata', 'prompt:custom']) {
+      vm.runInContext(`docResultTab='${tab}';`, app.context);
+      body.dataset.layout = 'pdf';
+      app.context.renderSelectedDocument();
+      assert.equal(body.dataset.tab, tab);
+      assert.equal(body.dataset.layout, '', `${status}: ${tab} must not inherit the full-bleed PDF layout`);
+      sharedMarkup ??= body.innerHTML;
+      assert.equal(body.innerHTML, sharedMarkup, `${status}: ${tab} must use the shared notice`);
+      assert.match(body.innerHTML, status === 'Failed'
+        ? /Processing failed:.*&lt;provider failure&gt;/ : /Agent Harness \(3 steps completed\)/);
+      assert.doesNotMatch(body.innerHTML, /<iframe/);
+    }
+  }
+  const css = read('index.css');
+  assert.match(css, /\.workspace-body\[data-layout="pdf"\]\s*\{[^}]*padding:\s*0;[^}]*overflow:\s*hidden/);
+  assert.doesNotMatch(css, /\.workspace-body\[data-tab="document"\]\s*\{/);
+});
+
+test('only actual completed PDF previews use the full-bleed layout and it resets when leaving the preview', () => {
+  const app = runtime('index');
+  vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};
+    tenantJobs=[{jobId:'file',tenantId:'one',fileName:'bundle.pdf',status:'Completed',totalPages:2,segments:[
+      {segmentIndex:0,startPage:1,endPage:2,bodyText:'Source document',insightSummary:'Complete document'}]}];
+    selectedJobId='file';selectedSliceIndex=-1;docResultTab='document';`, app.context);
+  const body = app.element('docCenterBody');
+  app.context.renderSelectedDocument();
+  assert.equal(body.dataset.layout, 'pdf');
+  assert.match(body.innerHTML, /class="pdf-full-frame"/);
+  vm.runInContext("tenantJobs[0].segments[0].wasTranslated=true;", app.context);
+  app.context.renderSelectedDocument();
+  assert.equal(body.dataset.layout, 'pdf');
+  assert.match(body.innerHTML, /class="pdf-side-by-side"/);
+  vm.runInContext("docResultTab='insights';", app.context);
+  app.context.renderSelectedDocument();
+  assert.equal(body.dataset.layout, '');
+  vm.runInContext("docResultTab='document';tenantJobs[0].segments=[];", app.context);
+  app.context.renderSelectedDocument();
+  assert.equal(body.dataset.layout, '');
+  assert.match(body.innerHTML, /No PDF available/);
+  vm.runInContext("tenantJobs=[];", app.context);
+  body.dataset.layout = 'pdf';
+  app.context.renderSelectedDocument();
+  assert.equal(body.dataset.layout, '');
+  assert.match(body.innerHTML, /Your documents, ready to explore/);
+});
+
 test('complete-file insights display once even when processing produced page fragments', () => {
   const app = runtime('index');
   vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};

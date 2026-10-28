@@ -550,7 +550,7 @@
       padding: 28px 36px 40px 36px;
     }
 
-    .workspace-body[data-tab="document"] {
+    .workspace-body[data-layout="pdf"] {
       padding: 0;
       overflow: hidden;
       display: flex;

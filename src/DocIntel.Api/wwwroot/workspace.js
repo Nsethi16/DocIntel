@@ -769,6 +769,7 @@ let tenants = [];
     function renderSelectedDocument() {
       stopGraphCanvas();
       const body = document.getElementById('docCenterBody');
+      body.dataset.layout = '';
       const sliceRow = document.getElementById('sliceSelectorRow');
       const navRow = document.getElementById('meridianNavRow');
       const exportBtn = document.getElementById('btnHeaderExportJson');
@@ -974,6 +975,7 @@ let tenants = [];
           body.innerHTML = `<div class="content-column">No PDF available.</div>`;
           return;
         }
+        body.dataset.layout = 'pdf';
         const focusedSeg = (selectedSliceIndex >= 0 ? segs.find(s => s.segmentIndex === selectedSliceIndex) : segs[0]) || segs[0];
         const origPdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf`;
         const transPdfUrl = `${origPdfUrl}?translated=true`;
