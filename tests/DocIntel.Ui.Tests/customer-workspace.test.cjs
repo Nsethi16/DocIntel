@@ -88,6 +88,18 @@ test('read-only empty workspaces explain access without offering upload', () => 
   assert.match(app.element('docCenterBody').innerHTML, /Ask a workspace administrator/);
 });
 
+test('collapsed navigation removes hidden controls from keyboard focus and can be reopened', () => {
+  const app = runtime();
+  app.context.toggleDocListPane();
+  assert.equal(app.element('docListPane').inert, true);
+  assert.equal(app.element('docListPane')['aria-hidden'], 'true');
+  assert.equal(app.focus, app.element('btnHeaderExpandDocList'));
+  app.context.toggleDocListPane();
+  assert.equal(app.element('docListPane').inert, false);
+  assert.equal(app.element('docListPane')['aria-hidden'], 'false');
+  assert.equal(app.focus, app.element('tenantSelectDropdown'));
+});
+
 test('Ask AI uses one contextual rail, a multiline composer and honest workspace scope', () => {
   const app = runtime();
   vm.runInContext("workspaceMode='ask'; renderSelectedDocument()", app.context);
@@ -201,6 +213,49 @@ test('a late detail response cannot replace a newer snapshot of the same selecte
   release({ ok: true, json: async () => documentJob('one', { status: 'Running' }) });
   await previous;
   assert.equal(vm.runInContext('selectedDocumentRecord.status', app.context), 'Completed');
+});
+
+test('an empty search invalidates pending document details and clears their loading state', async () => {
+  let release;
+  const app = runtime([
+    () => new Promise(resolve => { release = resolve; }),
+    { items: [], total: 0, nextOffset: null }
+  ]);
+  vm.runInContext("selectedJobId='one';renderDocumentList=()=>{};renderSelectedDocument=()=>{};", app.context);
+  const previous = app.context.loadSelectedDocument();
+  await app.context.loadTenantJobs();
+  release({ ok: true, json: async () => documentJob() });
+  await previous;
+  assert.equal(vm.runInContext('selectedJobId', app.context), null);
+  assert.equal(vm.runInContext('selectedJobLoading', app.context), false);
+  assert.equal(vm.runInContext('selectedDocumentRecord', app.context), null);
+});
+
+test('switching a Relationships workspace refreshes its authorized projection and resets pending flags', async () => {
+  const app = runtime([
+    { items: [], total: 0, nextOffset: null },
+    { documents: [], truncated: false }
+  ]);
+  vm.runInContext(`tenants=[{tenantId:'tenant/one',capabilities:{}},{tenantId:'two',capabilities:{}}];
+    workspaceMode='graph';relationshipLoading=true;relationshipTruncated=true;
+    renderTenantSelect=()=>{};renderDocumentList=()=>{};renderSelectedDocument=()=>{};`, app.context);
+  await app.context.onTenantSwitched('two');
+  assert.equal(app.calls.length, 2);
+  assert.match(app.calls[0].url, /\/tenants\/two\/documents/);
+  assert.match(app.calls[1].url, /\/tenants\/two\/graph/);
+  assert.equal(vm.runInContext('relationshipLoading', app.context), false);
+  assert.equal(vm.runInContext('relationshipTruncated', app.context), false);
+});
+
+test('switching from Graph to List cancels the detached canvas animation', () => {
+  const app = runtime();
+  const cancellations = [];
+  app.context.cancelAnimationFrame = id => cancellations.push(id);
+  vm.runInContext("workspaceMode='graph';graphView='list';graphSimAnimFrame=41;", app.context);
+  app.context.renderDocumentGraphTab(app.element('docCenterBody'));
+  assert.deepEqual(cancellations, [41]);
+  assert.equal(vm.runInContext('graphSimAnimFrame', app.context), null);
+  assert.match(app.element('graphWorkbenchContainer').innerHTML, /No documents match/);
 });
 
 test('Enter submission respects multiline editing and composition without creating duplicate questions', () => {

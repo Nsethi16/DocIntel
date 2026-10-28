@@ -11,6 +11,16 @@ const { startApi, killApi } = require('./helpers/api.cjs');
 const tenantId = 'contoso-legal';
 const base = '/api/harness/tenants/' + tenantId;
 
+function configuredConnections(issuer) {
+  return {
+    'AzureAI:FoundryInferenceEndpoint': issuer + '/models',
+    'AzureAI:AzureOpenAIEndpoint': issuer,
+    'AzureAI:DecisionEndpoint': issuer,
+    'AzureAI:LocalOpenAIEndpoint': issuer + '/v1',
+    'AzureAI:ContentUnderstandingEndpoint': 'https://content-understanding.example.invalid/private-layout'
+  };
+}
+
 async function fixture(documentIds = []) {
   const directory = path.join(__dirname, '.customer-http-' + crypto.randomUUID());
   await fs.mkdir(directory);
@@ -21,21 +31,37 @@ async function fixture(documentIds = []) {
   const reader = crypto.randomUUID();
   const processor = crypto.randomUUID();
   const outsider = crypto.randomUUID();
+  const people = [admin, reader, processor, outsider].map((id, index) => ({
+    id, displayName: `Fixture employee ${index}`, mail: `employee${index}@example.invalid`,
+    userPrincipalName: `employee${index}@example.invalid`, accountEnabled: true, userType: 'Member'
+  }));
   const keys = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
   const publicKey = { ...keys.publicKey.export({ format: 'jwk' }), kid: 'customer-fixture', alg: 'RS256', use: 'sig' };
   let issuer;
   let providerCalls = 0;
+  let directoryLookups = 0;
   const provider = http.createServer((request, response) => {
+    const url = new URL(request.url, issuer);
     let result;
-    if (request.url === '/.well-known/openid-configuration') {
+    if (request.method === 'GET' && url.pathname === '/.well-known/openid-configuration') {
       result = { issuer, jwks_uri: issuer + '/keys', authorization_endpoint: issuer + '/authorize',
         token_endpoint: issuer + '/token', response_types_supported: ['code'], subject_types_supported: ['public'],
         id_token_signing_alg_values_supported: ['RS256'] };
-    } else if (request.url === '/keys') result = { keys: [publicKey] };
+    } else if (request.method === 'GET' && url.pathname === '/keys') result = { keys: [publicKey] };
+    else if (request.method === 'GET' && /^\/graph\/users\/[0-9a-f-]{36}$/.test(url.pathname)) {
+      // Current access policy validates directory membership before executing an endpoint.
+      directoryLookups++;
+      result = people.find(person => person.id === url.pathname.split('/')[3]);
+      if (!result) {
+        response.writeHead(404);
+        response.end();
+        return;
+      }
+    }
     else {
       providerCalls++;
       response.writeHead(500);
-      response.end('No directory, inference, mailbox or delivery calls are permitted in this fixture.');
+      response.end('Only identity metadata and authorization directory reads are permitted in this fixture.');
       return;
     }
     response.writeHead(200, { 'Content-Type': 'application/json' });
@@ -80,15 +106,22 @@ async function fixture(documentIds = []) {
   return {
     directory, issuer, admin, reader, processor, outsider,
     providerCalls: () => providerCalls,
+    directoryLookups: () => directoryLookups,
     async start(overrides = {}) {
       await killApi(api);
       api = await startApi(directory, { ...settings, ...overrides });
     },
-    request(route, id = admin, method = 'GET', body, extraHeaders = {}) {
-      return fetch(api.url + route, { method, redirect: 'manual',
+    async request(route, id = admin, method = 'GET', body, extraHeaders = {}) {
+      const response = await fetch(api.url + route, { method, redirect: 'manual',
         headers: { ...(id ? { Authorization: 'Bearer ' + token(id) } : {}),
           ...(body ? { 'Content-Type': 'application/json' } : {}), ...extraHeaders },
         body: body ? JSON.stringify(body) : undefined });
+      if (response.status >= 500) {
+        const failures = api.getLogs().match(/failed with [A-Za-z0-9]+; code [0-9]+; site [A-Za-z0-9_.<>]+/g) || [];
+        assert.fail(`${method} ${route} returned HTTP ${response.status}. ` +
+          `Unexpected provider calls: ${providerCalls}. Safe diagnostics: ${failures.slice(-3).join(' | ')}`);
+      }
+      return response;
     },
     async stop() {
       await killApi(api);
@@ -100,7 +133,7 @@ async function fixture(documentIds = []) {
 
 test('customer setup is admin-only, configuration-only, secret-free and read-only',
   { timeout: 120000 }, async t => {
-    // Arrange: only an isolated loopback identity issuer is used; every provider call is counted.
+    // Arrange: authorization reads use a loopback directory; inference and delivery calls are rejected.
     const f = await fixture();
     try {
       await f.start();
@@ -130,19 +163,23 @@ test('customer setup is admin-only, configuration-only, secret-free and read-onl
         assert.ok(report.checks.every(check => ['Configured', 'ActionRequired', 'NotStarted'].includes(check.state)));
         assert.equal(report.checks.find(check => check.id === 'data').state, 'NotStarted');
         assert.equal(report.checks.find(check => check.id === 'people').state, 'NotStarted');
+        assert.ok(f.directoryLookups() > 0, 'authorization validates active directory membership');
+        assert.equal(f.providerCalls(), 0, 'authorization does not require an inference or delivery probe');
         assert.doesNotMatch(JSON.stringify(report), /fixture-private|unconfigured-fixture|App_Data|storageLocation/);
         assert.doesNotMatch(JSON.stringify(report), /127\.0\.0\.1|modelDescriptors|deploymentName|endpoint"\s*:/i);
       });
 
-      await t.test('configured endpoints never imply deployed models, verified inference or channel delivery', async () => {
-        await f.start({
-          'AzureAI:FoundryInferenceEndpoint': f.issuer + '/models',
-          'AzureAI:AzureOpenAIEndpoint': f.issuer,
-          'AzureAI:DecisionEndpoint': f.issuer,
-          'AzureAI:LocalOpenAIEndpoint': f.issuer + '/v1',
+      await t.test('layout configuration preserves the HTTPS-only host guard', async () => {
+        await assert.rejects(f.start({
           'AzureAI:ContentUnderstandingEndpoint': f.issuer + '/private-layout'
-        });
+        }), /Configured Azure data endpoints must use HTTPS without embedded credentials/);
+        await f.start();
+      });
+
+      await t.test('configured endpoints never imply deployed models, verified inference or channel delivery', async () => {
+        await f.start(configuredConnections(f.issuer));
         const before = await (await f.request(base)).json();
+        const directoryLookupsBeforeReport = f.directoryLookups();
         const response = await f.request(base + '/setup');
         assert.equal(response.status, 200);
         const report = await response.json();
@@ -159,7 +196,9 @@ test('customer setup is admin-only, configuration-only, secret-free and read-onl
         assert.equal(report.channels.teams.configured, false);
         assert.doesNotMatch(JSON.stringify(report), /private-layout|127\.0\.0\.1|fixture-private|App_Data/);
         assert.equal((await (await f.request(base)).json()).harnessVersion, before.harnessVersion);
-        assert.equal(f.providerCalls(), 0, 'reporting performs no directory, inference or delivery probes');
+        assert.equal(f.directoryLookups(), directoryLookupsBeforeReport,
+          'reporting makes no directory probe beyond the cached authorization check');
+        assert.equal(f.providerCalls(), 0, 'reporting performs no inference, mailbox or delivery probes');
       });
 
       await t.test('legacy chat-as-decision and unknown injected selections are retained but actionable', async () => {
@@ -285,6 +324,37 @@ async function seedDocuments(directory) {
     database.exec('COMMIT');
   } finally { database.close(); }
 }
+
+test('customer HTTP fixture authorizes real memberships and reads the persisted document contract',
+  { timeout: 60000 }, async () => {
+    // Arrange: exercise the existing endpoints first so fixture failures are distinct from new-route regressions.
+    const f = await fixture(['doc-0000', 'doc-0002', 'doc-1006', 'doc-1007']);
+    try {
+      await seedDocuments(f.directory);
+      await f.start();
+
+      // Act: current authorization performs real local directory validation, not a bypassed access resolver.
+      assert.equal((await f.request(base)).status, 200);
+      assert.equal((await f.request(base, f.outsider)).status, 403);
+      const response = await f.request(base + '/jobs', f.reader);
+      assert.equal(response.status, 200);
+      const jobs = await response.json();
+
+      // Assert: the exact SQLite fixture deserializes and keeps tenant/deletion/document boundaries intact.
+      assert.deepEqual(jobs.map(job => job.jobId), ['doc-0002', 'doc-0000']);
+      assert.equal(jobs[0].segments[0].promptColumnResults[0].resultText, 'custom-query-needle');
+      assert.equal(jobs[1].segments[0].bodyText, 'body-query-needle SOURCE_BODY_NOT_FOR_SUMMARIES');
+      assert.equal(jobs[0].executionTrace[0].executorName, 'Extract');
+      assert.ok(f.directoryLookups() > 0);
+      assert.equal(f.providerCalls(), 0);
+      await assert.rejects(f.start({
+        'AzureAI:ContentUnderstandingEndpoint': f.issuer + '/private-layout'
+      }), /Configured Azure data endpoints must use HTTPS without embedded credentials/);
+      await f.start(configuredConnections(f.issuer));
+      assert.equal((await f.request(base)).status, 200, 'the shared configured-endpoint fixture starts securely');
+      assert.equal(f.providerCalls(), 0);
+    } finally { await f.stop(); }
+  });
 
 test('customer document summaries authorize and search before paging without returning source content',
   { timeout: 120000 }, async t => {

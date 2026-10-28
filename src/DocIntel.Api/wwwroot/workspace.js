@@ -55,6 +55,19 @@ let tenants = [];
     let relationshipRevision = 0;
     const maximumInteractiveGraphNodes = 300;
 
+    function stopRelationshipAnimation() {
+      if (graphSimAnimFrame) cancelAnimationFrame(graphSimAnimFrame);
+      graphSimAnimFrame = null;
+      if (typeof window !== 'undefined') window.onmouseup = null;
+    }
+
+    function clearSelectedDocument() {
+      ++selectedDetailRevision;
+      selectedDocumentRecord = null;
+      selectedJobLoading = false;
+      closeSourceInspector(false);
+    }
+
     async function loadRelationshipDocuments() {
       const tenantId = currentTenant?.tenantId;
       if (!tenantId) return;
@@ -465,11 +478,7 @@ let tenants = [];
       if (mode === 'graph' && !isGraphCapabilityEnabled()) mode = 'documents';
       if (mode === 'ask' && !isAskAiCapabilityEnabled()) mode = 'documents';
       workspaceMode = mode;
-      if (mode !== 'graph' && graphSimAnimFrame) {
-        cancelAnimationFrame(graphSimAnimFrame);
-        graphSimAnimFrame = null;
-        window.onmouseup = null;
-      }
+      if (mode !== 'graph') stopRelationshipAnimation();
       const search = document.getElementById('docSearchInput');
       if (search) search.value = mode === 'ask' ? askChatSearchQuery : libraryQuery;
       closeSourceInspector(false);
@@ -527,14 +536,19 @@ let tenants = [];
     }
 
 
-    function toggleDocListPane() {
+    function toggleDocListPane(moveFocus = true) {
       const pane = document.getElementById('docListPane');
       const expandBtn = document.getElementById('btnHeaderExpandDocList');
       if (!pane) return;
       const isCollapsed = pane.classList.toggle('collapsed');
+      pane.inert = isCollapsed;
+      pane.setAttribute('aria-hidden', String(isCollapsed));
       if (expandBtn) {
         expandBtn.style.display = isCollapsed ? 'inline-flex' : 'none';
+        expandBtn.setAttribute('aria-expanded', String(!isCollapsed));
+        if (moveFocus && isCollapsed) expandBtn.focus();
       }
+      if (moveFocus && !isCollapsed) document.getElementById('tenantSelectDropdown')?.focus();
       if (workspaceMode === 'ask') {
         renderSelectedDocument();
       }
@@ -561,7 +575,7 @@ let tenants = [];
         document.addEventListener('docintel:preferences-changed', () => {
           if (workspaceMode === 'graph') renderSelectedDocument();
         });
-        if (globalThis.matchMedia?.('(max-width: 600px)').matches) toggleDocListPane();
+        if (globalThis.matchMedia?.('(max-width: 600px)').matches) toggleDocListPane(false);
         if (!currentTenant) { renderDocumentList(); renderSelectedDocument(); return; }
         await loadTenantJobs(selectedJobId);
         if (workspaceMode === 'graph') await loadRelationshipDocuments();
@@ -586,14 +600,18 @@ let tenants = [];
 
     async function onTenantSwitched(tenantId) {
       currentTenant = tenants.find(t => t.tenantId === tenantId) || tenants[0] || null;
+      const selectedTenantId = currentTenant?.tenantId;
       selectedJobId = null;
-      selectedDocumentRecord = null;
+      clearSelectedDocument();
       selectedSliceIndex = -1;
       activeChatId = null;
       tenantJobs = [];
       relationshipJobs = [];
       ++relationshipRevision;
       relationshipError = '';
+      relationshipLoading = false;
+      relationshipTruncated = false;
+      stopRelationshipAnimation();
       libraryTotal = 0;
       libraryNextOffset = null;
       libraryQuery = '';
@@ -612,6 +630,8 @@ let tenants = [];
       loadTenantChats(true);
       renderTenantSelect();
       await loadTenantJobs();
+      if (currentTenant?.tenantId === selectedTenantId && workspaceMode === 'graph')
+        await loadRelationshipDocuments();
     }
 
     async function loadTenantJobs(preferredJobId, append = false) {
@@ -643,7 +663,9 @@ let tenants = [];
         libraryNextOffset = result.nextOffset;
         if (preferredJobId) selectedJobId = preferredJobId;
         else if (!selectedJobId || !tenantJobs.some(j => j.jobId === selectedJobId)) {
-          selectedJobId = tenantJobs.length > 0 ? tenantJobs[0].jobId : null;
+          const nextJobId = tenantJobs.length > 0 ? tenantJobs[0].jobId : null;
+          if (selectedJobId !== nextJobId) clearSelectedDocument();
+          selectedJobId = nextJobId;
           selectedSliceIndex = -1;
         }
         if (selectedJobId && workspaceMode === 'documents') await loadSelectedDocument();
@@ -1800,6 +1822,7 @@ let tenants = [];
     }
 
     function renderDocumentGraphTab(body) {
+      stopRelationshipAnimation();
       if (relationshipLoading) {
         body.innerHTML = '<div class="workspace-empty" role="status"><h2>Loading document relationships…</h2><p>Reading authorized entity connections, not document bodies.</p></div>';
         return;
