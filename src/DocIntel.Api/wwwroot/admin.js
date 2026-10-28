@@ -1363,9 +1363,9 @@ let tenants = [];
 
       if (job.status === 'Failed') {
         body.innerHTML = `
-          <div class="result-card" style="border-color:#fca5a5;background:#fef2f2;">
-            <h3 class="result-card-title" style="color:#991b1b;margin-bottom:8px;">Processing Failed</h3>
-            <div style="font-size:12.5px;color:#7f1d1d;white-space:pre-wrap;">${escapeHtml(job.errorMessage || 'Unknown error')}</div>
+          <div class="result-card" style="border-color:var(--error);background:var(--error-bg);">
+            <h3 class="result-card-title" style="color:var(--error);margin-bottom:8px;">Processing Failed</h3>
+            <div style="font-size:12.5px;color:var(--error);white-space:pre-wrap;">${escapeHtml(job.errorMessage || 'Unknown error')}</div>
           </div>
         `;
         return;
@@ -1385,7 +1385,7 @@ let tenants = [];
         const pdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf`;
 
         body.innerHTML = `
-          <iframe src="${pdfUrl}" style="width:100%;height:calc(100vh - 185px);min-height:580px;border:1px solid var(--card-border);border-radius:14px;background:#f4f4f4;display:block;box-shadow:0 4px 16px rgba(0,0,0,0.04);" title="PDF Preview"></iframe>
+          <iframe src="${pdfUrl}" style="width:100%;height:calc(100vh - 185px);min-height:580px;border:1px solid var(--card-border);border-radius:14px;background:var(--surface-soft);display:block;box-shadow:0 4px 16px rgba(0,0,0,0.04);" title="PDF Preview"></iframe>
         `;
         return;
       }
@@ -1424,7 +1424,7 @@ let tenants = [];
           <div class="result-card">
             <div class="result-card-header">
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
-                <span class="version-chip" style="background:var(--accent-sand);color:#7c2816;border-color:#e5c5b8;">Slice #${s.segmentIndex + 1} · p.${s.startPage}–${s.endPage}</span>
+                <span class="version-chip" style="background:var(--accent-soft);color:var(--text-primary);border-color:var(--border);">Slice #${s.segmentIndex + 1} · p.${s.startPage}–${s.endPage}</span>
                 <h3 class="result-card-title" style="font-size:15px;">${escapeHtml(s.identifiedDocumentName || s.documentTypeName || 'Document')}</h3>
               </div>
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
@@ -1438,7 +1438,7 @@ let tenants = [];
             </div>
             <details>
               <summary style="cursor:pointer;font-size:12px;color:var(--text-secondary);font-weight:600;user-select:none;">View Extracted / Translated Source Text (${(s.translatedText || s.bodyText || '').length.toLocaleString()} chars)</summary>
-              <pre style="background:#faf9f7;padding:14px;border-radius:10px;border:1px solid var(--border);font-size:12px;line-height:1.55;white-space:pre-wrap;margin-top:8px;max-height:240px;overflow:auto;">${escapeHtml(s.translatedText || s.bodyText)}</pre>
+              <pre style="background:var(--surface-soft);padding:14px;border-radius:10px;border:1px solid var(--border);font-size:12px;line-height:1.55;white-space:pre-wrap;margin-top:8px;max-height:240px;overflow:auto;">${escapeHtml(s.translatedText || s.bodyText)}</pre>
             </details>
           </div>
         `).join('');
@@ -1480,7 +1480,7 @@ let tenants = [];
                 return `
                   <div class="entity-chip-card">
                     <div class="entity-chip-top">
-                      <span>${escapeHtml(e.category || 'Entity')} · <a href="javascript:void(0)" data-click="jumpToSlicePdf_arg" data-args="[${e.sliceIndex}]" style="color:#c25138;text-decoration:none;">Slice #${e.sliceNum} ↗</a></span>
+                      <span>${escapeHtml(e.category || 'Entity')} · <a href="javascript:void(0)" data-click="jumpToSlicePdf_arg" data-args="[${e.sliceIndex}]" style="color:var(--link);text-decoration:none;">Slice #${e.sliceNum} ↗</a></span>
                       <span class="conf-badge">${pct}%</span>
                     </div>
                     <div class="entity-chip-name">${escapeHtml(e.name)}</div>
@@ -1488,8 +1488,8 @@ let tenants = [];
                       <div class="entity-chip-val">${escapeHtml(e.value)}</div>
                       <button type="button" class="copy-chip-btn" data-click="copyTextValue_arg" data-args="[${escapeJsArg(e.value)}]" title="Copy value">Copy</button>
                     </div>
-                    <div style="height:4px;background:#eeeae2;border-radius:99px;overflow:hidden;margin-top:6px;">
-                      <div style="height:100%;width:${Math.min(100, Math.max(10, pct))}%;background:#16a34a;border-radius:99px;"></div>
+                    <div style="height:4px;background:var(--surface-soft);border-radius:99px;overflow:hidden;margin-top:6px;">
+                      <div style="height:100%;width:${Math.min(100, Math.max(10, pct))}%;background:var(--success);border-radius:99px;"></div>
                     </div>
                   </div>
                 `;
@@ -1577,7 +1577,7 @@ let tenants = [];
                     <td><strong>${escapeHtml(s.identifiedDocumentName || s.documentTypeName || 'Undefined')}</strong></td>
                     <td style="font-size:11.5px;color:var(--text-secondary);">${escapeHtml(s.matchedIdentificationRule || '—')}</td>
                     <td style="font-size:11.5px;font-family:monospace;">${escapeHtml((s.footers || []).join(', ') || '—')}</td>
-                    <td style="font-size:11.5px;">${s.splitPdfBlobUri ? `<a href="/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${s.segmentIndex}/pdf" target="_blank" style="color:#c25138;font-weight:600;">Open PDF</a>` : '—'}</td>
+                    <td style="font-size:11.5px;">${s.splitPdfBlobUri ? `<a href="/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${s.segmentIndex}/pdf" target="_blank" style="color:var(--link);font-weight:600;">Open PDF</a>` : '—'}</td>
                   </tr>
                 `).join('')}
               </tbody>

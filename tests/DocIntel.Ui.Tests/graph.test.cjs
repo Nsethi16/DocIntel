@@ -25,10 +25,17 @@ function runtime(jobs = fixtures) {
     moveTo() {}, lineTo() {}, stroke() {}, arc() {}, rect() {}, fill() {}, fillRect() {},
     measureText(text) { return { width: Array.from(text).length * 7 }; },
     fillText(text, x, y) {
-      this.labels.push({ text, x, y, font: this.font, width: this.measureText(text).width });
+      this.labels.push({ text, x, y, font: this.font, color: this.fillStyle, width: this.measureText(text).width });
     }
   };
-  const app = { frames, listeners, context2d, observers: [], bounds: { width: 320, height: 420 } };
+  const app = {
+    frames, listeners, context2d, observers: [], bounds: { width: 320, height: 420 },
+    colors: {
+      '--graph-document': '#252525', '--graph-entity': '#388e80', '--graph-edge': '#bec5c9',
+      '--graph-edge-dim': '#bbbbbb', '--graph-halo': '#dddddd', '--graph-label-bg': '#ffffff',
+      '--text-heading': '#202020', '--surface-soft': '#f8f8f8'
+    }
+  };
   const node = id => {
     if (nodes.has(id)) return nodes.get(id);
     const classes = new Set();
@@ -60,7 +67,9 @@ function runtime(jobs = fixtures) {
   };
   app.context = vm.createContext({
     document: { getElementById: node, querySelector: () => null, querySelectorAll: () => [] },
-    window, getComputedStyle: () => ({ fontFamily: '"Segoe UI", sans-serif' }),
+    window, getComputedStyle: () => ({
+      fontFamily: '"Segoe UI", sans-serif', getPropertyValue: name => app.colors[name]
+    }),
     ResizeObserver: class {
       constructor(callback) { this.callback = callback; app.observers.push(this); }
       observe(target) { this.target = target; }
@@ -237,6 +246,48 @@ test('resizing rebuilds the canvas at the new size without accumulating listener
   assert.equal(app.observers[0].disconnected, true);
   assert.equal(app.node('obsidianGraphCanvas').width, 960);
   assert.equal(app.listeners.get('mouseup').size, 1);
+  app.context.stopGraphCanvas();
+});
+
+test('focusing nodes and opening details do not rebuild or move a settled canvas', () => {
+  const app = runtime([job('first', [entity('Customer Name', 'Northwind')])]);
+  app.startCanvas();
+  app.flush();
+  const positions = vm.runInContext('JSON.stringify(graphCustomNodePositions)', app.context);
+  const observers = app.observers.length;
+  app.context.focusGraphNode('doc:first');
+  app.flush();
+  assert.equal(app.observers.length, observers);
+  assert.equal(vm.runInContext('JSON.stringify(graphCustomNodePositions)', app.context), positions);
+  assert.equal(app.node('graphInspectorAside').hidden, false);
+  app.context.toggleGraphDetails();
+  app.flush();
+  assert.equal(app.node('graphInspectorAside').hidden, true);
+  assert.equal(app.observers.length, observers);
+  app.context.stopGraphCanvas();
+});
+
+test('theme changes repaint Graph labels without restarting its layout', () => {
+  const app = runtime();
+  app.startCanvas();
+  app.flush();
+  const positions = vm.runInContext('JSON.stringify(graphCustomNodePositions)', app.context);
+  app.colors['--text-heading'] = '#f7f7f7';
+  vm.runInContext('graphCanvasRefresh()', app.context);
+  app.flush();
+  assert.equal(app.context2d.labels.at(-1).color, '#f7f7f7');
+  assert.equal(vm.runInContext('JSON.stringify(graphCustomNodePositions)', app.context), positions);
+  app.context.stopGraphCanvas();
+});
+
+test('filter rerenders keep an existing layout fixed when its geometry is unchanged', () => {
+  const app = runtime();
+  app.startCanvas();
+  app.flush();
+  const positions = vm.runInContext('JSON.stringify(graphCustomNodePositions)', app.context);
+  app.context.renderDocumentGraphCanvasOnly();
+  assert.equal(app.frames.size, 0);
+  assert.equal(vm.runInContext('JSON.stringify(graphCustomNodePositions)', app.context), positions);
   app.context.stopGraphCanvas();
 });
 

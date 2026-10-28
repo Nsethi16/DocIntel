@@ -24,6 +24,7 @@ let tenants = [];
     let graphSimEdges = [];
     let graphSimAnimFrame = null;
     let graphCanvasDisposer = null;
+    let graphCanvasRefresh = null;
     let graphLayoutSize = null;
     let graphCustomNodePositions = {};
     let askAiQuestionInput = '';
@@ -283,6 +284,7 @@ let tenants = [];
     }
 
     async function init() {
+      document.addEventListener('docintel:appearance-change', () => graphCanvasRefresh?.());
       document.addEventListener('keydown', event => {
         if (event.key === 'Escape' && workspaceMode === 'graph' && graphEntityDropdownOpen) {
           event.preventDefault();
@@ -707,13 +709,13 @@ let tenants = [];
     function focusGraphNode(nodeId) {
       graphFocusedNodeId = (graphFocusedNodeId === nodeId) ? null : nodeId;
       graphDetailsOpen = graphFocusedNodeId !== null;
-      renderDocumentGraphCanvasOnly();
+      renderDocumentGraphCanvasOnly(true);
     }
 
     function toggleGraphDetails() {
       graphDetailsOpen = !graphDetailsOpen;
       graphFocusedNodeId = null;
-      renderDocumentGraphCanvasOnly();
+      renderDocumentGraphCanvasOnly(true);
     }
 
     function stopGraphCanvas() {
@@ -721,6 +723,7 @@ let tenants = [];
       graphSimAnimFrame = null;
       graphCanvasDisposer?.();
       graphCanvasDisposer = null;
+      graphCanvasRefresh = null;
       graphHoveredNodeId = null;
     }
 
@@ -1472,7 +1475,7 @@ let tenants = [];
           <div class="entity-group-col" data-group="${escapeHtml(groupName)}">
             <button type="button" class="entity-group-header" aria-pressed="${isTypeSelected}" data-click="toggleGraphEntityNameFilter_arg_event" data-args="[${escapeJsArg(groupName)}]">
               <span>${isTypeSelected ? '☑' : '☐'} Has ${escapeHtml(groupName)}</span>
-              <span style="opacity:0.65;">${items.length}</span>
+              <span class="entity-option-count">${items.length}</span>
             </button>
             ${items.map(item => {
               const isValChecked = graphSelectedEntityValues.has(item.pairKey);
@@ -1490,6 +1493,7 @@ let tenants = [];
       body.innerHTML = `
         <div class="graph-shell" data-click="closeGraphDropdown">
           <div class="graph-toolbar">
+          <div class="graph-filter-actions">
           <div class="entity-multiselect-wrap" data-click="stopPropagation">
             <button type="button" class="ghost-action-btn entity-multiselect-box ${graphEntityDropdownOpen ? 'open' : ''}"
               id="entityMultiSelectBox" aria-expanded="${graphEntityDropdownOpen}" aria-controls="entityMultiSelectPopover"
@@ -1506,12 +1510,13 @@ let tenants = [];
               </div>
             </div>
           </div>
-          ${totalSelected ? '<button type="button" class="text-link-btn" data-click="resetGraphFilters_event">Clear Filters</button>' : ''}
+          <button type="button" class="text-link-btn" data-click="resetGraphFilters_event"${totalSelected ? '' : ' disabled'}>Clear Filters</button>
+          </div>
           <span class="graph-status" id="graphInfoStripContainer" role="status"></span>
           <button type="button" class="ghost-action-btn" id="graphDetailsToggle" aria-expanded="${graphDetailsOpen}"
             aria-controls="graphInspectorAside" data-click="toggleGraphDetails">Documents (${data.docNodes.length})</button>
           </div>
-          ${totalSelected ? `<div class="entity-tags-flow graph-active-filters">${selectedTagsHtml}</div>` : ''}
+          <div class="graph-active-filters">${selectedTagsHtml || '<span class="graph-detail-meta">All Entities</span>'}</div>
 
           <div class="graph-workbench" id="graphWorkbenchContainer"></div>
         </div>
@@ -1541,11 +1546,13 @@ let tenants = [];
       `).join('');
     }
 
-    function renderDocumentGraphCanvasOnly() {
+    function renderDocumentGraphCanvasOnly(keepCanvas = false) {
       const container = document.getElementById('graphWorkbenchContainer');
       if (!container) return;
 
-      stopGraphCanvas();
+      const reuseCanvas = keepCanvas && graphDepthMode === 'GLOBAL' &&
+        document.getElementById('obsidianGraphCanvas')?.isConnected && graphCanvasRefresh;
+      if (!reuseCanvas) stopGraphCanvas();
 
       const rawData = computeFilteredGraphData();
       let { docNodes, entityNodes, edges } = rawData;
@@ -1617,6 +1624,16 @@ let tenants = [];
         `;
       }
 
+      const inspectorContents = `<button type="button" class="graph-detail-close" aria-label="Close Graph Details"
+        data-click="toggleGraphDetails">\u00d7</button>${inspectorHtml}`;
+      if (reuseCanvas) {
+        const inspector = document.getElementById('graphInspectorAside');
+        inspector.innerHTML = inspectorContents;
+        inspector.hidden = !graphDetailsOpen;
+        graphCanvasRefresh();
+        return;
+      }
+
       const filtered = graphSelectedEntityNames.size > 0 || graphSelectedEntityValues.size > 0;
       container.innerHTML = `
         <div class="graph-canvas-card">
@@ -1647,7 +1664,7 @@ let tenants = [];
         </div>
 
         <aside class="graph-inspector-card" id="graphInspectorAside" aria-label="Graph Details"${graphDetailsOpen ? '' : ' hidden'}>
-          ${inspectorHtml}
+          ${inspectorContents}
         </aside>
       `;
 
@@ -1668,11 +1685,23 @@ let tenants = [];
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('The graph canvas could not be initialized.');
       const fontFamily = getComputedStyle(canvas).fontFamily;
+      const readPalette = () => {
+        const style = getComputedStyle(canvas);
+        const color = name => style.getPropertyValue(name).trim();
+        return {
+          document: color('--graph-document'), entity: color('--graph-entity'),
+          edge: color('--graph-edge'), edgeDim: color('--graph-edge-dim'),
+          halo: color('--graph-halo'), labelBackground: color('--graph-label-bg'),
+          text: color('--text-heading'), surface: color('--surface-soft')
+        };
+      };
+      let palette = readPalette();
       const labelWidth = Math.max(70, Math.min(180, width * 0.35));
       const previousSize = graphLayoutSize;
       const savedPosition = id => {
         const saved = graphCustomNodePositions[id];
         if (!saved) return null;
+        if (previousSize?.width === width && previousSize?.height === height) return saved;
         return previousSize
           ? { x: saved.x * width / previousSize.width, y: saved.y * height / previousSize.height }
           : saved;
@@ -1698,7 +1727,6 @@ let tenants = [];
           subLabel: e.entityName,
           degree,
           radius: Math.min(16, 10 + Math.sqrt(degree)),
-          color: '#388e80',
           x: saved ? saved.x : cx + Math.cos(angle) * ringR + ((i % 3) - 1) * 18,
           y: saved ? saved.y : cy + Math.sin(angle) * ringR + ((i % 2) - 0.5) * 18,
           vx: 0,
@@ -1721,7 +1749,6 @@ let tenants = [];
           subLabel: d.pageRange,
           degree,
           radius: 10,
-          color: '#252525',
           x: saved ? saved.x : cx + Math.cos(angle) * outerR,
           y: saved ? saved.y : cy + Math.sin(angle) * outerR,
           vx: 0,
@@ -1739,7 +1766,9 @@ let tenants = [];
         }))
         .filter(ed => ed.source && ed.target);
 
-      let alpha = 1.0;
+      const preservedLayout = previousSize?.width === width && previousSize?.height === height &&
+        simNodes.every(node => graphCustomNodePositions[node.id]);
+      let alpha = preservedLayout ? 0 : 1;
       let draggedNode = null;
       let isPanning = false;
       let startMouseX = 0;
@@ -1768,7 +1797,7 @@ let tenants = [];
       }
 
       function stepPhysics() {
-        if (alpha < 0.008 && !draggedNode) return;
+        if (alpha < 0.008 && !(draggedNode && pointerMoved)) return;
 
         // 1. Repulsion between nodes
         const repulsion = 1450;
@@ -1869,13 +1898,13 @@ let tenants = [];
           ctx.moveTo(ed.source.x, ed.source.y);
           ctx.lineTo(ed.target.x, ed.target.y);
           if (isHigh) {
-            ctx.strokeStyle = '#388e80';
+            ctx.strokeStyle = palette.entity;
             ctx.lineWidth = 1.6 / Math.sqrt(graphZoom);
           } else if (activeAnchorId) {
-            ctx.strokeStyle = 'rgba(200, 202, 218, 0.11)';
+            ctx.strokeStyle = palette.edgeDim;
             ctx.lineWidth = 0.75 / Math.sqrt(graphZoom);
           } else {
-            ctx.strokeStyle = '#bec5c9';
+            ctx.strokeStyle = palette.edge;
             ctx.lineWidth = 1.2 / Math.sqrt(graphZoom);
           }
           ctx.stroke();
@@ -1894,17 +1923,17 @@ let tenants = [];
           if (isFocusedOrHovered || (n.type === 'entity' && n.degree >= 3)) {
             ctx.beginPath();
             ctx.arc(n.x, n.y, n.radius + (isFocusedOrHovered ? 4 : 2.5), 0, Math.PI * 2);
-            ctx.fillStyle = isFocusedOrHovered ? 'rgba(75, 114, 254, 0.16)' : 'rgba(93, 116, 236, 0.06)';
+            ctx.fillStyle = palette.halo;
             ctx.fill();
           }
 
           ctx.beginPath();
           if (n.type === 'doc') ctx.rect(n.x - n.radius, n.y - n.radius, n.radius * 2, n.radius * 2);
           else ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
-          ctx.fillStyle = n.color;
+          ctx.fillStyle = n.type === 'doc' ? palette.document : palette.entity;
           ctx.fill();
           ctx.lineWidth = isFocusedOrHovered ? 1.8 : 1.0;
-          ctx.strokeStyle = '#ffffff';
+          ctx.strokeStyle = palette.surface;
           ctx.stroke();
 
           // Keep dense graphs quiet until the user focuses or zooms into a connection.
@@ -1928,11 +1957,11 @@ let tenants = [];
 
             if (isFocusedOrHovered) {
               const tw = ctx.measureText(text).width + 8;
-              ctx.fillStyle = 'rgba(255, 255, 255, 0.92)';
+              ctx.fillStyle = palette.labelBackground;
               ctx.fillRect(n.x - tw / 2, labelY - 1.5, tw, fontSize + 4);
             }
 
-            ctx.fillStyle = '#3b3b3b';
+            ctx.fillStyle = palette.text;
             ctx.fillText(text, n.x, labelY);
           }
 
@@ -1940,7 +1969,7 @@ let tenants = [];
         }
 
         ctx.restore();
-        if (alpha >= 0.008 || draggedNode) requestDraw();
+        if (alpha >= 0.008 || (draggedNode && pointerMoved)) requestDraw();
       }
 
       function requestDraw() {
@@ -1959,7 +1988,6 @@ let tenants = [];
         const hit = findNodeAt(sx, sy);
         if (hit) {
           draggedNode = hit;
-          alpha = Math.max(alpha, 0.35);
           canvas.style.cursor = 'grabbing';
         } else {
           isPanning = true;
@@ -1976,7 +2004,7 @@ let tenants = [];
         const dy = e.clientY - startMouseY;
         if (Math.abs(dx) > 2 || Math.abs(dy) > 2) pointerMoved = true;
 
-        if (draggedNode) {
+        if (draggedNode && pointerMoved) {
           const pt = screenToWorld(sx, sy);
           draggedNode.x = pt.x;
           draggedNode.y = pt.y;
@@ -2035,6 +2063,7 @@ let tenants = [];
         window.removeEventListener('mouseup', mouseUp);
         if (!observer) window.removeEventListener('resize', resize);
       };
+      graphCanvasRefresh = () => { palette = readPalette(); requestDraw(); };
       drawFrame();
     }
 
@@ -2210,7 +2239,7 @@ let tenants = [];
       const threadHtml = messages.map(m => {
         if (m.role === 'user') {
           return `
-            <div style="align-self:flex-end;background:#f3f3f8;color:var(--text-primary);padding:10px 16px;border-radius:18px;font-size:14px;font-weight:500;max-width:82%;">
+            <div style="align-self:flex-end;background:var(--surface-soft);color:var(--text-primary);padding:10px 16px;border-radius:18px;font-size:14px;font-weight:500;max-width:82%;">
               ${escapeHtml(m.text)}
             </div>
           `;

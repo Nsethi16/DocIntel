@@ -81,17 +81,33 @@ test('the familiar three Admin sections and document result views are retained w
 test('all entry pages use one local font and neutral theme without external font downloads', () => {
   const shell = read(path.join('shared', 'shell.css'));
   assert.match(shell, /--font-sans:\s*"Segoe UI Variable Text",\s*"Segoe UI"/);
-  assert.match(shell, /--text-primary:\s*#3b3b3b/);
-  assert.match(shell, /--text-secondary:\s*#6c6c6c/);
+  assert.match(shell, /--text-heading:\s*#202020/);
+  assert.match(shell, /--text-secondary:\s*#636363/);
   assert.match(shell, /button, input, select, textarea\s*\{\s*font:\s*inherit/);
   assert.match(shell, /prefers-reduced-motion:\s*reduce/);
   for (const page of ['index.html', 'admin.html', 'ask-run.html', 'email-question.html', 'review.html']) {
     const html = read(page);
     assert.equal([...html.matchAll(/href="\/shared\/shell\.css"/g)].length, 1, page);
+    assert.match(html, /src="\/shared\/shell\.js"/);
+    assert.ok(html.indexOf('src="/shared/shell.js"') < html.indexOf('href="/shared/shell.css"'),
+      `${page} must resolve appearance before painting`);
+    assert.match(html, /data-appearance-host/);
     assert.doesNotMatch(html, /fonts\.cdnfonts\.com|fonts\.googleapis\.com|fonts\.gstatic\.com/);
   }
   assert.doesNotMatch(read('index.css'), /font-family:\s*Georgia|Overused Grotesk/);
   assert.doesNotMatch(read('admin.css'), /--text-primary:|--font-sans:/);
+});
+
+test('sidebar resizing is an accessible separator and Graph details never create a second grid column', () => {
+  for (const file of ['index.html', 'admin.html']) {
+    const html = read(file);
+    assert.match(html, /data-resizable-sidebar data-sidebar-default="\d+"/);
+    assert.match(html, /class="sidebar-resizer" role="separator"[^>]+aria-orientation="vertical"/);
+  }
+  const css = read('index.css');
+  assert.match(css, /\.graph-inspector-card\s*\{[^}]*position:\s*absolute/);
+  assert.match(css, /\.graph-active-filters\s*\{[^}]*flex:0 0 42px/);
+  assert.doesNotMatch(css, /\.graph-workbench\.details-open\s*\{[^}]*grid-template-columns/);
 });
 
 test('composer focus belongs to the rounded container instead of a rectangular inner input', () => {
@@ -120,7 +136,7 @@ test('people settings use the same unboxed rows, neutral avatars and readable co
   assert.match(css, /\.tenant-users\s*\{[^}]*max-width:800px/);
   assert.match(css, /\.tenant-users-access-note\s*\{[^}]*background:transparent;[^}]*border:0/);
   assert.match(css, /\.tenant-users-list\s*\{[^}]*border:0/);
-  assert.match(css, /\.tenant-users-person strong\s*\{[^}]*font-size:14px;[^}]*font-weight:400/);
+  assert.match(css, /\.tenant-users-person strong\s*\{[^}]*font-size:14px;[^}]*font-weight:500/);
   assert.match(css, /\.tenant-users-avatar\s*\{[^}]*background:var\(--pill-hover\)/);
   assert.doesNotMatch(css, /#fcf6f2|#f9e8e1|#a54431/);
 });
@@ -175,21 +191,21 @@ test('models and features use quiet rows while configuration remains in existing
   assert.match(css, /\.model-harness-card\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(css, /\.feature-illustration\s*\{\s*display:\s*none/);
   assert.equal([...read('admin.html').matchAll(/<span>Manage<\/span>/g)].length, 6);
-  assert.match(css, /\.chevron-btn,\s*\.agent-manage-action\s*\{[^}]*background:\s*#ededed;[^}]*border:\s*0/);
-  assert.match(css, /#processingSettingsPanel\s*\{\s*--switch-on:\s*#252525/);
+  assert.match(css, /\.chevron-btn,\s*\.agent-manage-action\s*\{[^}]*background:\s*var\(--pill-hover\);[^}]*border:\s*0/);
+  assert.match(read(path.join('shared', 'shell.css')), /--switch-on:\s*#252525/);
   assert.match(css, /#processingSettingsPanel\s*\{[^}]*max-width:\s*800px/);
-  assert.match(css, /\.feature-title\s*\{[^}]*font-weight:\s*400/);
+  assert.match(css, /\.feature-title\s*\{[^}]*font-weight:\s*500/);
 });
 
 test('Agent and channels share the processing Manage, switch and quiet-row theme', () => {
   const css = read('admin.css');
   const agent = read('agent-settings.css');
-  assert.match(css, /#agentSettingsPanel\s*\{[^}]*--switch-on:\s*#252525;[^}]*max-width:\s*800px/);
+  assert.match(css, /#agentSettingsPanel\s*\{[^}]*max-width:\s*800px/);
   assert.match(css, /\.switch\s*\{[^}]*width:\s*40px/);
   assert.match(css, /:is\(#processingSettingsPanel, #agentSettingsPanel\)\s+\.switch\s*\{[^}]*height:\s*20px/);
   assert.match(agent, /\.agent-settings-card\s*\{[^}]*border:\s*0;[^}]*box-shadow:\s*none/);
-  assert.match(agent, /\.agent-setting-copy strong\s*\{[^}]*font-size:\s*14px;[^}]*font-weight:\s*400/);
-  assert.match(agent, /\.agent-channel-card h3\s*\{[^}]*font-weight:\s*400/);
+  assert.match(agent, /\.agent-setting-copy strong\s*\{[^}]*font-size:\s*14px;[^}]*font-weight:\s*500/);
+  assert.match(agent, /\.agent-channel-card h3\s*\{[^}]*font-weight:\s*500/);
   assert.doesNotMatch(agent, /\.agent-settings-card label span/);
   const app = runtime('admin');
   const calls = [];

@@ -4,6 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DocIntel — Workspace Settings</title>
+  <script src="/shared/shell.js"></script>
   <link rel="stylesheet" href="/shared/shell.css" />
   <link rel="stylesheet" href="/admin.css" />
   <link rel="stylesheet" href="/agent-settings.css" />
@@ -11,7 +12,7 @@
 </head>
 <body>
   <!-- Left Panel: Tenant Navigation & Creation (Collapsible) -->
-  <aside class="sidebar" id="leftSidebar">
+  <aside class="sidebar" id="leftSidebar" data-resizable-sidebar data-sidebar-default="216">
     <div class="sidebar-top-row">
       <span class="sidebar-brand-label">DocIntel</span>
       <button class="collapse-btn" id="btnToggleSidebar" title="Collapse or expand sidebar" data-click="toggleSidebar">
@@ -62,9 +63,12 @@
     </div>
 
     <div class="tenant-list" id="tenantList"></div>
+    <div class="shell-preferences" data-appearance-host></div>
     <button type="button" id="identitySignOut" class="nav-item" data-click="signOut" hidden>
       Sign Out
     </button>
+    <div class="sidebar-resizer" role="separator" aria-label="Resize Sidebar" aria-orientation="vertical"
+      aria-controls="leftSidebar" tabindex="0" title="Drag or use arrow keys to resize. Double-click to reset."></div>
   </aside>
 
   <!-- Right Panel: Tenant Agent Harness Canvas -->

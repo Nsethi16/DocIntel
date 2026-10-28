@@ -20,8 +20,8 @@
     notice.id = 'identityAccessError';
     notice.setAttribute('role', 'alert');
     notice.textContent = 'Your account does not have permission for this operation. Contact your administrator.';
-    notice.style.cssText = 'position:fixed;top:12px;left:20%;right:20%;padding:16px;background:#fff4ed;' +
-      'color:#7a271a;border:1px solid #f9dbaf;border-radius:8px;z-index:1000;';
+    notice.style.cssText = 'position:fixed;top:12px;left:20%;right:20%;padding:16px;background:var(--error-bg);' +
+      'color:var(--error);border:1px solid var(--error);border-radius:8px;z-index:1000;';
     document.body.appendChild(notice);
   }
 

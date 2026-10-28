@@ -8,7 +8,7 @@
 .tenant-users-heading p { max-width:680px; margin:0; color:var(--text-secondary); font-size:14px; line-height:1.5; }
 .tenant-users-heading > button { flex-shrink:0; }
 .tenant-users-access-note { background:transparent; border:0; border-radius:0; padding:16px 0; }
-.tenant-users-access-note > strong { font-size:14px; font-weight:400; }
+.tenant-users-access-note > strong { font-size:14px; font-weight:500; color:var(--text-heading); }
 .tenant-users-access-note p { margin:6px 0 0; line-height:1.5; color:var(--text-secondary); font-size:14px; }
 .tenant-users-toolbar { margin-top:24px; flex-wrap:wrap; }
 .tenant-users-toolbar h3 { margin:0; font-size:14px; font-weight:600; }
@@ -17,13 +17,13 @@
 .tenant-users-guidance, .tenant-users-status { line-height:1.5; font-size:14px; }
 .tenant-users-guidance { color:var(--text-secondary); }
 .tenant-users-status { min-height:21px; }
-.tenant-users-status[data-error="true"] { color:#9b3027; background:#fff2ee; border-radius:8px; padding:12px; }
-.tenant-users-list { border:0; border-radius:0; background:white; overflow:hidden; }
+.tenant-users-status[data-error="true"] { color:var(--error); background:var(--error-bg); border-radius:8px; padding:12px; }
+.tenant-users-list { border:0; border-radius:0; background:var(--bg); overflow:hidden; }
 .tenant-users-row { display:flex; align-items:center; gap:14px; padding:16px 0; border:0; }
 .tenant-users-row:last-child { border-bottom:0; }
 .tenant-users-person { flex:1; min-width:0; overflow-wrap:anywhere; }
 .tenant-users-person strong, .tenant-users-person small { display:block; }
-.tenant-users-person strong { font-size:14px; font-weight:400; }
+.tenant-users-person strong { font-size:14px; font-weight:500; color:var(--text-heading); }
 .tenant-users-person small { color:var(--text-secondary); margin-top:3px; line-height:1.5; font-size:14px; }
 .tenant-users-avatar { position:relative; display:grid; place-items:center; flex-shrink:0; width:36px; height:36px;
   border-radius:50%; background:var(--pill-hover); color:var(--text-primary); font-weight:500; overflow:hidden; }
@@ -31,12 +31,12 @@
 .tenant-users-badges { display:flex; flex-wrap:wrap; gap:6px; margin-top:8px; }
 .tenant-users-badge { display:inline-block; border:0; background:var(--accent-soft); color:var(--text-secondary);
   border-radius:8px; padding:3px 8px; font-size:12px; line-height:1.5; }
-.tenant-users-badge.restricted { background:#fff2e6; color:#7b4926; border-color:#eed7bb; }
+.tenant-users-badge.restricted { background:var(--warning-bg); color:var(--warning); border-color:var(--border); }
 .tenant-users-empty { padding:16px 0; color:var(--text-secondary); line-height:1.5; }
 .tenant-users-dialog { box-sizing:border-box; width:min(680px, calc(100vw - 32px)); max-height:85vh;
-  padding:24px; border:1px solid var(--border); border-radius:12px; background:#fff; color:var(--text-primary);
+  padding:24px; border:1px solid var(--border); border-radius:12px; background:var(--bg); color:var(--text-primary);
   font-family:var(--font-sans, inherit); box-shadow:0 16px 70px #18202c33; overflow-y:auto; }
-.tenant-users-dialog::backdrop { background:#252a3659; }
+.tenant-users-dialog::backdrop { background:rgba(0,0,0,.45); }
 .tenant-users-dialog h2 { font-size:22px; font-weight:600; margin:0 0 12px; }
 .tenant-users-dialog h3 { font-size:16px; margin:24px 0 10px; }
 .tenant-users-dialog p { color:var(--text-secondary); font-size:14px; line-height:1.5; overflow-wrap:anywhere; }
