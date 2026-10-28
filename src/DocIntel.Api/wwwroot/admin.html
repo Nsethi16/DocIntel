@@ -3,23 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agent Harness Admin Studio — DocIntel</title>
-  <link rel="preconnect" href="https://fonts.cdnfonts.com" />
-  <link href="https://fonts.cdnfonts.com/css/overused-grotesk" rel="stylesheet" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <title>Workspace settings — DocIntel</title>
   <link rel="stylesheet" href="/shared/shell.css" />
   <link rel="stylesheet" href="/admin.css" />
   <link rel="stylesheet" href="/agent-settings.css" />
   <link rel="stylesheet" href="/tenant-users.css" />
+  <link rel="stylesheet" href="/shared/customer.css" />
 </head>
 <body>
   <!-- Left Panel: Tenant Navigation & Creation (Collapsible) -->
   <aside class="sidebar" id="leftSidebar">
     <div class="sidebar-top-row">
       <span class="sidebar-brand-label">DocIntel</span>
-      <button class="collapse-btn" id="btnToggleSidebar" title="Collapse or expand sidebar" data-click="toggleSidebar">
+      <button class="collapse-btn" id="btnToggleSidebar" title="Collapse or expand sidebar" aria-expanded="true"
+        aria-controls="leftSidebar" data-click="toggleSidebar">
         <svg width="17" height="17" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
           <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
           <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
@@ -27,39 +24,41 @@
       </button>
     </div>
 
-    <div class="nav-item primary-pill" id="platformNewTenant" title="New tenant" data-click="expandAndOpenNewTenant">
+    <button type="button" class="nav-item primary-pill" id="platformNewTenant" title="New workspace" data-click="expandAndOpenNewTenant">
       <svg viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
       </svg>
-      <span class="nav-label">New tenant</span>
-    </div>
+      <span class="nav-label">New workspace</span>
+    </button>
 
-    <div class="nav-item active-nav" id="navAgentHarness" title="Agent harness">
+    <div class="nav-item active-nav" id="navAgentHarness" title="Workspace settings" aria-current="page">
       <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9.5 3.5a2 2 0 013 0l4 6.5a2 2 0 01-1.5 3H7a2 2 0 01-1.5-3l4-6.5z" />
       </svg>
-      <span class="nav-label">Agent harness</span>
+      <span class="nav-label">Workspace settings</span>
     </div>
 
-    <div class="nav-item" id="navDocumentIntel" title="Open Document Intelligence App" data-click="openWorkspaceForTenant">
+    <button type="button" class="nav-item" id="navDocumentIntel" title="Open workspace" data-click="openWorkspaceForTenant">
       <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
         <path stroke-linecap="round" stroke-linejoin="round" d="M5.5 3h6l4 4v9.5A1.5 1.5 0 0114 18H5.5A1.5 1.5 0 014 16.5v-12A1.5 1.5 0 015.5 3z" />
         <path stroke-linecap="round" stroke-linejoin="round" d="M7 10h6M7 13.5h4" />
       </svg>
-      <span class="nav-label">Document Intelligence ↗</span>
-    </div>
+      <span class="nav-label">Open workspace ↗</span>
+    </button>
 
     <div class="sidebar-divider"></div>
 
     <div class="sidebar-section-header">
-      <span>Tenants</span>
-      <button class="icon-btn" id="platformCreateTenant" title="Create tenant" data-click="expandAndOpenNewTenant">+</button>
+      <span>Workspaces</span>
+      <button class="icon-btn" id="platformCreateTenant" title="Create workspace" data-click="expandAndOpenNewTenant">+</button>
     </div>
 
     <!-- Inline New Tenant Popover -->
     <div class="new-tenant-popover" id="newTenantPopover">
-      <input type="text" id="newTenantName" placeholder="Tenant name (e.g. Woodgrove)" />
-      <input type="text" id="newTenantId" placeholder="tenant-id" />
+      <label for="newTenantName">Workspace name</label>
+      <input type="text" id="newTenantName" placeholder="e.g. Woodgrove" />
+      <label for="newTenantId">Workspace ID</label>
+      <input type="text" id="newTenantId" placeholder="workspace-id" />
       <div class="popover-actions">
         <button class="btn-mini" data-click="toggleNewTenantPopover_arg" data-args="[false]">Cancel</button>
         <button class="btn-mini dark" data-click="createTenant">Create</button>
@@ -78,58 +77,50 @@
       <!-- Tenant Name on Top + Save & Cancel -->
       <div class="tenant-header">
         <div>
-          <h1 class="editorial-heading" id="tenantHeading">Agent harness settings</h1>
+          <p class="settings-eyebrow">Workspace settings</p>
+          <h1 class="editorial-heading" id="tenantHeading" tabindex="-1">Choose a workspace</h1>
           <div class="tenant-meta-line">
             <span id="tenantIdDisplay">Tenant ID: —</span>
-            <span class="version-chip" id="harnessVersionChip">Harness v1</span>
+            <span class="version-chip" id="harnessVersionChip">Settings v1</span>
           </div>
+          <details class="settings-tools">
+            <summary>Appearance &amp; help</summary>
+            <div data-docintel-ux-host></div>
+          </details>
         </div>
         <div class="header-actions" id="harnessHeaderActions">
           <span class="unsaved-dot" id="unsavedBadge">Unsaved changes</span>
-          <button class="btn-action" id="btnCancelHarness" data-click="cancelTenantChanges" disabled>Cancel</button>
-          <button class="btn-action primary" id="btnSaveHarness" data-click="saveTenantHarness" disabled>Save</button>
+          <button class="btn-action" id="btnCancelHarness" data-click="cancelTenantChanges" disabled>Discard changes</button>
+          <button class="btn-action primary" id="btnSaveHarness" data-click="saveTenantHarness" disabled>Save changes</button>
         </div>
       </div>
 
-      <nav class="admin-sections" id="adminSections" aria-label="Tenant settings" role="tablist">
-        <button type="button" id="processingSettingsTab" class="selected" role="tab"
-          aria-label="Document processing" aria-controls="processingSettingsPanel" tabindex="0"
-          data-click="setAdminSection_arg" data-args="[&quot;processing&quot;]" aria-selected="true">
-          <span class="admin-section-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-              <path d="M7 3.5h7l4 4V20H7z" stroke-linejoin="round" />
-              <path d="M14 3.5V8h4M10 12h5M10 16h5" stroke-linecap="round" />
-            </svg>
-          </span>
-          <span class="admin-section-copy"><span class="admin-section-title">Document processing</span>
-            <span class="admin-section-description">Extraction &amp; models</span></span>
-        </button>
-        <button type="button" id="agentSettingsTab" role="tab" aria-label="Agent &amp; channels"
-          aria-controls="agentSettingsPanel" tabindex="-1"
-          data-click="setAdminSection_arg" data-args="[&quot;agent&quot;]" aria-selected="false">
-          <span class="admin-section-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-              <path d="m12 3 2.2 5.8L20 11l-5.8 2.2L12 19l-2.2-5.8L4 11l5.8-2.2z" stroke-linejoin="round" />
-              <path d="M19 17v4M17 19h4" stroke-linecap="round" />
-            </svg>
-          </span>
-          <span class="admin-section-copy"><span class="admin-section-title">Agent &amp; channels</span>
-            <span class="admin-section-description">Personality &amp; connections</span></span>
-        </button>
-        <button type="button" id="tenantUsersTab" role="tab" aria-label="Users &amp; access"
-          aria-controls="tenantUsersPanel" tabindex="-1"
-          data-click="setAdminSection_arg" data-args="[&quot;users&quot;]" aria-selected="false">
-          <span class="admin-section-icon" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-              <circle cx="9" cy="8" r="3" />
-              <path d="M3.5 20v-2a5.5 5.5 0 0 1 11 0v2M16 5.5a3 3 0 0 1 0 5.8M17 14a5 5 0 0 1 3.5 4.8V20"
-                stroke-linecap="round" />
-            </svg>
-          </span>
-          <span class="admin-section-copy"><span class="admin-section-title">Users &amp; access</span>
-            <span class="admin-section-description">People &amp; tenant roles</span></span>
-        </button>
+      <nav class="admin-sections" id="adminSections" aria-label="Workspace settings" role="tablist">
+        <button type="button" id="setupSettingsTab" class="selected" role="tab" aria-controls="setupSettingsPanel"
+          tabindex="0" data-click="setAdminSection_arg" data-args="[&quot;setup&quot;]" aria-selected="true">Setup</button>
+        <button type="button" id="processingSettingsTab" role="tab" aria-controls="processingSettingsPanel"
+          tabindex="-1" data-click="setAdminSection_arg" data-args="[&quot;processing&quot;]" aria-selected="false">Processing</button>
+        <button type="button" id="customAnalysisTab" role="tab" aria-controls="customAnalysisPanel"
+          tabindex="-1" data-click="setAdminSection_arg" data-args="[&quot;analysis&quot;]" aria-selected="false">Custom analysis</button>
+        <button type="button" id="agentSettingsTab" role="tab" aria-controls="agentSettingsPanel"
+          tabindex="-1" data-click="setAdminSection_arg" data-args="[&quot;agent&quot;]" aria-selected="false">Agent</button>
+        <button type="button" id="integrationsSettingsTab" role="tab" aria-controls="integrationsSettingsPanel"
+          tabindex="-1" data-click="setAdminSection_arg" data-args="[&quot;integrations&quot;]" aria-selected="false">Integrations</button>
+        <button type="button" id="tenantUsersTab" role="tab" aria-controls="tenantUsersPanel"
+          tabindex="-1" data-click="setAdminSection_arg" data-args="[&quot;users&quot;]" aria-selected="false">People</button>
       </nav>
+      <section id="setupSettingsPanel" role="tabpanel" aria-labelledby="setupSettingsTab">
+        <div class="settings-section-heading">
+          <div><h2>Get your workspace ready</h2>
+            <p>Review connections, choose processing settings, then try a PDF with your own access.</p></div>
+          <button type="button" class="btn-action" data-click="refreshWorkspaceSetup">Refresh status</button>
+        </div>
+        <p id="workspaceSetupStatus" role="status" aria-live="polite">Checking workspace setup…</p>
+        <ol id="workspaceSetupChecks" class="setup-checklist"></ol>
+        <div class="setup-next-step"><div><h3>Try a document</h3>
+          <p>Open the workspace to upload a test PDF. This does not send an email or Teams message.</p></div>
+          <button type="button" class="btn-action" data-click="openWorkspaceOnboarding">Try a PDF ↗</button></div>
+      </section>
       <section id="harnessSaveNotice" role="status" hidden>
         <p id="harnessSaveMessage"></p>
         <details><summary>Compare unsaved draft and server configuration</summary>
@@ -250,67 +241,57 @@
             <div class="agent-preview-footnote"><span>Web</span><span>Email</span><span>Teams</span></div>
           </aside>
         </div>
-        <h3 class="agent-channel-heading">Meet people where they work</h3>
+      </section>
+      <section id="integrationsSettingsPanel" role="tabpanel" aria-labelledby="integrationsSettingsTab" hidden>
+        <div class="settings-section-heading"><div><h2>Integrations</h2>
+          <p>Configuration is not proof of delivery. Your operator manages connections securely.</p></div>
+          <button type="button" class="btn-action" data-click="refreshWorkspaceSetup">Refresh status</button></div>
+        <p class="settings-help">Channel preferences are saved with Save changes. Enabling a channel does not
+          create a connection, grant consent, verify a deployment or send a message.</p>
         <div class="agent-channel-grid">
           <section class="agent-settings-card agent-channel-card">
             <div class="agent-channel-header"><span class="agent-channel-icon" aria-hidden="true">@</span>
               <div><h3>Email</h3><p>Receive a question by email and return a cited answer to a verified sender.</p></div></div>
             <label class="agent-channel-toggle"><input type="checkbox" id="agentEmailEnabled" data-change="onAgentProfileChanged">
-              Enable for this tenant</label><p class="agent-connection-state" id="agentEmailStatus">Checking connection...</p>
-            <p class="agent-safety-note">Mailbox connection and permissions are configured securely by the operator.</p>
+              Allow email for this workspace</label><p class="agent-connection-state" id="agentEmailStatus" role="status">Checking connection...</p>
+            <details><summary>Set up email</summary><ol id="agentEmailSteps"></ol>
+              <p class="agent-safety-note">Ask your operator to configure the approved mailbox connection in the secure
+                deployment settings, approve least-privilege access, and verify delivery with an authorized sender.
+                Never paste credentials here. This page cannot perform those steps for you.</p></details>
           </section>
           <section class="agent-settings-card agent-channel-card">
             <div class="agent-channel-header"><span class="agent-channel-icon" aria-hidden="true">#</span>
               <div><h3>Microsoft Teams</h3><p>Ask in a personal chat or mention the agent. Shared-chat requests keep document answers private.</p></div></div>
             <label class="agent-channel-toggle"><input type="checkbox" id="agentTeamsEnabled" data-change="onAgentProfileChanged">
-              Enable for this tenant</label><p class="agent-connection-state" id="agentTeamsStatus">Checking connection...</p>
-            <p class="agent-safety-note">Enabling a channel does not create a bot, grant access or send a test message.</p>
+              Allow Teams for this workspace</label><p class="agent-connection-state" id="agentTeamsStatus" role="status">Checking connection...</p>
+            <details><summary>Set up Teams</summary><ol id="agentTeamsSteps"></ol>
+              <p class="agent-safety-note">Ask your operator to configure the approved bot connection securely,
+                have your Teams administrator approve and install the app, then verify a private reply as an
+                authorized member. No consent or external send is initiated here.</p></details>
           </section>
         </div>
       </section>
-      <section id="processingSettingsPanel" role="tabpanel" aria-labelledby="processingSettingsTab">
+      <section id="processingSettingsPanel" role="tabpanel" aria-labelledby="processingSettingsTab" hidden>
+      <div class="settings-section-heading"><div><h2>Document processing</h2>
+        <p>Choose what happens to uploaded documents. Configure each feature separately from enabling it.</p></div></div>
       <div class="section-bar">
         <span class="section-bar-title">Models</span>
-        <span class="section-bar-meta">Harness-level routing</span>
       </div>
 
       <div class="models-harness-bar">
         <div class="model-harness-card">
-          <div class="model-card-left">
-            <div class="model-icon-box" aria-hidden="true">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                <circle cx="6.5" cy="12" r="2.8" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.3"/>
-                <circle cx="17.5" cy="7.5" r="2.5" fill="#e5dfd5" stroke="#8c8273" stroke-width="1.3"/>
-                <circle cx="17.5" cy="16.5" r="2.5" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.3"/>
-                <path d="M9.3 11L15 8.3M9.3 13L15 15.7" stroke="#8c8273" stroke-width="1.4" stroke-linecap="round"/>
-              </svg>
-            </div>
-            <div class="model-harness-label">
-              <strong>Decision Model</strong>
-              <span>Scores extracted slice text with the configured Microsoft Decision deployment</span>
-            </div>
-          </div>
+          <label class="model-harness-label" for="harnessDecisionModelSelect">Decision model</label>
           <select class="modern-model-pill" id="harnessDecisionModelSelect" aria-label="Decision model"
-            data-change="onHarnessChanged">
+            aria-describedby="decisionModelStatus modelVerificationNote" data-change="onHarnessChanged">
             <option value="decision-1">Microsoft Decision 1</option>
           </select>
+          <p id="decisionModelStatus" class="model-status" role="status">Deployment not verified.</p>
         </div>
 
         <div class="model-harness-card">
-          <div class="model-card-left">
-            <div class="model-icon-box" aria-hidden="true">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-                <path d="M12 4l1.9 4.5L18.5 10.4l-4.6 1.9L12 17l-1.9-4.7-4.6-1.9 4.6-1.9L12 4z" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.3" stroke-linejoin="round"/>
-                <circle cx="18" cy="17.5" r="1.8" fill="#8c8273"/>
-              </svg>
-            </div>
-            <div class="model-harness-label">
-              <strong>Language Model</strong>
-              <span>Powers Document Insights, Entity Extraction, and Data Extraction</span>
-            </div>
-          </div>
+          <label class="model-harness-label" for="harnessLanguageModelSelect">Language model</label>
           <select class="modern-model-pill" id="harnessLanguageModelSelect" aria-label="Language model"
-            data-change="onHarnessChanged">
+            aria-describedby="languageModelStatus modelVerificationNote" data-change="onHarnessChanged">
             <option value="phi-4">Microsoft Phi-4</option>
             <option value="mai-reasoning">Microsoft MAI-Reasoning</option>
             <option value="llama-3.3-70b">Meta Llama 3.3 70B</option>
@@ -319,8 +300,19 @@
             <option value="gpt-5-mini">GPT-5 Mini</option>
             <option value="gpt-4o">GPT-4o</option>
           </select>
+          <p id="languageModelStatus" class="model-status" role="status">Deployment not verified.</p>
         </div>
       </div>
+      <p class="model-verification-note" id="modelVerificationNote">
+        Configuration only · deployment availability is not live-verified.</p>
+      <details class="model-verification-details">
+        <summary>What these checks mean</summary>
+        <p>Decision models recognize document types from extracted text. Language models write insights,
+          extract fields and run custom analyses. A configured connection is not proof that its deployment
+          is available. These status checks do not run a per-model deployment probe.</p>
+        <p id="decisionModelDetails"></p>
+        <p id="languageModelDetails"></p>
+      </details>
 
       <!-- Features Section -->
       <div class="section-bar">
@@ -329,10 +321,11 @@
       </div>
 
       <div class="features-grid">
+        <h3 class="feature-group-heading">Prepare &amp; recognize</h3>
         <!-- 1. File Splitting & Grouping -->
         <div class="feature-tile">
           <div class="feature-tile-header">
-            <div class="feature-tile-left" data-click="toggleFeatureDrawer_arg" data-args="[&quot;split&quot;]">
+            <div class="feature-tile-left">
               <div class="feature-illustration" aria-hidden="true">
                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
                   <rect x="6" y="4" width="20" height="9" rx="2" fill="#e5dfd5" stroke="#c8bfb0" stroke-width="1.2"/>
@@ -347,13 +340,13 @@
             </div>
 
             <div class="feature-tile-controls">
-              <button class="chevron-btn" id="splitChevron" type="button" title="Expand or collapse settings" data-click="toggleFeatureDrawer_arg" data-args="[&quot;split&quot;]">
+              <button class="chevron-btn" id="splitChevron" type="button" aria-expanded="false" aria-controls="splitDrawer" aria-label="Configure file splitting" data-click="toggleFeatureDrawer_arg" data-args="[&quot;split&quot;]">Configure
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </button>
               <label class="switch" title="Toggle File Splitting & Grouping">
-                <input type="checkbox" id="splitFeatureToggle" data-change="onHarnessChanged" />
+                <input type="checkbox" id="splitFeatureToggle" aria-label="Enable file splitting" data-change="onHarnessChanged" />
                 <span class="slider"></span>
               </label>
             </div>
@@ -380,7 +373,7 @@
                 <button type="button" class="btn-mini" data-click="loadOcrUsage">Load / refresh</button>
                 <button type="button" class="btn-mini" id="ocrBudgetSave" data-click="saveOcrBudget" disabled>Save live allowance</button>
               </div>
-              <p>Separate from the harness version. Zero blocks fresh analysis, not validated cache reuse.
+              <p>Saved separately from workspace settings. Zero blocks fresh analysis, not validated cache reuse.
                 Failed or interrupted provider requests retain their reserved pages; these counts are not an invoice.</p>
             </details>
             <div class="drawer-row">
@@ -399,7 +392,7 @@
         <!-- 2. Identify Documents (Microsoft Decision 1 Model) -->
         <div class="feature-tile">
           <div class="feature-tile-header">
-            <div class="feature-tile-left" data-click="toggleFeatureDrawer_arg" data-args="[&quot;identify&quot;]">
+            <div class="feature-tile-left">
               <div class="feature-illustration" aria-hidden="true">
                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
                   <rect x="5" y="4" width="16" height="22" rx="2.5" fill="#e5dfd5" stroke="#c8bfb0" stroke-width="1.2"/>
@@ -410,19 +403,19 @@
                 </svg>
               </div>
               <div>
-                <h3 class="feature-title">Identify Documents</h3>
-                <p class="feature-desc">Classify extracted slice text into defined forms + Undefined using native Microsoft Decision 1 scoring</p>
+                <h3 class="feature-title">Document types</h3>
+                <p class="feature-desc">Recognize your document types. Unmatched documents stay Undefined.</p>
               </div>
             </div>
 
             <div class="feature-tile-controls">
-              <button class="chevron-btn" id="identifyChevron" type="button" title="Expand or collapse settings" data-click="toggleFeatureDrawer_arg" data-args="[&quot;identify&quot;]">
+              <button class="chevron-btn" id="identifyChevron" type="button" aria-expanded="false" aria-controls="identifyDrawer" aria-label="Configure document types" data-click="toggleFeatureDrawer_arg" data-args="[&quot;identify&quot;]">Configure
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </button>
               <label class="switch" title="Toggle Identify Documents">
-                <input type="checkbox" id="identifyFeatureToggle" data-change="onHarnessChanged" />
+                <input type="checkbox" id="identifyFeatureToggle" aria-label="Enable document type recognition" data-change="onHarnessChanged" />
                 <span class="slider"></span>
               </label>
             </div>
@@ -430,7 +423,7 @@
 
           <div class="feature-drawer" id="identifyDrawer">
             <div class="drawer-row">
-              <span class="drawer-label">Defined document identification rules (unmatched slices classify as "Undefined")</span>
+              <span class="drawer-label">Document types and recognition rules · unmatched documents stay Undefined</span>
               <button class="btn-mini" type="button" data-click="addIdentificationRuleRow">+ Add document</button>
             </div>
             <div class="rules-list" id="identificationRulesList"></div>
@@ -440,7 +433,7 @@
         <!-- 3. Document Translation (Azure Document Translation) -->
         <div class="feature-tile">
           <div class="feature-tile-header">
-            <div class="feature-tile-left" data-click="toggleFeatureDrawer_arg" data-args="[&quot;translation&quot;]">
+            <div class="feature-tile-left">
               <div class="feature-illustration" aria-hidden="true">
                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
                   <rect x="4" y="5" width="14" height="14" rx="3" fill="#e5dfd5" stroke="#c8bfb0" stroke-width="1.2"/>
@@ -456,13 +449,13 @@
             </div>
 
             <div class="feature-tile-controls">
-              <button class="chevron-btn" id="translationChevron" type="button" title="Expand or collapse settings" data-click="toggleFeatureDrawer_arg" data-args="[&quot;translation&quot;]">
+              <button class="chevron-btn" id="translationChevron" type="button" aria-expanded="false" aria-controls="translationDrawer" aria-label="Configure translation" data-click="toggleFeatureDrawer_arg" data-args="[&quot;translation&quot;]">Configure
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </button>
               <label class="switch" title="Toggle Document Translation">
-                <input type="checkbox" id="translationFeatureToggle" data-change="onHarnessChanged" />
+                <input type="checkbox" id="translationFeatureToggle" aria-label="Enable translation" data-change="onHarnessChanged" />
                 <span class="slider"></span>
               </label>
             </div>
@@ -490,9 +483,10 @@
         </div>
 
         <!-- 4. Document Insights -->
+        <h3 class="feature-group-heading">Understand &amp; extract</h3>
         <div class="feature-tile">
           <div class="feature-tile-header">
-            <div class="feature-tile-left" data-click="toggleFeatureDrawer_arg" data-args="[&quot;insight&quot;]">
+            <div class="feature-tile-left">
               <div class="feature-illustration" aria-hidden="true">
                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
                   <path d="M16 5l2.2 5.3L23.5 12.5l-5.3 2.2L16 20l-2.2-5.3L8.5 12.5l5.3-2.2L16 5z" fill="#f5b5a8" stroke="#e06d53" stroke-width="1.3" stroke-linejoin="round"/>
@@ -506,13 +500,13 @@
             </div>
 
             <div class="feature-tile-controls">
-              <button class="chevron-btn" id="insightChevron" type="button" title="Expand or collapse settings" data-click="toggleFeatureDrawer_arg" data-args="[&quot;insight&quot;]">
+              <button class="chevron-btn" id="insightChevron" type="button" aria-expanded="false" aria-controls="insightDrawer" aria-label="Configure document insights" data-click="toggleFeatureDrawer_arg" data-args="[&quot;insight&quot;]">Configure
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </button>
               <label class="switch" title="Toggle Document Insights">
-                <input type="checkbox" id="insightFeatureToggle" data-change="onHarnessChanged" />
+                <input type="checkbox" id="insightFeatureToggle" aria-label="Enable document insights" data-change="onHarnessChanged" />
                 <span class="slider"></span>
               </label>
             </div>
@@ -529,7 +523,7 @@
         <!-- 5. Entity Extraction -->
         <div class="feature-tile">
           <div class="feature-tile-header">
-            <div class="feature-tile-left" data-click="toggleFeatureDrawer_arg" data-args="[&quot;entity&quot;]">
+            <div class="feature-tile-left">
               <div class="feature-illustration" aria-hidden="true">
                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
                   <path d="M10 7H8a2 2 0 00-2 2v4a2 2 0 01-2 2 2 2 0 012 2v4a2 2 0 002 2h2" stroke="#8c8273" stroke-width="1.6" stroke-linecap="round"/>
@@ -545,13 +539,13 @@
             </div>
 
             <div class="feature-tile-controls">
-              <button class="chevron-btn" id="entityChevron" type="button" title="Expand or collapse settings" data-click="toggleFeatureDrawer_arg" data-args="[&quot;entity&quot;]">
+              <button class="chevron-btn" id="entityChevron" type="button" aria-expanded="false" aria-controls="entityDrawer" aria-label="Configure entity extraction" data-click="toggleFeatureDrawer_arg" data-args="[&quot;entity&quot;]">Configure
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </button>
               <label class="switch" title="Toggle Entity Extraction">
-                <input type="checkbox" id="entityFeatureToggle" data-change="onHarnessChanged" />
+                <input type="checkbox" id="entityFeatureToggle" aria-label="Enable entity extraction" data-change="onHarnessChanged" />
                 <span class="slider"></span>
               </label>
             </div>
@@ -568,7 +562,7 @@
         <!-- 6. Data Extraction (Per Defined Document Key-Value Fields + Tables & Columns) -->
         <div class="feature-tile">
           <div class="feature-tile-header">
-            <div class="feature-tile-left" data-click="toggleFeatureDrawer_arg" data-args="[&quot;dataExtraction&quot;]">
+            <div class="feature-tile-left">
               <div class="feature-illustration" aria-hidden="true">
                 <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
                   <rect x="4.5" y="5.5" width="23" height="21" rx="3" fill="#e5dfd5" stroke="#c8bfb0" stroke-width="1.2"/>
@@ -584,13 +578,13 @@
             </div>
 
             <div class="feature-tile-controls">
-              <button class="chevron-btn" id="dataExtractionChevron" type="button" title="Expand or collapse settings" data-click="toggleFeatureDrawer_arg" data-args="[&quot;dataExtraction&quot;]">
+              <button class="chevron-btn" id="dataExtractionChevron" type="button" aria-expanded="false" aria-controls="dataExtractionDrawer" aria-label="Configure fields and tables" data-click="toggleFeatureDrawer_arg" data-args="[&quot;dataExtraction&quot;]">Configure
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </button>
               <label class="switch" title="Toggle Data Extraction">
-                <input type="checkbox" id="dataExtractionFeatureToggle" data-change="onHarnessChanged" />
+                <input type="checkbox" id="dataExtractionFeatureToggle" aria-label="Enable fields and tables extraction" data-change="onHarnessChanged" />
                 <span class="slider"></span>
               </label>
             </div>
@@ -603,7 +597,11 @@
                 <select class="clean-select" id="dataExtractionDocSelect" data-change="onSelectedExtractionDocChanged"></select>
               </div>
             </div>
-
+            <p id="dataExtractionDocGuidance" class="settings-help" role="status" hidden>
+              Add a document type under Document types and save your changes first. Then return here to define
+              its fields and tables. No example types are added to your workspace.</p>
+            <fieldset id="dataExtractionSchemaControls" class="extraction-schema-controls">
+            <legend class="settings-sr-only">Fields and tables for the selected document type</legend>
             <div class="sub-section-header">
               <span class="drawer-label">Key-Value Pairs (Field Name &amp; Extraction Instruction)</span>
               <button class="btn-mini" type="button" data-click="addDataExtractionFieldRow">+ Add key-value field</button>
@@ -615,10 +613,12 @@
               <button class="btn-mini" type="button" data-click="addDataExtractionTableBlock">+ Add table</button>
             </div>
             <div class="rules-list" id="dataExtractionTablesList"></div>
+            </fieldset>
           </div>
         </div>
 
         <!-- 7. Document Graph -->
+        <h3 class="feature-group-heading">Explore &amp; ask</h3>
         <div class="feature-tile">
           <div class="feature-tile-header">
             <div class="feature-tile-left">
@@ -638,7 +638,7 @@
 
             <div class="feature-tile-controls">
               <label class="switch" title="Toggle Document Graph View">
-                <input type="checkbox" id="documentGraphFeatureToggle" checked data-change="onHarnessChanged" />
+                <input type="checkbox" id="documentGraphFeatureToggle" aria-label="Enable document graph" checked data-change="onHarnessChanged" />
                 <span class="slider"></span>
               </label>
             </div>
@@ -663,7 +663,7 @@
 
             <div class="feature-tile-controls">
               <label class="switch" title="Toggle Ask AI Workspace">
-                <input type="checkbox" id="askAiFeatureToggle" checked data-change="onHarnessChanged" />
+                <input type="checkbox" id="askAiFeatureToggle" aria-label="Enable Ask AI" checked data-change="onHarnessChanged" />
                 <span class="slider"></span>
               </label>
             </div>
@@ -671,38 +671,50 @@
         </div>
       </div>
 
-      <!-- Prompt Configuration Studio (Admin Prompt Columns + Entity Filter Builder) -->
-      <div class="section-bar" id="promptsSection" style="margin-top: 26px;">
+      </section>
+      <section id="customAnalysisPanel" role="tabpanel" aria-labelledby="customAnalysisTab" hidden>
+      <div class="settings-section-heading"><div><h2>Custom analysis</h2>
+        <p>Create reusable questions for documents. Each saved analysis keeps its own results tab in the workspace.</p></div></div>
+      <div class="section-bar" id="promptsSection">
         <div style="display:flex;align-items:center;gap:12px;">
-          <span class="section-bar-title">Prompt Configuration</span>
-          <span class="version-chip">PDF File / Base64 Execution</span>
+          <span class="section-bar-title">Run custom analyses on matching documents</span>
         </div>
         <div style="display:flex;align-items:center;gap:10px;">
-          <span class="section-bar-meta">Enable Prompt Columns</span>
-          <label class="switch" title="Toggle Prompt Columns Evaluation">
-            <input type="checkbox" id="promptColumnsFeatureToggle" checked data-change="onHarnessChanged" />
+          <label class="switch" title="Enable custom analysis">
+            <input type="checkbox" id="promptColumnsFeatureToggle" aria-label="Enable custom analysis" checked data-change="onHarnessChanged" />
             <span class="slider"></span>
           </label>
         </div>
       </div>
 
+      <p class="settings-help">Add or update an analysis in your draft, then use Save changes to publish.
+        Nothing is saved automatically. Processing uses the selected language model.</p>
       <div class="prompt-studio-grid">
-        <!-- Left Card: Create / Edit Prompt Column -->
         <div class="prompt-studio-card">
+          <div class="prompt-card-title-row">
+            <div><h3 class="prompt-card-title">Saved analyses</h3>
+              <p class="prompt-card-sub" id="savedPromptsCountSub">0 analyses configured</p></div>
+            <button type="button" class="btn-mini" data-click="newCustomAnalysis">New analysis</button>
+          </div>
+          <div class="saved-prompts-list" id="savedPromptsList"></div>
+          <button type="button" class="btn-mini" data-click="openWorkspaceForTenant">View results in workspace ↗</button>
+        </div>
+        <!-- Left Card: Create / Edit Prompt Column -->
+        <div class="prompt-studio-card" id="promptEditor" hidden>
           <div>
             <h3 class="prompt-card-title">
               <span style="color:#2563eb;font-size:18px;line-height:1;">＋</span>
-              <span id="promptFormHeading">Create New Prompt Column</span>
+              <span id="promptFormHeading">New analysis</span>
             </h3>
-            <p class="prompt-card-sub">Define a custom prompt column for document analysis. Matching documents are processed behind the scenes as PDF file / base64.</p>
+            <p class="prompt-card-sub">Describe what you want to learn and which documents to include.</p>
           </div>
 
           <div class="prompt-editor-body">
             <input type="hidden" id="editingPromptColumnId" value="" />
 
             <div class="prompt-field-group">
-              <label class="prompt-field-label" for="promptColumnNameInput">Column Name</label>
-              <input type="text" class="clean-input" id="promptColumnNameInput" placeholder="e.g., Summary, Sentiment, Key Points, Compliance Check" />
+              <label class="prompt-field-label" for="promptColumnNameInput">Analysis name</label>
+              <input type="text" class="clean-input" id="promptColumnNameInput" placeholder="e.g. Contract check" data-input="onPromptEditorChanged" />
             </div>
 
             <div class="prompt-field-group">
@@ -717,17 +729,19 @@
 
             <div class="prompt-field-group">
               <div style="display:flex;align-items:center;justify-content:space-between;">
-                <label class="prompt-field-label" for="promptInstructionsInput">Prompt Instructions</label>
-                <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-secondary);">Supports {{Document.Content}} &amp; PDF/Base64</span>
+                <label class="prompt-field-label" for="promptInstructionsInput">Instructions</label>
               </div>
-              <textarea class="clean-textarea" id="promptInstructionsInput" rows="4" placeholder="Summarize the contents of {{Document.Content}} in a clear and concise manner. Focus on key points, main arguments, and important conclusions."></textarea>
+              <textarea class="clean-textarea" id="promptInstructionsInput" rows="4" data-input="onPromptEditorChanged" placeholder="Summarize the contents of {{Document.Content}} in plain English."></textarea>
+              <details><summary>Advanced input details</summary>
+                <p>Instructions support {{Document.Content}}. Matching PDFs are supplied as PDF/base64
+                  input to the selected language model. Model configuration does not verify PDF support at runtime.</p></details>
             </div>
 
             <!-- Entity Filter Builder -->
             <div class="entity-filter-box">
               <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;">
                 <div>
-                  <div class="prompt-field-label">Entity Filter (Which Documents to Process)</div>
+                  <label class="prompt-field-label" for="promptFilterModeSelect">Which documents to process</label>
                   <div style="font-size:11.5px;color:var(--text-secondary);">Filter on extracted Entities to choose which documents/slices run this prompt column</div>
                 </div>
                 <select class="clean-select" id="promptFilterModeSelect" data-change="onPromptFilterModeChanged">
@@ -751,35 +765,35 @@
                 <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M4 10.5l4 4L16 6.5" />
                 </svg>
-                <span id="btnSavePromptLabel">Save Prompt</span>
+                <span id="btnSavePromptLabel">Add to changes</span>
               </button>
-              <button type="button" class="btn-clear-prompt" data-click="clearPromptColumnForm">✕ Clear</button>
+              <button type="button" class="btn-clear-prompt" data-click="closeCustomAnalysis">Cancel edit</button>
             </div>
           </div>
         </div>
 
-        <!-- Right Card: Saved Prompts -->
-        <div class="prompt-studio-card">
-          <div class="prompt-card-title-row">
-            <div>
-              <h3 class="prompt-card-title">Saved Prompts</h3>
-              <p class="prompt-card-sub" id="savedPromptsCountSub">0 prompts configured</p>
-            </div>
-            <a href="/" class="btn-mini" style="text-decoration:none;display:inline-flex;align-items:center;gap:5px;">View Results in UI ↗</a>
-          </div>
-
-          <div class="saved-prompts-list" id="savedPromptsList"></div>
-        </div>
       </div>
       </section>
     </div>
   </main>
 
-  <div class="toast" id="toast"></div>
+  <dialog id="settingsDraftDialog" class="settings-draft-dialog" aria-labelledby="settingsDraftTitle"
+    aria-describedby="settingsDraftText">
+    <h2 id="settingsDraftTitle">Save your changes?</h2>
+    <p id="settingsDraftText">You have unsaved workspace changes. Save them before leaving, discard them, or stay here.</p>
+    <p id="settingsDraftStatus" role="status" aria-live="polite"></p>
+    <div class="draft-dialog-actions">
+      <button type="button" id="draftStay" class="btn-action" data-click="resolveSettingsDraft_arg" data-args="[&quot;stay&quot;]" autofocus>Stay</button>
+      <button type="button" id="draftDiscard" class="btn-action" data-click="resolveSettingsDraft_arg" data-args="[&quot;discard&quot;]">Discard</button>
+      <button type="button" id="draftSave" class="btn-action primary" data-click="resolveSettingsDraft_arg" data-args="[&quot;save&quot;]">Save changes</button>
+    </div>
+  </dialog>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="/identity.js"></script>
   <script src="/shared/ui.js"></script>
   <script src="/shared/actions.js"></script>
+  <script src="/shared/customer.js"></script>
   <script src="/agent-settings.js"></script>
   <script src="/tenant-users.js"></script>
   <script src="/admin.js"></script>

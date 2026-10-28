@@ -10,6 +10,16 @@ const uiSource = fs.readFileSync(path.join(root, 'shared', 'ui.js'), 'utf8');
 const css = fs.readFileSync(path.join(root, 'shared', 'customer.css'), 'utf8');
 const preferenceKey = 'docintel.ui.preferences.v1';
 
+test('Admin loads the token bridge after its legacy styles and dark surfaces never retain white-on-white previews', () => {
+    const html = fs.readFileSync(path.join(root, 'admin.html'), 'utf8');
+    assert.ok(html.indexOf('/shared/customer.css') > html.indexOf('/tenant-users.css'));
+    assert.ok(html.indexOf('/shared/customer.css') > html.indexOf('/agent-settings.css'));
+    assert.match(css, /\[hidden\]\s*\{\s*display:\s*none\s*!important/);
+    assert.match(css, /\.agent-preview\s*\{[^}]*background:\s*var\(--di-surface\)/);
+    assert.match(css, /\.agent-preview-message\s*\{[^}]*color:\s*var\(--di-text\)/);
+    assert.match(css, /\.btn-action\.primary[\s\S]*?color:\s*var\(--di-on-accent\)/);
+});
+
 class FakeNode {
     constructor(tag, document) {
         this.tagName = tag.toUpperCase();

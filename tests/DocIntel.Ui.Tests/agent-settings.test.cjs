@@ -54,7 +54,11 @@ function runtime() {
   const element = id => {
     if (!elements.has(id)) {
       const classes = new Set();
-      elements.set(id, { id, value: '', checked: false, hidden: false, textContent: '',
+      elements.set(id, { id, value: '', checked: false, hidden: false, textContent: '', dataset: {}, options: [],
+        children: [],
+        append(...items) { this.children.push(...items); },
+        appendChild(item) { this.children.push(item); this.options.push(item); },
+        replaceChildren() { this.children = []; },
         classList: {
           toggle(name, enabled) { if (enabled) classes.add(name); else classes.delete(name); },
           contains(name) { return classes.has(name); }
@@ -64,17 +68,26 @@ function runtime() {
     }
     return elements.get(id);
   };
-  const app = { element, response: { email: { configured: false }, teams: { configured: false } } };
+  const app = { element, response: setup() };
   element('adminSections').addEventListener = (type, listener) => { app[type] = listener; };
-  for (const id of ['processingSettingsTab', 'agentSettingsTab', 'tenantUsersTab'])
+  for (const id of ['setupSettingsTab', 'processingSettingsTab', 'customAnalysisTab',
+    'agentSettingsTab', 'integrationsSettingsTab', 'tenantUsersTab'])
     element(id).focus = () => { app.focused = id; };
   const context = vm.createContext({
-    document: { getElementById: element },
+    document: { getElementById: element, createElement: tag => ({
+      tag, value: '', textContent: '', dataset: {}, children: [],
+      append(...items) { this.children.push(...items); }
+    }) },
     fetch: async () => ({ ok: true, json: async () => typeof app.response === 'function' ? app.response() : app.response })
   });
   vm.runInContext(source, context);
   app.settings = context.DocIntelAgentSettings;
   return app;
+}
+
+function setup(tenantId = 'tenant', channels = {}) {
+  return { workspace: { tenantId }, models: [], checks: [],
+    channels: { email: { configured: false }, teams: { configured: false }, ...channels } };
 }
 
 test('personality editing roundtrips safely with an illustrative style preview and no generated-answer claim', () => {
@@ -133,15 +146,15 @@ test('users tab reserves header geometry while removing harness actions from foc
   assert.equal(app.settings.read().instructions, 'Unsaved instructions');
 });
 
-test('section tabs preserve keyboard selection, focus and labels with decorative icons', () => {
+test('all six section tabs preserve keyboard selection, wrapping, focus and labels', () => {
   const app = runtime();
   let prevented = 0;
   for (const [target, key, expected] of [
-    ['processingSettingsTab', 'ArrowRight', 'agentSettingsTab'],
+    ['processingSettingsTab', 'ArrowRight', 'customAnalysisTab'],
     ['agentSettingsTab', 'End', 'tenantUsersTab'],
-    ['tenantUsersTab', 'ArrowRight', 'processingSettingsTab'],
-    ['processingSettingsTab', 'ArrowLeft', 'tenantUsersTab'],
-    ['tenantUsersTab', 'Home', 'processingSettingsTab']
+    ['tenantUsersTab', 'ArrowRight', 'setupSettingsTab'],
+    ['setupSettingsTab', 'ArrowLeft', 'tenantUsersTab'],
+    ['tenantUsersTab', 'Home', 'setupSettingsTab']
   ]) {
     app.keydown({ target: app.element(target), key, preventDefault() { prevented++; } });
     assert.equal(app.focused, expected);
@@ -150,7 +163,7 @@ test('section tabs preserve keyboard selection, focus and labels with decorative
   }
   assert.equal(prevented, 5);
   const html = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'DocIntel.Api', 'wwwroot', 'admin.html'), 'utf8');
-  assert.equal([...html.matchAll(/class="admin-section-icon" aria-hidden="true"/g)].length, 3);
+  assert.equal([...html.matchAll(/role="tab"/g)].length, 6);
   assert.ok(html.indexOf('id="adminSections"') < html.indexOf('id="harnessSaveNotice"'),
     'A section-specific conflict must not move the navigation');
 });
@@ -171,9 +184,9 @@ test('late channel-state responses cannot replace a newly selected tenant connec
   app.response = () => { entered(); return new Promise(resolve => { release = resolve; }); };
   const old = app.settings.connections('first');
   await body;
-  app.response = { email: { configured: false }, teams: { configured: false } };
+  app.response = setup('second');
   await app.settings.connections('second');
-  release({ email: { configured: true, address: 'old@example.invalid' }, teams: { configured: true } });
+  release(setup('first', { email: { configured: true, address: 'old@example.invalid' }, teams: { configured: true } }));
   await old;
   assert.doesNotMatch(app.element('agentEmailStatus').textContent, /old@example/);
 });

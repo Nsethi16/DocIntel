@@ -145,6 +145,22 @@ input::placeholder, textarea::placeholder { color: var(--di-muted); opacity: 1; 
 :is(.doc-row.selected, .meridian-tab.active, .workspace-mode-btn.active, .chat-history-item.selected) {
     background-color: var(--di-surface);
 }
+:is(.btn-action.primary, .btn-mini.dark, .btn-save-prompt, .btn-action.dark) {
+    color: var(--di-on-accent);
+    background: var(--di-accent);
+    border-color: var(--di-accent);
+}
+.version-chip, .selected .admin-section-icon, .agent-avatar, .agent-channel-icon {
+    color: var(--di-accent);
+    background: var(--di-accent-soft);
+    border-color: var(--di-accent-border);
+}
+.nav-item svg { color: currentColor; }
+.agent-eyebrow { color: var(--di-accent); }
+.agent-preview { color: var(--di-text); background: var(--di-surface); }
+.agent-preview-user { color: var(--di-text); background: var(--di-surface-soft); }
+.agent-preview-message { color: var(--di-text); background: var(--di-surface); border-color: var(--di-border); }
+.agent-preview-footnote span { color: var(--di-muted); background: var(--di-surface-soft); }
 
 /* Legacy controls sometimes remove outlines on :focus. Keep keyboard focus visible above those rules. */
 body :is(a, button, input, select, textarea, summary, [tabindex], [role="button"]):focus-visible {

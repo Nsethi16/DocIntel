@@ -4,8 +4,12 @@ let tenants = [];
     let ocrBudgetTenantId = null;
     let ocrBudgetRevision = 0;
     let ocrBudgetSaving = false;
+    let ocrBudgetBaseline = '';
+    let ocrBudgetUnconfirmed = false;
 
     async function loadOcrUsage() {
+      if (ocrBudgetDirty() && !ocrBudgetSaving)
+        return guardSettingsDraft(loadOcrUsage, 'Reload live allowance?');
       const tenantId = currentTenant?.tenantId;
       if (!tenantId) return;
       const revision = ++ocrBudgetRevision;
@@ -23,6 +27,8 @@ let tenants = [];
         ocrBudgetTenantId = tenantId;
         document.getElementById('ocrPageLimit').value = result.budget.monthlyPageLimit;
         document.getElementById('ocrWarningPercent').value = result.budget.warningPercent;
+        ocrBudgetBaseline = JSON.stringify([String(result.budget.monthlyPageLimit), String(result.budget.warningPercent)]);
+        ocrBudgetUnconfirmed = false;
         document.getElementById('ocrPageLimit').disabled = false;
         document.getElementById('ocrWarningPercent').disabled = false;
         document.getElementById('ocrBudgetSave').disabled = false;
@@ -38,12 +44,12 @@ let tenants = [];
     async function saveOcrBudget() {
       if (ocrBudgetSaving) {
         document.getElementById('ocrUsageStatus').textContent = 'An allowance save is still in progress.';
-        return;
+        return false;
       }
       const tenantId = currentTenant?.tenantId;
       if (!ocrBudgetSnapshot || tenantId !== ocrBudgetTenantId) {
         document.getElementById('ocrUsageStatus').textContent = 'Load the current tenant allowance before saving.';
-        return;
+        return false;
       }
       const limitText = String(document.getElementById('ocrPageLimit').value).trim();
       const warningText = String(document.getElementById('ocrWarningPercent').value).trim();
@@ -53,11 +59,10 @@ let tenants = [];
           monthlyPageLimit < 0 || monthlyPageLimit > 10000000 ||
           !Number.isInteger(warningPercent) || warningPercent < 1 || warningPercent > 100) {
         document.getElementById('ocrUsageStatus').textContent = 'Enter a whole-page limit and a warning percentage from 1 to 100.';
-        return;
+        return false;
       }
       const version = ocrBudgetSnapshot.version;
       const revision = ++ocrBudgetRevision;
-      ocrBudgetSnapshot = null;
       ocrBudgetSaving = true;
       document.getElementById('ocrBudgetSave').disabled = true;
       try {
@@ -67,10 +72,25 @@ let tenants = [];
         });
         const result = await response.json();
         if (!response.ok) throw new Error(result.title || result.error || 'Could not confirm the budget save. Reload before retrying.');
-        if (currentTenant?.tenantId === tenantId && revision === ocrBudgetRevision) await loadOcrUsage();
+        if (result.version === undefined) throw new Error('The saved allowance version was not confirmed.');
+        if (currentTenant?.tenantId !== tenantId || revision !== ocrBudgetRevision) return false;
+        const newerEdits = String(document.getElementById('ocrPageLimit').value) !== limitText ||
+          String(document.getElementById('ocrWarningPercent').value) !== warningText;
+        ocrBudgetBaseline = JSON.stringify([limitText, warningText]);
+        ocrBudgetSnapshot = { monthlyPageLimit, warningPercent, version: result.version };
+        if (newerEdits) {
+          document.getElementById('ocrBudgetSave').disabled = false;
+          document.getElementById('ocrUsageStatus').textContent =
+            'Allowance saved. Newer allowance edits remain unsaved; save them separately.';
+        } else await loadOcrUsage();
+        return true;
       } catch (error) {
-        if (currentTenant?.tenantId === tenantId && revision === ocrBudgetRevision)
+        if (currentTenant?.tenantId === tenantId && revision === ocrBudgetRevision) {
+          ocrBudgetSnapshot = null;
+          ocrBudgetUnconfirmed = true;
           document.getElementById('ocrUsageStatus').textContent = `${error.message} Reload before saving again.`;
+        }
+        return false;
       } finally {
         ocrBudgetSaving = false;
       }
@@ -78,12 +98,19 @@ let tenants = [];
 
     async function init() {
       const urlTenant = new URLSearchParams(window.location.search).get('tenant');
-      await loadTenants(urlTenant || undefined);
+      try {
+        await loadTenants(urlTenant || undefined);
+      } catch {
+        document.getElementById('workspaceSetupStatus').textContent =
+          'Workspaces could not be loaded. Check your access and reload. Setup has not been verified.';
+      }
     }
 
     async function loadTenants(selectedId) {
       const resp = await fetch('/api/harness/tenants?adminOnly=true');
+      if (!resp.ok) throw new Error('Workspaces could not be loaded');
       tenants = await resp.json();
+      if (!Array.isArray(tenants)) throw new Error('Invalid workspace response');
 
       if (!selectedId && currentTenant) {
         selectedId = currentTenant.tenantId;
@@ -102,7 +129,7 @@ let tenants = [];
       list.innerHTML = '';
 
       if (tenants.length === 0) {
-        list.innerHTML = '<div class="empty-tenants">No tenants created yet</div>';
+        list.innerHTML = '<div class="empty-tenants">No workspaces assigned</div>';
         return;
       }
 
@@ -114,10 +141,13 @@ let tenants = [];
           .join('')
           .substring(0, 2)
           .toUpperCase();
-        const row = document.createElement('div');
+        const row = document.createElement('button');
+        row.type = 'button';
         row.className = 'tenant-row' + (isActive ? ' active' : '');
         row.title = `${t.displayName} (v${t.harnessVersion || 1})`;
-        row.onclick = () => selectTenant(t.tenantId);
+        if (isActive) row.setAttribute('aria-current', 'true');
+        row.dataset.click = 'selectTenant_arg';
+        row.dataset.args = JSON.stringify([t.tenantId]);
         row.innerHTML = `
           <span class="tenant-initials">${escapeHtml(initials)}</span>
           <span class="tenant-row-name">${escapeHtml(t.displayName)}</span>
@@ -130,22 +160,163 @@ let tenants = [];
     function toggleSidebar() {
       const sb = document.getElementById('leftSidebar');
       sb.classList.toggle('collapsed');
+      document.getElementById('btnToggleSidebar').setAttribute('aria-expanded',
+        String(!sb.classList.contains('collapsed')));
     }
 
-    function expandAndOpenNewTenant() {
-      const sb = document.getElementById('leftSidebar');
-      sb.classList.remove('collapsed');
-      toggleNewTenantPopover(true);
+    async function expandAndOpenNewTenant() {
+      return guardSettingsDraft(() => {
+        document.getElementById('leftSidebar').classList.remove('collapsed');
+        toggleNewTenantPopover(true);
+      }, 'Create another workspace');
     }
 
     let savedSnapshotJson = '';
     let harnessSaveInFlight = false;
     let harnessSaveBlocked = false;
+    let promptEditorBaseline = '';
+    let draftGuardPending = false;
+    let draftDialogResolve = null;
+    let draftDialogBusy = false;
+    let promptEditorReturnFocus = null;
+    let processingDraftBaseline = '';
 
-    function selectTenant(tenantId) {
-      currentTenant = tenants.find(t => t.tenantId === tenantId) || null;
-      renderSidebarTenants();
-      renderMainCanvas();
+    async function selectTenant(tenantId) {
+      if (currentTenant?.tenantId === tenantId) return true;
+      return guardSettingsDraft(() => {
+        currentTenant = tenants.find(t => t.tenantId === tenantId) || null;
+        renderSidebarTenants();
+        renderMainCanvas();
+        document.getElementById('tenantHeading').focus();
+      }, 'Switch workspace');
+    }
+
+    function settingsJson(payload = buildPayloadFromUi()) {
+      return payload ? JSON.stringify({
+        decisionModelId: payload.decisionModelId, defaultModelId: payload.defaultModelId,
+        ocr: payload.ocr, reviewPolicy: payload.reviewPolicy, agent: payload.agent, capabilities: payload.capabilities
+      }) : '';
+    }
+
+    function promptEditorJson() {
+      return JSON.stringify({
+        id: document.getElementById('editingPromptColumnId').value,
+        name: document.getElementById('promptColumnNameInput').value,
+        instructions: document.getElementById('promptInstructionsInput').value,
+        mode: document.getElementById('promptFilterModeSelect').value,
+        filters: [...document.querySelectorAll('#promptFilterRulesList .entity-filter-rule-row')].map(row =>
+          ['entityName', 'operator', 'expectedValue'].map(key => row.querySelector(`[data-filter="${key}"]`).value))
+      });
+    }
+
+    function promptEditorDirty() {
+      return !document.getElementById('promptEditor').hidden && promptEditorJson() !== promptEditorBaseline;
+    }
+
+    function processingDraftJson() {
+      return JSON.stringify([
+        [...document.querySelectorAll('#identificationRulesList .rule-item')].map(row =>
+          ['docName', 'prompt'].map(key => row.querySelector(`[data-field="${key}"]`).value)),
+        [...document.querySelectorAll('#dataExtractionFieldsList .rule-item')].map(row =>
+          ['fieldName', 'instruction'].map(key => row.querySelector(`[data-field="${key}"]`).value)),
+        [...document.querySelectorAll('#dataExtractionTablesList .table-schema-box')].map(box => [
+          box.querySelector('[data-field="tableName"]').value,
+          box.querySelector('[data-field="tableInstruction"]').value,
+          [...box.querySelectorAll('.col-row')].map(row =>
+            ['colName', 'colInstruction'].map(key => row.querySelector(`[data-field="${key}"]`).value))
+        ])
+      ]);
+    }
+
+    function ocrBudgetDirty() {
+      return ocrBudgetTenantId === currentTenant?.tenantId && (ocrBudgetUnconfirmed ||
+        (ocrBudgetBaseline && JSON.stringify([String(document.getElementById('ocrPageLimit').value),
+          String(document.getElementById('ocrWarningPercent').value)]) !== ocrBudgetBaseline));
+    }
+
+    function hasUnsavedSettings() {
+      return Boolean(currentTenant && (settingsJson() !== savedSnapshotJson || promptEditorDirty() ||
+        (processingDraftBaseline && processingDraftJson() !== processingDraftBaseline)));
+    }
+
+    function hasUnsavedDraft() {
+      return hasUnsavedSettings() || Boolean(ocrBudgetDirty()) || harnessSaveInFlight || ocrBudgetSaving ||
+        harnessSaveBlocked;
+    }
+
+    function resolveSettingsDraft(choice) {
+      if (!draftDialogBusy && draftDialogResolve && ['save', 'discard', 'stay'].includes(choice)) {
+        const resolve = draftDialogResolve;
+        draftDialogResolve = null;
+        resolve(choice);
+      }
+    }
+
+    async function guardSettingsDraft(proceed, destination = 'Leave settings', options = {}) {
+      if (draftGuardPending) return false;
+      if (!hasUnsavedDraft()) { await proceed(); return true; }
+      draftGuardPending = true;
+      const dialog = document.getElementById('settingsDraftDialog');
+      const returnFocus = document.activeElement;
+      let proceeded = false;
+      const controls = ['draftSave', 'draftDiscard', 'draftStay'].map(id => document.getElementById(id));
+      document.getElementById('settingsDraftTitle').textContent = destination;
+      document.getElementById('settingsDraftText').textContent = options.editorOnly
+        ? 'This analysis has edits not yet added to your changes. Save changes, discard this edit, or stay.'
+        : 'Save your unsaved changes before continuing, discard them, or stay. Live OCR allowance changes use their own save.';
+      document.getElementById('settingsDraftStatus').textContent = options.conflict
+        ? 'The save is blocked. Copy any draft details you need before discarding and reloading.' : '';
+      try {
+        dialog.showModal();
+        document.getElementById('draftStay').focus();
+        let proceedRequested = false;
+        while (!proceedRequested) {
+          const choice = await new Promise(resolve => { draftDialogResolve = resolve; });
+          if (choice === 'stay') return false;
+          if (harnessSaveInFlight || ocrBudgetSaving) {
+            document.getElementById('settingsDraftStatus').textContent =
+              'A save is still in progress. Wait for its result before continuing.';
+            continue;
+          }
+          if (choice === 'discard') {
+            proceedRequested = true;
+          } else {
+            draftDialogBusy = true;
+            controls.forEach(button => { button.disabled = true; });
+            document.getElementById('settingsDraftStatus').textContent = 'Saving changes…';
+            const settingsSaved = !hasUnsavedSettings() || await saveTenantHarness();
+            const budgetSaved = settingsSaved && (!ocrBudgetDirty() || await saveOcrBudget());
+            draftDialogBusy = false;
+            controls.forEach(button => { button.disabled = false; });
+            if (!settingsSaved || !budgetSaved || hasUnsavedDraft()) {
+              document.getElementById('settingsDraftStatus').textContent =
+                'Could not leave: the save failed, conflicted, or newer edits remain. Your draft is preserved.';
+              document.getElementById('draftStay').focus();
+              continue;
+            }
+            proceedRequested = true;
+          }
+        }
+        dialog.close();
+        if (!options.editorOnly && !options.conflict) renderMainCanvas();
+        proceeded = true;
+        await proceed();
+        return true;
+      } finally {
+        draftDialogResolve = null;
+        draftDialogBusy = false;
+        draftGuardPending = false;
+        controls.forEach(button => { button.disabled = false; });
+        if (dialog.open) dialog.close();
+        if (!proceeded && returnFocus?.isConnected) returnFocus.focus();
+      }
+    }
+
+    async function openWorkspaceForTenant(onboarding = false) {
+      return guardSettingsDraft(() => {
+        window.location.href = '/?tenant=' + encodeURIComponent(currentTenant?.tenantId || '') +
+          (onboarding ? '&onboarding=1' : '');
+      }, 'Open workspace');
     }
 
     const expandedCards = new Set();
@@ -178,8 +349,15 @@ let tenants = [];
         const drawer = document.getElementById(key + 'Drawer');
         const chevron = document.getElementById(key + 'Chevron');
         const isOpen = expandedCards.has(key);
-        if (drawer) drawer.classList.toggle('open', isOpen);
-        if (chevron) chevron.classList.toggle('expanded', isOpen);
+        if (drawer) {
+          drawer.classList.toggle('open', isOpen);
+          drawer.hidden = !isOpen;
+          drawer.inert = !isOpen;
+        }
+        if (chevron) {
+          chevron.classList.toggle('expanded', isOpen);
+          chevron.setAttribute('aria-expanded', String(isOpen));
+        }
       });
     }
 
@@ -196,7 +374,7 @@ let tenants = [];
         const fName = row.querySelector('[data-field="fieldName"]').value.trim();
         const instr = row.querySelector('[data-field="instruction"]').value.trim();
         if (fName) {
-          fields.push({ fieldName: fName, instruction: instr });
+          fields.push({ ...row.schemaSource, fieldName: fName, instruction: instr });
         }
       });
       profile.fields = fields;
@@ -211,10 +389,10 @@ let tenants = [];
           const cName = cr.querySelector('[data-field="colName"]').value.trim();
           const cInstr = cr.querySelector('[data-field="colInstruction"]').value.trim();
           if (cName) {
-            cols.push({ columnName: cName, instruction: cInstr });
+            cols.push({ ...cr.schemaSource, columnName: cName, instruction: cInstr });
           }
         });
-        tables.push({ tableName: tName, instruction: tInstr, columns: cols });
+        tables.push({ ...box.schemaSource, tableName: tName, instruction: tInstr, columns: cols });
       });
       profile.tables = tables;
     }
@@ -226,8 +404,18 @@ let tenants = [];
         ...workingDataExtractionProfiles.map(p => p.documentName)
       ])].filter(Boolean);
 
-      if (docNames.length === 0) {
-        docNames.push('Program Signature Form', 'Customer Price Sheet');
+      const empty = docNames.length === 0;
+      sel.disabled = empty;
+      document.getElementById('dataExtractionSchemaControls').disabled = empty;
+      document.getElementById('dataExtractionDocGuidance').hidden = !empty;
+      if (empty) {
+        activeExtractionDocName = '';
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'No document types configured';
+        sel.replaceChildren(placeholder);
+        renderActiveDocExtractionSchema();
+        return;
       }
 
       if (!activeExtractionDocName || !docNames.includes(activeExtractionDocName)) {
@@ -246,9 +434,16 @@ let tenants = [];
     }
 
     function onSelectedExtractionDocChanged() {
+      if (!validateProcessingDraft()) {
+        document.getElementById('dataExtractionDocSelect').value = activeExtractionDocName;
+        return;
+      }
+      // Changing the active schema is navigation within the draft, not a save.
       syncActiveDocProfileFromDom();
       activeExtractionDocName = document.getElementById('dataExtractionDocSelect').value;
       renderActiveDocExtractionSchema();
+      processingDraftBaseline = processingDraftJson();
+      updateDirtyState();
     }
 
     function renderActiveDocExtractionSchema() {
@@ -257,17 +452,19 @@ let tenants = [];
 
       const fieldsList = document.getElementById('dataExtractionFieldsList');
       fieldsList.innerHTML = '';
-      (profile.fields || []).forEach(f => appendDataFieldRow(f.fieldName || '', f.instruction || ''));
+      (profile.fields || []).forEach(f => appendDataFieldRow(f.fieldName || '', f.instruction || '', f));
 
       const tablesList = document.getElementById('dataExtractionTablesList');
       tablesList.innerHTML = '';
-      (profile.tables || []).forEach(t => appendDataTableBlock(t.tableName || '', t.instruction || '', t.columns || []));
+      (profile.tables || []).forEach(t =>
+        appendDataTableBlock(t.tableName || '', t.instruction || '', t.columns || [], t));
     }
 
-    function appendDataFieldRow(fieldName, instruction) {
+    function appendDataFieldRow(fieldName, instruction, original = {}) {
       const container = document.getElementById('dataExtractionFieldsList');
       const div = document.createElement('div');
       div.className = 'rule-item';
+      div.schemaSource = original;
       div.innerHTML = `
         <input type="text" class="clean-input" data-field="fieldName" placeholder="Field name (e.g. QuoteNumber)" value="${escapeHtml(fieldName)}" data-input="onDataExtractionSchemaEdited" />
         <input type="text" class="clean-input" data-field="instruction" placeholder="Instruction on how to extract this field..." value="${escapeHtml(instruction)}" data-input="onDataExtractionSchemaEdited" />
@@ -277,14 +474,16 @@ let tenants = [];
     }
 
     function addDataExtractionFieldRow() {
+      if (!activeExtractionDocName) return;
       appendDataFieldRow('', '');
       onDataExtractionSchemaEdited();
     }
 
-    function appendDataTableBlock(tableName, instruction, columns) {
+    function appendDataTableBlock(tableName, instruction, columns, original = {}) {
       const container = document.getElementById('dataExtractionTablesList');
       const box = document.createElement('div');
       box.className = 'table-schema-box';
+      box.schemaSource = original;
       box.innerHTML = `
         <div class="rule-item">
           <input type="text" class="clean-input" data-field="tableName" placeholder="Table name (e.g. SubscriptionPricing)" value="${escapeHtml(tableName)}" data-input="onDataExtractionSchemaEdited" />
@@ -298,12 +497,13 @@ let tenants = [];
       `;
       container.appendChild(box);
       const colsContainer = box.querySelector('.cols-container');
-      (columns || []).forEach(c => appendColumnRow(colsContainer, c.columnName || '', c.instruction || ''));
+      (columns || []).forEach(c => appendColumnRow(colsContainer, c.columnName || '', c.instruction || '', c));
     }
 
-    function appendColumnRow(colsContainer, colName, colInstruction) {
+    function appendColumnRow(colsContainer, colName, colInstruction, original = {}) {
       const row = document.createElement('div');
       row.className = 'rule-item col-row';
+      row.schemaSource = original;
       row.innerHTML = `
         <input type="text" class="clean-input" data-field="colName" placeholder="Column name (e.g. PartNumber)" value="${escapeHtml(colName)}" data-input="onDataExtractionSchemaEdited" />
         <input type="text" class="clean-input" data-field="colInstruction" placeholder="Column extraction instruction..." value="${escapeHtml(colInstruction)}" data-input="onDataExtractionSchemaEdited" />
@@ -319,6 +519,7 @@ let tenants = [];
     }
 
     function addDataExtractionTableBlock() {
+      if (!activeExtractionDocName) return;
       appendDataTableBlock('', '', [{ columnName: '', instruction: '' }]);
       onDataExtractionSchemaEdited();
     }
@@ -338,8 +539,9 @@ let tenants = [];
       updated.decisionModelId = decisionModel;
       updated.defaultModelId = languageModel;
       updated.ocr = { ...(updated.ocr || {}), mode: document.getElementById('ocrModeSelect').value };
-      updated.reviewPolicy = { enabled: false, requiresDualReview: false, dueHours: 24 };
-      updated.agent = globalThis.DocIntelAgentSettings ? DocIntelAgentSettings.read() : currentTenant.agent;
+      updated.reviewPolicy = updated.reviewPolicy || { enabled: false, requiresDualReview: false, dueHours: 24 };
+      updated.agent = globalThis.DocIntelAgentSettings
+        ? { ...currentTenant.agent, ...DocIntelAgentSettings.read() } : currentTenant.agent;
       updated.capabilities = updated.capabilities || {};
 
       // 1. SplitAndGroup
@@ -357,13 +559,17 @@ let tenants = [];
         const docName = row.querySelector('[data-field="docName"]').value.trim();
         const prompt = row.querySelector('[data-field="prompt"]').value.trim();
         if (docName && prompt) {
-          idRules.push({ documentName: docName, identificationPrompt: prompt, isActive: true });
+          const original = row.ruleSource;
+          idRules.push({ ...original, documentName: docName, identificationPrompt: prompt,
+            isActive: original?.isActive !== false });
         }
       });
       updated.capabilities.IdentifyDocuments = {
+        ...updated.capabilities.IdentifyDocuments,
         enabled: document.getElementById('identifyFeatureToggle').checked,
         modelIdOverride: decisionModel,
         identifyDocuments: {
+          ...updated.capabilities.IdentifyDocuments?.identifyDocuments,
           decisionModelId: decisionModel,
           rules: idRules
         }
@@ -371,8 +577,10 @@ let tenants = [];
 
       // 3. DocumentTranslation
       updated.capabilities.DocumentTranslation = {
+        ...updated.capabilities.DocumentTranslation,
         enabled: document.getElementById('translationFeatureToggle').checked,
         documentTranslation: {
+          ...updated.capabilities.DocumentTranslation?.documentTranslation,
           targetLanguage: document.getElementById('translationTargetLang').value || 'en',
           doNotTranslateTerms: document.getElementById('doNotTranslateInput').value
             .split(',')
@@ -384,9 +592,11 @@ let tenants = [];
       // 4. DocumentInsight
       const insightPrompt = document.getElementById('insightInstructionsInput').value.trim();
       updated.capabilities.DocumentInsight = {
+        ...updated.capabilities.DocumentInsight,
         enabled: document.getElementById('insightFeatureToggle').checked,
         modelIdOverride: languageModel,
         documentInsight: {
+          ...updated.capabilities.DocumentInsight?.documentInsight,
           summaryInstructions: insightPrompt
         }
       };
@@ -394,9 +604,11 @@ let tenants = [];
       // 5. EntityExtraction
       const entityPrompt = document.getElementById('entityPromptInput').value.trim();
       updated.capabilities.EntityExtraction = {
+        ...updated.capabilities.EntityExtraction,
         enabled: document.getElementById('entityFeatureToggle').checked,
         modelIdOverride: languageModel,
         entityExtraction: {
+          ...updated.capabilities.EntityExtraction?.entityExtraction,
           extractionPrompt: entityPrompt
         }
       };
@@ -404,9 +616,11 @@ let tenants = [];
       // 6. DataExtraction
       syncActiveDocProfileFromDom();
       updated.capabilities.DataExtraction = {
+        ...updated.capabilities.DataExtraction,
         enabled: document.getElementById('dataExtractionFeatureToggle').checked,
         modelIdOverride: languageModel,
         dataExtraction: {
+          ...updated.capabilities.DataExtraction?.dataExtraction,
           profiles: JSON.parse(JSON.stringify(workingDataExtractionProfiles))
         }
       };
@@ -414,9 +628,11 @@ let tenants = [];
       // 7. PromptColumns
       const promptColsToggle = document.getElementById('promptColumnsFeatureToggle');
       updated.capabilities.PromptColumns = {
+        ...updated.capabilities.PromptColumns,
         enabled: promptColsToggle ? promptColsToggle.checked : true,
         modelIdOverride: languageModel,
         promptColumns: {
+          ...updated.capabilities.PromptColumns?.promptColumns,
           columns: JSON.parse(JSON.stringify(workingPromptColumns))
         }
       };
@@ -424,12 +640,14 @@ let tenants = [];
       // 8. DocumentGraph
       const docGraphToggle = document.getElementById('documentGraphFeatureToggle');
       updated.capabilities.DocumentGraph = {
+        ...updated.capabilities.DocumentGraph,
         enabled: docGraphToggle ? docGraphToggle.checked : true
       };
 
       // 9. AskAi
       const askAiToggle = document.getElementById('askAiFeatureToggle');
       updated.capabilities.AskAi = {
+        ...updated.capabilities.AskAi,
         enabled: askAiToggle ? askAiToggle.checked : true,
         modelIdOverride: languageModel
       };
@@ -444,8 +662,6 @@ let tenants = [];
       const insightOn = document.getElementById('insightFeatureToggle').checked;
       const entityOn = document.getElementById('entityFeatureToggle').checked;
       const dataExtOn = document.getElementById('dataExtractionFeatureToggle').checked;
-      const promptColsToggle = document.getElementById('promptColumnsFeatureToggle');
-      const promptColsOn = promptColsToggle ? promptColsToggle.checked : true;
       const docGraphToggle = document.getElementById('documentGraphFeatureToggle');
       const docGraphOn = docGraphToggle ? docGraphToggle.checked : true;
       const askAiToggle = document.getElementById('askAiFeatureToggle');
@@ -453,25 +669,14 @@ let tenants = [];
 
       renderExpandedState();
 
-      const enabledCount = [splitOn, idOn, transOn, insightOn, entityOn, dataExtOn, promptColsOn, docGraphOn, askAiOn].filter(Boolean).length;
-      document.getElementById('featureStatusCount').textContent = `${enabledCount} of 9 enabled`;
+      const enabledCount = [splitOn, idOn, transOn, insightOn, entityOn, dataExtOn, docGraphOn, askAiOn].filter(Boolean).length;
+      document.getElementById('featureStatusCount').textContent = `${enabledCount} of 8 enabled`;
     }
 
     function updateDirtyState() {
-      const currentPayload = buildPayloadFromUi();
-      const currentJson = currentPayload
-        ? JSON.stringify({
-            decisionModelId: currentPayload.decisionModelId,
-            defaultModelId: currentPayload.defaultModelId,
-            ocr: currentPayload.ocr,
-            reviewPolicy: currentPayload.reviewPolicy,
-            agent: currentPayload.agent,
-            capabilities: currentPayload.capabilities
-          })
-        : '';
-      const dirty = currentTenant ? (currentJson !== savedSnapshotJson) : false;
+      const dirty = hasUnsavedSettings();
 
-      document.getElementById('btnCancelHarness').disabled = !dirty;
+      document.getElementById('btnCancelHarness').disabled = !dirty || harnessSaveInFlight;
       document.getElementById('btnSaveHarness').disabled = !dirty || harnessSaveInFlight || harnessSaveBlocked;
       document.getElementById('unsavedBadge').classList.toggle('visible', dirty);
     }
@@ -479,13 +684,14 @@ let tenants = [];
     function renderIdentificationRules(rules) {
       const container = document.getElementById('identificationRulesList');
       container.innerHTML = '';
-      (rules || []).forEach(r => appendRuleRow(r.documentName || '', r.identificationPrompt || ''));
+      (rules || []).forEach(r => appendRuleRow(r.documentName || '', r.identificationPrompt || '', r));
     }
 
-    function appendRuleRow(docName, prompt) {
+    function appendRuleRow(docName, prompt, original = {}) {
       const container = document.getElementById('identificationRulesList');
       const div = document.createElement('div');
       div.className = 'rule-item';
+      div.ruleSource = original;
       div.innerHTML = `
         <input type="text" class="clean-input" data-field="docName" placeholder="Document name (e.g. Customer Price Sheet)" value="${escapeHtml(docName)}" data-input="onHarnessChanged" />
         <input type="text" class="clean-input" data-field="prompt" placeholder="If footer contains..., or title contains..." value="${escapeHtml(prompt)}" data-input="onHarnessChanged" />
@@ -499,34 +705,40 @@ let tenants = [];
       onHarnessChanged();
     }
 
-    function renderMainCanvas() {
+    function renderMainCanvas(preserveBudget = false) {
       if (globalThis.DocIntelTenantUsers) DocIntelTenantUsers.setTenant(currentTenant?.tenantId || null);
-      if (!currentTenant) return;
+      if (!currentTenant) {
+        globalThis.DocIntelAgentSettings?.connections(null);
+        document.getElementById('tenantHeading').textContent = 'No workspace assigned';
+        document.getElementById('btnSaveHarness').disabled = true;
+        document.getElementById('btnCancelHarness').disabled = true;
+        return;
+      }
       if (globalThis.DocIntelAgentSettings) {
         DocIntelAgentSettings.render(currentTenant.agent);
-        DocIntelAgentSettings.connections(currentTenant.tenantId);
       }
       harnessSaveBlocked = false;
       document.getElementById('harnessSaveNotice').hidden = true;
       document.getElementById('harnessDraft').textContent = '';
       document.getElementById('harnessServer').textContent = '';
-      ocrBudgetRevision++;
-      ocrBudgetSnapshot = null;
-      ocrBudgetTenantId = null;
-      document.getElementById('ocrBudgetSave').disabled = true;
-      document.getElementById('ocrPageLimit').disabled = true;
-      document.getElementById('ocrWarningPercent').disabled = true;
-      document.getElementById('ocrUsageStatus').textContent = 'Load the current monthly allowance and reserved request pages.';
+      if (!preserveBudget) {
+        ocrBudgetRevision++;
+        ocrBudgetSnapshot = null;
+        ocrBudgetTenantId = null;
+        ocrBudgetBaseline = '';
+        ocrBudgetUnconfirmed = false;
+        document.getElementById('ocrBudgetSave').disabled = true;
+        document.getElementById('ocrPageLimit').disabled = true;
+        document.getElementById('ocrWarningPercent').disabled = true;
+        document.getElementById('ocrUsageStatus').textContent = 'Load the current monthly allowance and reserved request pages.';
+      }
 
-      document.getElementById('harnessVersionChip').textContent = `Harness v${currentTenant.harnessVersion || 1}`;
+      document.getElementById('harnessVersionChip').textContent = `Settings v${currentTenant.harnessVersion || 1}`;
       document.getElementById('tenantHeading').textContent = `${currentTenant.displayName}`;
       document.getElementById('tenantIdDisplay').textContent = `Tenant ID: ${currentTenant.tenantId}`;
 
-      document.getElementById('harnessDecisionModelSelect').value = currentTenant.decisionModelId || 'decision-1';
-      document.getElementById('harnessLanguageModelSelect').value =
-        (currentTenant.defaultModelId && currentTenant.defaultModelId !== 'decision-1')
-          ? currentTenant.defaultModelId
-          : 'phi-4';
+      setModelSelection('harnessDecisionModelSelect', currentTenant.decisionModelId || 'decision-1');
+      setModelSelection('harnessLanguageModelSelect', currentTenant.defaultModelId || 'phi-4');
 
       const caps = currentTenant.capabilities || {};
 
@@ -570,7 +782,6 @@ let tenants = [];
       const deCfg = deCap.dataExtraction || {};
       document.getElementById('dataExtractionFeatureToggle').checked = deCap.enabled !== false;
       workingDataExtractionProfiles = JSON.parse(JSON.stringify(deCfg.profiles || []));
-      activeExtractionDocName = '';
       const definedDocNames = (idCfg.rules || []).map(r => r.documentName).filter(Boolean);
       renderDataExtractionDocDropdown(definedDocNames);
 
@@ -583,6 +794,7 @@ let tenants = [];
       refreshKnownEntitiesFromTenant();
       renderSavedPromptsList();
       clearPromptColumnForm();
+      document.getElementById('promptEditor').hidden = true;
 
       // 8. Document Graph & 9. Ask AI
       const dgCap = caps.DocumentGraph || { enabled: true };
@@ -605,17 +817,33 @@ let tenants = [];
             capabilities: initialPayload.capabilities
           })
         : '';
+      processingDraftBaseline = processingDraftJson();
       updateDirtyState();
+      globalThis.DocIntelAgentSettings?.connections(currentTenant.tenantId);
+    }
+
+    function setModelSelection(id, value) {
+      const select = document.getElementById(id);
+      if (![...select.options].some(option => option.value === value)) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = `${value} (saved selection; configuration unknown)`;
+        select.appendChild(option);
+      }
+      select.value = value;
     }
 
     function onHarnessChanged() {
       updateDrawersAndCount();
       updateDirtyState();
+      globalThis.DocIntelAgentSettings?.models();
     }
 
-    function cancelTenantChanges() {
-      renderMainCanvas();
-      showToast('Reverted unsaved changes');
+    async function cancelTenantChanges() {
+      return guardSettingsDraft(() => {
+        renderMainCanvas();
+        showToast('Workspace settings restored');
+      }, 'Discard workspace changes');
     }
 
     async function refreshKnownEntitiesFromTenant() {
@@ -694,8 +922,8 @@ let tenants = [];
         addPromptEntityFilterRow('Contract Number', 'Exists', '');
         addPromptEntityFilterRow('MBA/MBSA Number', 'Exists', '');
       }
+      updateDirtyState();
     }
-
     function onPromptFilterModeChanged() {
       const mode = document.getElementById('promptFilterModeSelect').value;
       const container = document.getElementById('promptFilterRulesContainer');
@@ -708,6 +936,7 @@ let tenants = [];
           addPromptEntityFilterRow('Contract Number', 'Exists', '');
         }
       }
+      updateDirtyState();
     }
 
     function addPromptEntityFilterRow(entityName = 'Contract Number', operator = 'Exists', expectedValue = '') {
@@ -716,29 +945,58 @@ let tenants = [];
       row.className = 'entity-filter-rule-row';
       const showVal = operator !== 'Exists';
       row.innerHTML = `
-        <input type="text" list="existingEntitiesDatalist" class="clean-input" data-filter="entityName" placeholder="Select or type Entity Name" value="${escapeHtml(entityName)}" />
-        <select class="clean-select" data-filter="operator" data-change="setFilterVisibility">
+        <input type="text" list="existingEntitiesDatalist" class="clean-input" data-filter="entityName" aria-label="Entity name" data-input="onPromptEditorChanged" placeholder="Select or type Entity Name" value="${escapeHtml(entityName)}" />
+        <select class="clean-select" data-filter="operator" aria-label="Filter comparison" data-change="setFilterVisibility">
           <option value="Exists" ${operator === 'Exists' ? 'selected' : ''}>Exists</option>
           <option value="Contains" ${operator === 'Contains' ? 'selected' : ''}>Contains</option>
           <option value="Equals" ${operator === 'Equals' ? 'selected' : ''}>Equals</option>
           <option value="StartsWith" ${operator === 'StartsWith' ? 'selected' : ''}>Starts With</option>
           <option value="NotEquals" ${operator === 'NotEquals' ? 'selected' : ''}>Not Equals</option>
         </select>
-        <input type="text" class="clean-input" data-filter="expectedValue" placeholder="Expected value..." value="${escapeHtml(expectedValue || '')}" style="visibility:${showVal ? 'visible' : 'hidden'}" />
+        <input type="text" class="clean-input" data-filter="expectedValue" aria-label="Expected value" data-input="onPromptEditorChanged" placeholder="Expected value..." value="${escapeHtml(expectedValue || '')}" style="visibility:${showVal ? 'visible' : 'hidden'}" />
         <button type="button" class="btn-mini" title="Remove filter condition" data-click="removePromptFilter">✕</button>
       `;
       rulesList.appendChild(row);
+      updateDirtyState();
     }
 
     function clearPromptColumnForm() {
       document.getElementById('editingPromptColumnId').value = '';
-      document.getElementById('promptFormHeading').textContent = 'Create New Prompt Column';
-      document.getElementById('btnSavePromptLabel').textContent = 'Save Prompt';
+      document.getElementById('promptFormHeading').textContent = 'New analysis';
+      document.getElementById('btnSavePromptLabel').textContent = 'Add to changes';
       document.getElementById('promptColumnNameInput').value = '';
       document.getElementById('promptInstructionsInput').value = 'Summarize the contents of {{Document.Content}} in a clear and concise manner. Focus on key points, main arguments, and important conclusions.';
       document.getElementById('promptFilterModeSelect').value = 'All';
       document.getElementById('promptFilterRulesList').innerHTML = '';
       onPromptFilterModeChanged();
+      promptEditorBaseline = promptEditorJson();
+    }
+
+    function openPromptEditor() {
+      document.getElementById('promptEditor').hidden = false;
+      document.getElementById('promptColumnNameInput').focus();
+    }
+
+    async function changePromptEditor(proceed) {
+      if (!promptEditorDirty()) { proceed(); return; }
+      return guardSettingsDraft(proceed, 'Leave this analysis edit?', { editorOnly: true });
+    }
+
+    async function newCustomAnalysis() {
+      return changePromptEditor(() => {
+        promptEditorReturnFocus = document.activeElement;
+        clearPromptColumnForm();
+        openPromptEditor();
+      });
+    }
+
+    async function closeCustomAnalysis() {
+      return changePromptEditor(() => {
+        clearPromptColumnForm();
+        document.getElementById('promptEditor').hidden = true;
+        updateDirtyState();
+        if (promptEditorReturnFocus?.isConnected) promptEditorReturnFocus.focus();
+      });
     }
 
     function formatPromptFilterBadgeText(col) {
@@ -757,13 +1015,13 @@ let tenants = [];
       const countSub = document.getElementById('savedPromptsCountSub');
       if (!list) return;
 
-      countSub.textContent = `${workingPromptColumns.length} prompt${workingPromptColumns.length === 1 ? '' : 's'} configured`;
+      countSub.textContent = `${workingPromptColumns.length} ${workingPromptColumns.length === 1 ? 'analysis' : 'analyses'} in workspace settings`;
       list.innerHTML = '';
 
       if (workingPromptColumns.length === 0) {
         list.innerHTML = `
-          <div style="padding:36px 18px;text-align:center;color:var(--text-secondary);font-size:12.5px;">
-            No saved prompts yet.<br/>Create your first prompt column on the left to start analyzing documents as PDF/Base64.
+          <div class="analysis-empty">
+            No custom analyses yet. Choose New analysis to add a reusable document question.
           </div>
         `;
         return;
@@ -779,8 +1037,8 @@ let tenants = [];
               <span>✦ ${escapeHtml(col.columnName)}</span>
             </div>
             <div style="display:flex;align-items:center;gap:6px;">
-              <button type="button" class="btn-mini" data-click="editPromptColumn_arg" data-args="[${idx}]">Edit</button>
-              <button type="button" class="btn-mini" data-click="deletePromptColumn_arg" data-args="[${idx}]">✕</button>
+              <button type="button" class="btn-mini" aria-label="Edit ${escapeHtml(col.columnName)}" data-click="editPromptColumn_arg" data-args="[${idx}]">Edit</button>
+              <button type="button" class="btn-mini" aria-label="Remove ${escapeHtml(col.columnName)}" data-click="deletePromptColumn_arg" data-args="[${idx}]">Remove</button>
             </div>
           </div>
           <div class="prompt-filter-badge">${escapeHtml(filterText)}</div>
@@ -790,61 +1048,86 @@ let tenants = [];
       });
     }
 
-    function editPromptColumn(idx) {
+    async function editPromptColumn(idx) {
       const col = workingPromptColumns[idx];
       if (!col) return;
-      document.getElementById('editingPromptColumnId').value = col.columnId || `col-${idx}`;
-      document.getElementById('promptFormHeading').textContent = `Edit Prompt Column: ${col.columnName}`;
-      document.getElementById('btnSavePromptLabel').textContent = 'Update Prompt';
-      document.getElementById('promptColumnNameInput').value = col.columnName || '';
-      document.getElementById('promptInstructionsInput').value = col.promptInstructions || '';
-      document.getElementById('promptFilterModeSelect').value = col.filterMode || 'All';
-      const rulesList = document.getElementById('promptFilterRulesList');
-      rulesList.innerHTML = '';
-      (col.entityFilters || []).forEach(r => addPromptEntityFilterRow(r.entityName || '', r.operator || 'Exists', r.expectedValue || ''));
-      onPromptFilterModeChanged();
+      return changePromptEditor(() => {
+        promptEditorReturnFocus = document.activeElement;
+        document.getElementById('editingPromptColumnId').value = col.columnId || `col-${idx}`;
+        document.getElementById('promptFormHeading').textContent = `Edit analysis: ${col.columnName}`;
+        document.getElementById('btnSavePromptLabel').textContent = 'Update in changes';
+        document.getElementById('promptColumnNameInput').value = col.columnName || '';
+        document.getElementById('promptInstructionsInput').value = col.promptInstructions || '';
+        document.getElementById('promptFilterModeSelect').value = col.filterMode || 'All';
+        const rulesList = document.getElementById('promptFilterRulesList');
+        rulesList.innerHTML = '';
+        (col.entityFilters || []).forEach(r =>
+          addPromptEntityFilterRow(r.entityName || '', r.operator || 'Exists', r.expectedValue || ''));
+        onPromptFilterModeChanged();
+        promptEditorBaseline = promptEditorJson();
+        openPromptEditor();
+        updateDirtyState();
+      });
     }
 
     async function deletePromptColumn(idx) {
+      if (!workingPromptColumns[idx]) return;
+      if (document.getElementById('editingPromptColumnId').value === workingPromptColumns[idx].columnId) {
+        const closed = await closeCustomAnalysis();
+        if (closed === false) return;
+      }
       workingPromptColumns.splice(idx, 1);
       renderSavedPromptsList();
       onHarnessChanged();
-      await saveTenantHarness();
+      showToast('Analysis removed from draft. Save changes to publish.');
     }
 
-    async function savePromptColumnFromForm() {
+    function stagePromptColumnFromForm() {
       const name = document.getElementById('promptColumnNameInput').value.trim();
       const instructions = document.getElementById('promptInstructionsInput').value.trim();
       if (!name || !instructions) {
-        showToast('Please enter both Column Name and Prompt Instructions');
-        return;
+        showToast('Enter an analysis name and instructions before saving.', { kind: 'error' });
+        document.getElementById(!name ? 'promptColumnNameInput' : 'promptInstructionsInput').focus();
+        return false;
       }
 
       const filterMode = document.getElementById('promptFilterModeSelect').value || 'All';
       const entityFilters = [];
       if (filterMode !== 'All') {
-        document.querySelectorAll('#promptFilterRulesList .entity-filter-rule-row').forEach(r => {
+        const rules = document.querySelectorAll('#promptFilterRulesList .entity-filter-rule-row');
+        for (const r of rules) {
           const eName = r.querySelector('[data-filter="entityName"]').value.trim();
           const op = r.querySelector('[data-filter="operator"]').value;
           const val = r.querySelector('[data-filter="expectedValue"]').value.trim();
-          if (eName) {
-            entityFilters.push({ entityName: eName, operator: op, expectedValue: op === 'Exists' ? null : val });
+          if (!eName || (op !== 'Exists' && !val)) {
+            showToast('Complete or remove unfinished analysis filters before saving.', { kind: 'error' });
+            return false;
           }
-        });
+          entityFilters.push({ entityName: eName, operator: op, expectedValue: op === 'Exists' ? null : val });
+        }
       }
 
       const editingId = document.getElementById('editingPromptColumnId').value;
+      if (workingPromptColumns.some((col, index) => (col.columnId || `col-${index}`) !== editingId &&
+          col.columnName.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) {
+        showToast('Choose a unique analysis name so its results tab is easy to identify.', { kind: 'error' });
+        return false;
+      }
       if (editingId) {
-        const existingIdx = workingPromptColumns.findIndex(c => c.columnId === editingId);
+        const existingIdx = workingPromptColumns.findIndex((c, index) => (c.columnId || `col-${index}`) === editingId);
         if (existingIdx >= 0) {
           workingPromptColumns[existingIdx] = {
+            ...workingPromptColumns[existingIdx],
             columnId: editingId,
             columnName: name,
             promptInstructions: instructions,
             filterMode,
             entityFilters,
-            isActive: true
+            isActive: workingPromptColumns[existingIdx].isActive !== false
           };
+        } else {
+          showToast('This analysis no longer exists. Reopen it before saving.', { kind: 'error' });
+          return false;
         }
       } else {
         workingPromptColumns.push({
@@ -855,18 +1138,32 @@ let tenants = [];
           entityFilters,
           isActive: true
         });
+        document.getElementById('editingPromptColumnId').value = workingPromptColumns.at(-1).columnId;
       }
 
       renderSavedPromptsList();
+      promptEditorBaseline = promptEditorJson();
+      return true;
+    }
+
+    function savePromptColumnFromForm() {
+      if (!stagePromptColumnFromForm()) return false;
       clearPromptColumnForm();
+      document.getElementById('promptEditor').hidden = true;
       onHarnessChanged();
-      await saveTenantHarness();
+      if (promptEditorReturnFocus?.isConnected) promptEditorReturnFocus.focus();
+      showToast('Analysis added to draft. Save changes to publish.');
+      return true;
     }
 
     async function saveTenantHarness() {
-      if (!currentTenant || harnessSaveInFlight || harnessSaveBlocked) return;
+      if (!currentTenant || harnessSaveInFlight || harnessSaveBlocked) return false;
+      if (!validateProcessingDraft()) return false;
+      if (promptEditorDirty() && !stagePromptColumnFromForm()) return false;
       const startedTenant = currentTenant;
       const updated = buildPayloadFromUi();
+      const editorAtSave = promptEditorJson();
+      const processingAtSave = processingDraftJson();
       harnessSaveInFlight = true;
       updateDirtyState();
       try {
@@ -875,18 +1172,21 @@ let tenants = [];
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(updated)
         });
-        if (currentTenant !== startedTenant) return;
+        if (currentTenant !== startedTenant) return false;
         if (!resp.ok) {
           const conflict = resp.status === 409 ? await resp.json() : null;
-          if (currentTenant !== startedTenant) return;
+          if (currentTenant !== startedTenant) return false;
           showHarnessSaveFailure(conflict?.current, resp.status === 409
-            ? 'Another administrator saved this harness. Your draft is preserved. Compare the configurations, copy any changes you need, then reload.'
+            ? 'Another administrator saved these settings. Your draft is preserved. Compare the configurations, copy any changes you need, then reload.'
             : 'The save was not confirmed. Your draft is preserved. Reload the server configuration before saving again.');
-          return;
+          return false;
         }
         const saved = await resp.json();
-        if (currentTenant !== startedTenant) return;
-        const editedDuringSave = JSON.stringify(buildPayloadFromUi()) !== JSON.stringify(updated);
+        if (currentTenant !== startedTenant) return false;
+        if (saved?.tenantId !== updated.tenantId || !Number.isInteger(saved.harnessVersion) ||
+            saved.harnessVersion <= updated.harnessVersion) throw new Error('Saved settings version was not confirmed');
+        const editedDuringSave = JSON.stringify(buildPayloadFromUi()) !== JSON.stringify(updated) ||
+          editorAtSave !== promptEditorJson() || processingAtSave !== processingDraftJson();
         currentTenant = saved;
         tenants = tenants.map(tenant => tenant.tenantId === saved.tenantId ? saved : tenant);
         renderSidebarTenants();
@@ -895,14 +1195,17 @@ let tenants = [];
             decisionModelId: updated.decisionModelId, defaultModelId: updated.defaultModelId,
             ocr: updated.ocr, reviewPolicy: updated.reviewPolicy, agent: updated.agent, capabilities: updated.capabilities
           });
-          document.getElementById('harnessVersionChip').textContent = `Harness v${saved.harnessVersion}`;
+          document.getElementById('harnessVersionChip').textContent = `Settings v${saved.harnessVersion}`;
+          processingDraftBaseline = processingAtSave;
         } else {
-          renderMainCanvas();
+          renderMainCanvas(true);
         }
         showToast(`Saved ${saved.displayName} (v${saved.harnessVersion})`);
+        return true;
       } catch {
         if (currentTenant === startedTenant) showHarnessSaveFailure(null,
           'The save outcome is unknown. Your draft is preserved. Reload the server configuration; do not repeat the save blindly.');
+        return false;
       } finally {
         harnessSaveInFlight = false;
         updateDirtyState();
@@ -918,22 +1221,53 @@ let tenants = [];
         ? JSON.stringify(server, null, 2) : 'Reload to retrieve the current server configuration.';
     }
 
-    async function reloadHarnessAfterConflict() {
-      if (!currentTenant || harnessSaveInFlight ||
-          !window.confirm('Discard the unsaved draft and load the latest server configuration? Copy any needed changes first.')) return;
-      const selected = currentTenant;
-      try {
-        const response = await fetch(`/api/harness/tenants/${encodeURIComponent(selected.tenantId)}`);
-        if (!response.ok) throw new Error('Reload failed');
-        const server = await response.json();
-        if (currentTenant !== selected) return;
-        currentTenant = server;
-        tenants = tenants.map(tenant => tenant.tenantId === server.tenantId ? server : tenant);
-        renderSidebarTenants();
-        renderMainCanvas();
-      } catch {
-        if (currentTenant === selected) showHarnessSaveFailure(null, 'Reload failed. Your draft is still preserved.');
+    function validateProcessingDraft() {
+      const required = [
+        ['#identificationRulesList .rule-item', ['docName', 'prompt'], 'identify'],
+        ['#dataExtractionFieldsList .rule-item', ['fieldName'], 'dataExtraction'],
+        ['#dataExtractionTablesList .table-schema-box', ['tableName'], 'dataExtraction'],
+        ['#dataExtractionTablesList .col-row', ['colName'], 'dataExtraction']
+      ];
+      for (const [selector, keys, drawer] of required) {
+        for (const row of document.querySelectorAll(selector)) {
+          for (const key of keys) {
+            const input = row.querySelector(`[data-field="${key}"]`);
+            if (input.value.trim()) continue;
+            expandedCards.add(drawer);
+            renderExpandedState();
+            globalThis.DocIntelAgentSettings?.section('processing');
+            input.focus();
+            showToast('Complete or remove unfinished document types, fields and tables before saving.', { kind: 'error' });
+            return false;
+          }
+        }
       }
+      return true;
+    }
+
+    async function reloadHarnessAfterConflict() {
+      if (!currentTenant || harnessSaveInFlight) return false;
+      return guardSettingsDraft(async () => {
+        const selected = currentTenant;
+        const draftAtReload = settingsJson() + promptEditorJson() + processingDraftJson();
+        try {
+          const response = await fetch(`/api/harness/tenants/${encodeURIComponent(selected.tenantId)}`);
+          if (!response.ok) throw new Error('Reload failed');
+          const server = await response.json();
+          if (currentTenant !== selected) return;
+          if (settingsJson() + promptEditorJson() + processingDraftJson() !== draftAtReload) {
+            showHarnessSaveFailure(server,
+              'New edits were made while reloading. Your draft is preserved; review before reloading again.');
+            return;
+          }
+          currentTenant = server;
+          tenants = tenants.map(tenant => tenant.tenantId === server.tenantId ? server : tenant);
+          renderSidebarTenants();
+          renderMainCanvas(true);
+        } catch {
+          if (currentTenant === selected) showHarnessSaveFailure(null, 'Reload failed. Your draft is still preserved.');
+        }
+      }, 'Reload latest settings?', { conflict: true });
     }
 
     function toggleNewTenantPopover(show) {
@@ -955,6 +1289,7 @@ let tenants = [];
     });
 
     async function createTenant() {
+      if (hasUnsavedDraft()) return guardSettingsDraft(createTenant, 'Create workspace');
       const displayName = document.getElementById('newTenantName').value.trim();
       const tenantId = document.getElementById('newTenantId').value.trim();
       if (!displayName || !tenantId) return;
@@ -1598,8 +1933,41 @@ let tenants = [];
       updateDirtyState();
     }
 
+    document.getElementById('settingsDraftDialog').addEventListener('cancel', event => {
+      event.preventDefault();
+      resolveSettingsDraft('stay');
+    });
+    document.getElementById('settingsDraftDialog').addEventListener('close', () => resolveSettingsDraft('stay'));
+    window.addEventListener?.('beforeunload', event => {
+      if (!hasUnsavedDraft()) return;
+      event.preventDefault();
+      event.returnValue = '';
+    });
+    document.getElementById('processingSettingsPanel').addEventListener('keydown', event => {
+      if (event.key !== 'Escape') return;
+      const drawer = event.target.closest('.feature-drawer');
+      if (!drawer || !drawer.classList.contains('open')) return;
+      const key = drawer.id.replace(/Drawer$/, '');
+      expandedCards.delete(key);
+      renderExpandedState();
+      document.getElementById(key + 'Chevron').focus();
+    });
+
     DocIntelActions.register({
-      setAdminSection_arg: { arity: 1, run: function(args) { DocIntelAgentSettings.section(args[0]); } },
+      setAdminSection_arg: { arity: 1, run: function(args) {
+        DocIntelAgentSettings.section(args[0]);
+        const panel = document.querySelector('[role="tabpanel"]:not([hidden])');
+        panel?.querySelector('h2')?.scrollIntoView?.({ block: 'nearest' });
+      } },
+      selectTenant_arg: { arity: 1, run: function(args) { return selectTenant(args[0]); } },
+      resolveSettingsDraft_arg: { arity: 1, run: function(args) { resolveSettingsDraft(args[0]); } },
+      refreshWorkspaceSetup: { arity: 0, run: function() {
+        return DocIntelAgentSettings.connections(currentTenant?.tenantId);
+      } },
+      openWorkspaceOnboarding: { arity: 0, run: function() { return openWorkspaceForTenant(true); } },
+      newCustomAnalysis: { arity: 0, run: function() { return newCustomAnalysis(); } },
+      closeCustomAnalysis: { arity: 0, run: function() { return closeCustomAnalysis(); } },
+      onPromptEditorChanged: { arity: 0, run: function() { updateDirtyState(); } },
       onAgentProfileChanged: { arity: 0, run: function() { onAgentProfileChanged(); } },
       addDataExtractionFieldRow: { arity: 0, run: function(args, event) { return addDataExtractionFieldRow(); } },
       addDataExtractionTableBlock: { arity: 0, run: function(args, event) { return addDataExtractionTableBlock(); } },
@@ -1620,19 +1988,19 @@ let tenants = [];
       onHarnessChanged: { arity: 0, run: function(args, event) { return onHarnessChanged(); } },
       onPromptFilterModeChanged: { arity: 0, run: function(args, event) { return onPromptFilterModeChanged(); } },
       onSelectedExtractionDocChanged: { arity: 0, run: function(args, event) { return onSelectedExtractionDocChanged(); } },
-      openWorkspaceForTenant: { arity: 0, run: function(args, event) { window.location.href='/?tenant=' + encodeURIComponent(currentTenant ? currentTenant.tenantId : ''); } },
+      openWorkspaceForTenant: { arity: 0, run: function() { return openWorkspaceForTenant(); } },
       reloadHarnessAfterConflict: { arity: 0, run: function(args, event) { return reloadHarnessAfterConflict(); } },
       removeExtractionColumn: { arity: 0, run: function(args, event) { this.closest('.col-row').remove(); onDataExtractionSchemaEdited(); } },
       removeExtractionField: { arity: 0, run: function(args, event) { this.closest('.rule-item').remove(); onDataExtractionSchemaEdited(); } },
       removeExtractionTable: { arity: 0, run: function(args, event) { this.closest('.table-schema-box').remove(); onDataExtractionSchemaEdited(); } },
       removeIdentificationRule: { arity: 0, run: function(args, event) { this.closest('.rule-item').remove(); onHarnessChanged(); } },
-      removePromptFilter: { arity: 0, run: function(args, event) { this.closest('.entity-filter-rule-row').remove(); } },
+      removePromptFilter: { arity: 0, run: function(args, event) { this.closest('.entity-filter-rule-row').remove(); updateDirtyState(); } },
       saveOcrBudget: { arity: 0, run: function(args, event) { return saveOcrBudget(); } },
       savePromptColumnFromForm: { arity: 0, run: function(args, event) { return savePromptColumnFromForm(); } },
       saveTenantHarness: { arity: 0, run: function(args, event) { return saveTenantHarness(); } },
       setEntityCategoryFilter_arg: { arity: 1, run: function(args, event) { return setEntityCategoryFilter(args[0]); } },
-      setFilterVisibility: { arity: 0, run: function(args, event) { this.nextElementSibling.style.visibility = this.value === 'Exists' ? 'hidden' : 'visible'; } },
-      signOut: { arity: 0, run: function(args, event) { return DocIntelIdentity.signOut(); } },
+      setFilterVisibility: { arity: 0, run: function(args, event) { this.nextElementSibling.style.visibility = this.value === 'Exists' ? 'hidden' : 'visible'; updateDirtyState(); } },
+      signOut: { arity: 0, run: function() { return guardSettingsDraft(() => DocIntelIdentity.signOut(), 'Sign out'); } },
       toggleFeatureDrawer_arg: { arity: 1, run: function(args, event) { return toggleFeatureDrawer(args[0]); } },
       toggleNewTenantPopover_arg: { arity: 1, run: function(args, event) { return toggleNewTenantPopover(args[0]); } },
       toggleSidebar: { arity: 0, run: function(args, event) { return toggleSidebar(); } }
