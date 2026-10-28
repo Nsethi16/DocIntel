@@ -191,7 +191,8 @@ let tenants = [];
           chevron.classList.toggle('expanded', isOpen);
           chevron.setAttribute('aria-expanded', String(isOpen));
           chevron.setAttribute('aria-controls', key + 'Drawer');
-          chevron.setAttribute('aria-label', `${isOpen ? 'Hide' : 'Edit'} ${labels[key]} settings`);
+          chevron.setAttribute('aria-label', `Manage ${labels[key]} settings`);
+          chevron.title = `Manage ${labels[key]} settings`;
         }
       });
     }

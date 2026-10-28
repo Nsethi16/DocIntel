@@ -62,10 +62,15 @@ test('the familiar three Admin sections and document result views are retained w
 test('models and features use quiet rows while configuration remains in existing drawers', () => {
   const css = read('admin.css');
   assert.match(css, /\.features-grid\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
-  assert.match(css, /\.feature-tile\s*\{[^}]*border:\s*0;[^}]*border-bottom:\s*1px/);
+  assert.match(css, /\.feature-tile\s*\{[^}]*border:\s*0;/);
+  assert.doesNotMatch(css.match(/\.feature-tile\s*\{([^}]+)\}/)[1], /border-bottom/);
   assert.match(css, /\.model-harness-card\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
   assert.match(css, /\.feature-illustration\s*\{\s*display:\s*none/);
-  assert.equal([...read('admin.html').matchAll(/<span>Edit<\/span>/g)].length, 6);
+  assert.equal([...read('admin.html').matchAll(/<span>Manage<\/span>/g)].length, 6);
+  assert.match(css, /\.chevron-btn\s*\{[^}]*background:\s*#ededed;[^}]*border:\s*0/);
+  assert.match(css, /#processingSettingsPanel\s*\{\s*--switch-on:\s*#252525/);
+  assert.match(css, /#processingSettingsPanel\s*\{[^}]*max-width:\s*800px/);
+  assert.match(css, /\.feature-title\s*\{[^}]*font-weight:\s*400/);
 });
 
 test('opening another feature hides only the previous drawer and preserves its entered values', () => {
@@ -74,10 +79,13 @@ test('opening another feature hides only the previous drawer and preserves its e
   app.context.toggleFeatureDrawer('split');
   assert.equal(app.element('splitDrawer').classList.contains('open'), true);
   assert.equal(app.element('splitChevron')['aria-expanded'], 'true');
+  assert.equal(app.element('splitChevron')['aria-label'], 'Manage file splitting and grouping settings');
+  assert.equal(app.element('splitChevron').title, 'Manage file splitting and grouping settings');
   app.context.toggleFeatureDrawer('entity');
   assert.equal(app.element('splitDrawer').classList.contains('open'), false);
   assert.equal(app.element('entityDrawer').classList.contains('open'), true);
   assert.equal(app.element('splitChevron')['aria-expanded'], 'false');
+  assert.equal(app.element('entityChevron')['aria-label'], 'Manage entity extraction settings');
   assert.equal(app.element('entityChevron')['aria-controls'], 'entityDrawer');
   assert.equal(app.element('footersToIgnoreInput').value, 'My unsaved rule');
   app.context.toggleFeatureDrawer('entity');
