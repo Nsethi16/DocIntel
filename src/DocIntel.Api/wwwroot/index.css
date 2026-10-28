@@ -557,6 +557,35 @@
       flex-direction: column;
     }
 
+    .pdf-preview {
+      flex: 1;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+      overflow: auto;
+    }
+
+    .pdf-preview > [hidden] {
+      display: none !important;
+    }
+
+    .pdf-preview-status {
+      margin: 28px 36px 16px;
+      color: var(--text-secondary);
+      font-size: 14px;
+      overflow-wrap: anywhere;
+    }
+
+    .pdf-preview-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 20px;
+      margin: 0 36px 28px;
+    }
+
     .pdf-full-frame {
       flex: 1;
       width: 100%;

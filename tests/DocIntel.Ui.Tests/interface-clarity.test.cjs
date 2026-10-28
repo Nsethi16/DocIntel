@@ -35,7 +35,8 @@ function runtime(page) {
       setAttribute(name, value) { this[name] = value; },
       addEventListener() {},
       focus() { focused = id; },
-      querySelector() { return null; }
+      querySelector() { return null; },
+      querySelectorAll() { return []; }
     };
     nodes.set(id, node);
     return node;

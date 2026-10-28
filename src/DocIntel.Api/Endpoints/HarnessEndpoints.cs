@@ -308,7 +308,8 @@ public static class HarnessEndpoints
             int sliceIndex,
             bool? translated,
             IJobStore jobStore,
-            IArtifactStore? artifactStore,
+            IArtifactStore artifactStore,
+            IPdfSlicer pdfSlicer,
             CancellationToken ct) =>
         {
             var wantTranslated = translated == true;
@@ -321,32 +322,13 @@ public static class HarnessEndpoints
             {
                 return Results.NotFound();
             }
-            byte[]? pdfBytes = null;
-            if (artifactStore is not null)
-            {
-                pdfBytes = await artifactStore.GetSlicePdfAsync(
-                    tenantId, authorizedJob.ArtifactDocumentId ?? jobId, sliceIndex, ct, isTranslated: wantTranslated);
-            }
-
-            if (pdfBytes is null)
-            {
-                var seg = authorizedJob.Segments.FirstOrDefault(s => s.SegmentIndex == sliceIndex);
-                if (wantTranslated)
-                {
-                    if (seg?.TranslatedPdfBytes is { Length: > 0 })
-                    {
-                        pdfBytes = seg.TranslatedPdfBytes;
-                    }
-                }
-                else
-                {
-                    pdfBytes = seg?.SplitPdfBytes;
-                }
-            }
-
+            var pdfBytes = await DocumentPdfReader.ReadSliceAsync(
+                authorizedJob, sliceIndex, wantTranslated, artifactStore, pdfSlicer, ct);
             if (pdfBytes is null || pdfBytes.Length == 0)
             {
-                return Results.NotFound(new { error = $"PDF slice {sliceIndex} for job '{jobId}' was not found." });
+                return Results.Problem(statusCode: 404, title: "PDF unavailable",
+                    detail: wantTranslated ? "The translated PDF artifact is unavailable."
+                        : "The stored PDF is unavailable. Restore the source artifact or upload the original PDF again.");
             }
 
             return Results.File(pdfBytes, "application/pdf", enableRangeProcessing: true);
@@ -693,10 +675,7 @@ public static class HarnessEndpoints
         {
             var job = await store.GetJobAsync(jobId, ct, tenantId);
             if (job is null) return Results.NotFound();
-            var bytes = await artifacts.GetOriginalPdfAsync(tenantId, jobId, ct);
-            if (bytes is not null && job.OriginalSha256 is not null &&
-                !String.Equals(job.OriginalSha256, Convert.ToHexString(SHA256.HashData(bytes)), StringComparison.Ordinal))
-                throw new InvalidDataException("The persisted source PDF does not match its accepted hash.");
+            var bytes = await DocumentPdfReader.ReadOriginalAsync(job, artifacts, ct);
             return bytes is null ? Results.NotFound() : Results.File(bytes, "application/pdf", enableRangeProcessing: true);
         });
 

@@ -766,6 +766,73 @@ let tenants = [];
       showToast('Exported JSON');
     }
 
+    function pdfPreviewMarkup(url, title) {
+      return `<div class="pdf-preview" data-pdf-url="${escapeHtml(url)}">
+        <p class="pdf-preview-status" role="status">Loading PDF...</p>
+        <div class="pdf-preview-actions" hidden>
+          <button type="button" class="text-link-btn">Try Again</button>
+          <a class="text-link-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open PDF in New Tab ↗</a>
+        </div>
+        <iframe class="pdf-full-frame" title="${escapeHtml(title)}" hidden></iframe>
+      </div>`;
+    }
+
+    async function loadPdfPreview(preview) {
+      const frame = preview.querySelector('iframe');
+      const status = preview.querySelector('.pdf-preview-status');
+      const actions = preview.querySelector('.pdf-preview-actions');
+      const retry = actions.querySelector('button');
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 15000);
+      retry.onclick = () => loadPdfPreview(preview);
+      actions.hidden = true;
+      frame.hidden = true;
+      status.hidden = false;
+      status.setAttribute('role', 'status');
+      status.textContent = 'Loading PDF...';
+      try {
+        const response = await fetch(preview.dataset.pdfUrl, {
+          headers: { Range: 'bytes=0-4' }, signal: controller.signal
+        });
+        await response.body?.cancel();
+        if (!preview.isConnected) return;
+        if (!response.ok) {
+          status.textContent = response.status === 404
+            ? preview.dataset.pdfUrl.endsWith('?translated=true')
+              ? 'The translated PDF is not available in storage. The original is shown separately if available. ' +
+                'Ask a workspace administrator to restore the translated PDF or process the original file again.'
+              : 'This PDF is not available in storage. Extracted results can remain available without the PDF. ' +
+                'Ask a workspace administrator to restore it or upload the original file again.'
+            : response.status === 401 || response.status === 403
+              ? 'Sign in again or request access to this document to view its PDF.'
+              : `The PDF could not be loaded (HTTP ${response.status}). Try again or open it in a new tab.`;
+          const correlation = response.headers.get('X-DocIntel-Correlation-Id');
+          if (correlation && /^[A-Za-z0-9:._-]{1,160}$/.test(correlation))
+            status.textContent += ` Reference: ${correlation}.`;
+        } else if (!/^application\/pdf(?:;|$)/i.test(response.headers.get('Content-Type') || '')) {
+          status.textContent = 'The server did not return a PDF. Try signing in again or open it in a new tab.';
+        } else {
+          frame.src = preview.dataset.pdfUrl;
+          frame.hidden = false;
+          status.hidden = true;
+          return;
+        }
+      } catch {
+        if (!preview.isConnected) return;
+        status.textContent = controller.signal.aborted
+          ? 'The PDF request timed out. Try again or open it in a new tab.'
+          : 'The PDF request could not be completed. Check your connection and try again.';
+      } finally {
+        clearTimeout(timeout);
+      }
+      status.setAttribute('role', 'alert');
+      actions.hidden = false;
+    }
+
+    function startPdfPreviews(body) {
+      body.querySelectorAll('.pdf-preview').forEach(preview => { void loadPdfPreview(preview); });
+    }
+
     function renderSelectedDocument() {
       stopGraphCanvas();
       const body = document.getElementById('docCenterBody');
@@ -995,25 +1062,27 @@ let tenants = [];
                   <span><strong>Original Document (${escapeHtml(srcLang)})</strong> · Pages ${focusedSeg.startPage}–${focusedSeg.endPage}</span>
                   <a href="${origPdfUrl}" target="_blank" class="text-link-btn">Open ↗</a>
                 </div>
-                <iframe class="pdf-full-frame" src="${origPdfUrl}" title="Original PDF Preview"></iframe>
+                ${pdfPreviewMarkup(origPdfUrl, 'Original PDF Preview')}
               </div>
               <div class="pdf-pane">
                 <div class="pdf-pane-bar">
                   <span><strong>Translated Document (${escapeHtml(tgtLang)})</strong> · Azure Document Translation</span>
                   <a href="${transPdfUrl}" target="_blank" class="text-link-btn">Open ↗</a>
                 </div>
-                <iframe class="pdf-full-frame" src="${transPdfUrl}" title="Translated PDF Preview"></iframe>
+                ${pdfPreviewMarkup(transPdfUrl, 'Translated PDF Preview')}
               </div>
             </div>
           `;
+          startPdfPreviews(body);
           return;
         }
 
-        const existingIframe = body.querySelector('iframe.pdf-full-frame:not(.pdf-side-by-side iframe)');
-        if (existingIframe && existingIframe.getAttribute('src') === origPdfUrl && !body.querySelector('.pdf-side-by-side')) {
+        const existingPreview = body.querySelector('.pdf-preview');
+        if (existingPreview?.dataset.pdfUrl === origPdfUrl && !body.querySelector('.pdf-side-by-side')) {
           return;
         }
-        body.innerHTML = `<iframe class="pdf-full-frame" src="${origPdfUrl}" title="PDF Preview"></iframe>`;
+        body.innerHTML = pdfPreviewMarkup(origPdfUrl, 'PDF Preview');
+        startPdfPreviews(body);
         return;
       }
 

@@ -156,13 +156,27 @@ test('an uploaded document survives an API crash and resumes under a new fenced 
       const original = await fetch(api.url + tenantPath + `/jobs/${accepted.jobId}/original`);
       assert.equal(original.status, 200);
       assert.deepEqual(Buffer.from(await original.arrayBuffer()), pdf);
-      const currentSlice = await fs.readFile(path.join(artifactDirectory, `${accepted.jobId}-a2`, 'slice-1.pdf'));
+      const currentSlicePath = path.join(artifactDirectory, `${accepted.jobId}-a2`, 'slice-1.pdf');
+      const currentSlice = await fs.readFile(currentSlicePath);
       await fs.writeFile(oldSlice, '%PDF-stale-owner');
       await fs.writeFile(path.join(artifactDirectory, `${accepted.jobId}-a1`, 'layout.json'), '{"stale":true}');
       await fs.writeFile(path.join(artifactDirectory, `${accepted.jobId}-a1`, 'result.json'), '{"stale":true}');
       const slice = await fetch(api.url + tenantPath + `/jobs/${accepted.jobId}/slices/0/pdf`);
       assert.equal(slice.status, 200);
       assert.deepEqual(Buffer.from(await slice.arrayBuffer()), currentSlice);
+      await fs.rm(currentSlicePath);
+      const recoveredPdfUrl = api.url + tenantPath + `/jobs/${accepted.jobId}/slices/0/pdf`;
+      const recoveredRange = await fetch(recoveredPdfUrl, { headers: { Range: 'bytes=0-4' } });
+      assert.equal(recoveredRange.status, 206);
+      assert.match(recoveredRange.headers.get('content-range'), /^bytes 0-4\/\d+$/);
+      assert.equal(Buffer.from(await recoveredRange.arrayBuffer()).toString('ascii'), '%PDF-');
+      const recoveredPdf = await fetch(recoveredPdfUrl);
+      assert.equal(recoveredPdf.status, 200);
+      assert.equal(recoveredPdf.headers.get('x-frame-options'), 'SAMEORIGIN');
+      assert.match(recoveredPdf.headers.get('content-type'), /application\/pdf/);
+      assert.ok((await recoveredPdf.arrayBuffer()).byteLength > 5);
+      await assert.rejects(fs.stat(currentSlicePath), { code: 'ENOENT' });
+      assert.equal(calls, recovered.segments.length + 1, 'PDF recovery must not call a model');
       assert.deepEqual(await (await fetch(api.url + recovered.layoutUrl)).json(), layout);
       assert.deepEqual(Buffer.from(await (await fetch(api.url + recovered.processingResultUrl)).arrayBuffer()),
         archivedBytes);

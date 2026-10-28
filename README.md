@@ -487,6 +487,14 @@ job is recorded/enqueued. The accepted SHA-256 is stored with the job; processin
 that persisted source, not PDF bytes in a queue ticket. Authorized clients can retrieve it at
 `/api/harness/tenants/{tenantId}/jobs/{jobId}/original`.
 
+View Document checks the PDF response before opening its native browser preview, with explicit
+missing-file, access, timeout and server-error notices, a retry, and an open-in-new-tab link.
+If an original slice artifact is missing, its exact page range can be copied in memory from the
+accepted, SHA-256-verified original; this does not rerun AI, change results or write artifacts.
+Missing translations are never replaced with the original. Legacy results without recoverable
+source PDFs require restoration from backup or uploading the actual original again; extracted text
+is never rendered into a replacement and presented as source evidence.
+
 Before a durable document worker publishes `Completed`, it writes an immutable `result.json`
 under the active attempt's artifact ID and stores its SHA-256 in the fenced job record. The
 snapshot includes the accepted harness, source/layout identities and processing results, without
