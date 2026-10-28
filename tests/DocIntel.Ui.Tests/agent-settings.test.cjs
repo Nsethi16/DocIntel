@@ -159,7 +159,7 @@ test('profile Manage disclosures remain native, exclusive and closed initially',
     assert.match(row, /<summary>[\s\S]*?class="agent-manage-action">Manage<\/span><\/summary>/);
     assert.match(row, /class="agent-profile-field"/);
   }
-  assert.match(html, /<details class="agent-style-disclosure">\s*<summary>Preview assistant style/);
+  assert.match(html, /<details class="agent-style-disclosure">\s*<summary>Preview Assistant Style/);
   for (const channel of ['Email', 'Teams']) {
     assert.match(html, new RegExp(`id="agent${channel}Manage"[\\s\\S]*?aria-controls="agent${channel}Details"`));
     assert.match(html, new RegExp(`id="agent${channel}Details" class="agent-channel-details" hidden`));

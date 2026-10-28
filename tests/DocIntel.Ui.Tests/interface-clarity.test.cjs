@@ -13,9 +13,13 @@ function runtime(page) {
   const element = id => {
     if (nodes.has(id)) return nodes.get(id);
     const classes = new Set();
+    let html = '';
     const node = {
-      id, value: '', style: {}, dataset: {}, hidden: false, textContent: '', innerHTML: '',
+      id, value: '', style: {}, dataset: {}, hidden: false, textContent: '',
+      get innerHTML() { return html; },
+      set innerHTML(value) { html = value; this.children = []; },
       children: [], open: false, inert: false,
+      appendChild(child) { this.children.push(child); },
       classList: {
         add(name) { classes.add(name); }, remove(name) { classes.delete(name); },
         contains(name) { return classes.has(name); },
@@ -36,7 +40,12 @@ function runtime(page) {
   const app = {
     element,
     document: {
-      getElementById: element, querySelector: () => null, querySelectorAll: () => []
+      getElementById: element, querySelector: () => null, querySelectorAll: () => [],
+      createElement(tag) {
+        const node = element(`created-${nodes.size}`);
+        node.tagName = tag;
+        return node;
+      }
     },
     fetch() { throw new Error('Presentation changes must not call a provider or save configuration.'); },
     console
@@ -57,6 +66,88 @@ test('the familiar three Admin sections and document result views are retained w
   for (const id of ['btnModeDocuments', 'btnModeGraph', 'btnModeAsk'])
     assert.match(workspace, new RegExp(`id="${id}"`));
   assert.match(read('workspace.js'), /docResultTab\.startsWith\('prompt:'\)/);
+  assert.match(read('index.css'), /\.meridian-tabs\s*\{[^}]*max-width:\s*100%;[^}]*overflow-x:\s*auto/);
+});
+
+test('all entry pages use one local font and neutral theme without external font downloads', () => {
+  const shell = read(path.join('shared', 'shell.css'));
+  assert.match(shell, /--font-sans:\s*"Segoe UI Variable Text",\s*"Segoe UI"/);
+  assert.match(shell, /--text-primary:\s*#3b3b3b/);
+  assert.match(shell, /--text-secondary:\s*#6c6c6c/);
+  assert.match(shell, /button, input, select, textarea\s*\{\s*font:\s*inherit/);
+  assert.match(shell, /prefers-reduced-motion:\s*reduce/);
+  for (const page of ['index.html', 'admin.html', 'ask-run.html', 'email-question.html', 'review.html']) {
+    const html = read(page);
+    assert.equal([...html.matchAll(/href="\/shared\/shell\.css"/g)].length, 1, page);
+    assert.doesNotMatch(html, /fonts\.cdnfonts\.com|fonts\.googleapis\.com|fonts\.gstatic\.com/);
+  }
+  assert.doesNotMatch(read('index.css'), /font-family:\s*Georgia|Overused Grotesk/);
+  assert.doesNotMatch(read('admin.css'), /--text-primary:|--font-sans:/);
+});
+
+test('navigation and settings labels use Title Case without transforming document content', () => {
+  const html = read('admin.html');
+  for (const label of ['Document Processing', 'Agent &amp; Channels', 'Users &amp; Access',
+    'Add People', 'Assigned People', 'Manage Access', 'Agent Name', 'Conversation Style', 'Response Guidance'])
+    assert.match(html, new RegExp(`>${label}(?:\\s|<)`), label);
+  assert.doesNotMatch(html, />Document processing<|>Agent &amp; channels<|>Users &amp; access</);
+  assert.doesNotMatch(read(path.join('shared', 'shell.css')), /text-transform:\s*capitalize/);
+  assert.match(read('workspace.js'), /escapeHtml\(col\.columnName\)/);
+  const index = read('index.html');
+  assert.ok(index.indexOf('id="drawerUploadLabel"') < index.indexOf('id="docItemsList"'));
+  assert.match(index, /<button[^>]+id="drawerUploadLabel"[^>]+data-click="chooseWorkspaceUpload"/);
+});
+
+test('people settings use the same unboxed rows, neutral avatars and readable content width', () => {
+  const css = read('tenant-users.css');
+  assert.match(css, /\.tenant-users\s*\{[^}]*max-width:800px/);
+  assert.match(css, /\.tenant-users-access-note\s*\{[^}]*background:transparent;[^}]*border:0/);
+  assert.match(css, /\.tenant-users-list\s*\{[^}]*border:0/);
+  assert.match(css, /\.tenant-users-person strong\s*\{[^}]*font-size:14px;[^}]*font-weight:400/);
+  assert.match(css, /\.tenant-users-avatar\s*\{[^}]*background:var\(--pill-hover\)/);
+  assert.doesNotMatch(css, /#fcf6f2|#f9e8e1|#a54431/);
+});
+
+test('vertical workspace navigation preserves capability gates and exposes the selected mode', () => {
+  const app = runtime('index');
+  const nav = app.element('workspaceModes');
+  app.document.querySelector = selector => selector === '#docListPane .workspace-mode-switcher' ? nav : null;
+  vm.runInContext(`currentTenant={capabilities:{DocumentGraph:{enabled:false},AskAi:{enabled:false}}};
+    workspaceMode='graph';`, app.context);
+  app.context.syncTenantWorkspaceCapabilities();
+  assert.equal(app.element('btnModeGraph').style.display, 'none');
+  assert.equal(app.element('btnModeAsk').style.display, 'none');
+  assert.equal(app.element('btnModeDocuments')['aria-pressed'], 'true');
+  assert.equal(nav.style.display, 'grid');
+  assert.equal(nav.style.gridTemplateColumns, undefined);
+  vm.runInContext("currentTenant.capabilities.DocumentGraph.enabled=true;workspaceMode='graph';", app.context);
+  app.context.syncTenantWorkspaceCapabilities();
+  assert.equal(app.element('btnModeGraph')['aria-pressed'], 'true');
+  assert.equal(app.element('btnModeDocuments')['aria-pressed'], 'false');
+  assert.match(read('index.css'), /\.workspace-mode-switcher\s*\{[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\)/);
+});
+
+test('document rows are keyboard-native buttons and preserve filenames, search and selection', () => {
+  const app = runtime('index');
+  vm.runInContext(`tenantJobs=[
+    {jobId:'one',fileName:'a mixed CASE.pdf',status:'Completed',totalPages:2},
+    {jobId:'two',fileName:'<report>.pdf',status:'Completed',totalPages:3}
+  ];selectedJobId='one';renderSelectedDocument=()=>{};`, app.context);
+  app.context.renderDocumentList();
+  const list = app.element('docItemsList');
+  assert.equal(list.children.length, 2);
+  assert.equal(list.children[0].tagName, 'button');
+  assert.equal(list.children[0].type, 'button');
+  assert.equal(list.children[0]['aria-pressed'], 'true');
+  assert.match(list.children[0].innerHTML, /a mixed CASE\.pdf/);
+  assert.match(list.children[1].innerHTML, /&lt;report&gt;\.pdf/);
+  list.children[1].onclick();
+  assert.equal(list.children[1]['aria-pressed'], 'true');
+  assert.equal(list.children[0]['aria-pressed'], 'false');
+  app.element('docSearchInput').value = 'mixed';
+  app.context.renderDocumentList();
+  assert.equal(list.children.length, 1);
+  assert.match(list.children[0].innerHTML, /a mixed CASE\.pdf/);
 });
 
 test('models and features use quiet rows while configuration remains in existing drawers', () => {
@@ -103,7 +194,7 @@ test('workspace labels preserve technical tenant identifiers and source-document
   assert.match(read('admin.js'), /`Workspace ID: \$\{currentTenant\.tenantId\}`/);
   assert.match(read('admin.js'), /'Tenant ID'/);
   assert.match(read('admin.js'), /\/api\/harness\/tenants/);
-  assert.match(read('tenant-users.js'), /\['TenantAdmin', 'Workspace admin'\]/);
+  assert.match(read('tenant-users.js'), /\['TenantAdmin', 'Workspace Admin'\]/);
   assert.match(read('workspace.js'), /<dt>Workspace<\/dt><dd>\$\{escapeHtml\(job\.tenantId\)\}/);
   assert.match(read('identity.js'), /not assigned to a DocIntel workspace/);
 });
@@ -153,14 +244,15 @@ test('editing a saved prompt reveals its editor and focuses the existing name fi
   assert.equal(app.focused(), 'promptColumnNameInput');
 });
 
-test('Ask AI temporarily hides the redundant document rail and restores the original Documents layout', () => {
+test('Ask AI leaves the shared document rail and its toggle unchanged when switching modes', () => {
   const app = runtime('index');
+  app.element('btnHeaderExpandDocList').style.display = 'none';
   vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};
     syncTenantWorkspaceCapabilities=()=>{};loadTenantChats=()=>{};
     getActiveChat=()=>({messages:[]});renderDocumentList=()=>{};renderSelectedDocument=()=>{};`, app.context);
   app.context.setWorkspaceMode('ask');
-  assert.equal(app.element('docListPane').classList.contains('collapsed'), true);
-  assert.equal(app.element('docListPane').inert, true);
+  assert.equal(app.element('docListPane').classList.contains('collapsed'), false);
+  assert.equal(app.element('docListPane').inert, false);
   app.context.setWorkspaceMode('documents');
   assert.equal(app.element('docListPane').classList.contains('collapsed'), false);
   assert.equal(app.element('docListPane').inert, false);
@@ -170,12 +262,68 @@ test('Ask AI temporarily hides the redundant document rail and restores the orig
 test('Ask AI preserves a document rail the user had already collapsed', () => {
   const app = runtime('index');
   app.element('docListPane').classList.add('collapsed');
+  app.element('docListPane').inert = true;
+  app.element('btnHeaderExpandDocList').style.display = 'inline-flex';
   vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};
     syncTenantWorkspaceCapabilities=()=>{};loadTenantChats=()=>{};
     getActiveChat=()=>({messages:[]});renderDocumentList=()=>{};renderSelectedDocument=()=>{};`, app.context);
   app.context.setWorkspaceMode('ask');
+  assert.equal(app.element('docListPane').classList.contains('collapsed'), true);
+  assert.equal(app.element('docListPane').inert, true);
+  assert.equal(app.element('btnHeaderExpandDocList').style.display, 'inline-flex');
   app.context.setWorkspaceMode('documents');
   assert.equal(app.element('docListPane').classList.contains('collapsed'), true);
+});
+
+test('Ask AI renders only in the right pane with the shared header and existing conversation controls', () => {
+  const app = runtime('index');
+  const header = app.element('workspaceHeader');
+  header.style.display = 'none';
+  app.document.querySelector = selector => selector === '.meridian-header' ? header : null;
+  vm.runInContext(`currentTenant={tenantId:'one',displayName:'Workspace',capabilities:{}};
+    workspaceMode='ask';loadTenantChats=()=>{};
+    tenantChats=[
+      {id:'chat-one',title:'<untrusted title>',messages:[{role:'assistant',text:'First answer'}]},
+      {id:'chat-two',title:'Second conversation',messages:[{role:'assistant',text:'Second answer'}]}
+    ];activeChatId='chat-one';`, app.context);
+  app.context.renderSelectedDocument();
+  const body = app.element('docCenterBody');
+  assert.equal(header.style.display, '');
+  assert.equal(body.dataset.tab, 'ask');
+  assert.equal(app.element('selectedDocTitle').textContent, 'Ask AI');
+  assert.equal(app.element('meridianNavRow').style.display, 'none');
+  assert.match(body.innerHTML, /ask-conversation-toolbar/);
+  assert.match(body.innerHTML, /data-change="selectAskAiChat_value"/);
+  assert.match(body.innerHTML, /&lt;untrusted title&gt;/);
+  assert.match(body.innerHTML, /New Chat/);
+  assert.match(body.innerHTML, /Delete Chat/);
+  assert.match(body.innerHTML, /First answer/);
+  assert.doesNotMatch(body.innerHTML, /<aside|ask-inner-sidebar|toggleDocListPane|toggleAskInnerSidebar|workspace-mode-switcher/);
+  app.context.registeredActions.selectAskAiChat_value.run.call({ value: 'chat-two' });
+  assert.match(body.innerHTML, /Second answer/);
+});
+
+test('the existing sidebar toggle does not rebuild Ask AI or discard its unsent question', () => {
+  const app = runtime('index');
+  vm.runInContext("workspaceMode='ask';renderSelectedDocument=()=>{throw new Error('Sidebar toggle rebuilt the right pane');};", app.context);
+  app.context.registeredActions.updateAskDraft_value.run.call({ value: 'My unsent question' });
+  app.context.toggleDocListPane();
+  assert.equal(app.element('docListPane').classList.contains('collapsed'), true);
+  assert.equal(app.element('docListPane').inert, true);
+  assert.equal(app.element('btnHeaderExpandDocList').style.display, 'inline-flex');
+  app.context.toggleDocListPane();
+  assert.equal(app.element('docListPane').classList.contains('collapsed'), false);
+  assert.equal(app.element('docListPane').inert, false);
+  assert.equal(vm.runInContext('askAiQuestionInput', app.context), 'My unsent question');
+});
+
+test('an unsent Ask AI question is cleared when switching workspaces', async () => {
+  const app = runtime('index');
+  vm.runInContext(`tenants=[{tenantId:'one'},{tenantId:'two'}];currentTenant=tenants[0];
+    askAiQuestionInput='Question for the first workspace';loadTenantChats=()=>{};
+    renderTenantSelect=()=>{};loadTenantJobs=async()=>{};`, app.context);
+  await app.context.onTenantSwitched('two');
+  assert.equal(vm.runInContext('askAiQuestionInput', app.context), '');
 });
 
 test('the document-first empty state hides irrelevant result tabs and checks existing upload permission', () => {

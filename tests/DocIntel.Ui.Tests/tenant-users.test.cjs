@@ -41,6 +41,7 @@ function runtime() {
       this.text = '';
       this.classList = { toggle() {} };
     }
+
     set id(value) { this.elementId = value; nodes.set(value, this); }
     get id() { return this.elementId; }
     set innerHTML(value) { throw new Error(`Untrusted content became HTML: ${value}`); }
@@ -109,6 +110,21 @@ function runtime() {
   return app;
 }
 
+test('the neutral Manage control opens existing access details without saving or changing permissions', async () => {
+  const app = runtime();
+  await app.init(snapshot([user(1)]));
+  const [manage] = app.find('tenantUsersList', 'tenantUsersDetails_arg');
+  assert.equal(manage.textContent, 'Manage');
+  assert.equal(manage.className, 'chevron-btn');
+  assert.equal(manage.getAttribute('aria-label'), 'Manage access for Employee 1');
+  const before = app.requests.length;
+  await app.invoke('tenantUsersDetails_arg', [id(1)]);
+  assert.equal(app.node('tenantUsersDetailsDialog').open, true);
+  assert.equal(app.node('tenantUsersDetailRole').value, 'User');
+  assert.equal(app.requests.length, before);
+  assert.equal(app.requests.filter(request => request.options.method === 'PUT').length, 0);
+});
+
 test('real markup integrates a third tab, same-origin scripts and separately saved access', () => {
   const html = fs.readFileSync(path.join(webroot, 'admin.html'), 'utf8');
   const admin = fs.readFileSync(path.join(webroot, 'admin.js'), 'utf8');
@@ -173,7 +189,7 @@ test('directory search is bounded, excludes ineligible people and never accepts 
   await app.invoke('tenantUsersSelect_arg', [id(5)]);
   const select = app.node(`tenant-user-role-${id(5)}`);
   assert.deepEqual(select.children.map(option => option.value), ['User', 'TenantAdmin']);
-  assert.deepEqual(select.children.map(option => option.textContent), ['User', 'Workspace admin']);
+  assert.deepEqual(select.children.map(option => option.textContent), ['User', 'Workspace Admin']);
   assert.equal(select.value, 'User');
   assert.equal(app.node('tenantUsersReviewAdd').disabled, false);
 });
@@ -231,7 +247,7 @@ test('roles and removals require confirmation; cancelled changes never mutate me
   app.node('tenantUsersDetailRole').value = 'TenantAdmin';
   await app.invoke('tenantUsersReviewRole');
   assert.equal(app.node('tenantUsersConfirmDialog').open, true);
-  assert.match(app.node('tenantUsersConfirmText').textContent, /from User to Workspace admin/);
+  assert.match(app.node('tenantUsersConfirmText').textContent, /from User to Workspace Admin/);
   await app.invoke('tenantUsersClose_arg', ['confirm']);
   await app.invoke('tenantUsersConfirm');
   assert.equal(app.requests.length, 1);

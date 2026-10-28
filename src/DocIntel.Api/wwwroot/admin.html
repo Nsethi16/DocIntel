@@ -3,12 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>DocIntel — Workspace settings</title>
-  <link rel="preconnect" href="https://fonts.cdnfonts.com" />
-  <link href="https://fonts.cdnfonts.com/css/overused-grotesk" rel="stylesheet" />
-  <link rel="preconnect" href="https://fonts.googleapis.com" />
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <title>DocIntel — Workspace Settings</title>
   <link rel="stylesheet" href="/shared/shell.css" />
   <link rel="stylesheet" href="/admin.css" />
   <link rel="stylesheet" href="/agent-settings.css" />
@@ -27,18 +22,18 @@
       </button>
     </div>
 
-    <div class="nav-item primary-pill" id="platformNewTenant" title="New workspace" data-click="expandAndOpenNewTenant">
+    <div class="nav-item primary-pill" id="platformNewTenant" title="New Workspace" data-click="expandAndOpenNewTenant">
       <svg viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
       </svg>
-      <span class="nav-label">New workspace</span>
+      <span class="nav-label">New Workspace</span>
     </div>
 
-    <div class="nav-item active-nav" id="navAgentHarness" title="Agent harness">
+    <div class="nav-item active-nav" id="navAgentHarness" title="Workspace Settings">
       <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9.5 3.5a2 2 0 013 0l4 6.5a2 2 0 01-1.5 3H7a2 2 0 01-1.5-3l4-6.5z" />
       </svg>
-      <span class="nav-label">Workspace settings</span>
+      <span class="nav-label">Workspace Settings</span>
     </div>
 
     <div class="nav-item" id="navDocumentIntel" title="Open Document Intelligence App" data-click="openWorkspaceForTenant">
@@ -53,7 +48,7 @@
 
     <div class="sidebar-section-header">
       <span>Workspaces</span>
-      <button class="icon-btn" id="platformCreateTenant" title="Create workspace" aria-label="Create workspace" data-click="expandAndOpenNewTenant">+</button>
+      <button class="icon-btn" id="platformCreateTenant" title="Create Workspace" aria-label="Create Workspace" data-click="expandAndOpenNewTenant">+</button>
     </div>
 
     <!-- Inline New Tenant Popover -->
@@ -68,7 +63,7 @@
 
     <div class="tenant-list" id="tenantList"></div>
     <button type="button" id="identitySignOut" class="nav-item" data-click="signOut" hidden>
-      Sign out
+      Sign Out
     </button>
   </aside>
 
@@ -78,7 +73,7 @@
       <!-- Tenant Name on Top + Save & Cancel -->
       <div class="tenant-header">
         <div>
-          <h1 class="editorial-heading" id="tenantHeading">Workspace settings</h1>
+          <h1 class="editorial-heading" id="tenantHeading">Workspace Settings</h1>
           <div class="tenant-meta-line">
             <span id="tenantIdDisplay">Workspace ID: —</span>
             <span class="version-chip" id="harnessVersionChip">Harness v1</span>
@@ -91,9 +86,9 @@
         </div>
       </div>
 
-      <nav class="admin-sections" id="adminSections" aria-label="Workspace settings" role="tablist">
+      <nav class="admin-sections" id="adminSections" aria-label="Workspace Settings" role="tablist">
         <button type="button" id="processingSettingsTab" class="selected" role="tab"
-          aria-label="Document processing" aria-controls="processingSettingsPanel" tabindex="0"
+          aria-label="Document Processing" aria-controls="processingSettingsPanel" tabindex="0"
           data-click="setAdminSection_arg" data-args="[&quot;processing&quot;]" aria-selected="true">
           <span class="admin-section-icon" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
@@ -101,10 +96,10 @@
               <path d="M14 3.5V8h4M10 12h5M10 16h5" stroke-linecap="round" />
             </svg>
           </span>
-          <span class="admin-section-copy"><span class="admin-section-title">Document processing</span>
-            <span class="admin-section-description">Extraction &amp; models</span></span>
+          <span class="admin-section-copy"><span class="admin-section-title">Document Processing</span>
+            <span class="admin-section-description">Extraction &amp; Models</span></span>
         </button>
-        <button type="button" id="agentSettingsTab" role="tab" aria-label="Agent &amp; channels"
+        <button type="button" id="agentSettingsTab" role="tab" aria-label="Agent &amp; Channels"
           aria-controls="agentSettingsPanel" tabindex="-1"
           data-click="setAdminSection_arg" data-args="[&quot;agent&quot;]" aria-selected="false">
           <span class="admin-section-icon" aria-hidden="true">
@@ -113,10 +108,10 @@
               <path d="M19 17v4M17 19h4" stroke-linecap="round" />
             </svg>
           </span>
-          <span class="admin-section-copy"><span class="admin-section-title">Agent &amp; channels</span>
-            <span class="admin-section-description">Personality &amp; connections</span></span>
+          <span class="admin-section-copy"><span class="admin-section-title">Agent &amp; Channels</span>
+            <span class="admin-section-description">Personality &amp; Connections</span></span>
         </button>
-        <button type="button" id="tenantUsersTab" role="tab" aria-label="Users &amp; access"
+        <button type="button" id="tenantUsersTab" role="tab" aria-label="Users &amp; Access"
           aria-controls="tenantUsersPanel" tabindex="-1"
           data-click="setAdminSection_arg" data-args="[&quot;users&quot;]" aria-selected="false">
           <span class="admin-section-icon" aria-hidden="true">
@@ -126,98 +121,97 @@
                 stroke-linecap="round" />
             </svg>
           </span>
-          <span class="admin-section-copy"><span class="admin-section-title">Users &amp; access</span>
-            <span class="admin-section-description">People &amp; workspace roles</span></span>
+          <span class="admin-section-copy"><span class="admin-section-title">Users &amp; Access</span>
+            <span class="admin-section-description">People &amp; Workspace Roles</span></span>
         </button>
       </nav>
       <section id="harnessSaveNotice" role="status" hidden>
         <p id="harnessSaveMessage"></p>
         <details><summary>Compare unsaved draft and server configuration</summary>
-          <h3>Your draft</h3><pre id="harnessDraft" style="max-height:300px;overflow:auto;white-space:pre-wrap;"></pre>
-          <h3>Server configuration at conflict</h3><pre id="harnessServer" style="max-height:300px;overflow:auto;white-space:pre-wrap;"></pre>
+          <h3>Your Draft</h3><pre id="harnessDraft" style="max-height:300px;overflow:auto;white-space:pre-wrap;"></pre>
+          <h3>Server Configuration at Conflict</h3><pre id="harnessServer" style="max-height:300px;overflow:auto;white-space:pre-wrap;"></pre>
         </details>
-        <button type="button" class="btn-action" data-click="reloadHarnessAfterConflict">Reload latest configuration</button>
+        <button type="button" class="btn-action" data-click="reloadHarnessAfterConflict">Reload Latest Configuration</button>
       </section>
       <section id="tenantUsersPanel" class="tenant-users" role="tabpanel" aria-labelledby="tenantUsersTab" hidden>
         <div class="tenant-users-heading">
-          <div><span class="tenant-users-eyebrow">PEOPLE, NOT PERMISSIONS TO MANAGE</span>
-            <h2>The right people. One shared workspace.</h2>
+          <div><h2>Users &amp; Access</h2>
             <p>Assign existing employees from your enterprise directory. The same membership applies to the
               workspace, Admin Studio, web, email and Teams.</p></div>
           <button type="button" class="btn-action primary" id="tenantUsersAdd"
-            data-click="tenantUsersOpenAdd" disabled>Add people</button>
+            data-click="tenantUsersOpenAdd" disabled>Add People</button>
         </div>
         <div class="tenant-users-access-note">
-          <strong>Workspace-wide documents for every new assignment</strong>
-          <p><strong>User</strong> — read documents and Ask AI. <strong>Workspace admin</strong> — full workspace access,
+          <strong>Shared Document Access</strong>
+          <p><strong>User</strong> — read documents and Ask AI. <strong>Workspace Admin</strong> — full workspace access,
             including processing, settings and people management. There are no per-document permissions to configure here.</p>
         </div>
         <div class="tenant-users-toolbar">
-          <h3>Assigned people <span id="tenantUsersCount"></span></h3>
+          <h3>Assigned People <span id="tenantUsersCount"></span></h3>
           <div><span id="tenantUsersVersion" class="version-chip"></span>
             <button type="button" class="btn-action" id="tenantUsersReload" data-click="tenantUsersReload">
-              Reload access</button></div>
+              Reload Access</button></div>
         </div>
         <p id="tenantUsersDirectory" class="tenant-users-guidance"></p>
         <p id="tenantUsersStatus" class="tenant-users-status" role="status" aria-live="polite"></p>
         <div id="tenantUsersList" class="tenant-users-list" aria-busy="false"></div>
         <div class="tenant-users-dialog-actions">
           <button type="button" class="btn-action" id="tenantUsersMore" data-click="tenantUsersMore" hidden>
-            Load more people</button></div>
+            Load More People</button></div>
 
         <dialog id="tenantUsersAddDialog" class="tenant-users-dialog" aria-labelledby="tenantUsersAddTitle">
-          <div class="tenant-users-dialog-heading"><h2 id="tenantUsersAddTitle">Add people</h2>
+          <div class="tenant-users-dialog-heading"><h2 id="tenantUsersAddTitle">Add People</h2>
             <button type="button" class="btn-action" data-click="tenantUsersClose_arg"
-              data-args="[&quot;add&quot;]" aria-label="Close Add people">Close</button></div>
+              data-args="[&quot;add&quot;]" aria-label="Close Add People">Close</button></div>
           <p>Choose existing directory members, not arbitrary email addresses. New assignments include all workspace documents.</p>
           <label for="tenantUsersSearch">Find employees by name or work email</label>
           <input type="search" id="tenantUsersSearch" class="clean-input" minlength="2" maxlength="80"
             autocomplete="off" data-input="tenantUsersSearch" aria-describedby="tenantUsersSearchStatus">
           <p id="tenantUsersSearchStatus" role="status" aria-live="polite">Enter at least 2 characters.</p>
           <div id="tenantUsersSearchResults" class="tenant-users-search-results" aria-label="Directory results"></div>
-          <h3>Selected people <span id="tenantUsersSelectedCount"></span></h3>
+          <h3>Selected People <span id="tenantUsersSelectedCount"></span></h3>
           <p class="tenant-users-guidance">Up to 25 people at a time. The default role is User.</p>
           <div id="tenantUsersSelected" class="tenant-users-selected"></div>
           <div class="tenant-users-dialog-actions">
             <button type="button" class="btn-action" data-click="tenantUsersClose_arg"
               data-args="[&quot;add&quot;]">Cancel</button>
             <button type="button" class="btn-action primary" id="tenantUsersReviewAdd"
-              data-click="tenantUsersReviewAdd" disabled>Review assignments</button></div>
+              data-click="tenantUsersReviewAdd" disabled>Review Assignments</button></div>
         </dialog>
 
         <dialog id="tenantUsersDetailsDialog" class="tenant-users-dialog tenant-users-detail-dialog"
           aria-labelledby="tenantUsersDetailsTitle">
-          <div class="tenant-users-dialog-heading"><h2 id="tenantUsersDetailsTitle">Person details</h2>
+          <div class="tenant-users-dialog-heading"><h2 id="tenantUsersDetailsTitle">Manage Access</h2>
             <button type="button" class="btn-action" data-click="tenantUsersClose_arg"
-              data-args="[&quot;details&quot;]" aria-label="Close person details">Close</button></div>
+              data-args="[&quot;details&quot;]" aria-label="Close Manage Access">Close</button></div>
           <div id="tenantUsersDetails"></div>
           <div id="tenantUsersDetailControls"></div>
         </dialog>
 
         <dialog id="tenantUsersConfirmDialog" class="tenant-users-dialog tenant-users-confirm-dialog"
           aria-labelledby="tenantUsersConfirmTitle" aria-describedby="tenantUsersConfirmText">
-          <h2 id="tenantUsersConfirmTitle">Confirm access change</h2>
+          <h2 id="tenantUsersConfirmTitle">Confirm Access Change</h2>
           <p id="tenantUsersConfirmText"></p>
           <p id="tenantUsersConfirmStatus" role="status" aria-live="polite"></p>
           <div class="tenant-users-dialog-actions">
             <button type="button" class="btn-action" id="tenantUsersConfirmCancel"
-              data-click="tenantUsersClose_arg" data-args="[&quot;confirm&quot;]">Go back</button>
+              data-click="tenantUsersClose_arg" data-args="[&quot;confirm&quot;]">Go Back</button>
             <button type="button" class="btn-action primary" id="tenantUsersConfirmSave"
-              data-click="tenantUsersConfirm">Confirm change</button></div>
+              data-click="tenantUsersConfirm">Confirm Change</button></div>
         </dialog>
       </section>
       <section id="agentSettingsPanel" class="agent-settings" role="tabpanel" aria-labelledby="agentSettingsTab" hidden>
         <div class="agent-settings-heading">
-          <h2>Agent &amp; channels</h2>
+          <h2>Agent &amp; Channels</h2>
           <p>Choose how your assistant responds and where people can use it.</p>
         </div>
         <div class="agent-identity-grid">
           <section class="agent-settings-card agent-profile-grid" aria-label="Agent personality">
             <details class="agent-setting-row" name="agent-profile-settings">
-              <summary><span class="agent-setting-copy"><strong>Agent name</strong>
+              <summary><span class="agent-setting-copy"><strong>Agent Name</strong>
                 <span id="agentNameSummary">DocIntel</span></span><span class="agent-manage-action">Manage</span></summary>
               <div class="agent-profile-field">
-                <label for="agentDisplayName">Agent name</label>
+                <label for="agentDisplayName">Agent Name</label>
                 <input id="agentDisplayName" maxlength="64" class="clean-input" placeholder="e.g. Meridian"
                   aria-describedby="agentIdentityNote" data-input="onAgentProfileChanged">
                 <p class="agent-safety-note agent-profile-note" id="agentIdentityNote">Used in replies.
@@ -225,30 +219,30 @@
               </div>
             </details>
             <details class="agent-setting-row" name="agent-profile-settings">
-              <summary><span class="agent-setting-copy"><strong>Conversation style</strong>
+              <summary><span class="agent-setting-copy"><strong>Conversation Style</strong>
                 <span id="agentToneSummary">Professional</span></span><span class="agent-manage-action">Manage</span></summary>
               <div class="agent-profile-field">
-                <label for="agentTone">Conversation style</label>
+                <label for="agentTone">Conversation Style</label>
                 <select id="agentTone" class="clean-select" data-change="onAgentProfileChanged">
                   <option>Professional</option><option>Friendly</option><option>Concise</option>
                 </select>
               </div>
             </details>
             <details class="agent-setting-row" name="agent-profile-settings">
-              <summary><span class="agent-setting-copy"><strong>Agent purpose</strong>
+              <summary><span class="agent-setting-copy"><strong>Agent Purpose</strong>
                 <span id="agentPurposeSummary"></span></span><span class="agent-manage-action">Manage</span></summary>
               <div class="agent-profile-field">
-                <label for="agentPurpose">Agent purpose</label>
+                <label for="agentPurpose">Agent Purpose</label>
                 <textarea id="agentPurpose" maxlength="500" class="clean-textarea" rows="5"
                   placeholder="Describe its purpose and audience." data-input="onAgentProfileChanged"></textarea>
               </div>
             </details>
             <details class="agent-setting-row" name="agent-profile-settings">
-              <summary><span class="agent-setting-copy"><strong>Response guidance</strong>
+              <summary><span class="agent-setting-copy"><strong>Response Guidance</strong>
                 <span id="agentInstructionsSummary">Optional instructions for your assistant</span></span>
                 <span class="agent-manage-action">Manage</span></summary>
               <div class="agent-profile-field">
-                <label for="agentInstructions">Response guidance <span>Optional</span></label>
+                <label for="agentInstructions">Response Guidance <span>Optional</span></label>
                 <textarea id="agentInstructions" maxlength="4000" class="clean-textarea" rows="5"
                   placeholder="For example: use plain English, lead with the answer, explain unfamiliar contract terms."
                   data-input="onAgentProfileChanged"></textarea>
@@ -258,9 +252,9 @@
               Answers respect document access, cite evidence and disclose uncertainty. Never enter passwords or tokens here.</p>
           </section>
           <details class="agent-style-disclosure">
-            <summary>Preview assistant style</summary>
+            <summary>Preview Assistant Style</summary>
             <aside class="agent-settings-card agent-preview" aria-label="Personality preview">
-            <span class="agent-eyebrow">STYLE PREVIEW</span>
+            <span class="agent-eyebrow">Style Preview</span>
             <div class="agent-preview-identity"><span class="agent-avatar" id="agentPreviewAvatar">D</span>
               <div><strong id="agentPreviewName">DocIntel</strong><span id="agentPreviewPurpose"></span></div></div>
             <div class="agent-preview-user">Which agreement covers this customer?</div>
@@ -404,7 +398,7 @@
 
           <div class="feature-drawer" id="splitDrawer">
             <div class="drawer-row">
-              <span class="drawer-label">Document understanding</span>
+              <span class="drawer-label">Document Understanding</span>
               <span>Azure Content Understanding &middot; all PDF pages &middot; layout + Markdown</span>
               <select class="clean-input" id="ocrModeSelect" hidden aria-label="Legacy offline recognition policy">
                 <option value="Auto">Automatic for scanned pages</option>
@@ -413,26 +407,26 @@
               </select>
             </div>
             <details>
-              <summary>Live document-analysis allowance</summary>
+              <summary>Live Document-Analysis Allowance</summary>
               <p id="ocrUsageStatus" role="status">Load the current monthly allowance and reserved request pages.</p>
               <div class="drawer-row">
-                <label for="ocrPageLimit">Monthly pages</label>
+                <label for="ocrPageLimit">Monthly Pages</label>
                 <input class="clean-input" id="ocrPageLimit" type="number" min="0" max="10000000" disabled />
                 <label for="ocrWarningPercent">Warn at (%)</label>
                 <input class="clean-input" id="ocrWarningPercent" type="number" min="1" max="100" disabled />
-                <button type="button" class="btn-mini" data-click="loadOcrUsage">Load / refresh</button>
-                <button type="button" class="btn-mini" id="ocrBudgetSave" data-click="saveOcrBudget" disabled>Save live allowance</button>
+                <button type="button" class="btn-mini" data-click="loadOcrUsage">Load / Refresh</button>
+                <button type="button" class="btn-mini" id="ocrBudgetSave" data-click="saveOcrBudget" disabled>Save Live Allowance</button>
               </div>
               <p>Separate from the harness version. Zero blocks fresh analysis, not validated cache reuse.
                 Failed or interrupted provider requests retain their reserved pages; these counts are not an invoice.</p>
             </details>
             <div class="drawer-row">
               <div style="display:flex;align-items:center;gap:8px;flex:1;">
-                <span class="drawer-label">Footers to ignore</span>
+                <span class="drawer-label">Footers to Ignore</span>
                 <input type="text" class="clean-input" id="footersToIgnoreInput" style="flex:1;" placeholder="Confidential, Page" data-input="onHarnessChanged" />
               </div>
               <div style="display:flex;align-items:center;gap:8px;flex:1;">
-                <span class="drawer-label">Amendment indicators</span>
+                <span class="drawer-label">Amendment Indicators</span>
                 <input type="text" class="clean-input" id="amendmentIndicatorsInput" style="flex:1;" placeholder="amendment, avenant, ctm" data-input="onHarnessChanged" />
               </div>
             </div>
@@ -474,8 +468,8 @@
 
           <div class="feature-drawer" id="identifyDrawer">
             <div class="drawer-row">
-              <span class="drawer-label">Defined document identification rules (unmatched slices classify as "Undefined")</span>
-              <button class="btn-mini" type="button" data-click="addIdentificationRuleRow">+ Add document</button>
+              <span class="drawer-label">Document Identification Rules (unmatched slices classify as "Undefined")</span>
+              <button class="btn-mini" type="button" data-click="addIdentificationRuleRow">+ Add Document</button>
             </div>
             <div class="rules-list" id="identificationRulesList"></div>
           </div>
@@ -516,7 +510,7 @@
           <div class="feature-drawer" id="translationDrawer">
             <div class="drawer-row">
               <div style="display:flex;align-items:center;gap:8px;">
-                <span class="drawer-label">Target language</span>
+                <span class="drawer-label">Target Language</span>
                 <select class="clean-select" id="translationTargetLang" data-change="onHarnessChanged">
                   <option value="en">English (en)</option>
                   <option value="es">Spanish (es)</option>
@@ -527,7 +521,7 @@
                 </select>
               </div>
               <div style="display:flex;align-items:center;gap:8px;flex:1;justify-content:flex-end;">
-                <span class="drawer-label">Do-not-translate terms</span>
+                <span class="drawer-label">Do-Not-Translate Terms</span>
                 <input type="text" class="clean-input" id="doNotTranslateInput" style="width:260px;" placeholder="Microsoft, MBSA, OXXO" data-input="onHarnessChanged" />
               </div>
             </div>
@@ -566,7 +560,7 @@
 
           <div class="feature-drawer" id="insightDrawer">
             <div class="drawer-row">
-              <span class="drawer-label">Insight instructions</span>
+              <span class="drawer-label">Insight Instructions</span>
             </div>
             <textarea class="clean-textarea" id="insightInstructionsInput" rows="2" placeholder="Describe how the insights should be generated..." data-input="onHarnessChanged"></textarea>
           </div>
@@ -606,7 +600,7 @@
 
           <div class="feature-drawer" id="entityDrawer">
             <div class="drawer-row">
-              <span class="drawer-label">Entity extraction prompt (what entities to extract)</span>
+              <span class="drawer-label">Entity Extraction Prompt (what entities to extract)</span>
             </div>
             <textarea class="clean-textarea" id="entityPromptInput" rows="2" placeholder="Specify which entities and fields to extract..." data-input="onHarnessChanged"></textarea>
           </div>
@@ -647,20 +641,20 @@
           <div class="feature-drawer" id="dataExtractionDrawer">
             <div class="drawer-row">
               <div style="display:flex;align-items:center;gap:8px;">
-                <span class="drawer-label">Defined document</span>
+                <span class="drawer-label">Defined Document</span>
                 <select class="clean-select" id="dataExtractionDocSelect" data-change="onSelectedExtractionDocChanged"></select>
               </div>
             </div>
 
             <div class="sub-section-header">
               <span class="drawer-label">Key-Value Pairs (Field Name &amp; Extraction Instruction)</span>
-              <button class="btn-mini" type="button" data-click="addDataExtractionFieldRow">+ Add key-value field</button>
+              <button class="btn-mini" type="button" data-click="addDataExtractionFieldRow">+ Add Key-Value Field</button>
             </div>
             <div class="rules-list" id="dataExtractionFieldsList"></div>
 
             <div class="sub-section-header">
               <span class="drawer-label">Tables (Table Name, Instruction &amp; Columns)</span>
-              <button class="btn-mini" type="button" data-click="addDataExtractionTableBlock">+ Add table</button>
+              <button class="btn-mini" type="button" data-click="addDataExtractionTableBlock">+ Add Table</button>
             </div>
             <div class="rules-list" id="dataExtractionTablesList"></div>
           </div>
@@ -783,7 +777,7 @@
                 <datalist id="existingEntitiesDatalist"></datalist>
                 <div id="promptFilterRulesList" style="display:flex;flex-direction:column;gap:7px;"></div>
                 <div>
-                  <button type="button" class="btn-mini" data-click="addPromptEntityFilterRow">+ Add entity condition</button>
+                  <button type="button" class="btn-mini" data-click="addPromptEntityFilterRow">+ Add Entity Condition</button>
                 </div>
               </div>
             </div>

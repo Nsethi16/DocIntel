@@ -4,7 +4,7 @@ A modern **.NET 10 + .NET Aspire + Microsoft Agent Framework (`Microsoft.Agents.
 
 The application calls each isolated document and settings space a **workspace**. Existing API routes,
 JSON/storage identifiers such as `tenantId`, and the `TenantAdmin` role value remain compatible;
-the role is displayed as **Workspace admin**. A Microsoft Entra directory tenant and a source-document
+the role is displayed as **Workspace Admin**. A Microsoft Entra directory tenant and a source-document
 field named **Tenant ID** are separate concepts and keep their original names.
 
 ## Conservative lifecycle controls
@@ -654,7 +654,7 @@ this code does not create registrations or consent/permission grants.
 
 ## Agent identity and channels
 
-Admin Studio has **Document processing**, **Agent & channels**, and **Users & access** tabs. Agent & channels
+Admin Studio has **Document Processing**, **Agent & Channels**, and **Users & Access** tabs. Agent & Channels
 stores workspace-versioned `agent.displayName`, `purpose`, `tone` (Professional/Friendly/Concise),
 `instructions`, `emailEnabled` and `teamsEnabled`. The style preview is illustrative, not a model
 completion. Channel toggles are distinct from read-only operator connection status; no token,
@@ -662,20 +662,30 @@ password, arbitrary callback URL or privileged role is configured through person
 Name/purpose/guidance are bounded and JSON-encoded into presentation instructions; fixed
 authorization, evidence, citation and tool policies always remain in force. Each executed run
 captures its agent profile and harness version for consistent web/email/Teams responses.
-The icon-labeled section tabs support arrow/Home/End navigation. Switching to Users & access
+The section tabs support arrow/Home/End navigation. Switching to Users & Access
 hides harness-only controls without collapsing the header or shifting the section navigation.
-Agent & channels and Document processing share borderless rows, regular-weight labels, gray
+All three settings sections share borderless rows, regular-weight labels, gray
 **Manage** controls, dark switches and an 800px content width. Agent fields open one native disclosure
 at a time without discarding drafts; the illustrative preview is optional. Channel Manage controls
 only reveal setup guidance: they do not enable a channel, grant permissions or send a test message.
 Changes still require **Save**. Narrow screens stack channel controls without changing the existing
 three-section navigation or individual document result tabs.
+The Documents sidebar uses a quiet vertical navigation, a top-level **Upload PDF** action and
+flat selected rows; document selection is keyboard accessible. Navigation and control labels use
+Title Case, while filenames, custom prompt names and document contents remain unchanged. All entry
+pages share the same neutral palette, local Segoe UI/system font stack and visible keyboard focus;
+there are no external font downloads. Technical values and code can still use monospace.
+**Documents**, **Graph** and **Ask AI** use the same sidebar and manual collapse toggle. Switching
+to Ask AI changes only the right content pane; it neither hides the shared header nor creates a
+second sidebar. Existing conversations, new-chat and deletion controls remain available in a compact
+right-pane toolbar. Unsent questions survive mode changes and manual sidebar toggling; switching
+workspaces clears the draft.
 
 ### Enterprise users and unified access
 
-`Users & access` searches existing corporate Entra people; it never creates corporate accounts,
+`Users & Access` searches existing corporate Entra people; it never creates corporate accounts,
 passwords, or Entra administrator roles. Select one or several people, then assign **User**
-(workspace-wide document reading and Ask AI) or **Workspace admin** (`TenantAdmin`; also document processing, user
+(workspace-wide document reading and Ask AI) or **Workspace Admin** (`TenantAdmin`; also document processing, user
 management, harness configuration and channels). All new people have the same document collection;
 there is no document-scope picker. Directory photos, title, department and office help distinguish
 people; initials are shown when no photo exists. Missing/failed directory connections are explicit,

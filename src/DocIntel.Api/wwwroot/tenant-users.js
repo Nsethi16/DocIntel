@@ -1,7 +1,7 @@
 (function (root) {
   'use strict';
   const node = id => document.getElementById(id);
-  const roles = Object.freeze([['User', 'User'], ['TenantAdmin', 'Workspace admin']]);
+  const roles = Object.freeze([['User', 'User'], ['TenantAdmin', 'Workspace Admin']]);
   const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const dialogIds = {
     add: 'tenantUsersAddDialog', details: 'tenantUsersDetailsDialog', confirm: 'tenantUsersConfirmDialog'
@@ -127,7 +127,10 @@
         if (user.directoryState !== 'Active')
           badges.append(element('span', 'tenant-users-badge', directoryLabel(user.directoryState)));
         info.append(badges);
-        row.append(info, action('View details', 'tenantUsersDetails_arg', [user.objectId], !editable()));
+        const manage = action('Manage', 'tenantUsersDetails_arg', [user.objectId], !editable());
+        manage.className = 'chevron-btn';
+        manage.setAttribute('aria-label', `Manage access for ${personName(user.profile) || user.objectId}`);
+        row.append(info, manage);
         list.append(row);
       }
     }
@@ -365,7 +368,7 @@
     if (!items.length || items.some(item => !eligible(item.person))) return;
     const changes = items.map(item => ({ objectId: item.person.objectId, role: item.role, status: 'Active' }));
     const admins = changes.filter(change => change.role === 'TenantAdmin').length;
-    review(changes, 'Confirm new assignments',
+    review(changes, 'Confirm New Assignments',
       `Assign ${changes.length} people with workspace-wide documents? ${admins} will be workspace admins with full ` +
       'processing, settings and people-management access. Membership applies across web, email and Teams.');
   }
@@ -387,8 +390,8 @@
     container.append(heading);
     const details = element('dl', 'tenant-users-details-grid');
     for (const [label, value] of [
-      ['Object ID', objectId], ['Work email', user.profile?.email || user.profile?.userPrincipalName || 'Not available'],
-      ['Job title', user.profile?.jobTitle || 'Not available'], ['Department', user.profile?.department || 'Not available'],
+      ['Object ID', objectId], ['Work Email', user.profile?.email || user.profile?.userPrincipalName || 'Not available'],
+      ['Job Title', user.profile?.jobTitle || 'Not available'], ['Department', user.profile?.department || 'Not available'],
       ['Office', user.profile?.officeLocation || 'Not available'], ['Directory', directoryLabel(user.directoryState)],
       ['Status', user.status], ['Source', user.source], ['Role', user.legacyRestricted
         ? 'Operator-managed restricted access' : roleName(user.role)]
@@ -400,20 +403,20 @@
       management.append(element('p', '', 'This imported membership has operator-managed restricted access. ' +
         'Only disabling or removing it is supported here. Its role and document access cannot be broadened.'));
     } else if (user.status !== 'Removed') {
-      const label = element('label', '', 'Workspace role');
+      const label = element('label', '', 'Workspace Role');
       label.htmlFor = 'tenantUsersDetailRole';
       const select = roleSelect(label.htmlFor, user.role);
-      management.append(label, select, element('p', '', 'User: read and Ask AI. Workspace admin: full workspace management.'));
-      management.append(action('Review role change', 'tenantUsersReviewRole'));
+      management.append(label, select, element('p', '', 'User: read and Ask AI. Workspace Admin: full workspace management.'));
+      management.append(action('Review Role Change', 'tenantUsersReviewRole'));
     }
     const buttons = element('div', 'tenant-users-dialog-actions');
     if (user.status === 'Active')
-      buttons.append(action('Disable access', 'tenantUsersReviewStatus_arg', ['Disabled']));
+      buttons.append(action('Disable Access', 'tenantUsersReviewStatus_arg', ['Disabled']));
     if (user.status !== 'Active' && canActivate(user))
-      buttons.append(action(user.status === 'Removed' ? 'Restore access' : 'Enable access',
+      buttons.append(action(user.status === 'Removed' ? 'Restore Access' : 'Enable Access',
         'tenantUsersReviewStatus_arg', ['Active']));
     if (user.status !== 'Removed')
-      buttons.append(action('Remove access', 'tenantUsersReviewStatus_arg', ['Removed']));
+      buttons.append(action('Remove Access', 'tenantUsersReviewStatus_arg', ['Removed']));
     management.append(buttons);
     node(dialogIds.details).showModal();
   }
@@ -426,7 +429,7 @@
       managementNotice('Cannot grant workspace admin while the directory account is not confirmed active.');
       return;
     }
-    review([{ objectId: user.objectId, role, status: user.status }], 'Confirm role change',
+    review([{ objectId: user.objectId, role, status: user.status }], 'Confirm Role Change',
       `Change ${personName(user.profile) || user.objectId} from ${roleName(user.role)} to ${roleName(role)}? ` +
       (role === 'TenantAdmin' ? 'Workspace admins can process documents and manage workspace settings and people.'
         : 'Users can read documents and Ask AI, but cannot process documents or manage settings and people.'));
@@ -442,7 +445,7 @@
     if (!editable() || !user || !['Active', 'Disabled', 'Removed'].includes(status) || status === user.status) return;
     if (user.legacyRestricted && (status === 'Active' || user.status === 'Removed')) return;
     if (status === 'Active' && !canActivate(user)) return;
-    review([{ objectId: user.objectId, role: user.role, status }], `Confirm ${status.toLowerCase()} access`,
+    review([{ objectId: user.objectId, role: user.role, status }], `Confirm ${status} Access`,
       `Set access for ${personName(user.profile) || user.objectId} to ${status}? ` +
       (status === 'Active' ? 'This restores membership across the workspace, web, email and Teams.'
         : 'This revokes membership across the workspace, Admin Studio, web, email and Teams. ' +

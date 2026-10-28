@@ -31,28 +31,7 @@ let tenants = [];
     let tenantChats = [];
     let loadedChatStorageKey = null;
     let activeChatId = null;
-    let askInnerSidebarCollapsed = false;
-    let askChatSearchQuery = '';
     let jobPollTimer = null;
-    let documentDrawerHiddenForAsk = false;
-
-    function onAskChatSearchInput(val) {
-      askChatSearchQuery = val || '';
-      renderSelectedDocument();
-      const inp = document.getElementById('askChatSearchInput');
-      if (inp) {
-        inp.focus();
-        inp.setSelectionRange(inp.value.length, inp.value.length);
-      }
-    }
-
-    function toggleAskInnerSidebar() {
-      askInnerSidebarCollapsed = !askInnerSidebarCollapsed;
-      const el = document.getElementById('askInnerSidebar');
-      const expandBtn = document.getElementById('btnExpandAskSidebar');
-      if (el) el.classList.toggle('collapsed', askInnerSidebarCollapsed);
-      if (expandBtn) expandBtn.style.display = askInnerSidebarCollapsed ? 'inline-flex' : 'none';
-    }
 
     function getChatsStorageKey(tenantId = currentTenant?.tenantId || 'default',
       partition = globalThis.DocIntelIdentity?.chatPartition) {
@@ -201,19 +180,17 @@ let tenants = [];
       if (btnGraph) btnGraph.style.display = graphOn ? 'inline-flex' : 'none';
       if (btnAsk) btnAsk.style.display = askOn ? 'inline-flex' : 'none';
 
-      const visibleCount = 1 + (graphOn ? 1 : 0) + (askOn ? 1 : 0);
-      if (switcher) {
-        switcher.style.display = visibleCount > 1 ? 'grid' : 'none';
-        switcher.style.gridTemplateColumns = `repeat(${visibleCount}, 1fr)`;
-      }
+      if (switcher) switcher.style.display = 'grid';
 
       if ((workspaceMode === 'graph' && !graphOn) || (workspaceMode === 'ask' && !askOn)) {
         workspaceMode = 'documents';
       }
 
-      if (btnDocs) btnDocs.classList.toggle('active', workspaceMode === 'documents');
-      if (btnGraph) btnGraph.classList.toggle('active', workspaceMode === 'graph');
-      if (btnAsk) btnAsk.classList.toggle('active', workspaceMode === 'ask');
+      for (const [button, mode] of [[btnDocs, 'documents'], [btnGraph, 'graph'], [btnAsk, 'ask']]) {
+        if (!button) continue;
+        button.classList.toggle('active', workspaceMode === mode);
+        button.setAttribute('aria-pressed', String(workspaceMode === mode));
+      }
     }
 
     function setWorkspaceMode(mode) {
@@ -221,26 +198,7 @@ let tenants = [];
       if (mode === 'ask' && !isAskAiCapabilityEnabled()) mode = 'documents';
       workspaceMode = mode;
       syncTenantWorkspaceCapabilities();
-      const drawer = document.getElementById('docListPane');
-      const expand = document.getElementById('btnHeaderExpandDocList');
-      if (mode === 'ask' && drawer && !drawer.classList.contains('collapsed')) {
-        documentDrawerHiddenForAsk = true;
-        drawer.classList.add('collapsed');
-        drawer.inert = true;
-        drawer.setAttribute('aria-hidden', 'true');
-        if (expand) expand.style.display = 'inline-flex';
-      } else if (mode !== 'ask' && documentDrawerHiddenForAsk) {
-        documentDrawerHiddenForAsk = false;
-        if (drawer) {
-          drawer.classList.remove('collapsed');
-          drawer.inert = false;
-          drawer.setAttribute('aria-hidden', 'false');
-        }
-        if (expand) expand.style.display = 'none';
-      }
-
       if (mode === 'ask') {
-        if (globalThis.matchMedia?.('(max-width: 700px)').matches) askInnerSidebarCollapsed = true;
         loadTenantChats();
         const chat = getActiveChat();
         if (!askAiLoading && chat?.pendingAskAi?.runId) {
@@ -298,9 +256,6 @@ let tenants = [];
       if (expandBtn) {
         expandBtn.style.display = isCollapsed ? 'inline-flex' : 'none';
       }
-      if (workspaceMode === 'ask') {
-        renderSelectedDocument();
-      }
     }
 
     async function init() {
@@ -331,6 +286,7 @@ let tenants = [];
       selectedJobId = null;
       selectedSliceIndex = -1;
       activeChatId = null;
+      askAiQuestionInput = '';
       loadTenantChats(true);
       renderTenantSelect();
       await loadTenantJobs();
@@ -422,7 +378,8 @@ let tenants = [];
       if (filtered.length === 0) {
         container.innerHTML = `
           <div style="padding:28px 12px;text-align:center;color:var(--text-secondary);font-size:12.5px;line-height:1.5;">
-            No documents found.<br/>Upload a PDF below to get started.
+            No documents found.<br/>${query ? 'Try another name or content search.'
+              : 'Your accessible documents will appear here.'}
           </div>
         `;
         return;
@@ -436,8 +393,10 @@ let tenants = [];
         const dotCls = job.status === 'Completed' ? '' : (job.status === 'Failed' ? 'failed' : 'running');
         const snippet = extractContentMatchSnippet(job, rawQuery);
 
-        const row = document.createElement('div');
+        const row = document.createElement('button');
+        row.type = 'button';
         row.className = 'doc-row' + (isSelected ? ' selected' : '');
+        row.setAttribute('aria-pressed', String(isSelected));
         row.title = `${job.fileName} (${job.status})`;
         row.onclick = () => {
           selectedJobId = job.jobId;
@@ -451,11 +410,12 @@ let tenants = [];
         };
 
         row.innerHTML = `
-          <div class="doc-row-main">
-            <div class="doc-row-name">${escapeHtml(job.fileName)}</div>
-            <div class="doc-row-meta">${escapeHtml(dateStr)} · ${job.totalPages || 0} pp${segs.length > 1 ? ` · ${segs.length} slices` : ''}</div>
-            ${snippet ? `<div style="font-size:11px;color:var(--accent-ink);margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(snippet)}</div>` : ''}
-          </div>
+          <svg class="doc-row-icon" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M4 2h8l4 4v16H4zM12 2v5h4M7 12h6M7 16h6"/></svg>
+          <span class="doc-row-main">
+            <span class="doc-row-name">${escapeHtml(job.fileName)}</span>
+            <span class="doc-row-meta">${escapeHtml(dateStr)} · ${job.totalPages || 0} pp${segs.length > 1 ? ` · ${segs.length} slices` : ''}</span>
+            ${snippet ? `<span class="doc-row-snippet">${escapeHtml(snippet)}</span>` : ''}
+          </span>
           <span class="status-dot ${dotCls}" title="${escapeHtml(job.status)}"></span>
         `;
         container.appendChild(row);
@@ -694,15 +654,18 @@ let tenants = [];
       const navRow = document.getElementById('meridianNavRow');
       const exportBtn = document.getElementById('btnHeaderExportJson');
       const headerEl = document.querySelector('.meridian-header');
+      if (headerEl) headerEl.style.display = '';
 
       if (workspaceMode === 'ask') {
         body.dataset.tab = 'ask';
-        if (headerEl) headerEl.style.display = 'none';
+        if (navRow) navRow.style.display = 'none';
+        if (exportBtn) exportBtn.style.display = 'none';
+        sliceRow.innerHTML = '';
+        document.getElementById('selectedDocTitle').textContent = 'Ask AI';
+        document.getElementById('selectedDocMetaText').textContent = currentTenant?.displayName || 'Workspace';
         renderCrossDocumentAskTab(body);
         return;
       }
-
-      if (headerEl) headerEl.style.display = '';
 
       if (workspaceMode === 'graph') {
         body.dataset.tab = 'graph';
@@ -2187,89 +2150,29 @@ let tenants = [];
       const chatIsLoading = askAiLoading && askAiLoadingChatId === chat?.id &&
         askAiLoadingTenantId === currentTenant?.tenantId;
       const isEmptyChat = messages.length === 0 && !chatIsLoading;
-      const isDocDrawerCollapsed = document.getElementById('docListPane')?.classList.contains('collapsed');
-
-      // Only list chats that have at least 1 message so "New chat" is never duplicated under Chats
       const savedChats = tenantChats.filter(c => (c.messages || []).length > 0);
-
-      const chatListHtml = savedChats.map(c => {
-        const isSelected = c.id === activeChatId && !isEmptyChat;
-        return `
-          <div class="chat-history-item ${isSelected ? 'selected' : ''}" title="${escapeHtml(c.title || 'Chat')}" data-click="selectAskAiChat_arg" data-args="[${escapeJsArg(c.id)}]">
-            <span class="chat-history-title">${escapeHtml(c.title || 'Chat')}</span>
-            <button type="button" class="chat-delete-btn" title="Delete chat" data-click="deleteAskAiChat_arg_event" data-args="[${escapeJsArg(c.id)}]">✕</button>
-          </div>
-        `;
-      }).join('');
-
-      const leftChatRailHtml = `
-        <aside class="ask-inner-sidebar ${askInnerSidebarCollapsed ? 'collapsed' : ''}" id="askInnerSidebar">
-          <div class="drawer-top" style="border-bottom:none;padding-bottom:6px;">
-            <div class="drawer-brand-row" style="height:28px;">
-              <div style="display:flex;align-items:center;gap:6px;min-width:0;">
-                ${isDocDrawerCollapsed ? `
-                  <button type="button" class="icon-toggle-btn" title="Expand Documents panel" data-click="toggleDocListPane">
-                    <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
-                      <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
-                      <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
-                    </svg>
-                  </button>
-                ` : ''}
-                <span class="ask-panel-title">${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')}</span>
-              </div>
-              <button type="button" class="icon-toggle-btn" title="Collapse Ask AI panel" data-click="toggleAskInnerSidebar">
-                <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
-                  <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
-                  <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
-                </svg>
-              </button>
-            </div>
-
-            ${isDocDrawerCollapsed ? `
-              <div class="workspace-mode-switcher">
-                <button type="button" class="workspace-mode-btn" data-click="setWorkspaceMode_arg" data-args="[&quot;documents&quot;]">Documents</button>
-                <button type="button" class="workspace-mode-btn" data-click="setWorkspaceMode_arg" data-args="[&quot;graph&quot;]">Graph</button>
-                <button type="button" class="workspace-mode-btn active" data-click="setWorkspaceMode_arg" data-args="[&quot;ask&quot;]">✦ Ask AI</button>
-              </div>
-            ` : ''}
-
-            <button type="button" class="ask-new-chat-pill" data-click="startNewAskAiChat">
-              <svg viewBox="0 0 20 20" fill="currentColor">
-                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
-              </svg>
-              <span>New chat</span>
-            </button>
-          </div>
-
-          <div class="drawer-subbar">
-            <span>Chats</span>
-          </div>
-
-          <div class="doc-items-scroll">
-            ${chatListHtml}
-          </div>
-        </aside>
-      `;
-
-      const floatingExpandBtnHtml = `
-        <button type="button" class="icon-toggle-btn" id="btnExpandAskSidebar" style="position:absolute;top:12px;left:12px;display:${askInnerSidebarCollapsed ? 'inline-flex' : 'none'};" title="Expand Ask AI panel" data-click="toggleAskInnerSidebar">
-          <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6">
-            <rect x="2.5" y="3.5" width="15" height="13" rx="2.5" />
-            <line x1="7.5" y1="3.5" x2="7.5" y2="16.5" />
-          </svg>
-        </button>
+      const conversationControls = `
+        <div class="ask-conversation-toolbar">
+          ${savedChats.length ? `<label for="askChatSelect">Conversation</label>
+            <select id="askChatSelect" data-change="selectAskAiChat_value">
+              ${isEmptyChat ? `<option value="${escapeHtml(chat.id)}" selected>New Chat</option>` : ''}
+              ${savedChats.map(c => `<option value="${escapeHtml(c.id)}"${c.id === activeChatId ? ' selected' : ''}>${escapeHtml(c.title || 'Chat')}</option>`).join('')}
+            </select>` : ''}
+          <button type="button" class="ghost-action-btn" data-click="startNewAskAiChat">New Chat</button>
+          ${!isEmptyChat ? `<button type="button" class="ghost-action-btn" data-click="deleteAskAiChat_arg_event"
+            data-args="[${escapeJsArg(chat.id)}]">Delete Chat</button>` : ''}
+        </div>
       `;
 
       if (isEmptyChat) {
         body.innerHTML = `
-          ${leftChatRailHtml}
           <div class="ask-main-pane">
-            ${floatingExpandBtnHtml}
+            ${conversationControls}
             <div class="ask-minimal-stage">
               <h2 class="ask-minimal-heading">${escapeHtml(currentTenant?.agent?.purpose || 'Explore and answer questions across your documents')}</h2>
 
               <div class="ask-pill-bar">
-                <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Ask ${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')} about your documents..." data-enter="runCrossDocumentAskAi_value" />
+                <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Ask ${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')} about your documents..." data-input="updateAskDraft_value" data-enter="runCrossDocumentAskAi_value" />
                 <button type="button" class="ask-pill-send" title="Send message" data-click="submitAskInput">
                   <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                     <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
@@ -2308,10 +2211,9 @@ let tenants = [];
       }).join('');
 
       body.innerHTML = `
-        ${leftChatRailHtml}
         <div class="ask-main-pane" style="justify-content:flex-start;">
-          ${floatingExpandBtnHtml}
-          <div class="ask-minimal-stage" style="justify-content:space-between;min-height:100%;margin:0 auto;">
+          ${conversationControls}
+          <div class="ask-minimal-stage" style="justify-content:space-between;flex:1;margin:0 auto;gap:24px;">
             <div style="width:100%;display:flex;flex-direction:column;gap:18px;padding-bottom:28px;">
               ${threadHtml}
               ${chatIsLoading ? `<div id="askAiProgress" role="status" style="color:var(--text-secondary);font-size:13.5px;">${escapeHtml(askAiProgressText)}</div>` : ''}
@@ -2320,7 +2222,7 @@ let tenants = [];
             </div>
 
             <div class="ask-pill-bar" style="position:sticky;bottom:8px;">
-              <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Ask ${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')} about your documents..." data-enter="runCrossDocumentAskAi_value" />
+              <input type="text" class="ask-pill-input" id="askAiMainInputEl" value="${escapeHtml(askAiQuestionInput)}" placeholder="Ask ${escapeHtml(currentTenant?.agent?.displayName || 'DocIntel')} about your documents..." data-input="updateAskDraft_value" data-enter="runCrossDocumentAskAi_value" />
               <button type="button" class="ask-pill-send" title="Send message" data-click="submitAskInput">
                 <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M4 10h12M11 5l5 5-5 5" stroke-linecap="round" stroke-linejoin="round" />
@@ -2355,6 +2257,7 @@ let tenants = [];
       runCrossDocumentAskAi_arg_arg: { arity: 2, run: function(args, event) { return runCrossDocumentAskAi(args[0], args[1]); } },
       runCrossDocumentAskAi_value: { arity: 0, run: function(args, event) { return runCrossDocumentAskAi(this.value); } },
       selectAskAiChat_arg: { arity: 1, run: function(args, event) { return selectAskAiChat(args[0]); } },
+      selectAskAiChat_value: { arity: 0, run: function() { return selectAskAiChat(this.value); } },
       setDocResultTab_arg: { arity: 1, run: function(args, event) { return setDocResultTab(args[0]); } },
       setEntityCategoryFilter_arg: { arity: 1, run: function(args, event) { return setEntityCategoryFilter(args[0]); } },
       setWorkspaceMode_arg: { arity: 1, run: function(args, event) { return setWorkspaceMode(args[0]); } },
@@ -2362,7 +2265,7 @@ let tenants = [];
       startNewAskAiChat: { arity: 0, run: function(args, event) { return startNewAskAiChat(); } },
       stopPropagation: { arity: 0, run: function(args, event) { event.stopPropagation(); } },
       submitAskInput: { arity: 0, run: function(args, event) { return runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value); } },
-      toggleAskInnerSidebar: { arity: 0, run: function(args, event) { return toggleAskInnerSidebar(); } },
+      updateAskDraft_value: { arity: 0, run: function() { askAiQuestionInput = this.value; } },
       toggleDocListPane: { arity: 0, run: function(args, event) { return toggleDocListPane(); } },
       toggleEntityMultiSelectDropdown_event: { arity: 0, run: function(args, event) { return toggleEntityMultiSelectDropdown(event); } },
       toggleGraphEntityNameFilter_arg_event: { arity: 1, run: function(args, event) { return toggleGraphEntityNameFilter(args[0], event); } },
