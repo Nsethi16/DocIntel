@@ -14,6 +14,7 @@ let tenants = [];
     let graphEntityDropdownSearch = '';
     let graphEntitySearchQuery = '';
     let graphFocusedNodeId = null;
+    let graphDetailsOpen = false;
     let graphHoveredNodeId = null;
     let graphDepthMode = 'GLOBAL'; // 'GLOBAL' | 'HOP1' | 'HOP2'
     let graphZoom = 1;
@@ -22,6 +23,8 @@ let tenants = [];
     let graphSimNodes = [];
     let graphSimEdges = [];
     let graphSimAnimFrame = null;
+    let graphCanvasDisposer = null;
+    let graphLayoutSize = null;
     let graphCustomNodePositions = {};
     let askAiQuestionInput = '';
     let askAiLoading = false;
@@ -280,6 +283,13 @@ let tenants = [];
     }
 
     async function init() {
+      document.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && workspaceMode === 'graph' && graphEntityDropdownOpen) {
+          event.preventDefault();
+          closeGraphDropdown();
+          document.getElementById('entityMultiSelectBox')?.focus();
+        }
+      });
       const resp = await fetch('/api/harness/tenants');
       tenants = await resp.json();
       const urlTenant = new URLSearchParams(window.location.search).get('tenant');
@@ -303,6 +313,8 @@ let tenants = [];
     }
 
     async function onTenantSwitched(tenantId) {
+      stopGraphCanvas();
+      resetGraphState();
       currentTenant = tenants.find(t => t.tenantId === tenantId) || tenants[0] || null;
       selectedJobId = null;
       selectedSliceIndex = -1;
@@ -577,6 +589,7 @@ let tenants = [];
       }
       graphFocusedNodeId = null;
       renderSelectedDocument();
+      if (graphEntityDropdownOpen) document.getElementById('entityPopoverSearchInput')?.focus();
     }
 
     function toggleGraphEntityValueSelection(pairKey, evt) {
@@ -588,6 +601,7 @@ let tenants = [];
       }
       graphFocusedNodeId = null;
       renderSelectedDocument();
+      if (graphEntityDropdownOpen) document.getElementById('entityPopoverSearchInput')?.focus();
     }
 
     function toggleEntityMultiSelectDropdown(evt) {
@@ -597,10 +611,19 @@ let tenants = [];
       const box = document.getElementById('entityMultiSelectBox');
       if (pop) pop.classList.toggle('open', graphEntityDropdownOpen);
       if (box) box.classList.toggle('open', graphEntityDropdownOpen);
+      if (box) box.setAttribute('aria-expanded', String(graphEntityDropdownOpen));
       if (graphEntityDropdownOpen) {
         const inp = document.getElementById('entityPopoverSearchInput');
         if (inp) inp.focus();
       }
+    }
+
+    function closeGraphDropdown() {
+      graphEntityDropdownOpen = false;
+      document.getElementById('entityMultiSelectPopover')?.classList.remove('open');
+      const button = document.getElementById('entityMultiSelectBox');
+      button?.classList.remove('open');
+      button?.setAttribute('aria-expanded', 'false');
     }
 
     function filterEntityPopoverOptions(query) {
@@ -645,19 +668,27 @@ let tenants = [];
       renderSelectedDocument();
     }
 
-    function resetGraphFilters(evt) {
-      if (evt) evt.stopPropagation();
+    function resetGraphState() {
+      graphEntityDropdownOpen = false;
       graphSelectedEntityNames.clear();
       graphSelectedEntityValues.clear();
       graphSelectedEntityValuePair = 'ALL';
       graphEntityDropdownSearch = '';
       graphEntitySearchQuery = '';
       graphFocusedNodeId = null;
+      graphDetailsOpen = false;
+      graphHoveredNodeId = null;
       graphDepthMode = 'GLOBAL';
       graphZoom = 1;
       graphPanX = 0;
       graphPanY = 0;
       graphCustomNodePositions = {};
+      graphLayoutSize = null;
+    }
+
+    function resetGraphFilters(evt) {
+      if (evt) evt.stopPropagation();
+      resetGraphState();
       renderSelectedDocument();
     }
 
@@ -675,7 +706,22 @@ let tenants = [];
 
     function focusGraphNode(nodeId) {
       graphFocusedNodeId = (graphFocusedNodeId === nodeId) ? null : nodeId;
+      graphDetailsOpen = graphFocusedNodeId !== null;
       renderDocumentGraphCanvasOnly();
+    }
+
+    function toggleGraphDetails() {
+      graphDetailsOpen = !graphDetailsOpen;
+      graphFocusedNodeId = null;
+      renderDocumentGraphCanvasOnly();
+    }
+
+    function stopGraphCanvas() {
+      if (graphSimAnimFrame !== null) cancelAnimationFrame(graphSimAnimFrame);
+      graphSimAnimFrame = null;
+      graphCanvasDisposer?.();
+      graphCanvasDisposer = null;
+      graphHoveredNodeId = null;
     }
 
     function jumpFromGraphToSlice(jobId, sliceIdx) {
@@ -718,6 +764,7 @@ let tenants = [];
     }
 
     function renderSelectedDocument() {
+      stopGraphCanvas();
       const body = document.getElementById('docCenterBody');
       const sliceRow = document.getElementById('sliceSelectorRow');
       const navRow = document.getElementById('meridianNavRow');
@@ -741,9 +788,8 @@ let tenants = [];
         if (navRow) navRow.style.display = 'none';
         if (exportBtn) exportBtn.style.display = 'none';
         sliceRow.innerHTML = '';
-        const completedCount = tenantJobs.filter(j => j.status === 'Completed').length;
-        document.getElementById('selectedDocTitle').textContent = currentTenant ? `${currentTenant.displayName} — Document Graph` : 'Document Graph';
-        document.getElementById('selectedDocMetaText').textContent = `${completedCount} document${completedCount === 1 ? '' : 's'}`;
+        document.getElementById('selectedDocTitle').textContent = 'Graph';
+        document.getElementById('selectedDocMetaText').textContent = currentTenant?.displayName || 'Workspace';
         renderDocumentGraphTab(body);
         return;
       }
@@ -1390,14 +1436,6 @@ let tenants = [];
       };
     }
 
-    function getEntityCategoryColor(cat) {
-      const c = String(cat || '').toUpperCase();
-      if (c.includes('IDENTIFIER')) return { bg: '#f2f4ff', border: '#c5cffc', text: '#3b4fc4', dot: '#5d74ec' };
-      if (c.includes('PARTY') || c.includes('CUSTOMER')) return { bg: '#effaf7', border: '#bce3dc', text: '#246b60', dot: '#388e80' };
-      if (c.includes('FINANCIAL')) return { bg: '#fdf8f0', border: '#ebd4b5', text: '#8f5b22', dot: '#c2853c' };
-      return { bg: '#f6f4fc', border: '#d8d0f2', text: '#5c48a8', dot: '#8470cf' };
-    }
-
     function renderDocumentGraphTab(body) {
       const data = computeFilteredGraphData();
       const totalSelected = graphSelectedEntityNames.size + graphSelectedEntityValues.size;
@@ -1426,23 +1464,23 @@ let tenants = [];
           `;
         })
       ];
-      const selectedTagsHtml = selectedTagsList.join('<span style="font-family:var(--font-mono);font-size:10px;font-weight:600;color:var(--text-secondary);">AND</span>');
+      const selectedTagsHtml = selectedTagsList.join('<span class="graph-filter-and">AND</span>');
 
       const groupsHtml = [...groupedByType.entries()].map(([groupName, items]) => {
         const isTypeSelected = graphSelectedEntityNames.has(groupName);
         return `
           <div class="entity-group-col" data-group="${escapeHtml(groupName)}">
-            <div class="entity-group-header" data-click="toggleGraphEntityNameFilter_arg_event" data-args="[${escapeJsArg(groupName)}]">
-              <span>${isTypeSelected ? '☑' : '☐'} ${escapeHtml(groupName)}</span>
+            <button type="button" class="entity-group-header" aria-pressed="${isTypeSelected}" data-click="toggleGraphEntityNameFilter_arg_event" data-args="[${escapeJsArg(groupName)}]">
+              <span>${isTypeSelected ? '☑' : '☐'} Has ${escapeHtml(groupName)}</span>
               <span style="opacity:0.65;">${items.length}</span>
-            </div>
+            </button>
             ${items.map(item => {
-              const isValChecked = isTypeSelected || graphSelectedEntityValues.has(item.pairKey);
+              const isValChecked = graphSelectedEntityValues.has(item.pairKey);
               return `
-                <div class="entity-value-option ${isValChecked ? 'checked' : ''}" data-search="${escapeHtml(item.value)}" data-click="toggleGraphEntityValueSelection_arg_event" data-args="[${escapeJsArg(item.pairKey)}]">
+                <button type="button" class="entity-value-option ${isValChecked ? 'checked' : ''}" aria-pressed="${isValChecked}" data-search="${escapeHtml(item.value)}" data-click="toggleGraphEntityValueSelection_arg_event" data-args="[${escapeJsArg(item.pairKey)}]">
                   <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${isValChecked ? '✓ ' : ''}${escapeHtml(item.value)}</span>
-                  <span style="font-family:var(--font-mono);font-size:10.5px;opacity:0.65;flex-shrink:0;">${item.count} doc${item.count === 1 ? '' : 's'}</span>
-                </div>
+                  <span class="entity-option-count">${item.count} doc${item.count === 1 ? '' : 's'}</span>
+                </button>
               `;
             }).join('')}
           </div>
@@ -1451,32 +1489,29 @@ let tenants = [];
 
       body.innerHTML = `
         <div class="graph-shell" data-click="closeGraphDropdown">
+          <div class="graph-toolbar">
           <div class="entity-multiselect-wrap" data-click="stopPropagation">
-            <div class="entity-multiselect-box ${graphEntityDropdownOpen ? 'open' : ''}" id="entityMultiSelectBox" data-click="toggleEntityMultiSelectDropdown_event">
-              <div class="entity-tags-flow">
-                <span style="font-family:var(--font-mono);font-size:11px;font-weight:600;text-transform:uppercase;color:var(--text-secondary);margin-right:4px;">Entities:</span>
-                ${totalSelected === 0
-                  ? `<span style="color:var(--text-secondary);font-size:13px;">All Entities (${data.allEntityValuePairs.length} values across ${data.allEntityNames.length} types) — click to select one or multiple entities</span>`
-                  : selectedTagsHtml}
-              </div>
-              <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-                ${totalSelected > 0 ? `<button type="button" class="ghost-action-btn" data-click="resetGraphFilters_event">Clear (${totalSelected})</button>` : ''}
-                <span style="font-size:12px;color:var(--text-secondary);padding:0 4px;">▾</span>
-              </div>
-            </div>
+            <button type="button" class="ghost-action-btn entity-multiselect-box ${graphEntityDropdownOpen ? 'open' : ''}"
+              id="entityMultiSelectBox" aria-expanded="${graphEntityDropdownOpen}" aria-controls="entityMultiSelectPopover"
+              ${data.allEntityValuePairs.length ? '' : 'disabled'}
+              data-click="toggleEntityMultiSelectDropdown_event">Filter Entities${totalSelected ? ` (${totalSelected})` : ''} <span aria-hidden="true">▾</span></button>
 
             <div class="entity-multiselect-popover ${graphEntityDropdownOpen ? 'open' : ''}" id="entityMultiSelectPopover">
               <div class="entity-popover-search">
-                <input type="text" id="entityPopoverSearchInput" placeholder="Filter entity types or values (e.g. Woodgrove, OXXO, USD, U4565450)..." value="${escapeHtml(graphEntityDropdownSearch)}" data-input="filterEntityPopoverOptions_value" />
-                ${totalSelected > 0 ? `<button type="button" class="ghost-action-btn" data-click="resetGraphFilters_event">Select All</button>` : ''}
+                <input type="search" id="entityPopoverSearchInput" aria-label="Search Entities" placeholder="Search entities or values" value="${escapeHtml(graphEntityDropdownSearch)}" data-input="filterEntityPopoverOptions_value" />
               </div>
+              <p class="entity-filter-note">Documents must match all selected filters.</p>
               <div class="entity-popover-list" id="entityPopoverList">
-                ${groupsHtml}
+                ${groupsHtml || '<p class="entity-filter-note">No extracted entities are available yet.</p>'}
               </div>
             </div>
           </div>
-
-          <div class="graph-info-strip" id="graphInfoStripContainer"></div>
+          ${totalSelected ? '<button type="button" class="text-link-btn" data-click="resetGraphFilters_event">Clear Filters</button>' : ''}
+          <span class="graph-status" id="graphInfoStripContainer" role="status"></span>
+          <button type="button" class="ghost-action-btn" id="graphDetailsToggle" aria-expanded="${graphDetailsOpen}"
+            aria-controls="graphInspectorAside" data-click="toggleGraphDetails">Documents (${data.docNodes.length})</button>
+          </div>
+          ${totalSelected ? `<div class="entity-tags-flow graph-active-filters">${selectedTagsHtml}</div>` : ''}
 
           <div class="graph-workbench" id="graphWorkbenchContainer"></div>
         </div>
@@ -1496,14 +1531,21 @@ let tenants = [];
       renderSelectedDocument();
     }
 
+    function renderGraphDocumentLinks(documents) {
+      return documents.map(d => `
+        <button type="button" class="graph-inspector-item" data-click="jumpFromGraphToSlice_arg_arg"
+          data-args="[${escapeJsArg(d.jobId)},-1]">
+          <span class="graph-document-name">${escapeHtml(d.docName)} <span aria-hidden="true">↗</span></span>
+          <span class="graph-detail-meta">${escapeHtml(d.pageRange)}${d.docTypesSummary ? ' · ' + escapeHtml(d.docTypesSummary) : ''}</span>
+        </button>
+      `).join('');
+    }
+
     function renderDocumentGraphCanvasOnly() {
       const container = document.getElementById('graphWorkbenchContainer');
       if (!container) return;
 
-      if (graphSimAnimFrame) {
-        cancelAnimationFrame(graphSimAnimFrame);
-        graphSimAnimFrame = null;
-      }
+      stopGraphCanvas();
 
       const rawData = computeFilteredGraphData();
       let { docNodes, entityNodes, edges } = rawData;
@@ -1532,218 +1574,79 @@ let tenants = [];
       entityNodes.forEach(e => nodeById.set(e.id, e));
 
       const focusedNode = graphFocusedNodeId ? nodeById.get(graphFocusedNodeId) : null;
-
-      // Determine the subset of jobs represented by the current selection (focused node or filtered graph)
-      let activeDocIdsSet = new Set(docNodes.map(d => d.jobId));
-      if (focusedNode && focusedNode.type === 'entity') {
-        activeDocIdsSet = new Set(focusedNode.connectedDocs.map(d => d.jobId));
-      } else if (focusedNode && focusedNode.type === 'doc') {
-        activeDocIdsSet = new Set([focusedNode.jobId]);
-      }
-
-      const activeJobs = tenantJobs.filter(j => activeDocIdsSet.has(j.jobId));
-      const totalPagesInSelection = activeJobs.reduce((acc, j) => acc + (j.totalPages || 0), 0);
-      const totalSlicesInSelection = activeJobs.reduce((acc, j) => acc + ((j.segments || []).length), 0);
-
-      const selectionEntities = activeJobs.flatMap(j => (j.segments || []).flatMap(s => s.extractedEntities || []));
-      const customerSet = [...new Set(selectionEntities.filter(e => e.name === 'Customer Name').map(e => e.value))];
-      const mbsaSet = [...new Set(selectionEntities.filter(e => e.name === 'MBA/MBSA Number').map(e => e.value))];
-      const currencySet = [...new Set(selectionEntities.filter(e => e.name === 'Billing Currency').map(e => e.value))];
-
-      let dealValueSum = 0;
-      const seenDealJobs = new Set();
-      activeJobs.forEach(j => {
-        if (seenDealJobs.has(j.jobId)) return;
-        const dvEnt = (j.segments || []).flatMap(s => s.extractedEntities || []).find(e => e.name === 'Total Deal Value');
-        if (dvEnt && dvEnt.value) {
-          const parsed = parseFloat(String(dvEnt.value).replace(/[^0-9.]/g, ''));
-          if (!isNaN(parsed)) {
-            dealValueSum += parsed;
-            seenDealJobs.add(j.jobId);
-          }
-        }
-      });
-
+      if (!focusedNode) graphFocusedNodeId = null;
       const infoStrip = document.getElementById('graphInfoStripContainer');
-      if (infoStrip) {
-        const selectedValLabels = [
-          ...[...graphSelectedEntityNames].map(n => `All ${n}`),
-          ...[...graphSelectedEntityValues].map(pk => pk.split('||')[1])
-        ];
-        const focusTitle = focusedNode
-          ? (focusedNode.type === 'entity' ? `${focusedNode.entityValue}` : focusedNode.docName)
-          : (selectedValLabels.length > 0 ? selectedValLabels.join(', ') : 'All Workspace Documents');
-        const focusSub = focusedNode
-          ? (focusedNode.type === 'entity' ? `Entity Hub · ${focusedNode.entityName}` : `Selected Document · ${focusedNode.pageRange}`)
-          : `${edges.length} entity connection${edges.length === 1 ? '' : 's'} active`;
-
-        infoStrip.innerHTML = `
-          <div class="graph-info-card">
-            <span class="graph-info-label">Active Selection</span>
-            <span class="graph-info-value" title="${escapeHtml(focusTitle)}">${escapeHtml(focusTitle)}</span>
-            <span class="graph-info-sub">${escapeHtml(focusSub)}</span>
-          </div>
-          <div class="graph-info-card">
-            <span class="graph-info-label">Document Coverage</span>
-            <span class="graph-info-value">${activeJobs.length} Document${activeJobs.length === 1 ? '' : 's'}</span>
-            <span class="graph-info-sub">${totalPagesInSelection} pages · ${totalSlicesInSelection} identified slices</span>
-          </div>
-          <div class="graph-info-card">
-            <span class="graph-info-label">Counterparties &amp; Agreements</span>
-            <span class="graph-info-value" title="${escapeHtml(customerSet.join(', '))}">${customerSet.length > 0 ? escapeHtml(customerSet.slice(0, 2).join(', ') + (customerSet.length > 2 ? ` +${customerSet.length - 2}` : '')) : '—'}</span>
-            <span class="graph-info-sub">${mbsaSet.length} MBA/MBSA agreement${mbsaSet.length === 1 ? '' : 's'} (${escapeHtml(mbsaSet.slice(0, 2).join(', ') || 'None')})</span>
-          </div>
-          <div class="graph-info-card">
-            <span class="graph-info-label">Commercial Exposure</span>
-            <span class="graph-info-value">${dealValueSum > 0 ? '$' + dealValueSum.toLocaleString('en-US', { maximumFractionDigits: 0 }) : `${entityNodes.length} Entity Hubs`}</span>
-            <span class="graph-info-sub">${currencySet.length > 0 ? `Currencies: ${escapeHtml(currencySet.join(' · '))}` : 'Across matched agreements'}</span>
-          </div>
-        `;
+      if (infoStrip) infoStrip.textContent = `${edges.length} connection${edges.length === 1 ? '' : 's'}`;
+      const detailsToggle = document.getElementById('graphDetailsToggle');
+      if (detailsToggle) {
+        detailsToggle.textContent = graphDetailsOpen ? 'Hide Details' : `Documents (${docNodes.length})`;
+        detailsToggle.setAttribute('aria-expanded', String(graphDetailsOpen));
+        detailsToggle.disabled = docNodes.length === 0 && !graphDetailsOpen;
       }
+      container.classList.toggle('details-open', graphDetailsOpen);
 
       let inspectorHtml = '';
 
       if (focusedNode && focusedNode.type === 'entity') {
-        // Compute co-occurring entities across the documents connected to this entity hub
-        const coEntitiesMap = new Map();
-        focusedNode.connectedDocs.forEach(d => {
-          const jobObj = tenantJobs.find(j => j.jobId === d.jobId);
-          if (!jobObj) return;
-          (jobObj.segments || []).forEach(s => {
-            (s.extractedEntities || []).forEach(ent => {
-              const pk = `${ent.name}||${ent.value}`;
-              if (pk === focusedNode.pairKey || ent.name === 'Document Heading') return;
-              if (!coEntitiesMap.has(pk)) {
-                coEntitiesMap.set(pk, { pairKey: pk, name: ent.name, value: ent.value, count: 0 });
-              }
-              coEntitiesMap.get(pk).count++;
-            });
-          });
-        });
-        const coEntities = [...coEntitiesMap.values()].sort((a, b) => b.count - a.count).slice(0, 5);
-
         inspectorHtml = `
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <span style="font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Entity Hub Dossier</span>
-            <button type="button" class="text-link-btn" data-click="focusGraphNode_arg" data-args="[null]">Clear</button>
-          </div>
-          <div style="padding:10px 12px;border-radius:9px;background:var(--bg);border:1px solid var(--line);">
-            <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(focusedNode.entityName)}</div>
-            <div style="font-size:15.5px;font-weight:600;color:var(--text-primary);margin-top:2px;">${escapeHtml(focusedNode.entityValue)}</div>
-            <div style="font-size:12px;color:var(--text-secondary);margin-top:4px;">Shared across <strong>${focusedNode.connectedDocs.length}</strong> document${focusedNode.connectedDocs.length === 1 ? '' : 's'} in this workspace.</div>
-          </div>
-
-          ${coEntities.length > 0 ? `
-            <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;margin-top:2px;">
-              Co-Occurring Entities (${coEntities.length})
-            </div>
-            <div style="display:flex;flex-wrap:wrap;gap:5px;">
-              ${coEntities.map(ce => `
-                <button type="button" class="text-link-btn" style="font-size:10.5px;" data-click="focusGraphNode_arg" data-args="[${escapeJsArg('ent:' + ce.pairKey)}]" title="${escapeHtml(ce.name)}: ${escapeHtml(ce.value)}">
-                  ${escapeHtml(ce.name)}: ${escapeHtml(ce.value)}
-                </button>
-              `).join('')}
-            </div>
-          ` : ''}
-
-          <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;margin-top:2px;">
-            Connected Documents (${focusedNode.connectedDocs.length})
-          </div>
-          ${focusedNode.connectedDocs.map(d => {
-            const jobObj = tenantJobs.find(j => j.jobId === d.jobId);
-            const firstInsight = jobObj && jobObj.segments && jobObj.segments[0] ? cleanInsightText(jobObj.segments[0].insightSummary) : '';
-            return `
-              <div class="graph-inspector-item" data-click="jumpFromGraphToSlice_arg_arg" data-args="[${escapeJsArg(d.jobId)},-1]">
-                <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-                  <div style="font-weight:600;font-size:13px;color:var(--text-primary);">${escapeHtml(d.docName)}</div>
-                  <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);">Open ↗</span>
-                </div>
-                <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);">${escapeHtml(d.pageRange)}${d.docTypesSummary ? ' · ' + escapeHtml(d.docTypesSummary) : ''}</div>
-                ${firstInsight ? `<div style="font-size:11.5px;color:var(--text-secondary);margin-top:3px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;">${escapeHtml(firstInsight)}</div>` : ''}
-              </div>
-            `;
-          }).join('')}
+          <span class="graph-detail-meta">${escapeHtml(focusedNode.entityName)}</span>
+          <h2 class="graph-detail-title">${escapeHtml(focusedNode.entityValue)}</h2>
+          <p class="graph-detail-meta">Connected Documents (${focusedNode.connectedDocs.length})</p>
+          ${renderGraphDocumentLinks(focusedNode.connectedDocs)}
         `;
       } else if (focusedNode && focusedNode.type === 'doc') {
         const connectedEntities = focusedNode.entityIds.map(id => nodeById.get(id)).filter(Boolean);
-        const jobObj = tenantJobs.find(j => j.jobId === focusedNode.jobId);
-        const firstInsight = jobObj && jobObj.segments && jobObj.segments[0] ? cleanInsightText(jobObj.segments[0].insightSummary) : '';
-
         inspectorHtml = `
-          <div style="display:flex;align-items:center;justify-content:space-between;">
-            <span style="font-family:var(--font-mono);font-size:10.5px;font-weight:600;color:var(--accent-ink);text-transform:uppercase;">Document Dossier</span>
-            <button type="button" class="text-link-btn" data-click="focusGraphNode_arg" data-args="[null]">Clear</button>
-          </div>
-          <div style="padding:10px 12px;border-radius:9px;background:var(--bg);border:1px solid var(--line);display:flex;flex-direction:column;gap:6px;">
-            <div style="font-size:15px;font-weight:600;color:var(--text-primary);">${escapeHtml(focusedNode.docName)}</div>
-            <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);">${escapeHtml(focusedNode.pageRange)}</div>
-            ${firstInsight ? `<div style="font-size:12px;color:var(--text-body);line-height:1.45;">${escapeHtml(firstInsight)}</div>` : ''}
-            <div style="display:flex;gap:6px;margin-top:2px;">
-              <button type="button" class="text-link-btn" data-click="jumpFromGraphToSlice_arg_arg" data-args="[${escapeJsArg(focusedNode.jobId)},-1]">Open Document ↗</button>
-            </div>
-          </div>
-          <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);text-transform:uppercase;margin-top:2px;">
-            Extracted Entities (${connectedEntities.length})
-          </div>
+          <h2 class="graph-detail-title">${escapeHtml(focusedNode.docName)}</h2>
+          <p class="graph-detail-meta">${escapeHtml(focusedNode.pageRange)}</p>
+          <button type="button" class="ghost-action-btn" data-click="jumpFromGraphToSlice_arg_arg"
+            data-args="[${escapeJsArg(focusedNode.jobId)},-1]">Open Document ↗</button>
+          <h3 class="graph-detail-subtitle">Entities (${connectedEntities.length})</h3>
           ${connectedEntities.map(e => `
-            <div class="graph-inspector-item" data-click="focusGraphNode_arg" data-args="[${escapeJsArg(e.id)}]">
-              <div style="display:flex;align-items:center;justify-content:space-between;">
-                <span style="font-family:var(--font-mono);font-size:10px;color:var(--text-secondary);text-transform:uppercase;">${escapeHtml(e.entityName)}</span>
-                <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent-ink);">${e.connectedDocs.length} doc${e.connectedDocs.length === 1 ? '' : 's'}</span>
-              </div>
-              <div style="font-weight:600;font-size:13px;color:var(--text-primary);">${escapeHtml(e.entityValue)}</div>
-            </div>
+            <button type="button" class="graph-inspector-item" data-click="focusGraphNode_arg" data-args="[${escapeJsArg(e.id)}]">
+              <span class="graph-detail-meta">${escapeHtml(e.entityName)}</span>
+              <span>${escapeHtml(e.entityValue)}</span>
+            </button>
           `).join('')}
         `;
       } else {
         inspectorHtml = `
-          <div>
-            <div style="font-size:14px;font-weight:600;color:var(--text-primary);">Matched Documents (${docNodes.length})</div>
-            <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;">
-              Documents matching the active entity filters. Click any document to open it or click a node on the graph to inspect its dossier.
-            </div>
-          </div>
-          ${docNodes.map(d => `
-            <div class="graph-inspector-item" data-click="jumpFromGraphToSlice_arg_arg" data-args="[${escapeJsArg(d.jobId)},-1]">
-              <div style="display:flex;align-items:center;justify-content:space-between;gap:6px;">
-                <span style="font-weight:600;font-size:13px;color:var(--text-primary);">${escapeHtml(d.docName)}</span>
-                <span style="font-family:var(--font-mono);font-size:10px;color:var(--accent);">Open ↗</span>
-              </div>
-              <div style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-secondary);">${escapeHtml(d.pageRange)}${d.docTypesSummary ? ' · ' + escapeHtml(d.docTypesSummary) : ''}</div>
-            </div>
-          `).join('')}
+          <h2 class="graph-detail-title">Documents (${docNodes.length})</h2>
+          <p class="graph-detail-meta">Open a document to view its results.</p>
+          ${renderGraphDocumentLinks(docNodes)}
         `;
       }
 
+      const filtered = graphSelectedEntityNames.size > 0 || graphSelectedEntityValues.size > 0;
       container.innerHTML = `
-        <div class="graph-canvas-card" style="overflow:hidden;background-color:#fafafc;">
+        <div class="graph-canvas-card">
           ${docNodes.length === 0 ? `
-            <div style="margin:auto;text-align:center;color:var(--text-secondary);padding:32px;">
-              No documents or entities match the current entity filters.<br/><br/>
-              <button type="button" class="ghost-action-btn" data-click="resetGraphFilters">Reset Entity Filters</button>
+            <div class="graph-empty">
+              <h2>${filtered ? 'No Matching Connections' : 'No Connections Yet'}</h2>
+              <p>${filtered ? 'Try removing one or more entity filters.'
+                : 'Connections appear after entities are extracted from completed documents.'}</p>
+              ${filtered ? '<button type="button" class="ghost-action-btn" data-click="resetGraphFilters">Clear Filters</button>' : ''}
             </div>
           ` : `
-            <canvas id="obsidianGraphCanvas" style="width:100%;height:100%;display:block;cursor:grab;"></canvas>
+            <canvas id="obsidianGraphCanvas" aria-label="Document and entity connections. Use Documents to inspect the connections without the canvas."></canvas>
           `}
 
+          ${docNodes.length ? `
           <div class="graph-floating-hud">
             <div class="graph-legend">
-              <span><i class="legend-dot" style="background:#16161d;"></i>Document (${docNodes.length})</span>
-              <span><i class="legend-dot" style="background:#4b72fe;"></i>Identifier</span>
-              <span><i class="legend-dot" style="background:#0d9488;"></i>Party / Customer</span>
-              <span><i class="legend-dot" style="background:#d97706;"></i>Financial</span>
-              <span><i class="legend-dot" style="background:#7c3aed;"></i>Metadata</span>
+              <span><i class="legend-dot graph-document-dot"></i>Documents</span>
+              <span><i class="legend-dot graph-entity-dot"></i>Entities</span>
             </div>
             <div class="graph-zoom-bar">
-              <button type="button" class="text-link-btn" data-click="zoomGraphBy_arg" data-args="[-0.2]">−</button>
+              <button type="button" class="text-link-btn" aria-label="Zoom Out" data-click="zoomGraphBy_arg" data-args="[-0.2]">−</button>
               <span id="graphZoomLabel">${Math.round(graphZoom * 100)}%</span>
-              <button type="button" class="text-link-btn" data-click="zoomGraphBy_arg" data-args="[0.2]">+</button>
-              <button type="button" class="text-link-btn" data-click="zoomGraphBy_arg" data-args="[0]">Re-layout</button>
+              <button type="button" class="text-link-btn" aria-label="Zoom In" data-click="zoomGraphBy_arg" data-args="[0.2]">+</button>
+              <button type="button" class="text-link-btn" data-click="zoomGraphBy_arg" data-args="[0]">Reset View</button>
             </div>
-          </div>
+          </div>` : ''}
         </div>
 
-        <aside class="graph-inspector-card" id="graphInspectorAside">
+        <aside class="graph-inspector-card" id="graphInspectorAside" aria-label="Graph Details"${graphDetailsOpen ? '' : ' hidden'}>
           ${inspectorHtml}
         </aside>
       `;
@@ -1756,13 +1659,25 @@ let tenants = [];
     function initObsidianForceCanvas(docNodes, entityNodes, edges) {
       const canvas = document.getElementById('obsidianGraphCanvas');
       if (!canvas) return;
-      const rect = canvas.parentElement.getBoundingClientRect();
+      const rect = canvas.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
-      const width = Math.max(640, rect.width || 880);
-      const height = Math.max(460, rect.height || 560);
-      canvas.width = width * dpr;
-      canvas.height = height * dpr;
+      const width = Math.max(1, rect.width);
+      const height = Math.max(1, rect.height);
+      canvas.width = Math.round(width * dpr);
+      canvas.height = Math.round(height * dpr);
       const ctx = canvas.getContext('2d');
+      if (!ctx) throw new Error('The graph canvas could not be initialized.');
+      const fontFamily = getComputedStyle(canvas).fontFamily;
+      const labelWidth = Math.max(70, Math.min(180, width * 0.35));
+      const previousSize = graphLayoutSize;
+      const savedPosition = id => {
+        const saved = graphCustomNodePositions[id];
+        if (!saved) return null;
+        return previousSize
+          ? { x: saved.x * width / previousSize.width, y: saved.y * height / previousSize.height }
+          : saved;
+      };
+      graphLayoutSize = { width, height };
 
       const cx = width / 2;
       const cy = height / 2;
@@ -1774,18 +1689,16 @@ let tenants = [];
       entityNodes.forEach((e, i) => {
         const angle = (2 * Math.PI * i) / Math.max(1, entityNodes.length);
         const ringR = Math.min(width, height) * 0.24;
-        const saved = graphCustomNodePositions[e.id];
+        const saved = savedPosition(e.id);
         const degree = e.connectedDocs.length;
-        const colors = getEntityCategoryColor(e.category);
         const node = {
           id: e.id,
           type: 'entity',
           label: e.entityValue,
           subLabel: e.entityName,
           degree,
-          radius: Math.min(13.5, 4.8 + Math.sqrt(degree) * 2.2),
-          color: colors.dot,
-          bgColor: colors.bg,
+          radius: Math.min(16, 10 + Math.sqrt(degree)),
+          color: '#388e80',
           x: saved ? saved.x : cx + Math.cos(angle) * ringR + ((i % 3) - 1) * 18,
           y: saved ? saved.y : cy + Math.sin(angle) * ringR + ((i % 2) - 0.5) * 18,
           vx: 0,
@@ -1797,9 +1710,9 @@ let tenants = [];
       });
 
       docNodes.forEach((d, i) => {
-        const angle = (2 * Math.PI * i) / Math.max(1, docNodes.length);
+        const angle = Math.PI + (2 * Math.PI * i) / Math.max(1, docNodes.length);
         const outerR = Math.min(width, height) * 0.37;
-        const saved = graphCustomNodePositions[d.id];
+        const saved = savedPosition(d.id);
         const degree = d.entityIds.length;
         const node = {
           id: d.id,
@@ -1807,9 +1720,8 @@ let tenants = [];
           label: d.docName,
           subLabel: d.pageRange,
           degree,
-          radius: d.isCurrentJob ? 5.6 : 4.4,
-          color: d.isCurrentJob ? '#4b72fe' : '#64697d',
-          bgColor: '#ffffff',
+          radius: 10,
+          color: '#252525',
           x: saved ? saved.x : cx + Math.cos(angle) * outerR,
           y: saved ? saved.y : cy + Math.sin(angle) * outerR,
           vx: 0,
@@ -1885,7 +1797,7 @@ let tenants = [];
         }
 
         // 2. Link spring attraction
-        const targetDist = 92;
+        const targetDist = Math.min(240, Math.max(180, width * 0.4));
         const springK = 0.048 * alpha;
         for (let i = 0; i < simEdges.length; i++) {
           const e = simEdges[i];
@@ -1916,6 +1828,9 @@ let tenants = [];
           n.vy *= 0.78;
           n.x += n.vx;
           n.y += n.vy;
+          const margin = labelWidth / 2 + 12;
+          n.x = Math.min(width - margin, Math.max(margin, n.x));
+          n.y = Math.min(height - 56, Math.max(24, n.y));
           graphCustomNodePositions[n.id] = { x: n.x, y: n.y };
         }
 
@@ -1923,6 +1838,8 @@ let tenants = [];
       }
 
       function drawFrame() {
+        graphSimAnimFrame = null;
+        if (!canvas.isConnected || workspaceMode !== 'graph') return;
         stepPhysics();
 
         ctx.save();
@@ -1952,14 +1869,14 @@ let tenants = [];
           ctx.moveTo(ed.source.x, ed.source.y);
           ctx.lineTo(ed.target.x, ed.target.y);
           if (isHigh) {
-            ctx.strokeStyle = 'rgba(75, 114, 254, 0.65)';
-            ctx.lineWidth = 1.35 / Math.sqrt(graphZoom);
+            ctx.strokeStyle = '#388e80';
+            ctx.lineWidth = 1.6 / Math.sqrt(graphZoom);
           } else if (activeAnchorId) {
             ctx.strokeStyle = 'rgba(200, 202, 218, 0.11)';
             ctx.lineWidth = 0.75 / Math.sqrt(graphZoom);
           } else {
-            ctx.strokeStyle = 'rgba(182, 185, 204, 0.32)';
-            ctx.lineWidth = 0.85 / Math.sqrt(graphZoom);
+            ctx.strokeStyle = '#bec5c9';
+            ctx.lineWidth = 1.2 / Math.sqrt(graphZoom);
           }
           ctx.stroke();
         }
@@ -1971,7 +1888,7 @@ let tenants = [];
           const isFocusedOrHovered = n.id === activeAnchorId;
 
           ctx.save();
-          ctx.globalAlpha = isDimmed ? 0.14 : 0.92;
+          ctx.globalAlpha = isDimmed ? 0.2 : 1;
 
           // Subtle halo on entity hubs or active nodes
           if (isFocusedOrHovered || (n.type === 'entity' && n.degree >= 3)) {
@@ -1982,27 +1899,32 @@ let tenants = [];
           }
 
           ctx.beginPath();
-          ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
+          if (n.type === 'doc') ctx.rect(n.x - n.radius, n.y - n.radius, n.radius * 2, n.radius * 2);
+          else ctx.arc(n.x, n.y, n.radius, 0, Math.PI * 2);
           ctx.fillStyle = n.color;
           ctx.fill();
           ctx.lineWidth = isFocusedOrHovered ? 1.8 : 1.0;
           ctx.strokeStyle = '#ffffff';
           ctx.stroke();
 
-          // Subtle Obsidian LOD Label Rule: at rest only label shared hubs (degree >= 3); reveal neighbor labels on hover/focus or zoom
+          // Keep dense graphs quiet until the user focuses or zooms into a connection.
           const showLabel = isFocusedOrHovered ||
             (activeAnchorId && neighborSet.has(n.id)) ||
             (n.type === 'entity' && n.degree >= 3) ||
             graphZoom >= 1.25 ||
-            simNodes.length <= 20;
+            simNodes.length <= 12;
 
           if (showLabel) {
-            const fontSize = Math.max(9.5, Math.min(11.5, (n.type === 'entity' ? 11 : 10) / Math.pow(graphZoom, 0.25)));
-            ctx.font = `${isFocusedOrHovered ? '600' : '500'} ${fontSize}px "Overused Grotesk", sans-serif`;
+            const fontSize = 13;
+            ctx.font = `${isFocusedOrHovered ? '600' : '400'} ${fontSize}px ${fontFamily}`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            const text = n.label.length > 26 ? n.label.slice(0, 25) + '…' : n.label;
-            const labelY = n.y + n.radius + 3.5;
+            if (n.labelFont !== ctx.font) {
+              n.displayLabel = fitGraphLabel(ctx, n.label, labelWidth);
+              n.labelFont = ctx.font;
+            }
+            const text = n.displayLabel;
+            const labelY = n.y + n.radius + 7;
 
             if (isFocusedOrHovered) {
               const tw = ctx.measureText(text).width + 8;
@@ -2010,7 +1932,7 @@ let tenants = [];
               ctx.fillRect(n.x - tw / 2, labelY - 1.5, tw, fontSize + 4);
             }
 
-            ctx.fillStyle = isFocusedOrHovered ? '#16161d' : (n.type === 'entity' ? '#454859' : '#6c7086');
+            ctx.fillStyle = '#3b3b3b';
             ctx.fillText(text, n.x, labelY);
           }
 
@@ -2018,7 +1940,12 @@ let tenants = [];
         }
 
         ctx.restore();
-        graphSimAnimFrame = requestAnimationFrame(drawFrame);
+        if (alpha >= 0.008 || draggedNode) requestDraw();
+      }
+
+      function requestDraw() {
+        if (graphSimAnimFrame === null && canvas.isConnected)
+          graphSimAnimFrame = requestAnimationFrame(drawFrame);
       }
 
       canvas.onmousedown = (e) => {
@@ -2038,6 +1965,7 @@ let tenants = [];
           isPanning = true;
           canvas.style.cursor = 'grabbing';
         }
+        requestDraw();
       };
 
       canvas.onmousemove = (e) => {
@@ -2063,16 +1991,26 @@ let tenants = [];
           const hit = findNodeAt(sx, sy);
           graphHoveredNodeId = hit ? hit.id : null;
           canvas.style.cursor = hit ? 'pointer' : 'grab';
+          canvas.title = hit ? `${hit.label} · ${hit.subLabel}` : '';
         }
+        requestDraw();
+      };
+      canvas.onmouseleave = () => {
+        if (draggedNode || isPanning) return;
+        graphHoveredNodeId = null;
+        canvas.title = '';
+        canvas.style.cursor = 'grab';
+        requestDraw();
       };
 
-      window.onmouseup = () => {
+      const mouseUp = () => {
         if (!pointerMoved && draggedNode) {
           focusGraphNode(draggedNode.id);
         }
         draggedNode = null;
         isPanning = false;
       };
+      window.addEventListener('mouseup', mouseUp);
 
       canvas.onwheel = (e) => {
         e.preventDefault();
@@ -2080,9 +2018,38 @@ let tenants = [];
         graphZoom = Math.min(2.6, Math.max(0.45, +(graphZoom + delta).toFixed(2)));
         const lbl = document.getElementById('graphZoomLabel');
         if (lbl) lbl.textContent = `${Math.round(graphZoom * 100)}%`;
+        requestDraw();
       };
 
+      const resize = () => {
+        if (!canvas.isConnected || workspaceMode !== 'graph') return;
+        const current = canvas.getBoundingClientRect();
+        if (Math.abs(current.width - width) > 1 || Math.abs(current.height - height) > 1)
+          renderDocumentGraphCanvasOnly();
+      };
+      const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(resize);
+      if (observer) observer.observe(canvas);
+      else window.addEventListener('resize', resize);
+      graphCanvasDisposer = () => {
+        observer?.disconnect();
+        window.removeEventListener('mouseup', mouseUp);
+        if (!observer) window.removeEventListener('resize', resize);
+      };
       drawFrame();
+    }
+
+    function fitGraphLabel(context, label, maxWidth) {
+      if (context.measureText(label).width <= maxWidth) return label;
+      const characters = Array.from(label);
+      let low = 0;
+      let high = characters.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        const candidate = characters.slice(0, middle).join('') + '…';
+        if (context.measureText(candidate).width <= maxWidth) low = middle;
+        else high = middle - 1;
+      }
+      return characters.slice(0, low).join('') + '…';
     }
 
     function saveAskAiChatForTenant(tenantId, chat, partition) {
@@ -2293,7 +2260,7 @@ let tenants = [];
         const control = document.getElementById('drawerUploadLabel');
         if (control && !control.hidden && control.style.display !== 'none') document.getElementById('docUploadInput')?.click();
       } },
-      closeGraphDropdown: { arity: 0, run: function(args, event) { if(graphEntityDropdownOpen){ graphEntityDropdownOpen=false; document.getElementById('entityMultiSelectPopover')?.classList.remove('open'); document.getElementById('entityMultiSelectBox')?.classList.remove('open'); } } },
+      closeGraphDropdown: { arity: 0, run: function() { closeGraphDropdown(); } },
       copyTextValue_arg: { arity: 1, run: function(args, event) { return copyTextValue(args[0]); } },
       deleteAskAiChat_arg_event: { arity: 1, run: function(args, event) { return deleteAskAiChat(args[0], event); } },
       exportSelectedJobJson: { arity: 0, run: function(args, event) { return exportSelectedJobJson(); } },
@@ -2320,6 +2287,7 @@ let tenants = [];
       submitAskInput: { arity: 0, run: function(args, event) { return runCrossDocumentAskAi(document.getElementById('askAiMainInputEl').value); } },
       updateAskDraft_value: { arity: 0, run: function() { askAiQuestionInput = this.value; } },
       toggleDocListPane: { arity: 0, run: function(args, event) { return toggleDocListPane(); } },
+      toggleGraphDetails: { arity: 0, run: function() { toggleGraphDetails(); } },
       toggleEntityMultiSelectDropdown_event: { arity: 0, run: function(args, event) { return toggleEntityMultiSelectDropdown(event); } },
       toggleGraphEntityNameFilter_arg_event: { arity: 1, run: function(args, event) { return toggleGraphEntityNameFilter(args[0], event); } },
       toggleGraphEntityValueSelection_arg_event: { arity: 1, run: function(args, event) { return toggleGraphEntityValueSelection(args[0], event); } },

@@ -683,6 +683,12 @@ selected conversation; there is no duplicate chat toolbar or second sidebar. Ret
 restores its search and selection. Unsent questions survive mode changes and manual sidebar toggling;
 switching workspaces clears the draft. History remains browser-local and partitioned by verified
 account and workspace; this does not add cross-device chat synchronization.
+Graph is canvas-first: one entity-filter control, removable AND-filter chips and a compact connection
+count replace the summary-card dashboard. Document and entity details open on node selection or
+through **Documents**; they are not an always-open second list. Documents use dark squares and
+entities use teal circles, with measured, local-font labels and full names in tooltips/details.
+The canvas uses its actual display size, adjusts when resized and stops animating once settled.
+Graph filters and layout are cleared when switching workspaces.
 
 ### Enterprise users and unified access
 
