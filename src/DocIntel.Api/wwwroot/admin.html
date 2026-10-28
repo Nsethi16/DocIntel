@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agent Harness Admin Studio — DocIntel</title>
+  <title>DocIntel — Workspace settings</title>
   <link rel="preconnect" href="https://fonts.cdnfonts.com" />
   <link href="https://fonts.cdnfonts.com/css/overused-grotesk" rel="stylesheet" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -31,14 +31,14 @@
       <svg viewBox="0 0 20 20" fill="currentColor">
         <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z" clip-rule="evenodd" />
       </svg>
-      <span class="nav-label">New tenant</span>
+      <span class="nav-label">New workspace</span>
     </div>
 
     <div class="nav-item active-nav" id="navAgentHarness" title="Agent harness">
       <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5">
         <path stroke-linecap="round" stroke-linejoin="round" d="M9.5 3.5a2 2 0 013 0l4 6.5a2 2 0 01-1.5 3H7a2 2 0 01-1.5-3l4-6.5z" />
       </svg>
-      <span class="nav-label">Agent harness</span>
+      <span class="nav-label">Workspace settings</span>
     </div>
 
     <div class="nav-item" id="navDocumentIntel" title="Open Document Intelligence App" data-click="openWorkspaceForTenant">
@@ -46,13 +46,13 @@
         <path stroke-linecap="round" stroke-linejoin="round" d="M5.5 3h6l4 4v9.5A1.5 1.5 0 0114 18H5.5A1.5 1.5 0 014 16.5v-12A1.5 1.5 0 015.5 3z" />
         <path stroke-linecap="round" stroke-linejoin="round" d="M7 10h6M7 13.5h4" />
       </svg>
-      <span class="nav-label">Document Intelligence ↗</span>
+      <span class="nav-label">Documents ↗</span>
     </div>
 
     <div class="sidebar-divider"></div>
 
     <div class="sidebar-section-header">
-      <span>Tenants</span>
+      <span>Workspaces</span>
       <button class="icon-btn" id="platformCreateTenant" title="Create tenant" data-click="expandAndOpenNewTenant">+</button>
     </div>
 
@@ -78,7 +78,7 @@
       <!-- Tenant Name on Top + Save & Cancel -->
       <div class="tenant-header">
         <div>
-          <h1 class="editorial-heading" id="tenantHeading">Agent harness settings</h1>
+          <h1 class="editorial-heading" id="tenantHeading">Workspace settings</h1>
           <div class="tenant-meta-line">
             <span id="tenantIdDisplay">Tenant ID: —</span>
             <span class="version-chip" id="harnessVersionChip">Harness v1</span>
@@ -271,7 +271,7 @@
       <section id="processingSettingsPanel" role="tabpanel" aria-labelledby="processingSettingsTab">
       <div class="section-bar">
         <span class="section-bar-title">Models</span>
-        <span class="section-bar-meta">Harness-level routing</span>
+        <span class="section-bar-meta">Used by this workspace</span>
       </div>
 
       <div class="models-harness-bar">
@@ -287,7 +287,7 @@
             </div>
             <div class="model-harness-label">
               <strong>Decision Model</strong>
-              <span>Scores extracted slice text with the configured Microsoft Decision deployment</span>
+              <span>Recognizes document types from extracted text</span>
             </div>
           </div>
           <select class="modern-model-pill" id="harnessDecisionModelSelect" aria-label="Decision model"
@@ -306,7 +306,7 @@
             </div>
             <div class="model-harness-label">
               <strong>Language Model</strong>
-              <span>Powers Document Insights, Entity Extraction, and Data Extraction</span>
+              <span>Summaries, extraction and document answers</span>
             </div>
           </div>
           <select class="modern-model-pill" id="harnessLanguageModelSelect" aria-label="Language model"
@@ -348,12 +348,13 @@
 
             <div class="feature-tile-controls">
               <button class="chevron-btn" id="splitChevron" type="button" title="Expand or collapse settings" data-click="toggleFeatureDrawer_arg" data-args="[&quot;split&quot;]">
+                <span>Edit</span>
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </button>
               <label class="switch" title="Toggle File Splitting & Grouping">
-                <input type="checkbox" id="splitFeatureToggle" data-change="onHarnessChanged" />
+                <input type="checkbox" id="splitFeatureToggle" aria-label="Enable File Splitting and Grouping" data-change="onHarnessChanged" />
                 <span class="slider"></span>
               </label>
             </div>
@@ -411,18 +412,19 @@
               </div>
               <div>
                 <h3 class="feature-title">Identify Documents</h3>
-                <p class="feature-desc">Classify extracted slice text into defined forms + Undefined using native Microsoft Decision 1 scoring</p>
+                <p class="feature-desc">Recognize the document types you define</p>
               </div>
             </div>
 
             <div class="feature-tile-controls">
               <button class="chevron-btn" id="identifyChevron" type="button" title="Expand or collapse settings" data-click="toggleFeatureDrawer_arg" data-args="[&quot;identify&quot;]">
+                <span>Edit</span>
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </button>
               <label class="switch" title="Toggle Identify Documents">
-                <input type="checkbox" id="identifyFeatureToggle" data-change="onHarnessChanged" />
+                <input type="checkbox" id="identifyFeatureToggle" aria-label="Enable document identification" data-change="onHarnessChanged" />
                 <span class="slider"></span>
               </label>
             </div>
@@ -451,18 +453,19 @@
               </div>
               <div>
                 <h3 class="feature-title">Document Translation</h3>
-                <p class="feature-desc">Translate non-target language slices using Azure Document Translation</p>
+                <p class="feature-desc">Translate documents into your chosen language</p>
               </div>
             </div>
 
             <div class="feature-tile-controls">
               <button class="chevron-btn" id="translationChevron" type="button" title="Expand or collapse settings" data-click="toggleFeatureDrawer_arg" data-args="[&quot;translation&quot;]">
+                <span>Edit</span>
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
               </button>
               <label class="switch" title="Toggle Document Translation">
-                <input type="checkbox" id="translationFeatureToggle" data-change="onHarnessChanged" />
+                <input type="checkbox" id="translationFeatureToggle" aria-label="Enable document translation" data-change="onHarnessChanged" />
                 <span class="slider"></span>
               </label>
             </div>
@@ -501,12 +504,13 @@
               </div>
               <div>
                 <h3 class="feature-title">Document Insights</h3>
-                <p class="feature-desc">Generate executive insights guided by custom instructions</p>
+                <p class="feature-desc">Generate a summary using your instructions</p>
               </div>
             </div>
 
             <div class="feature-tile-controls">
               <button class="chevron-btn" id="insightChevron" type="button" title="Expand or collapse settings" data-click="toggleFeatureDrawer_arg" data-args="[&quot;insight&quot;]">
+                <span>Edit</span>
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
@@ -540,12 +544,13 @@
               </div>
               <div>
                 <h3 class="feature-title">Entity Extraction</h3>
-                <p class="feature-desc">Extract structured entities from documents using a custom extraction prompt</p>
+                <p class="feature-desc">Find the names, values and details you need</p>
               </div>
             </div>
 
             <div class="feature-tile-controls">
               <button class="chevron-btn" id="entityChevron" type="button" title="Expand or collapse settings" data-click="toggleFeatureDrawer_arg" data-args="[&quot;entity&quot;]">
+                <span>Edit</span>
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
@@ -579,12 +584,13 @@
               </div>
               <div>
                 <h3 class="feature-title">Data Extraction</h3>
-                <p class="feature-desc">Extract structured key-value pairs and tables with columns at the defined document level</p>
+                <p class="feature-desc">Extract the fields and tables defined for each document type</p>
               </div>
             </div>
 
             <div class="feature-tile-controls">
               <button class="chevron-btn" id="dataExtractionChevron" type="button" title="Expand or collapse settings" data-click="toggleFeatureDrawer_arg" data-args="[&quot;dataExtraction&quot;]">
+                <span>Edit</span>
                 <svg width="16" height="16" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                   <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                 </svg>
@@ -632,7 +638,7 @@
               </div>
               <div>
                 <h3 class="feature-title">Document Graph</h3>
-                <p class="feature-desc">Enable the interactive cross-document Entity Constellation Graph view in the workspace</p>
+                <p class="feature-desc">Explore connections between documents</p>
               </div>
             </div>
 
@@ -657,7 +663,7 @@
               </div>
               <div>
                 <h3 class="feature-title">Ask AI</h3>
-                <p class="feature-desc">Enable conversational cross-document question answering and chat management</p>
+                <p class="feature-desc">Ask questions and get answers linked to your documents</p>
               </div>
             </div>
 
@@ -675,7 +681,6 @@
       <div class="section-bar" id="promptsSection" style="margin-top: 26px;">
         <div style="display:flex;align-items:center;gap:12px;">
           <span class="section-bar-title">Prompt Configuration</span>
-          <span class="version-chip">PDF File / Base64 Execution</span>
         </div>
         <div style="display:flex;align-items:center;gap:10px;">
           <span class="section-bar-meta">Enable Prompt Columns</span>
@@ -688,14 +693,9 @@
 
       <div class="prompt-studio-grid">
         <!-- Left Card: Create / Edit Prompt Column -->
-        <div class="prompt-studio-card">
-          <div>
-            <h3 class="prompt-card-title">
-              <span style="color:#2563eb;font-size:18px;line-height:1;">＋</span>
-              <span id="promptFormHeading">Create New Prompt Column</span>
-            </h3>
-            <p class="prompt-card-sub">Define a custom prompt column for document analysis. Matching documents are processed behind the scenes as PDF file / base64.</p>
-          </div>
+        <details class="prompt-studio-card" id="promptEditor">
+          <summary class="prompt-editor-summary"><span id="promptFormHeading">Create New Prompt Column</span></summary>
+          <p class="prompt-card-sub">Choose a name, instructions and the documents this prompt applies to.</p>
 
           <div class="prompt-editor-body">
             <input type="hidden" id="editingPromptColumnId" value="" />
@@ -756,10 +756,10 @@
               <button type="button" class="btn-clear-prompt" data-click="clearPromptColumnForm">✕ Clear</button>
             </div>
           </div>
-        </div>
+        </details>
 
         <!-- Right Card: Saved Prompts -->
-        <div class="prompt-studio-card">
+        <div class="prompt-studio-card saved-prompts-card">
           <div class="prompt-card-title-row">
             <div>
               <h3 class="prompt-card-title">Saved Prompts</h3>

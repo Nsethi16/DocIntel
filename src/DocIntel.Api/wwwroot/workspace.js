@@ -34,6 +34,7 @@ let tenants = [];
     let askInnerSidebarCollapsed = false;
     let askChatSearchQuery = '';
     let jobPollTimer = null;
+    let documentDrawerHiddenForAsk = false;
 
     function onAskChatSearchInput(val) {
       askChatSearchQuery = val || '';
@@ -220,8 +221,26 @@ let tenants = [];
       if (mode === 'ask' && !isAskAiCapabilityEnabled()) mode = 'documents';
       workspaceMode = mode;
       syncTenantWorkspaceCapabilities();
+      const drawer = document.getElementById('docListPane');
+      const expand = document.getElementById('btnHeaderExpandDocList');
+      if (mode === 'ask' && drawer && !drawer.classList.contains('collapsed')) {
+        documentDrawerHiddenForAsk = true;
+        drawer.classList.add('collapsed');
+        drawer.inert = true;
+        drawer.setAttribute('aria-hidden', 'true');
+        if (expand) expand.style.display = 'inline-flex';
+      } else if (mode !== 'ask' && documentDrawerHiddenForAsk) {
+        documentDrawerHiddenForAsk = false;
+        if (drawer) {
+          drawer.classList.remove('collapsed');
+          drawer.inert = false;
+          drawer.setAttribute('aria-hidden', 'false');
+        }
+        if (expand) expand.style.display = 'none';
+      }
 
       if (mode === 'ask') {
+        if (globalThis.matchMedia?.('(max-width: 700px)').matches) askInnerSidebarCollapsed = true;
         loadTenantChats();
         const chat = getActiveChat();
         if (!askAiLoading && chat?.pendingAskAi?.runId) {
@@ -274,6 +293,8 @@ let tenants = [];
       const expandBtn = document.getElementById('btnHeaderExpandDocList');
       if (!pane) return;
       const isCollapsed = pane.classList.toggle('collapsed');
+      pane.inert = isCollapsed;
+      pane.setAttribute('aria-hidden', String(isCollapsed));
       if (expandBtn) {
         expandBtn.style.display = isCollapsed ? 'inline-flex' : 'none';
       }
@@ -288,6 +309,7 @@ let tenants = [];
       const urlTenant = new URLSearchParams(window.location.search).get('tenant');
       currentTenant = tenants.find(t => t.tenantId === urlTenant) || tenants[0] || null;
       renderTenantSelect();
+      if (globalThis.matchMedia?.('(max-width: 700px)').matches) toggleDocListPane();
       await loadTenantJobs();
     }
 
@@ -699,14 +721,21 @@ let tenants = [];
       body.dataset.tab = docResultTab;
 
       const job = tenantJobs.find(j => j.jobId === selectedJobId);
+      if (exportBtn) exportBtn.hidden = !job;
 
       if (!job) {
         document.getElementById('selectedDocTitle').textContent = currentTenant ? currentTenant.displayName : 'Document Intelligence';
         document.getElementById('selectedDocMetaText').textContent = currentTenant ? currentTenant.tenantId : 'Idle';
         sliceRow.innerHTML = '';
+        if (navRow) navRow.style.display = 'none';
+        const upload = document.getElementById('drawerUploadLabel');
+        const canUpload = upload && upload.style.display !== 'none';
         body.innerHTML = `
-          <div class="content-column" style="padding:48px 0;color:var(--text-secondary);font-size:14px;">
-            Select a document from the left drawer or upload a PDF to inspect results.
+          <div class="workspace-start">
+            <h2>Your documents, ready to explore</h2>
+            <p>${canUpload ? 'Upload a PDF to identify its documents and view the results here.'
+              : 'Select a document from the list. Ask your workspace administrator to upload documents.'}</p>
+            ${canUpload ? '<button type="button" class="workspace-start-upload" data-click="chooseWorkspaceUpload">Upload a PDF</button><small>One PDF at a time · up to 25 MiB</small>' : ''}
           </div>
         `;
         return;
@@ -2304,6 +2333,10 @@ let tenants = [];
     }
 
     DocIntelActions.register({
+      chooseWorkspaceUpload: { arity: 0, run: function() {
+        const control = document.getElementById('drawerUploadLabel');
+        if (control && control.style.display !== 'none') document.getElementById('docUploadInput')?.click();
+      } },
       closeGraphDropdown: { arity: 0, run: function(args, event) { if(graphEntityDropdownOpen){ graphEntityDropdownOpen=false; document.getElementById('entityMultiSelectPopover')?.classList.remove('open'); document.getElementById('entityMultiSelectBox')?.classList.remove('open'); } } },
       copyTextValue_arg: { arity: 1, run: function(args, event) { return copyTextValue(args[0]); } },
       deleteAskAiChat_arg_event: { arity: 1, run: function(args, event) { return deleteAskAiChat(args[0], event); } },

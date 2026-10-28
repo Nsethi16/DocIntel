@@ -1,8 +1,8 @@
 :root {
-      --bg: #fafafc;
-      --rail-bg: #f6f6f8;
-      --border: #e3e1ec;
-      --card-border: #e1e1e9;
+      --bg: #ffffff;
+      --rail-bg: #f7f7f9;
+      --border: #e6e8ed;
+      --card-border: #e0e3e9;
       --pill-active: #eef0ff;
       --pill-hover: #f0f0f5;
       --accent-coral: #4b72fe;
@@ -18,7 +18,7 @@
 
     /* Left Navigation Rail — Collapsible / Expandable */
     .sidebar {
-      width: 245px;
+      width: 216px;
       background: var(--rail-bg);
       border-right: 1px solid var(--border);
       padding: 14px 12px;
@@ -289,7 +289,7 @@
 
     .canvas-column {
       width: 100%;
-      max-width: 1440px;
+      max-width: 1160px;
       margin-inline: auto;
     }
 
@@ -412,8 +412,8 @@
 
     .features-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 20px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
       width: 100%;
       align-items: stretch;
     }
@@ -424,25 +424,25 @@
 
     .feature-tile {
       width: 100%;
-      border: 1px solid var(--card-border);
-      border-radius: 16px;
-      padding: 20px;
-      background: #ffffff;
+      border: 0;
+      border-bottom: 1px solid var(--border);
+      border-radius: 0;
+      padding: 17px 0;
+      background: transparent;
       display: flex;
       flex-direction: column;
-      gap: 14px;
-      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      gap: 0;
     }
 
     .feature-tile:hover {
-      border-color: #d4d4d4;
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.03);
+      border-color: var(--border);
+      box-shadow: none;
     }
 
     .feature-tile-header {
       width: 100%;
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       justify-content: space-between;
       gap: 16px;
     }
@@ -461,16 +461,20 @@
       align-items: center;
       gap: 12px;
       flex-shrink: 0;
-      min-height: 56px;
-      align-self: flex-start;
+      min-height: 36px;
+      align-self: center;
     }
 
     .chevron-btn {
       background: transparent;
       border: 1px solid transparent;
-      width: 28px;
-      height: 28px;
-      border-radius: 8px;
+      width: auto;
+      min-width: 68px;
+      height: 34px;
+      gap: 5px;
+      padding: 0 8px;
+      border-radius: 6px;
+      font: 500 12.5px var(--font-sans);
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -485,13 +489,17 @@
     }
 
     .chevron-btn.expanded {
-      transform: rotate(180deg);
+      transform: none;
       color: var(--text-primary);
     }
+    .chevron-btn.expanded svg { transform: rotate(180deg); }
 
     .feature-drawer {
       border-top: 1px solid var(--border);
-      padding-top: 14px;
+      padding: 18px;
+      margin-top: 16px;
+      border-radius: 8px;
+      background: #f8f9fb;
       display: none;
       flex-direction: column;
       gap: 10px;
@@ -568,24 +576,27 @@
     /* Prompt Configuration Studio (Matches Screenshot + Entity Filter Builder) */
     .prompt-studio-grid {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 20px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 16px;
       margin-top: 10px;
       margin-bottom: 32px;
     }
 
     .prompt-studio-card {
       background: #ffffff;
-      border: 1px solid var(--card-border);
-      border-radius: 16px;
-      padding: 20px;
+      border: 0;
+      border-radius: 0;
+      padding: 0;
       min-width: 0;
       display: grid;
-      grid-row: span 2;
-      grid-template-rows: subgrid;
       gap: 14px;
-      box-shadow: 0 2px 8px rgba(15, 23, 42, 0.02);
+      box-shadow: none;
     }
+    .prompt-studio-card.saved-prompts-card { order: -1; }
+    details.prompt-studio-card { display: block; border-top: 1px solid var(--border); padding-top: 16px; }
+    .prompt-editor-summary { cursor: pointer; font-size: 14px; font-weight: 600; padding: 10px 0; }
+    .prompt-editor-summary + .prompt-card-sub { margin-top: 8px; }
+    details.prompt-studio-card .prompt-editor-body { margin-top: 16px; }
 
     .prompt-card-title-row {
       display: flex;
@@ -737,10 +748,11 @@
     }
 
     .saved-prompt-item {
-      border: 1px solid var(--card-border);
-      border-radius: 12px;
-      padding: 12px 14px;
-      background: #fcfcfd;
+      border: 0;
+      border-bottom: 1px solid var(--border);
+      border-radius: 0;
+      padding: 14px 0;
+      background: transparent;
       display: flex;
       flex-direction: column;
       gap: 7px;
@@ -749,7 +761,7 @@
     }
 
     .saved-prompt-item:hover {
-      border-color: #b5bcf3;
+      border-color: var(--border);
     }
 
     .saved-prompt-top {
@@ -804,29 +816,29 @@
 
     .models-harness-bar {
       display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 20px;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0;
       margin-bottom: 24px;
       width: 100%;
     }
 
     .model-harness-card {
       width: 100%;
-      border: 1px solid var(--card-border);
-      border-radius: 16px;
-      padding: 20px;
-      background: #ffffff;
+      border: 0;
+      border-bottom: 1px solid var(--border);
+      border-radius: 0;
+      padding: 14px 0;
+      background: transparent;
       min-width: 0;
       display: grid;
-      grid-row: span 2;
-      grid-template-rows: subgrid;
-      gap: 16px;
-      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+      align-items: center;
+      gap: 20px;
     }
 
     .model-harness-card:hover {
-      border-color: #d4d4d4;
-      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.03);
+      border-color: var(--border);
+      box-shadow: none;
     }
 
     .model-card-left {
@@ -837,15 +849,7 @@
     }
 
     .model-icon-box {
-      width: 56px;
-      height: 56px;
-      border-radius: 12px;
-      background: var(--accent-sand);
-      border: 1px solid #ece7df;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
+      display: none;
     }
 
     .model-harness-label {
@@ -871,16 +875,16 @@
     .modern-model-pill {
       width: 100%;
       min-width: 0;
-      height: 40px;
+      height: 36px;
       flex-shrink: 0;
       appearance: none;
       -webkit-appearance: none;
-      background-color: #f7f6f4;
+      background-color: #ffffff;
       background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 20 20' fill='none' stroke='%23555' stroke-width='1.8'%3E%3Cpath d='M5.5 7.5L10 12l4.5-4.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
       background-repeat: no-repeat;
       background-position: right 13px center;
       border: 1px solid #e2ded8;
-      border-radius: 10px;
+      border-radius: 7px;
       padding: 0 36px 0 15px;
       font-size: 12.5px;
       font-weight: 600;
@@ -905,6 +909,21 @@
       .models-harness-bar, .features-grid, .prompt-studio-grid {
         grid-template-columns: minmax(0, 1fr);
       }
+      @media (max-width: 700px) {
+        .model-harness-card { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+        .sidebar:not(.collapsed) { position: absolute; inset: 0 auto 0 0; z-index: 30; box-shadow: 8px 0 24px #17203312; }
+        .tenant-header { flex-wrap: wrap; }
+        .main-canvas { padding: 20px 16px; }
+        .feature-tile-header { gap: 10px; }
+        .feature-tile-controls { gap: 4px; }
+        .feature-drawer { padding: 14px 10px; }
+        .editorial-heading { font-size: 22px; }
+        .tenant-meta-line { flex-wrap: wrap; }
+      }
+      .main-canvas :is(button,input,select,textarea,summary):focus-visible {
+        outline: 2px solid #3d56e0; outline-offset: 3px;
+      }
+      .switch:has(input:focus-visible) { outline: 2px solid #3d56e0; outline-offset: 3px; border-radius: 20px; }
     }
 
     .feature-tile-left {
@@ -916,15 +935,7 @@
 
     /* Warm editorial mini-illustration */
     .feature-illustration {
-      width: 56px;
-      height: 56px;
-      border-radius: 12px;
-      background: var(--accent-sand);
-      border: 1px solid #ece7df;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-shrink: 0;
+      display: none;
     }
 
     .illus-bar {

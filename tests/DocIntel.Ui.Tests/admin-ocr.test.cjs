@@ -13,6 +13,7 @@ function runtime(responses = []) {
       value: '', checked: false, disabled: false,
       style: {}, children: [],
       addEventListener() {},
+      focus() {},
       classList: { toggle() {}, add() {}, remove() {} }
     });
     return elements.get(id);

@@ -77,6 +77,8 @@ let tenants = [];
     }
 
     async function init() {
+      if (globalThis.matchMedia?.('(max-width: 700px)').matches)
+        document.getElementById('leftSidebar')?.classList.add('collapsed');
       const urlTenant = new URLSearchParams(window.location.search).get('tenant');
       await loadTenants(urlTenant || undefined);
     }
@@ -168,18 +170,29 @@ let tenants = [];
       if (expandedCards.has(key)) {
         expandedCards.delete(key);
       } else {
+        expandedCards.clear();
         expandedCards.add(key);
       }
       renderExpandedState();
     }
 
     function renderExpandedState() {
+      const labels = {
+        split: 'file splitting and grouping', identify: 'document identification',
+        translation: 'document translation', insight: 'document insights',
+        entity: 'entity extraction', dataExtraction: 'data extraction'
+      };
       ['split', 'identify', 'translation', 'insight', 'entity', 'dataExtraction'].forEach(key => {
         const drawer = document.getElementById(key + 'Drawer');
         const chevron = document.getElementById(key + 'Chevron');
         const isOpen = expandedCards.has(key);
         if (drawer) drawer.classList.toggle('open', isOpen);
-        if (chevron) chevron.classList.toggle('expanded', isOpen);
+        if (chevron) {
+          chevron.classList.toggle('expanded', isOpen);
+          chevron.setAttribute('aria-expanded', String(isOpen));
+          chevron.setAttribute('aria-controls', key + 'Drawer');
+          chevron.setAttribute('aria-label', `${isOpen ? 'Hide' : 'Edit'} ${labels[key]} settings`);
+        }
       });
     }
 
@@ -763,7 +776,7 @@ let tenants = [];
       if (workingPromptColumns.length === 0) {
         list.innerHTML = `
           <div style="padding:36px 18px;text-align:center;color:var(--text-secondary);font-size:12.5px;">
-            No saved prompts yet.<br/>Create your first prompt column on the left to start analyzing documents as PDF/Base64.
+            No saved prompts yet.<br/>Open “Create New Prompt Column” below to add one.
           </div>
         `;
         return;
@@ -803,6 +816,9 @@ let tenants = [];
       rulesList.innerHTML = '';
       (col.entityFilters || []).forEach(r => addPromptEntityFilterRow(r.entityName || '', r.operator || 'Exists', r.expectedValue || ''));
       onPromptFilterModeChanged();
+      const editor = document.getElementById('promptEditor');
+      if (editor) editor.open = true;
+      document.getElementById('promptColumnNameInput').focus();
     }
 
     async function deletePromptColumn(idx) {

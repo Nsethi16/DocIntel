@@ -28,6 +28,13 @@ design and end-to-end purge verification; no GDPR/HIPAA/SOC 2 compliance is clai
 
 ## Features
 
+The interface remains document-first, with the original three Admin sections and individual
+custom-result tabs. Processing settings use compact rows; opening an Edit drawer hides the
+previous drawer without clearing its fields. Saved prompt columns stay visible while the
+create/edit form is disclosed on demand. Ask AI temporarily hides the redundant document rail
+and restores its prior state when returning to documents. These presentation changes do not
+alter model routing, permissions, processing, integrations or explicit save behavior.
+
 ### Human review is retired
 
 The application no longer creates review sessions, advertises review tools to Ask AI, or requires
