@@ -689,7 +689,8 @@ through **Documents**; they are not an always-open second list. Documents use da
 entities use teal circles, with measured, local-font labels and full names in tooltips/details.
 The canvas uses its actual display size, adjusts when resized and stops animating once settled.
 Graph filters and layout are cleared when switching workspaces.
-**Appearance** in the sidebar offers **System**, **Light** and **Dark**, saved for this browser
+The **Theme** icons in the sidebar footer offer **System** (monitor), **Light** (sun) and **Dark**
+(moon), with tooltips and an explicit selected state. The choice is saved for this browser
 and shared with settings and question-status pages. Dark mode themes controls, dialogs and the Graph
 canvas; it does not invert or alter original PDFs. Appearance changes repaint Graph without moving it.
 Graph reserves a fixed filter row and overlays details, so selections do not resize the canvas or

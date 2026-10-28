@@ -4,6 +4,11 @@
   const themeKey = 'docintel_appearance_v1';
   const widthKey = 'docintel_sidebar_width_v1';
   const choices = ['system', 'light', 'dark'];
+  const iconPaths = {
+    system: 'M3 4h14v10H3zM7 17h6M10 14v3',
+    light: 'M10 6.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7zM10 1.5v2M10 16.5v2M1.5 10h2M16.5 10h2M4 4l1.5 1.5M14.5 14.5 16 16M4 16l1.5-1.5M14.5 5.5 16 4',
+    dark: 'M16.7 11.4A7 7 0 0 1 8.6 3.3a7 7 0 1 0 8.1 8.1z'
+  };
   const scheme = root.matchMedia('(prefers-color-scheme: dark)');
   const narrow = root.matchMedia('(max-width: 700px)');
   const controls = [];
@@ -67,7 +72,7 @@
     const theme = preference === 'system' ? (scheme.matches ? 'dark' : 'light') : preference;
     document.documentElement.setAttribute('data-theme', theme);
     document.documentElement.setAttribute('data-appearance', preference);
-    for (const control of controls) control.value = preference;
+    for (const control of controls) control.setAttribute('aria-pressed', String(control.value === preference));
     document.dispatchEvent(new root.CustomEvent('docintel:appearance-change', { detail: { theme } }));
   }
 
@@ -113,31 +118,40 @@
 
   function initialize() {
     for (const host of document.querySelectorAll('[data-appearance-host]')) {
-      const label = document.createElement('label');
-      label.textContent = 'Appearance';
-      const select = document.createElement('select');
-      select.id = 'appearanceSelect';
-      label.htmlFor = select.id;
-      select.setAttribute('aria-label', 'Appearance');
+      const label = document.createElement('span');
+      label.textContent = 'Theme';
+      const group = document.createElement('div');
+      group.className = 'appearance-options';
+      group.setAttribute('role', 'group');
+      group.setAttribute('aria-label', 'Appearance');
       for (const value of choices) {
-        const option = document.createElement('option');
-        option.value = value;
-        option.textContent = value[0].toUpperCase() + value.slice(1);
-        select.appendChild(option);
+        const name = value[0].toUpperCase() + value.slice(1);
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.id = `appearance-${value}`;
+        button.value = value;
+        button.title = `${name} Theme`;
+        button.setAttribute('aria-label', `Use ${name} Theme`);
+        button.setAttribute('aria-pressed', String(value === preference));
+        const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        for (const [attribute, content] of Object.entries({
+          viewBox: '0 0 20 20', fill: 'none', stroke: 'currentColor',
+          'stroke-width': '1.5', 'stroke-linecap': 'round', 'stroke-linejoin': 'round',
+          'aria-hidden': 'true', focusable: 'false'
+        })) icon.setAttribute(attribute, content);
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        path.setAttribute('d', iconPaths[value]);
+        icon.appendChild(path);
+        button.appendChild(icon);
+        button.addEventListener('click', () => {
+          preference = value;
+          write(themeKey, preference);
+          applyTheme();
+        });
+        controls.push(button);
+        group.appendChild(button);
       }
-      select.value = preference;
-      select.addEventListener('change', () => {
-        if (!choices.includes(select.value)) {
-          report('Choose System, Light or Dark appearance.');
-          select.value = preference;
-          return;
-        }
-        preference = select.value;
-        write(themeKey, preference);
-        applyTheme();
-      });
-      controls.push(select);
-      host.append(label, select);
+      host.append(label, group);
     }
 
     sidebar = document.querySelector('[data-resizable-sidebar]');

@@ -62,7 +62,8 @@ function runtime({ saved = {}, dark = false, width = 1280, defaultWidth = 280, s
   };
   const document = {
     readyState: 'loading', body: null, documentElement: html,
-    createElement: element, getElementById: id => nodes.get(id) || null,
+    createElement: element, createElementNS: (namespace, tag) => element(tag),
+    getElementById: id => nodes.get(id) || null,
     querySelectorAll: () => [host], querySelector: () => sidebar,
     addEventListener: (name, callback) => documentEvents.set(name, callback),
     dispatchEvent: event => { documentEvents.get(event.type)?.(event); }
@@ -83,7 +84,8 @@ function runtime({ saved = {}, dark = false, width = 1280, defaultWidth = 280, s
     context, html, sidebar, divider, storage, styles, scheme, narrow, events,
     ready() { document.body = element('body'); documentEvents.get('DOMContentLoaded')(); },
     theme() { return html.getAttribute('data-theme'); },
-    select(value) { const select = nodes.get('appearanceSelect'); select.value = value; select.emit('change'); },
+    select(value) { nodes.get(`appearance-${value}`).emit('click'); },
+    appearanceButton(value) { return nodes.get(`appearance-${value}`); },
     width() { return Number(divider.getAttribute('aria-valuenow')); },
     notice() { return nodes.get('shellPreferenceNotice')?.textContent || ''; }
   };
@@ -114,6 +116,25 @@ test('System follows device changes while an explicit appearance is preserved', 
   assert.equal(app.theme(), 'light');
   app.select('system');
   assert.equal(app.theme(), 'dark');
+});
+
+test('appearance icons have accessible names, tooltips and one selected state', () => {
+  const app = runtime();
+  app.ready();
+  for (const value of ['system', 'light', 'dark']) {
+    const button = app.appearanceButton(value);
+    assert.equal(button.type, 'button');
+    assert.match(button.getAttribute('aria-label'), new RegExp(value, 'i'));
+    assert.match(button.title, /Theme$/);
+    assert.equal(button.children[0].getAttribute('aria-hidden'), 'true');
+  }
+  app.select('dark');
+  assert.equal(app.appearanceButton('dark').getAttribute('aria-pressed'), 'true');
+  assert.equal(app.appearanceButton('light').getAttribute('aria-pressed'), 'false');
+  assert.equal(app.appearanceButton('system').getAttribute('aria-pressed'), 'false');
+  app.events.get('storage')({ key: 'docintel_appearance_v1', newValue: 'system' });
+  assert.equal(app.appearanceButton('system').getAttribute('aria-pressed'), 'true');
+  assert.equal(app.appearanceButton('dark').getAttribute('aria-pressed'), 'false');
 });
 
 test('preferences synchronize between pages without rewriting them', () => {
