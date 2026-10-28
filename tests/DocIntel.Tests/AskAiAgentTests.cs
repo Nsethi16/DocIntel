@@ -477,13 +477,16 @@ public sealed class AskAiAgentTests
         store.VerifyNoOtherCalls();
     }
 
-    [Fact]
-    public async Task File_Insights_Are_Explicitly_Scoped_Context_And_Not_Source_Citation_Text()
+    [Theory]
+    [InlineData(64, false)]
+    [InlineData(5_000, true)]
+    public async Task File_Insights_Are_Explicitly_Scoped_Context_And_Not_Source_Citation_Text(
+        int summaryLength, bool truncated)
     {
         // Arrange
         var store = await CreateDocumentStoreAsync();
         var job = (await store.GetJobAsync("source", tenantId: "tenant-one"))!;
-        job.PacketSummary = "Derived complete-file insight";
+        job.PacketSummary = new string('x', summaryLength);
         job.Segments[0].InsightSummary = null;
         await store.UpsertJobAsync(job);
         var tenant = new TenantHarness { TenantId = "tenant-one", DisplayName = "Test" };
@@ -495,6 +498,12 @@ public sealed class AskAiAgentTests
                 It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
             .Returns(async (IEnumerable<ChatMessage> _, ChatOptions options, CancellationToken token) =>
             {
+                var search = Assert.IsAssignableFrom<AIFunction>(
+                    Assert.Single(options.Tools!, candidate => candidate.Name == "search_documents"));
+                await search.InvokeAsync(new AIFunctionArguments
+                {
+                    ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery())
+                }, token);
                 var tool = Assert.IsAssignableFrom<AIFunction>(
                     Assert.Single(options.Tools!, candidate => candidate.Name == "inspect_document_slice"));
                 inspection = await tool.InvokeAsync(new AIFunctionArguments
@@ -514,7 +523,9 @@ public sealed class AskAiAgentTests
         // Assert
         using var result = JsonSerializer.SerializeToDocument(inspection);
         Assert.Equal("CompleteFile", result.RootElement.GetProperty("fileInsight").GetProperty("scope").GetString());
-        Assert.Equal(job.PacketSummary, result.RootElement.GetProperty("fileInsight").GetProperty("summary").GetString());
+        Assert.Equal(job.PacketSummary[..Math.Min(4_000, summaryLength)],
+            result.RootElement.GetProperty("fileInsight").GetProperty("summary").GetString());
+        Assert.Equal(truncated, result.RootElement.GetProperty("fileInsight").GetProperty("summaryTruncated").GetBoolean());
         Assert.DoesNotContain(job.PacketSummary!, Assert.Single(run.Citations).Excerpt);
     }
 
