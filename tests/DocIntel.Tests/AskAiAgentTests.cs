@@ -306,6 +306,24 @@ public sealed class AskAiAgentTests
     }
 
     [Fact]
+    public async Task Oversized_Tool_Descriptions_Fail_Before_A_Provider_Request_With_A_Specific_Diagnostic()
+    {
+        // Arrange
+        var extension = new Mock<IAskAiToolProvider>();
+        extension.Setup(provider => provider.GetTools(It.IsAny<TenantHarness>()))
+            .Returns([AIFunctionFactory.Create(() => "Unused", "oversized", new string('x', 1_025))]);
+        var orchestrator = CreateOrchestrator(new InMemoryJobStore(), [extension.Object], []);
+
+        // Act
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            orchestrator.ExecuteRunAsync(CreateRun()));
+
+        // Assert
+        Assert.Equal("The Ask AI tool configuration exceeds the provider description limit.", error.Message);
+        Assert.Equal("InvalidToolConfiguration", AskAiFailureDiagnostics.GetCode(error));
+    }
+
+    [Fact]
     public async Task Human_Review_Is_Not_An_Advertised_Model_Tool()
     {
         // Arrange
@@ -327,6 +345,9 @@ public sealed class AskAiAgentTests
 
         // Assert
         Assert.NotNull(captured);
+        Assert.All(captured.Tools!, tool => Assert.InRange(tool.Description?.Length ?? 0, 0, 1_024));
+        Assert.Contains("analyze_evidence request rules:", captured.Instructions);
+        Assert.Contains("dateBucket is none/month/quarter/year", captured.Instructions);
         Assert.DoesNotContain(captured.Tools!, tool => tool.Name == "inspect_human_review");
         Assert.Contains(captured.Tools!, tool => tool.Name == "inspect_document_slice");
     }

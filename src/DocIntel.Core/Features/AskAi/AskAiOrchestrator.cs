@@ -479,6 +479,7 @@ public static class AskAiPromptBuilder
 /// </summary>
 public sealed class AskAiOrchestrator
 {
+    private const int MaximumToolDescriptionCharacters = 1_024;
     private static readonly JsonElement AnswerSchema = JsonSerializer.Deserialize<JsonElement>("""
         {
           "type": "object",
@@ -905,24 +906,19 @@ public sealed class AskAiOrchestrator
                 "Accepts the same bounded query as search_documents; use null searchText and [] entities to browse. " +
                 "Follow continuation tokens and then inspect matching logical documents; previews are not evidence."),
             AIFunctionFactory.Create(AnalyzeEvidenceAsync, "analyze_evidence",
-                "Compute a source-backed table or chart. Operation: rows, sum, average, count, min, max or outliers. " +
-                "Visualization: table, bar or line. Supply 1-8 columns with unique lowercase keys; kind text/number/date; " +
-                "numberFormat dot-decimal/comma-decimal; dateFormat yyyy-MM-dd, dd/MM/yyyy, MM/dd/yyyy, dd-MM-yyyy, " +
-                "MM-dd-yyyy, d MMM yyyy or d MMMM yyyy. Each of at most 100 rows needs evidenceId, an exact sourceQuote " +
-                "identifying that record, cells with raw strings copied from that quote (or null for missing), and " +
-                "an explicit unit copied within that record quote for numeric aggregation. Never infer USD from '$'. " +
-                "Include a source-record identifier column when otherwise identical records are distinct. " +
-                "groupBy names a column; valueColumn names a numeric column; dateBucket none/month/quarter/year. " +
-                "count needs no valueColumn or unit. Sum/count results include same-unit sharePercent values. " +
-                "Units remain separate. Outliers use the 1.5xIQR rule, minimum four observations per unit. " +
-                "Line charts require date grouping. Copy the returned analysisId into the final answer and include " +
-                "all its evidenceIds; do not generate numeric chart values yourself. An error is not a successful analysis.")
+                "Compute a source-backed table or chart from inspected records. Supports rows, sum, average, count, " +
+                "min, max and IQR outliers. Use exact source quotes, explicit parsing formats and source-supported " +
+                "units. Returns validated calculations, coverage and an analysisId. Include that ID and its " +
+                "evidenceIds in the final answer. Detailed request rules are in the system instructions. " +
+                "An error means no result was published.")
         };
         tools.AddRange(_toolProviders.SelectMany(p => p.GetTools(tenant)));
         if (tools.Select(t => t.Name).Distinct(StringComparer.Ordinal).Count() != tools.Count)
         {
             throw new InvalidOperationException("Ask AI tool names must be unique.");
         }
+        if (tools.Any(tool => (tool.Description?.Length ?? 0) > MaximumToolDescriptionCharacters))
+            throw new InvalidOperationException("The Ask AI tool configuration exceeds the provider description limit.");
 
         var options = new ChatOptions
         {
@@ -966,6 +962,20 @@ public sealed class AskAiOrchestrator
                 Never choose day-first versus month-first dates without evidence or a disclosed user assumption;
                 ask for clarification when that ambiguity changes the answer.
                 Use server calculation results for totals, averages, rankings, changes and outliers.
+                analyze_evidence request rules:
+                operation is rows, sum, average, count, min, max or outliers; visualization is table, bar or line.
+                Supply 1-8 columns with unique lowercase keys; kind text/number/date; numberFormat
+                dot-decimal/comma-decimal; dateFormat yyyy-MM-dd, dd/MM/yyyy, MM/dd/yyyy, dd-MM-yyyy,
+                MM-dd-yyyy, d MMM yyyy or d MMMM yyyy.
+                Each of at most 100 rows needs evidenceId, an exact sourceQuote identifying that record,
+                cells with raw strings copied from that quote (or null for missing), and an explicit unit
+                copied within that quote for numeric aggregation. Never infer USD from '$'.
+                Include a source-record identifier column when otherwise identical records are distinct.
+                groupBy names a column; valueColumn names a numeric column; dateBucket is none/month/quarter/year.
+                count needs no valueColumn or unit. Sum/count results include same-unit sharePercent values.
+                Units remain separate. Outliers use the 1.5xIQR rule, minimum four observations per unit.
+                Line charts require date grouping. Copy returned analysisId and all its evidenceIds into the
+                final answer; never generate numeric chart values yourself. An error is not a successful analysis.
                 A chart is optional: same-unit categories -> bar; same-unit real dates -> line; clauses -> table.
                 Explain assumptions and differences between sourced facts and inferred recommendations.
                 Analytical datasets cover inspected records, not automatically the complete workspace.

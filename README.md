@@ -461,6 +461,9 @@ only allowlisted types and dataset column references, never executable code or a
 Mixed-unit charts and oversized charts become explicitly disclosed tables. Email/Teams
 payloads retain a bounded textual table preview instead of silently dropping analytical results.
 No new frontend framework, package, cloud resource or change to the workspace navigation is required.
+Tool descriptions stay within the provider's 1,024-character limit; detailed analytical request
+guidance lives in the system instructions. Oversized extension descriptions fail locally with an
+explicit configuration error rather than causing an opaque provider rejection.
 
 Web submissions may send `previousRunId`. The server loads at most four completed prior turns
 owned by that same actor and workspace, checks current permissions and document fingerprints,

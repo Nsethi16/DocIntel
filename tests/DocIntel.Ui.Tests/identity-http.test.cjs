@@ -155,6 +155,10 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
             };
           } else if (url.pathname === '/model/v1/chat/completions') {
             const body = JSON.parse(text);
+            for (const tool of body.tools || []) {
+              assert.ok((tool.function?.description || '').length <= 1024,
+                `${tool.function?.name} exceeds the provider tool-description limit`);
+            }
             const question = body.messages.find(message => message.role === 'user')?.content || '';
             const toolResults = body.messages.filter(message => message.role === 'tool');
             let message;

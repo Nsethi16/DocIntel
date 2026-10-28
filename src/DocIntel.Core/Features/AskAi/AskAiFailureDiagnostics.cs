@@ -13,6 +13,7 @@ public static class AskAiFailureDiagnostics
         "The Ask AI tool-call limit was reached. Narrow the question." => "ToolCallLimit",
         "The evidence limit was reached. Narrow the question." => "EvidenceLimit",
         "The Ask AI document scope limit was reached. Narrow the question." => "EvidenceLimit",
+        "The Ask AI tool configuration exceeds the provider description limit." => "InvalidToolConfiguration",
         "A document used by this conversation changed; start a new question without prior context." => "SourceChanged",
         "Document retrieval failed; no answer was produced."
             when exception.GetBaseException() is ArgumentException => "InvalidToolArguments",
@@ -30,6 +31,7 @@ public static class AskAiFailureDiagnostics
         "ToolCallLimit" or "EvidenceLimit" => "This question exceeded its search or evidence limit. Narrow the question.",
         "InvalidToolArguments" => "The model generated invalid document-search or inspection arguments. No answer was returned.",
         "RetrievalFailed" => "Document retrieval failed. No answer was returned.",
+        "InvalidToolConfiguration" => "Ask AI has an incompatible tool configuration. A workspace administrator must correct it.",
         "SourceChanged" => "A source document changed or prior evidence is no longer current. Start a new chat to search the current documents.",
         _ => "Ask AI could not complete this request. Check the run diagnostics or try again."
     };
