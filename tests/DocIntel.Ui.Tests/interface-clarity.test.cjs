@@ -94,6 +94,14 @@ test('all entry pages use one local font and neutral theme without external font
   assert.doesNotMatch(read('admin.css'), /--text-primary:|--font-sans:/);
 });
 
+test('composer focus belongs to the rounded container instead of a rectangular inner input', () => {
+  const css = read('index.css');
+  assert.match(css, /\.ask-pill-bar:focus-within\s*\{[^}]*border-color:\s*var\(--text-muted\);[^}]*box-shadow:\s*0 0 0 1px var\(--text-muted\)/);
+  assert.match(css, /\.ask-pill-input:focus-visible\s*\{\s*outline:\s*none/);
+  assert.match(css, /\.ask-pill-input::placeholder\s*\{[^}]*color:\s*var\(--text-muted\)/);
+  assert.match(read(path.join('shared', 'shell.css')), /:focus-visible\s*\{[^}]*outline:\s*2px solid var\(--focus-ring\)/);
+});
+
 test('navigation and settings labels use Title Case without transforming document content', () => {
   const html = read('admin.html');
   for (const label of ['Document Processing', 'Agent &amp; Channels', 'Users &amp; Access',

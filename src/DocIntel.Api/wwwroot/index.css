@@ -1377,8 +1377,8 @@
     }
 
     .ask-pill-bar:focus-within {
-      border-color: #d0d0dc;
-      box-shadow: 0 8px 28px rgba(15, 23, 42, 0.09);
+      border-color: var(--text-muted);
+      box-shadow: 0 0 0 1px var(--text-muted);
     }
 
     .ask-pill-plus {
@@ -1397,6 +1397,7 @@
     .ask-pill-input {
       flex: 1;
       min-width: 0;
+      padding: 0;
       border: none;
       background: transparent;
       font-family: var(--font-sans);
@@ -1405,8 +1406,10 @@
       outline: none;
     }
 
+    .ask-pill-input:focus-visible { outline: none; }
+
     .ask-pill-input::placeholder {
-      color: #7c7f90;
+      color: var(--text-muted);
     }
 
     .ask-pill-send {
