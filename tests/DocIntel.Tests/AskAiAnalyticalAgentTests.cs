@@ -43,10 +43,12 @@ public sealed class AskAiAnalyticalAgentTests
                         new() { ["jobId"] = $"source{number}", ["sliceIndex"] = 0, ["textOffset"] = 0 }, token);
                 var result = await InvokeAsync(options, "analyze_evidence",
                     new() { ["request"] = JsonSerializer.SerializeToElement(fixture.Request) }, token);
-                var computed = JsonSerializer.SerializeToDocument(result);
+                using var computed = JsonSerializer.SerializeToDocument(result);
                 Assert.Equal("a1", computed.RootElement.GetProperty("analysisId").GetString());
-                return Response("""{"kind":"DocumentAnswer","answer":"Woodgrove has the higher inspected spend.",
-                    "evidenceIds":["e1","e2","e3"],"analysisIds":["a1"]}""");
+                return Response("""
+                    {"kind":"DocumentAnswer","answer":"Woodgrove has the higher inspected spend.",
+                    "evidenceIds":["e1","e2","e3"],"analysisIds":["a1"]}
+                    """);
             });
         var run = new AskAiRun { RunId = "analysis", TenantId = "workspace", Question = "Compare supplier spend." };
 
@@ -99,8 +101,10 @@ public sealed class AskAiAnalyticalAgentTests
                 Assert.Contains(messages, message => message.Text?.Contains("previousQuestion") == true);
                 await InvokeAsync(options, "inspect_document_slice",
                     new() { ["jobId"] = "source", ["sliceIndex"] = 0, ["textOffset"] = 0 }, token);
-                return Response("""{"kind":"DocumentAnswer","answer":"The source is available [1].",
-                    "evidenceIds":["e1"],"analysisIds":[]}""");
+                return Response("""
+                    {"kind":"DocumentAnswer","answer":"The source is available [1].",
+                    "evidenceIds":["e1"],"analysisIds":[]}
+                    """);
             });
 
         // Act
@@ -109,6 +113,31 @@ public sealed class AskAiAnalyticalAgentTests
         // Assert
         Assert.Equal("source", Assert.Single(fixture.FollowUp.Citations).JobId);
         Assert.Single(fixture.FollowUp.SourceVersions);
+    }
+
+    [Fact]
+    public async Task Source_Changes_During_Reasoning_Discard_The_Answer_And_Analyses()
+    {
+        // Arrange
+        var fixture = await AskAiConversationTests.FixtureAsync();
+        var client = new Mock<IChatClient>();
+        client.Setup(chat => chat.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(async (IEnumerable<ChatMessage> _, ChatOptions options, CancellationToken token) =>
+            {
+                await InvokeAsync(options, "inspect_document_slice",
+                    new() { ["jobId"] = "source", ["sliceIndex"] = 0, ["textOffset"] = 0 }, token);
+                fixture.Source.Segments[0].BodyText = "Replaced source facts.";
+                await fixture.Jobs.UpsertJobAsync(fixture.Source, token);
+                return Response("""{"kind":"DocumentAnswer","answer":"Old source [1].","evidenceIds":["e1"],"analysisIds":[]}""");
+            });
+
+        // Act / Assert
+        await Assert.ThrowsAsync<AskAiSourceChangedException>(() =>
+            Orchestrator(fixture.Jobs, client.Object, fixture.Runs).ExecuteRunAsync(fixture.FollowUp));
+        Assert.Null(fixture.FollowUp.Answer);
+        Assert.Empty(fixture.FollowUp.Analyses);
+        Assert.Empty(fixture.FollowUp.Citations);
     }
 
     private static async Task<object?> InvokeAsync(

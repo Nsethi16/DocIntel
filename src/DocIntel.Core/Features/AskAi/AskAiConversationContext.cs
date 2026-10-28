@@ -36,7 +36,8 @@ public static class AskAiConversationContext
             if (previous is null || previous.TenantId != run.TenantId || previous.Actor != run.Actor ||
                 previous.Status != JobStatus.Completed || String.IsNullOrWhiteSpace(previous.Answer))
                 throw new UnauthorizedAccessException("The prior conversation is unavailable to this actor.");
-            if (previous.Citations.Any(citation => !previous.SourceVersions.ContainsKey(citation.JobId)))
+            if (previous.Citations.Any(citation => !previous.SourceVersions.ContainsKey(citation.JobId)) ||
+                previous.DocumentsEvaluated > 0 && previous.SourceVersions.Count == 0)
                 throw new AskAiSourceChangedException();
             var documentIds = previous.ReferencedJobIds.Concat(previous.Citations.Select(citation => citation.JobId))
                 .Concat(previous.SourceVersions.Keys).Distinct(StringComparer.Ordinal);
@@ -70,10 +71,15 @@ public static class AskAiConversationContext
                 previousQuestion = previous.Question,
                 previousAnswer = previousAnswer[..Math.Min(previousAnswer.Length, 4_000)],
                 answerShortened = previousAnswer.Length > 4_000,
-                previousAnalyses = previous.Analyses.Take(2).Select(analysis => new
+                previousAnalyses = previous.Analyses.Take(4).Select(analysis => new
                 {
-                    analysis.Title, analysis.Operation, analysis.Notes, analysis.Coverage,
-                    rowsPreview = analysis.Rows.Take(10), rowsShortened = analysis.Rows.Count > 10
+                    analysis.Title, analysis.Operation, analysis.Notes, analysis.Coverage, analysis.Columns,
+                    rowsPreview = analysis.Rows.Take(5).Select(row => row.Cells.ToDictionary(cell => cell.Key, cell =>
+                    {
+                        var text = Convert.ToString(cell.Value, System.Globalization.CultureInfo.InvariantCulture);
+                        return text is { Length: > 120 } ? text[..117] + "..." : text;
+                    })),
+                    rowsShortened = analysis.Rows.Count > 5
                 }),
                 documentReferences = previous.Citations.Select(citation => new
                     { citation.JobId, citation.SliceIndex, citation.DocumentName, citation.PageRange })

@@ -215,6 +215,42 @@ test('mixed units, excessive charts, non-numbers and missing columns disclose a 
   }
 });
 
+test('cached bar and line specs require one explicit unit even when category labels identify unlike units', () => {
+  const app = runtime();
+  for (const visualization of ['bar', 'line']) {
+    for (const units of [['USD', 'EUR'], ['kg', 'm'], ['USD', null], [null, null], ['', ''], ['USD', 2]]) {
+      const analysis = dataset([10.25, -2.5]);
+      analysis.visualization = visualization;
+      if (visualization === 'line') analysis.columns[0].kind = 'date';
+      analysis.rows.forEach((row, index) => {
+        row.cells.category = visualization === 'line' ? `2026-01-0${index + 1}` : `Amount (${units[index]})`;
+        row.cells.unit = units[index];
+      });
+      const host = app.render(analysis);
+      assert.equal(tagged(host, 'svg').length, 0, `${visualization}: ${JSON.stringify(units)}`);
+      assert.equal(tagged(host, 'table').length, 1);
+      assert.match(host.textContent, /Table only.*exactly one non-empty unit is required/);
+      assert.equal(tagged(host, 'tbody')[0].children.length, 2);
+      const withoutDeclaration = structuredClone(analysis);
+      withoutDeclaration.columns = withoutDeclaration.columns.filter(column => column.key !== 'unit');
+      assert.equal(tagged(app.render(withoutDeclaration), 'svg').length, 0,
+        'omitting the unit column cannot bypass the unit guard');
+    }
+    const valid = dataset([10.25, -2.5]);
+    valid.visualization = visualization;
+    if (visualization === 'line') {
+      valid.columns[0].kind = 'date';
+      valid.rows.forEach((row, index) => { row.cells.category = `2026-01-0${index + 1}`; });
+    }
+    assert.equal(tagged(app.render(valid), 'svg').length, 1, 'one shared explicit unit remains chartable');
+    valid.rows.forEach(row => { delete row.cells.unit; });
+    valid.columns = valid.columns.filter(column => column.key !== 'unit');
+    const missingUnit = app.render(valid);
+    assert.equal(tagged(missingUnit, 'svg').length, 0);
+    assert.match(missingUnit.textContent, /exactly one non-empty unit is required/);
+  }
+});
+
 test('cached malformed or oversized datasets are bounded and null never silently becomes zero', () => {
   const app = runtime();
   const analysis = dataset(Array.from({ length: 101 }, () => null));

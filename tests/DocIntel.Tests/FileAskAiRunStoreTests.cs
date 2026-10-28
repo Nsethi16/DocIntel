@@ -29,6 +29,35 @@ public sealed class FileAskAiRunStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task Analytical_Results_And_Conversation_Links_Survive_A_Store_Restart()
+    {
+        // Arrange
+        var fixture = AskAiAnalysisTests.Invoices("sum", "bar", "supplier",
+            ("Contoso", "100.25", "USD", "2026-01-01"));
+        var analysis = AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence);
+        analysis.Rows[0].CitationNumbers = [1];
+        var run = new AskAiRun
+        {
+            RunId = "one", TenantId = "tenant", Question = "Show that by supplier", PreviousRunId = "prior",
+            Status = JobStatus.Completed, Answer = "Source-backed spend.", Analyses = [analysis],
+            SourceVersions = new() { ["source"] = new string('A', 64) }
+        };
+        await new FileAskAiRunStore(_directory).UpsertRunAsync(run);
+
+        // Act
+        var restored = await new FileAskAiRunStore(_directory).GetRunAsync("tenant", "one");
+
+        // Assert
+        Assert.Equal("prior", restored!.PreviousRunId);
+        Assert.Equal("bar", Assert.Single(restored.Analyses).Visualization);
+        Assert.Equal(new[] { 1 }, restored.Analyses[0].Rows[0].CitationNumbers);
+        using var json = JsonSerializer.SerializeToDocument(restored.Analyses[0]);
+        Assert.Equal(100.25m, json.RootElement.GetProperty("rows")[0].GetProperty("cells")
+            .GetProperty("value").GetDecimal());
+        Assert.Equal(new string('A', 64), restored.SourceVersions["source"]);
+    }
+
+    [Fact]
     public async Task Independent_Store_Instances_Cannot_Own_The_Same_Run()
     {
         // Arrange

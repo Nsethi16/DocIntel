@@ -456,7 +456,7 @@ Runs expose additive `analyses` with typed columns, computed rows, server-resolv
 numbers, coverage and method notes. The web conversation and standalone run view render local,
 accessible SVG bar/date-line charts plus evidence-linked tables. Chart specifications contain
 only allowlisted types and dataset column references, never executable code or arbitrary HTML.
-Mixed-unit line charts and oversized charts become explicitly disclosed tables. Email/Teams
+Mixed-unit charts and oversized charts become explicitly disclosed tables. Email/Teams
 payloads retain a bounded textual table preview instead of silently dropping analytical results.
 No new frontend framework, package, cloud resource or change to the workspace navigation is required.
 

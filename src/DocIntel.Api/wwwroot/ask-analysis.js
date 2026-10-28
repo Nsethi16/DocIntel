@@ -131,11 +131,12 @@
     if (rows.some(row => cell(row, y.key) !== null && !finiteNumber(cell(row, y.key)))) {
       return { reason: 'Table only: chart values must be finite numbers or missing.' };
     }
-    const hasUnit = columns.some(column => column.key === 'unit') ||
-      rows.some(row => row?.cells && Object.hasOwn(row.cells, 'unit'));
     const units = new Set(rows.map(row => cell(row, 'unit')));
-    if (hasUnit && (units.size > 1 || [...units].some(unit => unit !== null && typeof unit !== 'string'))) {
-      return { reason: 'Table only: mixed or invalid units cannot share a chart axis.' };
+    const unit = [...units][0];
+    if (units.size !== 1 || typeof unit !== 'string' || !unit.trim()) {
+      return {
+        reason: 'Table only: mixed or invalid units cannot share a chart axis; exactly one non-empty unit is required.'
+      };
     }
     const points = rows.map(row => ({
       row, label: displayValue(cell(row, x.key), x.kind), value: cell(row, y.key),
@@ -146,7 +147,6 @@
       points.some(point => point.date === null) || new Set(points.map(point => point.date)).size !== points.length)) {
       return { reason: 'Table only: a line chart requires distinct, valid ISO dates and one unit.' };
     }
-    const unit = hasUnit ? text(cell(rows[0], 'unit')) : '';
     return { points, x, y, unit };
   }
 

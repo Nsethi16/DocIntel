@@ -386,7 +386,7 @@ test('rich conversation cards use existing citation actions and offer context on
   app.context.analysis = {
     title: 'Totals', visualization: 'bar', xColumn: 'name', yColumn: 'amount',
     columns: [{ key: 'name', label: 'Name', kind: 'text' }, { key: 'amount', label: 'Amount', kind: 'number' }],
-    rows: [{ cells: { name: 'Vendor', amount: 2 }, citationNumbers: [1, 2] }]
+    rows: [{ cells: { name: 'Vendor', amount: 2, unit: 'USD' }, citationNumbers: [1, 2] }]
   };
   app.context.citations = [
     { citationNumber: 1, jobId: 'source', sliceIndex: 3 },

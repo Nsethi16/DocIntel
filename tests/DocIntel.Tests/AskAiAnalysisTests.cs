@@ -91,6 +91,44 @@ public sealed class AskAiAnalysisTests
             AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence));
     }
 
+    [Theory]
+    [InlineData("100.00", "USD", "Supplier Contoso; Date 2026-01-01; Unit USD; Amount 100.00.")]
+    [InlineData("100ms", "ms", "Supplier Contoso; Date 2026-01-01; Measurement 100ms.")]
+    public void Literal_Numbers_With_Sentence_Punctuation_And_Attached_Units_Remain_Usable(
+        string amount, string unit, string quote)
+    {
+        // Arrange
+        var fixture = Invoices("sum", "bar", "supplier", ("Contoso", amount, unit, "2026-01-01"));
+        var originalRow = fixture.Request.Rows[0];
+        fixture.Evidence["e1"] = new(quote, "source");
+        fixture.Request.Rows[0] = new()
+        {
+            EvidenceId = "e1", SourceQuote = quote, Unit = unit, Cells = originalRow.Cells
+        };
+
+        // Act
+        var result = AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence);
+
+        // Assert
+        Assert.Equal(100m, Assert.Single(result.Rows).Cells["value"]);
+    }
+
+    [Fact]
+    public void Case_Sensitive_Physical_Units_Cannot_Be_Relabeled()
+    {
+        // Arrange
+        var fixture = Invoices("sum", "bar", "supplier", ("Contoso", "100", "mW", "2026-01-01"));
+        var row = fixture.Request.Rows[0];
+        fixture.Request.Rows[0] = new()
+        {
+            EvidenceId = row.EvidenceId, SourceQuote = row.SourceQuote, Cells = row.Cells, Unit = "MW"
+        };
+
+        // Act / Assert
+        Assert.Throws<ArgumentException>(() =>
+            AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence));
+    }
+
     [Fact]
     public void Ambiguous_Currency_Symbols_Are_Not_Guessed_As_US_Dollars()
     {
@@ -173,11 +211,13 @@ public sealed class AskAiAnalysisTests
         Assert.Contains(result.Notes, note => note == "First-to-last change: 50 USD (50%).");
     }
 
-    [Fact]
-    public void Mixed_Unit_Time_Series_Return_An_Explicit_Table_Rather_Than_A_Misleading_Chart()
+    [Theory]
+    [InlineData("line")]
+    [InlineData("bar")]
+    public void Mixed_Unit_Analyses_Return_An_Explicit_Table_Rather_Than_A_Misleading_Chart(string visualization)
     {
         // Arrange
-        var fixture = Invoices("sum", "line", "date",
+        var fixture = Invoices("sum", visualization, "date",
             ("Contoso", "100.00", "USD", "2026-01-01"),
             ("Contoso", "150.00", "EUR", "2026-03-01"));
 
@@ -187,6 +227,21 @@ public sealed class AskAiAnalysisTests
         // Assert
         Assert.Equal("table", result.Visualization);
         Assert.Contains(result.Notes, note => note.Contains("chart size or unit constraints"));
+    }
+
+    [Fact]
+    public void Non_Positive_Baselines_Do_Not_Produce_A_Misleading_Percentage_Change()
+    {
+        // Arrange
+        var fixture = Invoices("sum", "line", "date",
+            ("Contoso", "0", "USD", "2026-01-01"), ("Contoso", "150", "USD", "2026-03-01"));
+
+        // Act
+        var result = AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence);
+
+        // Assert
+        Assert.Contains(result.Notes, note => note.Contains("non-positive baseline"));
+        Assert.Contains(result.Notes, note => note.Contains("missing periods are not filled with zero"));
     }
 
     [Fact]
@@ -233,6 +288,8 @@ public sealed class AskAiAnalysisTests
 
         // Assert
         Assert.Null(Assert.Single(result.Rows).Cells["amount"]);
+        Assert.Equal("USD", result.Rows[0].Cells["unit"]);
+        Assert.Contains(result.Columns, column => column.Key == "unit");
         Assert.Equal(1, result.Coverage.MissingValues);
     }
 

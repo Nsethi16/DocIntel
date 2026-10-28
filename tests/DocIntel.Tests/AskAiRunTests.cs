@@ -106,6 +106,32 @@ public sealed class AskAiRunTests
         Assert.Null(failed.Answer);
     }
 
+    [Fact]
+    public async Task Failed_Runs_Clear_All_Analytical_Output_And_Source_Context()
+    {
+        // Arrange
+        var store = new InMemoryAskAiRunStore();
+        var run = CreateRun();
+        run.Analyses = [new() { AnalysisId = "stale", Title = "Stale result" }];
+        run.SourceVersions["source"] = new string('A', 64);
+        await store.UpsertRunAsync(run);
+        var client = new Mock<IChatClient>();
+        client.Setup(chat => chat.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new HttpRequestException("Private provider failure."));
+
+        // Act
+        await CreateProcessor(store, client.Object).ProcessAsync(new(run.RunId, run.TenantId));
+        var failed = await store.GetRunAsync(run.TenantId, run.RunId);
+
+        // Assert
+        Assert.Equal(JobStatus.Failed, failed!.Status);
+        Assert.Null(failed.Answer);
+        Assert.Empty(failed.Analyses);
+        Assert.Empty(failed.SourceVersions);
+        Assert.Empty(failed.Citations);
+    }
+
     [Theory]
     [InlineData("""{"kind":"DocumentAnswer","answer":"A claim without evidence.","evidenceIds":[]}""", "MissingEvidence")]
     [InlineData("""{"kind":"NoEvidence","answer":"No matches [1].","evidenceIds":[]}""", "CitationMismatch")]

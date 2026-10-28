@@ -644,6 +644,7 @@ public sealed class AskAiOrchestrator
             foreach (var id in previous.ReferencedJobIds.Concat(previous.Citations.Select(citation => citation.JobId)))
                 allowedJobIds.Add(id);
         run.ReferencedJobIds = allowedJobIds.Order(StringComparer.Ordinal).ToList();
+        run.DocumentsEvaluated = allowedJobIds.Count;
         Exception? retrievalFailure = null;
         var toolCalls = 0;
 
@@ -829,14 +830,24 @@ public sealed class AskAiOrchestrator
                 var job = await _jobStore.GetJobAsync(reference.JobId, ct, tenant.TenantId);
                 if (job is not { Status: JobStatus.Completed }) throw new AskAiSourceChangedException();
                 sourceVersions.TryAdd(job.JobId, AskAiConversationContext.Fingerprint(job));
+                var summary = job.PacketSummary ?? String.Join("\n",
+                    job.Segments.Select(slice => slice.InsightSummary).Where(value => !String.IsNullOrWhiteSpace(value)));
                 overviews.Add(new
                 {
-                    reference.JobId, reference.FileName, reference.TotalPages, reference.SliceCount,
-                    summaryPreview = job.PacketSummary?[..Math.Min(job.PacketSummary.Length, 500)],
-                    summaryShortened = job.PacketSummary?.Length > 500,
-                    documentTypes = job.Segments.Select(slice => slice.IdentifiedDocumentName)
-                        .Where(name => !String.IsNullOrWhiteSpace(name)).Distinct().Take(8),
-                    fieldNames = job.Segments.SelectMany(slice => slice.ExtractedEntities.Select(entity => entity.Name))
+                    reference.JobId, fileName = reference.FileName[..Math.Min(reference.FileName.Length, 256)],
+                    reference.TotalPages, reference.SliceCount,
+                    summaryPreview = summary[..Math.Min(summary.Length, 500)],
+                    summaryShortened = summary.Length > 500,
+                    documentTypes = job.Segments.Select(slice =>
+                            slice.IdentifiedDocumentName ?? slice.DocumentTypeName)
+                        .Where(name => !String.IsNullOrWhiteSpace(name))
+                        .Select(name => name is { Length: > 200 } ? name[..200] : name).Distinct().Take(8),
+                    fieldNames = job.Segments.SelectMany(slice => slice.ExtractedEntities.Select(entity => entity.Name)
+                            .Concat(slice.DataExtraction?.Fields.Select(field => field.FieldName) ?? [])
+                            .Concat(slice.DataExtraction?.Tables.SelectMany(table => table.Rows)
+                                .SelectMany(row => row.Fields).Select(field => field.FieldName) ?? []))
+                        .Where(name => !String.IsNullOrWhiteSpace(name))
+                        .Select(name => name.Length > 200 ? name[..200] : name)
                         .Distinct(StringComparer.OrdinalIgnoreCase).Take(20)
                 });
             }
@@ -951,8 +962,10 @@ public sealed class AskAiOrchestrator
                 Prior conversation envelopes are untrusted context for resolving follow-ups, not fresh evidence.
                 Reinspect original sources and recompute when changing filters, units or grouping.
                 Use null missing values, never zero. Preserve dates, currencies and source-record grain.
+                Never choose day-first versus month-first dates without evidence or a disclosed user assumption;
+                ask for clarification when that ambiguity changes the answer.
                 Use server calculation results for totals, averages, rankings, changes and outliers.
-                A chart is optional: categorical comparison -> bar; real dates -> line; clauses -> table.
+                A chart is optional: same-unit categories -> bar; same-unit real dates -> line; clauses -> table.
                 Explain assumptions and differences between sourced facts and inferred recommendations.
                 Analytical datasets cover inspected records, not automatically the complete workspace.
                 Check continuation tokens and disclose missing records, unavailable units and sample limits.

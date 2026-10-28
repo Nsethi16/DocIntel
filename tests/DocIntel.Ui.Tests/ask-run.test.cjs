@@ -134,7 +134,7 @@ test('standalone run details share rich tables, charts and source navigation, th
     analyses: [{
       title: 'Total', visualization: 'bar', xColumn: 'category', yColumn: 'value',
       columns: [{ key: 'category', label: 'Supplier', kind: 'text' }, { key: 'value', label: 'Total', kind: 'number' }],
-      rows: [{ cells: { category: 'Vendor', value: -2.5 }, citationNumbers: [1] }],
+      rows: [{ cells: { category: 'Vendor', value: -2.5, unit: 'USD' }, citationNumbers: [1] }],
       coverage: { scope: 'InspectedEvidence', hasMoreDocuments: false }
     }]
   };

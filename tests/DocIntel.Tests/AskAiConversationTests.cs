@@ -108,7 +108,7 @@ public sealed class AskAiConversationTests
 
         // Act
         var restored = await fixture.Runs.GetRunAsync("workspace", "prior");
-        var json = JsonSerializer.SerializeToDocument(restored);
+        using var json = JsonSerializer.SerializeToDocument(restored);
 
         // Assert
         Assert.Equal("bar", Assert.Single(restored!.Analyses).Visualization);

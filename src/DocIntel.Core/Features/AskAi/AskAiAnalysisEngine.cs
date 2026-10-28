@@ -28,6 +28,7 @@ public static class AskAiAnalysisEngine
         if (request.Columns.Any(column => column is null ||
                 !Regex.IsMatch(column.Key, "^[a-z][a-z0-9_]{0,31}$", RegexOptions.CultureInvariant) ||
                 column.Key is "constructor" or "prototype" ||
+                column.Key == "unit" && column.Kind != "text" ||
                 String.IsNullOrWhiteSpace(column.Label) || column.Label.Length > 100 ||
                 column.Kind is not ("text" or "number" or "date") ||
                 column.NumberFormat is not ("dot-decimal" or "comma-decimal") ||
@@ -42,7 +43,7 @@ public static class AskAiAnalysisEngine
             request.DateBucket is not ("none" or "month" or "quarter" or "year") ||
             request.DateBucket != "none" && groupColumn?.Kind != "date" ||
             request.Visualization == "line" && groupColumn?.Kind != "date" ||
-            request.Operation == "rows" && request.Visualization != "table")
+            request.Operation == "rows" && (request.Visualization != "table" || request.DateBucket != "none"))
             throw new ArgumentException("Aggregation and charts require compatible grouping, date and numeric columns.");
 
         var records = new List<SourceRecord>();
@@ -58,12 +59,15 @@ public static class AskAiAnalysisEngine
                 throw new ArgumentException("Each record requires inspected evidence, an exact source quote and declared cells.");
             var quote = Normalize(row.SourceQuote);
             var text = Normalize(source.SourceText);
-            var quoteOffset = text.IndexOf(quote, StringComparison.OrdinalIgnoreCase);
-            if (quoteOffset < 0 || text.IndexOf(quote, quoteOffset + 1, StringComparison.OrdinalIgnoreCase) >= 0)
+            var quoteOffset = text.IndexOf(quote, StringComparison.Ordinal);
+            if (quoteOffset < 0 || text.IndexOf(quote, quoteOffset + 1, StringComparison.Ordinal) >= 0)
                 throw new ArgumentException("A record quote must identify one occurrence in inspected original text.");
-            var unit = Normalize(row.Unit ?? String.Empty);
+            var rawUnit = String.IsNullOrWhiteSpace(row.Unit) ? row.Cells.GetValueOrDefault("unit") : row.Unit;
+            var unit = Normalize(rawUnit ?? String.Empty);
             if (unit.Length > 64 || unit is "$" or "\u20ac" or "\u00a3" ||
-                unit.Length > 0 && !ContainsValue(quote, unit, false))
+                unit.Length > 0 && !Regex.IsMatch(quote,
+                    $@"(?<!\p{{L}}){Regex.Escape(unit)}(?![\p{{L}}\p{{N}}])",
+                    RegexOptions.CultureInvariant))
                 throw new ArgumentException("Use an explicit source-supported unit; ambiguous currency symbols cannot be aggregated.");
             var cells = new Dictionary<string, object?>(StringComparer.Ordinal);
             foreach (var column in request.Columns)
@@ -84,6 +88,9 @@ public static class AskAiAnalysisEngine
                     _ => raw
                 };
             }
+            if (cells.TryGetValue("unit", out var suppliedUnitCell) && suppliedUnitCell is string suppliedUnit &&
+                unit.Length > 0 && !String.Equals(suppliedUnit, unit, StringComparison.Ordinal))
+                throw new ArgumentException("The record unit and unit cell must agree.");
             var key = source.DocumentIdentity + "\n" +
                 JsonSerializer.Serialize(cells.OrderBy(cell => cell.Key, StringComparer.Ordinal)) + "\n" + unit;
             if (!seen.Add(key))
@@ -110,12 +117,28 @@ public static class AskAiAnalysisEngine
         {
             "Computed from cited, inspected source records; this is not a certified complete-workspace total."
         };
+        notes.AddRange(request.Columns.Where(column => column.Kind == "date")
+            .Select(column => $"Date parsing: {column.Label}: {column.DateFormat}."));
+        notes.AddRange(request.Columns.Where(column => column.Kind == "number")
+            .Select(column => $"Numeric parsing: {column.Label}: {column.NumberFormat}."));
         var rows = new List<AskAiAnalysisRow>();
         List<AskAiAnalysisColumn> columns;
         if (request.Operation == "rows")
         {
             columns = request.Columns.Select(column =>
                 new AskAiAnalysisColumn(column.Key, column.Label, column.Kind)).ToList();
+            if (request.Columns.Exists(column => column.Kind == "number") ||
+                records.Exists(record => record.Unit.Length > 0))
+            {
+                if (!columns.Exists(column => column.Key == "unit"))
+                    columns.Add(new("unit", "Unit", "text"));
+                foreach (var record in records)
+                {
+                    record.Cells["unit"] = record.Unit.Length == 0 ? null : record.Unit;
+                }
+                if (records.Exists(record => record.Unit.Length == 0))
+                    notes.Add("Some numeric rows have no explicit unit; their values are displayed, not combined.");
+            }
             rows = records.Select(record => new AskAiAnalysisRow
             {
                 Cells = record.Cells, EvidenceIds = [record.EvidenceId]
@@ -175,7 +198,7 @@ public static class AskAiAnalysisEngine
         }
         var visualization = request.Visualization;
         if (rows.Count == 0 || rows.Count > 40 ||
-            visualization == "line" && rows.Select(row => row.Cells["unit"]?.ToString())
+            (visualization is "bar" or "line") && rows.Select(row => row.Cells["unit"]?.ToString())
                 .Distinct(StringComparer.Ordinal).Count() != 1)
         {
             if (visualization != "table") notes.Add("A table is used because the chart size or unit constraints are not met.");
@@ -183,12 +206,14 @@ public static class AskAiAnalysisEngine
         }
         if (visualization == "line" && rows.Count > 1)
         {
+            notes.Add("Only observed dates are plotted; missing periods are not filled with zero.");
             var first = (decimal)rows[0].Cells["value"]!;
             var last = (decimal)rows[^1].Cells["value"]!;
             var difference = last - first;
             notes.Add($"First-to-last change: {difference.ToString("0.####", CultureInfo.InvariantCulture)} " +
-                $"{rows[0].Cells["unit"]}" + (first == 0 ? "; percentage change is undefined from zero."
-                    : $" ({((difference / Math.Abs(first)) * 100).ToString("0.##", CultureInfo.InvariantCulture)}%)."));
+                $"{rows[0].Cells["unit"]}" + (first <= 0
+                    ? "; percentage change is not reported from a non-positive baseline."
+                    : $" ({((difference / first) * 100).ToString("0.##", CultureInfo.InvariantCulture)}%)."));
         }
         if (missing > 0) notes.Add($"{missing} records contain missing required values or units; no missing value became zero.");
         if (duplicates > 0) notes.Add($"{duplicates} duplicate source records were excluded.");
@@ -230,9 +255,12 @@ public static class AskAiAnalysisEngine
         {
             var before = index > 0 ? text[index - 1] : ' ';
             var after = index + value.Length < text.Length ? text[index + value.Length] : ' ';
+            var continuesNumber = (before is '.' or ',') && index > 1 && Char.IsDigit(text[index - 2]) ||
+                (after is '.' or ',') && index + value.Length + 1 < text.Length &&
+                Char.IsDigit(text[index + value.Length + 1]);
             if ((!Char.IsLetterOrDigit(value[0]) || !Char.IsLetterOrDigit(before)) &&
                 (!Char.IsLetterOrDigit(value[^1]) || !Char.IsLetterOrDigit(after)) &&
-                (!numeric || before is not ('.' or ',') && after is not ('.' or ',')))
+                (!numeric || !continuesNumber))
                 return true;
         }
         return false;
