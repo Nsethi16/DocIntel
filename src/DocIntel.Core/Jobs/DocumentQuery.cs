@@ -102,7 +102,7 @@ public static class DocumentQueryCompiler
 
         if (!String.IsNullOrWhiteSpace(query.SearchText))
         {
-            sql.Append(" AND (CONTAINS(c.fileName, @text, true) OR EXISTS(" +
+            sql.Append(" AND (CONTAINS(c.fileName, @text, true) OR CONTAINS(c.packetSummary, @text, true) OR EXISTS(" +
                        "SELECT VALUE s FROM s IN c.segments WHERE " +
                        "CONTAINS(s.bodyText, @text, true) OR CONTAINS(s.markdown, @text, true) OR " +
                        "CONTAINS(s.translatedText, @text, true) OR CONTAINS(s.insightSummary, @text, true)) OR " +
@@ -154,6 +154,7 @@ public static class DocumentQueryCompiler
 
         var text = query.SearchText;
         return job.FileName.Contains(text, StringComparison.OrdinalIgnoreCase) ||
+               (job.PacketSummary?.Contains(text, StringComparison.OrdinalIgnoreCase) ?? false) ||
                job.Segments.Any(s =>
                    s.BodyText.Contains(text, StringComparison.OrdinalIgnoreCase) ||
                    s.Markdown.Contains(text, StringComparison.OrdinalIgnoreCase) ||

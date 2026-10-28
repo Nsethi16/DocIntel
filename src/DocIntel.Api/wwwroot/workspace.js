@@ -1017,19 +1017,40 @@ let tenants = [];
 
       // 2. Insights Tab — Calm Editorial Prose, Zero Nested Boxes
       if (docResultTab === 'insights') {
+        const documentInsights = segs.filter(s => cleanInsightText(s.insightSummary));
+        if (documentInsights.length === 0) {
+          sliceRow.innerHTML = '';
+          const prose = cleanInsightText(job.packetSummary);
+          const lastPage = job.totalPages || Math.max(0, ...segs.map(s => s.endPage || 0));
+          const originalUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/original`;
+          body.innerHTML = `
+            <div class="content-column">
+              <article class="slice-section expanded">
+                <div class="slice-section-head"><div>
+                  <h3 class="slice-section-title">File Insights</h3>
+                  <div class="slice-section-sub">${escapeHtml(job.fileName)} · Complete File${lastPage ? ` · Pages 1–${lastPage}` : ''}</div>
+                </div>
+                ${prose ? `<a class="text-link-btn" href="${originalUrl}" target="_blank" rel="noopener noreferrer">Open File ↗</a>` : ''}
+                </div>
+                <div class="slice-card-body"><p class="insight-prose" style="margin:0;">${escapeHtml(prose ||
+                  'No insight summary has been generated for this file.')}</p></div>
+              </article>
+            </div>`;
+          return;
+        }
         const distinctLangs = [...new Set(segs.map(s => (s.detectedLanguage || 'en').toUpperCase()))];
         const anyTranslated = segs.some(s => s.wasTranslated);
 
         const summaryLineHtml = `
           <div class="packet-summary-line">
-            <span>${job.totalPages || 0} pages · ${segs.length} slice${segs.length === 1 ? '' : 's'} · ${escapeHtml(distinctLangs.join(', '))}${anyTranslated ? ' → EN translated' : ''} · ${totalEntitiesCount} entities extracted</span>
+            <span>${job.totalPages || 0} pages · ${documentInsights.length} document${documentInsights.length === 1 ? '' : 's'} · ${escapeHtml(distinctLangs.join(', '))}${anyTranslated ? ' → EN translated' : ''} · ${totalEntitiesCount} entities extracted</span>
             <span>Harness v${job.appliedHarnessVersion || 1}</span>
           </div>
         `;
 
-        const sectionsHtml = activeSegs.map((s, idx) => {
-          const docName = s.identifiedDocumentName || s.documentTypeName || `Slice ${s.segmentIndex + 1}`;
-          const prose = cleanInsightText(s.insightSummary) || 'No insight summary generated for this slice.';
+        const sectionsHtml = activeSegs.filter(s => cleanInsightText(s.insightSummary)).map((s, idx) => {
+          const docName = s.identifiedDocumentName || s.documentTypeName || `Document ${s.segmentIndex + 1}`;
+          const prose = cleanInsightText(s.insightSummary);
           const langNote = s.wasTranslated
             ? ` · Translated ${(s.detectedLanguage || '').toUpperCase()} → ${(s.targetLanguage || 'en').toUpperCase()}`
             : '';
@@ -1040,11 +1061,11 @@ let tenants = [];
               <div class="slice-section-head" data-click="toggleSliceCard_self">
                 <div>
                   <h3 class="slice-section-title">${escapeHtml(docName)}</h3>
-                  <div class="slice-section-sub">Slice ${s.segmentIndex + 1} · Pages ${s.startPage}–${s.endPage}${escapeHtml(langNote)}</div>
+                  <div class="slice-section-sub">Document ${s.segmentIndex + 1} · Pages ${s.startPage}–${s.endPage}${escapeHtml(langNote)}</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;">
                   <button type="button" class="text-link-btn" data-click="jumpToSlicePdf_arg_event" data-args="[${s.segmentIndex}]">Pages ${s.startPage}–${s.endPage} ↗</button>
-                  <button type="button" class="slice-chevron-btn" aria-label="Expand or collapse slice">
+                  <button type="button" class="slice-chevron-btn" aria-label="Expand or collapse document insight">
                     <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                       <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
                     </svg>

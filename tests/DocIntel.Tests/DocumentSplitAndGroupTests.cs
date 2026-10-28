@@ -327,7 +327,7 @@ public sealed class DocumentSplitAndGroupTests : IDisposable
         Assert.Equal("es", completed.Slices[0].DetectedLanguage);
         Assert.True(completed.Slices[0].WasTranslated);
         Assert.Contains("Program Signature Form", completed.Slices[0].TranslatedText);
-        Assert.NotNull(completed.Slices[0].InsightSummary);
+        Assert.Null(completed.Slices[0].InsightSummary);
         Assert.Contains(completed.Slices[0].ExtractedEntities, e => e.Name == "MBA/MBSA Number" && e.Value == "U4565450");
 
         Assert.NotNull(completed.Slices[0].DataExtraction);
@@ -343,9 +343,10 @@ public sealed class DocumentSplitAndGroupTests : IDisposable
         Assert.Null(completed.Slices[1].DataExtraction);
         Assert.Equal("en", completed.Slices[1].DetectedLanguage);
         Assert.False(completed.Slices[1].WasTranslated);
-        Assert.NotNull(completed.Slices[1].InsightSummary);
+        Assert.Null(completed.Slices[1].InsightSummary);
         Assert.Contains(completed.Slices[1].ExtractedEntities, e => e.Name == "Quote Number" && e.Value == "3037534.004");
         Assert.NotEmpty(completed.ExtractedEntities);
+        // Incomplete identification uses one file insight, without separate page/slice summaries.
         Assert.False(string.IsNullOrWhiteSpace(completed.PacketSummary));
     }
 

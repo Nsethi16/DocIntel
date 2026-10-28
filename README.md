@@ -88,7 +88,11 @@ Admins can manage isolated **Workspaces** and configure each workspace's **Agent
   2. **Identify Documents**: Scores extracted slice text against admin-defined `(DocumentName, IdentificationPrompt)`
      criteria plus `"Undefined"` using the configured **Microsoft-Decision-1** deployment and its native decision API.
   3. **Document Translation**: Translates non-target-language slices using **Azure Document Translation** (`Azure.AI.Translation.Document` / `Text` on the same Microsoft Foundry resource) while honoring `DoNotTranslateTerms`.
-  4. **Document Insights**: Generates executive insights guided by custom **Insight instructions**.
+  4. **Document Insights**: Generates one integrated insight for the complete file, or one per complete
+     identified logical document when splitting and identification are enabled and all documents are
+     identified. Disabled, absent or incomplete identification falls back to one file insight covering
+     every page; it never falls back to page-by-page summaries. Separate documents of the same type
+     remain separate. Existing results require reprocessing or explicit reevaluation to use this policy.
   5. **Entity Extraction**: Extracts structured entities guided by a custom **Entity extraction prompt**.
   6. **Data Extraction**: Extracts per-document structured **Key-Value Pairs** and **Tables (with Columns + Instructions)** mapped to each defined document type.
 

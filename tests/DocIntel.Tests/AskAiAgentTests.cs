@@ -477,6 +477,47 @@ public sealed class AskAiAgentTests
         store.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task File_Insights_Are_Explicitly_Scoped_Context_And_Not_Source_Citation_Text()
+    {
+        // Arrange
+        var store = await CreateDocumentStoreAsync();
+        var job = (await store.GetJobAsync("source", tenantId: "tenant-one"))!;
+        job.PacketSummary = "Derived complete-file insight";
+        job.Segments[0].InsightSummary = null;
+        await store.UpsertJobAsync(job);
+        var tenant = new TenantHarness { TenantId = "tenant-one", DisplayName = "Test" };
+        var harness = new Mock<IHarnessStore>();
+        harness.Setup(item => item.GetTenantAsync("tenant-one", It.IsAny<CancellationToken>())).ReturnsAsync(tenant);
+        object? inspection = null;
+        var client = new Mock<IChatClient>();
+        client.Setup(chat => chat.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(async (IEnumerable<ChatMessage> _, ChatOptions options, CancellationToken token) =>
+            {
+                var tool = Assert.IsAssignableFrom<AIFunction>(
+                    Assert.Single(options.Tools!, candidate => candidate.Name == "inspect_document_slice"));
+                inspection = await tool.InvokeAsync(new AIFunctionArguments
+                {
+                    ["jobId"] = "source", ["sliceIndex"] = 0, ["textOffset"] = 0
+                }, token);
+                return Final("DocumentAnswer", "The source agreement [1].", "e1");
+            });
+        var catalog = new ModelCatalog(customClients:
+            new Dictionary<string, IChatClient> { [tenant.DefaultModelId] = client.Object });
+        var orchestrator = new AskAiOrchestrator(harness.Object, store, catalog, [],
+            NullLogger<AskAiOrchestrator>.Instance);
+
+        // Act
+        var run = await orchestrator.ExecuteRunAsync(CreateRun());
+
+        // Assert
+        using var result = JsonSerializer.SerializeToDocument(inspection);
+        Assert.Equal("CompleteFile", result.RootElement.GetProperty("fileInsight").GetProperty("scope").GetString());
+        Assert.Equal(job.PacketSummary, result.RootElement.GetProperty("fileInsight").GetProperty("summary").GetString());
+        Assert.DoesNotContain(job.PacketSummary!, Assert.Single(run.Citations).Excerpt);
+    }
+
     private static async Task<InMemoryJobStore> CreateDocumentStoreAsync()
     {
         var store = new InMemoryJobStore();

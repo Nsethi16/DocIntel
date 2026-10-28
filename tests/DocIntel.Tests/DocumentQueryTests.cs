@@ -105,6 +105,32 @@ public sealed class DocumentQueryTests
         Assert.Contains("page size", exception.Message);
     }
 
+    [Fact]
+    public async Task Complete_File_Insights_Are_Searchable_Without_Broadening_Tenant_Or_Document_Access()
+    {
+        // Arrange
+        var store = new InMemoryJobStore();
+        var first = CreateJob("one", "tenant-one", "USD");
+        first.PacketSummary = "A complete-file RenewalRisk insight";
+        await store.UpsertJobAsync(first);
+        var other = CreateJob("two", "tenant-two", "USD");
+        other.PacketSummary = first.PacketSummary;
+        await store.UpsertJobAsync(other);
+        var query = new DocumentQuery { SearchText = "renewalrisk" }
+            .WithAccess(new HashSet<string>(StringComparer.Ordinal) { "one" });
+
+        // Act
+        var page = await store.SearchDocumentsAsync("tenant-one", query);
+        var compiled = DocumentQueryCompiler.Compile("tenant-one", query);
+
+        // Assert
+        Assert.Equal("one", Assert.Single(page.Documents).JobId);
+        Assert.Contains("CONTAINS(c.packetSummary, @text, true)", compiled.Sql);
+        Assert.Contains("ARRAY_CONTAINS(@authorizedJobIds, c.jobId)", compiled.Sql);
+        Assert.Equal("renewalrisk", compiled.Parameters["@text"]);
+        Assert.False(DocumentQueryCompiler.Matches(first, "tenant-two", query));
+    }
+
     private static DocumentJob CreateJob(string id, string tenantId, string currency) => new()
     {
         JobId = id,

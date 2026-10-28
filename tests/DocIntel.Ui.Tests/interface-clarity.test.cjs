@@ -508,3 +508,52 @@ test('the document-first empty state hides irrelevant result tabs and checks exi
   assert.doesNotMatch(app.element('docCenterBody').innerHTML, /data-click="chooseWorkspaceUpload"/);
   assert.match(app.element('docCenterBody').innerHTML, /workspace administrator/);
 });
+
+test('complete-file insights display once even when processing produced page fragments', () => {
+  const app = runtime('index');
+  vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};
+    tenantJobs=[{jobId:'file',tenantId:'one',fileName:'bundle.pdf',status:'Completed',totalPages:3,
+      packetSummary:'Complete summary <unsafe>',segments:[
+        {segmentIndex:0,startPage:1,endPage:1,bodyText:'Page one'},
+        {segmentIndex:1,startPage:2,endPage:2,bodyText:'Page two'},
+        {segmentIndex:2,startPage:3,endPage:3,bodyText:'Page three'}]}];
+    selectedJobId='file';selectedSliceIndex=1;docResultTab='insights';`, app.context);
+  app.context.renderSelectedDocument();
+  const html = app.element('docCenterBody').innerHTML;
+  assert.equal([...html.matchAll(/<article\b/g)].length, 1);
+  assert.match(html, /File Insights/);
+  assert.match(html, /Complete File/);
+  assert.match(html, /Pages 1–3/);
+  assert.match(html, /Complete summary &lt;unsafe&gt;/);
+  assert.match(html, /\/jobs\/file\/original/);
+  assert.doesNotMatch(html, /No insight summary generated for this slice/);
+  assert.equal(app.element('sliceSelectorRow').children.length, 0);
+});
+
+test('identified document insights retain their complete ranges instead of generating page cards', () => {
+  const app = runtime('index');
+  vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};
+    tenantJobs=[{jobId:'file',tenantId:'one',fileName:'bundle.pdf',status:'Completed',totalPages:4,
+      packetSummary:'Combined document summaries',segments:[
+        {segmentIndex:0,startPage:1,endPage:2,identifiedDocumentName:'Invoice',insightSummary:'First document summary'},
+        {segmentIndex:1,startPage:3,endPage:4,identifiedDocumentName:'Invoice',insightSummary:'Second document summary'}]}];
+    selectedJobId='file';selectedSliceIndex=-1;docResultTab='insights';`, app.context);
+  app.context.renderSelectedDocument();
+  const html = app.element('docCenterBody').innerHTML;
+  assert.equal([...html.matchAll(/<article\b/g)].length, 2);
+  assert.match(html, /Document 1 · Pages 1–2/);
+  assert.match(html, /Document 2 · Pages 3–4/);
+  assert.match(html, /First document summary/);
+  assert.match(html, /Second document summary/);
+  assert.doesNotMatch(html, /File Insights/);
+});
+
+test('an empty insight result shows one file-level notice rather than a notice per page', () => {
+  const app = runtime('index');
+  vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};
+    tenantJobs=[{jobId:'file',tenantId:'one',fileName:'bundle.pdf',status:'Completed',totalPages:2,segments:[
+      {segmentIndex:0,startPage:1,endPage:1},{segmentIndex:1,startPage:2,endPage:2}]}];
+    selectedJobId='file';selectedSliceIndex=-1;docResultTab='insights';`, app.context);
+  app.context.renderSelectedDocument();
+  assert.equal([...app.element('docCenterBody').innerHTML.matchAll(/No insight summary has been generated/g)].length, 1);
+});

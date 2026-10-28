@@ -1420,7 +1420,17 @@ let tenants = [];
           </div>
         `;
 
-        body.innerHTML = kpiStripHtml + activeSegs.map(s => `
+        const hasDocumentInsights = segs.some(s => String(s.insightSummary || '').trim());
+        if (!hasDocumentInsights) {
+          const summary = String(job.packetSummary || '').trim();
+          body.innerHTML = kpiStripHtml + `
+            <div class="result-card"><h3 class="result-card-title">File Insights</h3>
+              <p>Complete File · ${escapeHtml(job.fileName)} · ${job.totalPages || 0} pages</p>
+              <div class="insight-summary-box">${escapeHtml(summary ||
+                'No insight summary has been generated for this file.')}</div></div>`;
+          return;
+        }
+        body.innerHTML = kpiStripHtml + activeSegs.filter(s => String(s.insightSummary || '').trim()).map(s => `
           <div class="result-card">
             <div class="result-card-header">
               <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">

@@ -726,6 +726,15 @@ public sealed class AskAiOrchestrator
                     nextTextOffset = textOffset + sourceText.Length < slice.BodyText.Length
                         ? (int?)(textOffset + sourceText.Length) : null,
                     slice.InsightSummary,
+                    fileInsight = job.Segments.All(segment => String.IsNullOrWhiteSpace(segment.InsightSummary)) &&
+                        !String.IsNullOrWhiteSpace(job.PacketSummary)
+                        ? new
+                        {
+                            scope = "CompleteFile",
+                            summary = job.PacketSummary.Length > 4_000
+                                ? job.PacketSummary[..4_000] : job.PacketSummary,
+                            summaryTruncated = job.PacketSummary.Length > 4_000
+                        } : null,
                     ExtractedEntities = slice.ExtractedEntities.Select(entity => new
                     {
                         name = entity.Name,
@@ -809,6 +818,8 @@ public sealed class AskAiOrchestrator
                 unless its result supports the claim. No matches must not be replaced by unrelated documents.
                 Keep currencies separate. Distinguish source text from derived AI results. Disclose pagination
                 or evidence limits; never claim a sampled search covered the entire corpus.
+                fileInsight is complete-file derived context, not a quotation from the inspected slice.
+                summaryTruncated=true marks a preview; inspect original sourceText to substantiate each claim.
                 hasDevelopmentResults=true means derived results include development simulation;
                 null means legacy provenance is unknown. Ground factual claims in original source text,
                 not those unverified derived results.
