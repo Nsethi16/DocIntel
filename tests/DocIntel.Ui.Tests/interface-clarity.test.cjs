@@ -9,6 +9,7 @@ const read = file => fs.readFileSync(path.join(root, file), 'utf8');
 
 function runtime(page) {
   const nodes = new Map();
+  const storage = new Map();
   let focused;
   const element = id => {
     if (nodes.has(id)) return nodes.get(id);
@@ -20,6 +21,8 @@ function runtime(page) {
       set innerHTML(value) { html = value; this.children = []; },
       children: [], open: false, inert: false,
       appendChild(child) { this.children.push(child); },
+      append(...children) { this.children.push(...children); },
+      replaceChildren(...children) { this.innerHTML = ''; this.children.push(...children); },
       classList: {
         add(name) { classes.add(name); }, remove(name) { classes.delete(name); },
         contains(name) { return classes.has(name); },
@@ -39,6 +42,12 @@ function runtime(page) {
   };
   const app = {
     element,
+    storage,
+    DocIntelIdentity: { chatPartition: 'test-user' },
+    localStorage: {
+      getItem: key => storage.get(key) || null,
+      setItem: (key, value) => storage.set(key, value)
+    },
     document: {
       getElementById: element, querySelector: () => null, querySelectorAll: () => [],
       createElement(tag) {
@@ -275,7 +284,7 @@ test('Ask AI preserves a document rail the user had already collapsed', () => {
   assert.equal(app.element('docListPane').classList.contains('collapsed'), true);
 });
 
-test('Ask AI renders only in the right pane with the shared header and existing conversation controls', () => {
+test('Ask AI keeps the right pane focused on the conversation and moves history into the shared sidebar', () => {
   const app = runtime('index');
   const header = app.element('workspaceHeader');
   header.style.display = 'none';
@@ -292,15 +301,145 @@ test('Ask AI renders only in the right pane with the shared header and existing 
   assert.equal(body.dataset.tab, 'ask');
   assert.equal(app.element('selectedDocTitle').textContent, 'Ask AI');
   assert.equal(app.element('meridianNavRow').style.display, 'none');
-  assert.match(body.innerHTML, /ask-conversation-toolbar/);
-  assert.match(body.innerHTML, /data-change="selectAskAiChat_value"/);
-  assert.match(body.innerHTML, /&lt;untrusted title&gt;/);
-  assert.match(body.innerHTML, /New Chat/);
-  assert.match(body.innerHTML, /Delete Chat/);
   assert.match(body.innerHTML, /First answer/);
-  assert.doesNotMatch(body.innerHTML, /<aside|ask-inner-sidebar|toggleDocListPane|toggleAskInnerSidebar|workspace-mode-switcher/);
-  app.context.registeredActions.selectAskAiChat_value.run.call({ value: 'chat-two' });
+  assert.doesNotMatch(body.innerHTML, /<aside|ask-inner-sidebar|toggleDocListPane|toggleAskInnerSidebar|workspace-mode-switcher|ask-conversation-toolbar|askChatSelect|New Chat|Delete Chat/);
+  app.context.renderDocumentList();
+  const list = app.element('docItemsList');
+  assert.equal(list.children.length, 2);
+  assert.match(list.children[0].children[0].innerHTML, /&lt;untrusted title&gt;/);
+  assert.equal(list.children[0].children[0].type, 'button');
+  assert.equal(list.children[0].children[1].type, 'button');
+  list.children[1].children[0].onclick();
   assert.match(body.innerHTML, /Second answer/);
+});
+
+test('the contextual sidebar swaps actions and searches without changing document state or upload permission', () => {
+  const app = runtime('index');
+  app.storage.set('docintel_chats_v2_test-user_one', JSON.stringify([
+    { id: 'chat-one', title: 'First question', messages: [{ role: 'user', text: 'Northwind terms' }] },
+    { id: 'chat-two', title: 'Second question', messages: [{ role: 'user', text: 'Contoso terms' }] }
+  ]));
+  vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};
+    tenantJobs=[{jobId:'document-one',fileName:'Contract.pdf',status:'Completed',totalPages:3}];
+    selectedJobId='document-one';selectedSliceIndex=2;docResultTab='prompt:custom';
+    renderSelectedDocument=()=>{};`, app.context);
+  app.element('drawerUploadLabel').style.display = 'none';
+  app.element('docSearchInput').value = 'Contract';
+  app.context.setWorkspaceMode('ask');
+  assert.equal(app.element('drawerUploadLabel').hidden, true);
+  assert.equal(app.element('drawerNewChatButton').hidden, false);
+  assert.equal(app.element('docSearchBoxWrap').hidden, true);
+  assert.equal(app.element('chatSearchBoxWrap').hidden, false);
+  assert.equal(app.element('sidebarCollectionTitle').textContent, 'Past Chats');
+  assert.equal(app.element('docListCountLabel').textContent, '2 chats');
+  app.element('chatSearchInput').value = 'northwind';
+  app.context.renderDocumentList();
+  assert.equal(app.element('docItemsList').children.length, 1);
+  assert.equal(app.element('docListCountLabel').textContent, '1 chat');
+  assert.match(app.element('docItemsList').children[0].children[0].innerHTML, /First question/);
+  app.context.setWorkspaceMode('graph');
+  assert.equal(app.element('drawerUploadLabel').hidden, false);
+  assert.equal(app.element('drawerUploadLabel').style.display, 'none', 'Read-only upload permission must remain intact');
+  assert.equal(app.element('drawerNewChatButton').hidden, true);
+  assert.equal(app.element('docSearchBoxWrap').hidden, false);
+  assert.equal(app.element('chatSearchBoxWrap').hidden, true);
+  assert.equal(app.element('sidebarCollectionTitle').textContent, 'Documents');
+  assert.equal(app.element('docSearchInput').value, 'Contract');
+  assert.equal(app.element('docItemsList').children.length, 1);
+  assert.equal(vm.runInContext('selectedJobId', app.context), 'document-one');
+  assert.equal(vm.runInContext('selectedSliceIndex', app.context), 2);
+  assert.equal(vm.runInContext('docResultTab', app.context), 'prompt:custom');
+  app.context.setWorkspaceMode('ask');
+  assert.equal(app.element('chatSearchInput').value, 'northwind');
+  assert.equal(app.element('docListCountLabel').textContent, '1 chat');
+  vm.runInContext('currentTenant.capabilities.AskAi={enabled:false};', app.context);
+  app.context.setWorkspaceMode('ask');
+  assert.equal(app.element('drawerNewChatButton').hidden, true);
+  assert.equal(app.element('sidebarCollectionTitle').textContent, 'Documents');
+});
+
+test('New Chat reuses an empty draft, clears chat filtering and focuses the composer without a request', () => {
+  const app = runtime('index');
+  app.storage.set('docintel_chats_v2_test-user_one', JSON.stringify([
+    { id: 'saved', title: 'Saved question', messages: [{ role: 'user', text: 'Question' }] },
+    { id: 'draft', title: 'New chat', messages: [] }
+  ]));
+  vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};workspaceMode='ask';
+    renderSelectedDocument=()=>{};`, app.context);
+  app.context.renderDocumentList();
+  app.element('chatSearchInput').value = 'No match';
+  app.context.startNewAskAiChat();
+  app.context.startNewAskAiChat();
+  assert.equal(vm.runInContext('activeChatId', app.context), 'draft');
+  assert.equal(vm.runInContext('tenantChats.length', app.context), 2);
+  assert.equal(app.element('chatSearchInput').value, '');
+  assert.equal(app.element('docListCountLabel').textContent, '1 chat', 'Unused drafts are not past chats');
+  assert.equal(app.focused(), 'askAiMainInputEl');
+});
+
+test('chat searches, empty states and names remain safe text in the shared list', () => {
+  const app = runtime('index');
+  app.storage.set('docintel_chats_v2_test-user_one', JSON.stringify([
+    { id: 'saved', title: '<img src=x onerror=evil()>', messages: [{ role: 'user', text: 'Find my agreement' }] }
+  ]));
+  vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};workspaceMode='ask';`, app.context);
+  app.context.renderDocumentList();
+  const list = app.element('docItemsList');
+  assert.match(list.children[0].children[0].innerHTML, /&lt;img src=x onerror=evil\(\)&gt;/);
+  assert.equal(list.children[0].children[1]['aria-label'], 'Delete chat: <img src=x onerror=evil()>');
+  app.element('chatSearchInput').value = 'AGREEMENT';
+  app.context.renderDocumentList();
+  assert.equal(list.children.length, 1);
+  app.element('chatSearchInput').value = 'missing';
+  app.context.renderDocumentList();
+  assert.equal(list.children[0].textContent, 'No matching chats. Try another search.');
+});
+
+test('chat actions cannot reuse a stale account or workspace list', () => {
+  const app = runtime('index');
+  const original = JSON.stringify([
+    { id: 'private', title: 'Private question', messages: [{ role: 'user', text: 'Private contents' }] }
+  ]);
+  app.storage.set('docintel_chats_v2_test-user_one', original);
+  vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};workspaceMode='ask';
+    showToast=message=>{globalThis.notice=message;};renderSelectedDocument=()=>{};`, app.context);
+  app.context.renderDocumentList();
+  const stale = app.element('docItemsList').children[0];
+  app.element('chatSearchInput').value = 'Private';
+  app.context.DocIntelIdentity.chatPartition = 'another-user';
+  stale.children[0].onclick();
+  assert.equal(app.element('chatSearchInput').value, '');
+  assert.match(app.context.notice, /no longer available/);
+  assert.equal(app.element('docListCountLabel').textContent, '0 chats');
+  stale.children[1].onclick({ stopPropagation() {} });
+  assert.equal(app.storage.get('docintel_chats_v2_test-user_one'), original);
+  assert.doesNotMatch(app.storage.get('docintel_chats_v2_another-user_one'), /Private/);
+  vm.runInContext("currentTenant={tenantId:'two',capabilities:{}};", app.context);
+  app.context.renderDocumentList();
+  assert.equal(app.element('docListCountLabel').textContent, '0 chats');
+  assert.doesNotMatch(app.storage.get('docintel_chats_v2_another-user_two'), /Private/);
+});
+
+test('deleting chats is separate from selecting them and deleting the last chat leaves a reusable draft', () => {
+  const app = runtime('index');
+  app.storage.set('docintel_chats_v2_test-user_one', JSON.stringify([
+    { id: 'first', title: 'First', messages: [{ role: 'user', text: 'First question' }] },
+    { id: 'second', title: 'Second', messages: [{ role: 'assistant', text: 'Second answer' }] }
+  ]));
+  app.storage.set('docintel_chats_v2_test-user_other', 'Unchanged other workspace');
+  vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};workspaceMode='ask';
+    renderSelectedDocument=()=>{};`, app.context);
+  app.context.renderDocumentList();
+  let stopped = 0;
+  app.element('docItemsList').children[0].children[1].onclick({ stopPropagation() { stopped++; } });
+  assert.equal(stopped, 1);
+  assert.equal(vm.runInContext('activeChatId', app.context), 'second');
+  assert.equal(app.element('docListCountLabel').textContent, '1 chat');
+  app.element('docItemsList').children[0].children[1].onclick({ stopPropagation() {} });
+  assert.equal(app.element('docListCountLabel').textContent, '0 chats');
+  assert.equal(vm.runInContext('tenantChats.length', app.context), 1);
+  assert.equal(vm.runInContext('tenantChats[0].messages.length', app.context), 0);
+  assert.equal(app.storage.get('docintel_chats_v2_test-user_other'), 'Unchanged other workspace');
 });
 
 test('the existing sidebar toggle does not rebuild Ask AI or discard its unsent question', () => {

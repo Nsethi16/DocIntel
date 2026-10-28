@@ -44,6 +44,8 @@ let tenants = [];
       if (loadedChatStorageKey !== storageKey) {
         tenantChats = [];
         activeChatId = null;
+        const search = document.getElementById('chatSearchInput');
+        if (search) search.value = '';
       }
       loadedChatStorageKey = storageKey;
       if (!forceReload && Array.isArray(tenantChats) && tenantChats.length > 0) {
@@ -95,6 +97,7 @@ let tenants = [];
 
     function startNewAskAiChat() {
       loadTenantChats();
+      document.getElementById('chatSearchInput').value = '';
       // Reuse existing empty chat if the top chat has 0 messages
       const existingEmpty = tenantChats.find(c => (c.messages || []).length === 0);
       if (existingEmpty) {
@@ -125,6 +128,12 @@ let tenants = [];
     }
 
     function selectAskAiChat(chatId) {
+      loadTenantChats();
+      if (!tenantChats.some(chat => chat.id === chatId)) {
+        showToast('This chat is no longer available in this workspace.');
+        renderDocumentList();
+        return;
+      }
       activeChatId = chatId;
       askAiQuestionInput = '';
       if (workspaceMode !== 'ask') {
@@ -142,6 +151,12 @@ let tenants = [];
 
     function deleteAskAiChat(chatId, evt) {
       if (evt) evt.stopPropagation();
+      loadTenantChats();
+      if (!tenantChats.some(chat => chat.id === chatId)) {
+        showToast('This chat is no longer available in this workspace.');
+        renderDocumentList();
+        return;
+      }
       tenantChats = tenantChats.filter(c => c.id !== chatId);
       if (tenantChats.length === 0) {
         const fresh = {
@@ -185,6 +200,12 @@ let tenants = [];
       if ((workspaceMode === 'graph' && !graphOn) || (workspaceMode === 'ask' && !askOn)) {
         workspaceMode = 'documents';
       }
+      const asking = workspaceMode === 'ask';
+      document.getElementById('drawerUploadLabel').hidden = asking;
+      document.getElementById('drawerNewChatButton').hidden = !asking;
+      document.getElementById('docSearchBoxWrap').hidden = asking;
+      document.getElementById('chatSearchBoxWrap').hidden = !asking;
+      document.getElementById('sidebarCollectionTitle').textContent = asking ? 'Past Chats' : 'Documents';
 
       for (const [button, mode] of [[btnDocs, 'documents'], [btnGraph, 'graph'], [btnAsk, 'ask']]) {
         if (!button) continue;
@@ -361,7 +382,55 @@ let tenants = [];
       return '';
     }
 
+    function renderChatList() {
+      loadTenantChats();
+      const container = document.getElementById('docItemsList');
+      const query = document.getElementById('chatSearchInput').value.trim().toLowerCase();
+      const history = tenantChats.filter(chat => Array.isArray(chat.messages) && chat.messages.length > 0);
+      const filtered = history.filter(chat => !query ||
+        [chat.title, ...chat.messages.map(message => message?.text)].join('\n').toLowerCase().includes(query));
+      document.getElementById('docListCountLabel').textContent =
+        `${filtered.length} chat${filtered.length === 1 ? '' : 's'}`;
+      container.replaceChildren();
+      if (!filtered.length) {
+        const empty = document.createElement('div');
+        empty.className = 'sidebar-list-empty';
+        empty.textContent = query ? 'No matching chats. Try another search.'
+          : 'No past chats yet. Ask a question to start your first conversation.';
+        container.appendChild(empty);
+        return;
+      }
+      for (const chat of filtered) {
+        const selected = chat.id === activeChatId;
+        const row = document.createElement('div');
+        row.className = 'chat-history-item' + (selected ? ' selected' : '');
+        const open = document.createElement('button');
+        open.type = 'button';
+        open.className = 'doc-row';
+        open.title = String(chat.title || 'Chat');
+        open.setAttribute('aria-pressed', String(selected));
+        open.onclick = () => selectAskAiChat(chat.id);
+        open.innerHTML = `
+          <svg class="doc-row-icon" viewBox="0 0 20 24" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><path d="M3 4h14v12H8l-5 4zM6 8h8M6 12h5"/></svg>
+          <span class="doc-row-main"><span class="doc-row-name">${escapeHtml(chat.title || 'Chat')}</span>
+            <span class="doc-row-meta">${chat.messages.length} message${chat.messages.length === 1 ? '' : 's'}</span></span>`;
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'chat-delete-btn';
+        remove.title = 'Delete Chat';
+        remove.setAttribute('aria-label', `Delete chat: ${chat.title || 'Chat'}`);
+        remove.textContent = '\u00d7';
+        remove.onclick = event => deleteAskAiChat(chat.id, event);
+        row.append(open, remove);
+        container.appendChild(row);
+      }
+    }
+
     function renderDocumentList() {
+      if (workspaceMode === 'ask') {
+        renderChatList();
+        return;
+      }
       const container = document.getElementById('docItemsList');
       const rawQuery = (document.getElementById('docSearchInput').value || '').trim();
       const query = rawQuery.toLowerCase();
@@ -2150,24 +2219,10 @@ let tenants = [];
       const chatIsLoading = askAiLoading && askAiLoadingChatId === chat?.id &&
         askAiLoadingTenantId === currentTenant?.tenantId;
       const isEmptyChat = messages.length === 0 && !chatIsLoading;
-      const savedChats = tenantChats.filter(c => (c.messages || []).length > 0);
-      const conversationControls = `
-        <div class="ask-conversation-toolbar">
-          ${savedChats.length ? `<label for="askChatSelect">Conversation</label>
-            <select id="askChatSelect" data-change="selectAskAiChat_value">
-              ${isEmptyChat ? `<option value="${escapeHtml(chat.id)}" selected>New Chat</option>` : ''}
-              ${savedChats.map(c => `<option value="${escapeHtml(c.id)}"${c.id === activeChatId ? ' selected' : ''}>${escapeHtml(c.title || 'Chat')}</option>`).join('')}
-            </select>` : ''}
-          <button type="button" class="ghost-action-btn" data-click="startNewAskAiChat">New Chat</button>
-          ${!isEmptyChat ? `<button type="button" class="ghost-action-btn" data-click="deleteAskAiChat_arg_event"
-            data-args="[${escapeJsArg(chat.id)}]">Delete Chat</button>` : ''}
-        </div>
-      `;
 
       if (isEmptyChat) {
         body.innerHTML = `
           <div class="ask-main-pane">
-            ${conversationControls}
             <div class="ask-minimal-stage">
               <h2 class="ask-minimal-heading">${escapeHtml(currentTenant?.agent?.purpose || 'Explore and answer questions across your documents')}</h2>
 
@@ -2212,7 +2267,6 @@ let tenants = [];
 
       body.innerHTML = `
         <div class="ask-main-pane" style="justify-content:flex-start;">
-          ${conversationControls}
           <div class="ask-minimal-stage" style="justify-content:space-between;flex:1;margin:0 auto;gap:24px;">
             <div style="width:100%;display:flex;flex-direction:column;gap:18px;padding-bottom:28px;">
               ${threadHtml}
@@ -2237,7 +2291,7 @@ let tenants = [];
     DocIntelActions.register({
       chooseWorkspaceUpload: { arity: 0, run: function() {
         const control = document.getElementById('drawerUploadLabel');
-        if (control && control.style.display !== 'none') document.getElementById('docUploadInput')?.click();
+        if (control && !control.hidden && control.style.display !== 'none') document.getElementById('docUploadInput')?.click();
       } },
       closeGraphDropdown: { arity: 0, run: function(args, event) { if(graphEntityDropdownOpen){ graphEntityDropdownOpen=false; document.getElementById('entityMultiSelectPopover')?.classList.remove('open'); document.getElementById('entityMultiSelectBox')?.classList.remove('open'); } } },
       copyTextValue_arg: { arity: 1, run: function(args, event) { return copyTextValue(args[0]); } },
@@ -2257,7 +2311,6 @@ let tenants = [];
       runCrossDocumentAskAi_arg_arg: { arity: 2, run: function(args, event) { return runCrossDocumentAskAi(args[0], args[1]); } },
       runCrossDocumentAskAi_value: { arity: 0, run: function(args, event) { return runCrossDocumentAskAi(this.value); } },
       selectAskAiChat_arg: { arity: 1, run: function(args, event) { return selectAskAiChat(args[0]); } },
-      selectAskAiChat_value: { arity: 0, run: function() { return selectAskAiChat(this.value); } },
       setDocResultTab_arg: { arity: 1, run: function(args, event) { return setDocResultTab(args[0]); } },
       setEntityCategoryFilter_arg: { arity: 1, run: function(args, event) { return setEntityCategoryFilter(args[0]); } },
       setWorkspaceMode_arg: { arity: 1, run: function(args, event) { return setWorkspaceMode(args[0]); } },

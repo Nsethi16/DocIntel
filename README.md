@@ -675,11 +675,14 @@ flat selected rows; document selection is keyboard accessible. Navigation and co
 Title Case, while filenames, custom prompt names and document contents remain unchanged. All entry
 pages share the same neutral palette, local Segoe UI/system font stack and visible keyboard focus;
 there are no external font downloads. Technical values and code can still use monospace.
-**Documents**, **Graph** and **Ask AI** use the same sidebar and manual collapse toggle. Switching
-to Ask AI changes only the right content pane; it neither hides the shared header nor creates a
-second sidebar. Existing conversations, new-chat and deletion controls remain available in a compact
-right-pane toolbar. Unsent questions survive mode changes and manual sidebar toggling; switching
-workspaces clears the draft.
+**Documents**, **Graph** and **Ask AI** use the same sidebar frame, navigation and manual collapse
+toggle. Documents and Graph show **Upload PDF**, **Search Documents** and the document list. Ask AI
+uses the same locations for **New Chat**, **Search Chats** and **Past Chats**, with selection and
+deletion beside each saved conversation. The right pane contains only the welcome/composer or
+selected conversation; there is no duplicate chat toolbar or second sidebar. Returning to Documents
+restores its search and selection. Unsent questions survive mode changes and manual sidebar toggling;
+switching workspaces clears the draft. History remains browser-local and partitioned by verified
+account and workspace; this does not add cross-device chat synchronization.
 
 ### Enterprise users and unified access
 

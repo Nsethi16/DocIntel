@@ -1258,67 +1258,14 @@
       overflow: hidden;
     }
 
-    .ask-conversation-toolbar {
-      display:flex; align-items:center; flex-wrap:wrap; gap:8px;
-      width:100%; max-width:860px; margin:0 auto 16px; flex-shrink:0;
-    }
-    .ask-conversation-toolbar label { color:var(--text-secondary); font-size:14px; }
-    .ask-conversation-toolbar select {
-      min-width:0; max-width:100%; width:240px; min-height:34px;
-      padding:6px 10px; border:1px solid var(--border); border-radius:8px;
-      background:var(--surface-soft); color:var(--text-primary);
-    }
-
-    .ask-panel-title {
-      font-family: var(--font-sans);
-      font-size: 13.5px;
-      font-weight: 600;
-      color: var(--text-primary);
-      padding: 4px 6px;
-      line-height: 20px;
-    }
-
-    .ask-new-chat-pill {
-      width: 100%;
-      height: 32px;
-      border: 0;
-      background: var(--pill-hover);
-      color: var(--text-primary);
-      font-family: var(--font-sans);
-      font-size: 14px;
-      font-weight: 400;
-      padding: 0 11px;
-      border-radius: 8px;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      text-align: left;
-      box-shadow: none;
-      transition: background 0.12s ease, border-color 0.12s ease;
-    }
-
-    .ask-new-chat-pill:hover {
-      background: var(--accent-soft);
-      border-color: var(--accent-border);
-      color: var(--accent-ink);
-    }
-
-    .ask-new-chat-pill svg {
-      width: 15px;
-      height: 15px;
-      flex-shrink: 0;
-      color: currentColor;
-    }
-
     .chat-history-item {
-      padding: 9px 11px;
+      padding: 0;
       border-radius: 8px;
       cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
+      gap: 0;
       font-size: 14px;
       font-weight: 400;
       color: var(--text-primary);
@@ -1336,21 +1283,21 @@
       box-shadow: none;
     }
 
-    .chat-history-title {
+    .chat-history-item > .doc-row {
+      width: auto;
       flex: 1;
       min-width: 0;
-      white-space: nowrap;
-      overflow: hidden;
-      text-overflow: ellipsis;
     }
+    .sidebar-list-empty { padding:16px 10px; color:var(--text-secondary); font-size:13px; line-height:1.6; }
 
     .chat-delete-btn {
       border: none;
       background: transparent;
-      color: #7c7f90;
+      color: var(--text-secondary);
       font-size: 12px;
-      width: 20px;
-      height: 20px;
+      width: 28px;
+      height: 28px;
+      margin-right: 6px;
       border-radius: 5px;
       cursor: pointer;
       opacity: 0;
@@ -1361,13 +1308,15 @@
       transition: opacity 0.12s ease, background 0.12s ease;
     }
 
-    .chat-history-item:hover .chat-delete-btn {
+    .chat-history-item:hover .chat-delete-btn,
+    .chat-history-item:focus-within .chat-delete-btn {
       opacity: 1;
     }
+    @media (hover: none) { .chat-delete-btn { opacity:1; } }
 
     .chat-delete-btn:hover {
-      background: #dcdce4;
-      color: #16161d;
+      background: var(--pill-hover);
+      color: var(--text-primary);
     }
 
     .ask-main-pane {
