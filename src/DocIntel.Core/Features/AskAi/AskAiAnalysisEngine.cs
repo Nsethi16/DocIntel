@@ -196,6 +196,22 @@ public static class AskAiAnalysisEngine
                 ? rows.OrderBy(row => (string)row.Cells["category"]!, StringComparer.Ordinal).ToList()
                 : rows.OrderByDescending(row => (decimal)row.Cells["value"]!).ToList();
         }
+        if (request.Operation is "sum" or "count")
+        {
+            columns.Add(new("sharePercent", "Share of Unit Total (%)", "number"));
+            notes.Add("Shares use only this dataset's same-unit total, rounded to four decimal places.");
+            foreach (var group in rows.GroupBy(row => (string)row.Cells["unit"]!, StringComparer.Ordinal))
+            {
+                var total = group.Sum(row => (decimal)row.Cells["value"]!);
+                var validShares = total > 0 && group.All(row => (decimal)row.Cells["value"]! >= 0);
+                foreach (var row in group)
+                    row.Cells["sharePercent"] = validShares
+                        ? Decimal.Round((decimal)row.Cells["value"]! / total * 100m, 4, MidpointRounding.ToEven)
+                        : null;
+                if (!validShares)
+                    notes.Add($"Shares are not reported for {group.Key} with credits or non-positive totals.");
+            }
+        }
         var visualization = request.Visualization;
         if (rows.Count == 0 || rows.Count > 40 ||
             (visualization is "bar" or "line") && rows.Select(row => row.Cells["unit"]?.ToString())

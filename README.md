@@ -451,6 +451,8 @@ explicit; aggregation units must occur in the same quote. Ambiguous symbols do n
 currency, units remain separate, missing values never become zero, and repeated source records
 are excluded. Include a source-record identifier column when otherwise identical records are
 actually distinct. Outliers use the 1.5xIQR rule with at least four records per unit.
+Sum/count datasets also include same-unit shares rounded to four decimal places; credits,
+non-positive totals and non-positive change baselines are explicitly excluded from misleading percentages.
 
 Runs expose additive `analyses` with typed columns, computed rows, server-resolved citation
 numbers, coverage and method notes. The web conversation and standalone run view render local,

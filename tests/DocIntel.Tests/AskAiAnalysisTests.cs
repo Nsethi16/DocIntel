@@ -31,6 +31,40 @@ public sealed class AskAiAnalysisTests
     }
 
     [Fact]
+    public void Shares_Are_Computed_Against_The_Same_Unit_Total_Without_Currency_Conversion()
+    {
+        // Arrange
+        var fixture = Invoices("sum", "table", "supplier",
+            ("Contoso", "100", "USD", "2026-01-01"),
+            ("Woodgrove", "300", "USD", "2026-01-02"),
+            ("Contoso", "40", "EUR", "2026-01-03"));
+
+        // Act
+        var result = AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence);
+
+        // Assert
+        Assert.Equal(25m, result.Rows.Single(row => (string)row.Cells["category"]! == "Contoso" &&
+            (string)row.Cells["unit"]! == "USD").Cells["sharePercent"]);
+        Assert.Equal(75m, result.Rows.Single(row => (string)row.Cells["category"]! == "Woodgrove").Cells["sharePercent"]);
+        Assert.Equal(100m, result.Rows.Single(row => (string)row.Cells["unit"]! == "EUR").Cells["sharePercent"]);
+    }
+
+    [Fact]
+    public void Credits_Do_Not_Produce_Misleading_Positive_Share_Percentages()
+    {
+        // Arrange
+        var fixture = Invoices("sum", "table", "supplier",
+            ("Contoso", "100", "USD", "2026-01-01"), ("Credit", "-50", "USD", "2026-01-02"));
+
+        // Act
+        var result = AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence);
+
+        // Assert
+        Assert.All(result.Rows, row => Assert.Null(row.Cells["sharePercent"]));
+        Assert.Contains(result.Notes, note => note.Contains("credits or non-positive totals"));
+    }
+
+    [Fact]
     public void Missing_Amounts_Are_Excluded_And_Disclosed_Instead_Of_Becoming_Zero()
     {
         // Arrange
@@ -68,8 +102,8 @@ public sealed class AskAiAnalysisTests
     public void Numeric_Substrings_Cannot_Fabricate_A_Different_Amount()
     {
         // Arrange
-        var fixture = Invoices("sum", "bar", "supplier", ("Contoso", "1,000.00", "USD", "2026-01-01"));
-        fixture.Request.Rows[0].Cells["amount"] = "1";
+        var fixture = Invoices("sum", "bar", "supplier", ("Contoso", "10,000.00", "USD", "2026-01-01"));
+        fixture.Request.Rows[0].Cells["amount"] = "10";
 
         // Act / Assert
         Assert.Throws<ArgumentException>(() =>

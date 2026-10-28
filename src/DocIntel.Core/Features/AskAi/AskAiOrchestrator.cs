@@ -913,6 +913,7 @@ public sealed class AskAiOrchestrator
                 "an explicit unit copied within that record quote for numeric aggregation. Never infer USD from '$'. " +
                 "Include a source-record identifier column when otherwise identical records are distinct. " +
                 "groupBy names a column; valueColumn names a numeric column; dateBucket none/month/quarter/year. " +
+                "count needs no valueColumn or unit. Sum/count results include same-unit sharePercent values. " +
                 "Units remain separate. Outliers use the 1.5xIQR rule, minimum four observations per unit. " +
                 "Line charts require date grouping. Copy the returned analysisId into the final answer and include " +
                 "all its evidenceIds; do not generate numeric chart values yourself. An error is not a successful analysis.")
