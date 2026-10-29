@@ -203,6 +203,9 @@ public sealed class AskAiRunProcessor(
                 logger.LogError("Ask AI provider failure for {RunId}: HTTP {ProviderStatus}; code {ProviderCode}; " +
                     "parameter {ProviderParameter}; schema keyword {SchemaKeyword}.",
                     run.RunId, provider.HttpStatus, provider.Code, provider.Parameter, provider.SchemaKeyword);
+            if (AskAiDataFailure.FromException(exception) is { } data)
+                logger.LogError("Ask AI data failure for {RunId}: HTTP {DataStatus}; substatus {DataSubStatus}.",
+                    run.RunId, data.HttpStatus, data.SubStatus);
         }
 
         run.Status = stoppingToken.IsCancellationRequested ? JobStatus.Queued : JobStatus.Failed;

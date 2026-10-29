@@ -484,6 +484,10 @@ source content and generated answers are never published. `recent` cannot be use
 The Azure diagnostic workflow's optional `ask_run_id` looks up that opaque reference in the app's
 linked log workspace over the past day, including prior revisions. It prints only allowlisted
 exception types/codes/sites, never raw log messages; missing logs or lookup failure are explicit.
+`Data` uses the selected run's actor and current workspace/document permissions to check five fixed,
+read-only search shapes and at most one continuation per shape. It makes no model calls, never replays
+the question, writes no results and prints only counts plus numeric database HTTP/substatus on failure.
+Database rejection, access, throttling and availability errors are distinct from AI-provider errors.
 `Synthetic` exercises the real configured model and the complete analytical agent over two authored,
 in-memory fake quotes. It is limited to eight model requests and 120 seconds, requires the same live
 probing opt-in, checks exact totals/citations/bar-chart data, and never resolves a production job/run

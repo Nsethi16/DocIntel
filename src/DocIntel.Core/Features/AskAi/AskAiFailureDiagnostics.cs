@@ -1,10 +1,36 @@
+using Microsoft.Azure.Cosmos;
+
 namespace DocIntel.Core.Features.AskAi;
+
+/// <summary>Numeric database failure metadata; never includes diagnostics, queries or document values.</summary>
+public sealed record AskAiDataFailure(int HttpStatus, int SubStatus)
+{
+    /// <summary>Finds the actual Cosmos response status rather than interpreting its exception HResult.</summary>
+    public static AskAiDataFailure? FromException(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+            if (current is CosmosException cosmos)
+                return new((int)cosmos.StatusCode, cosmos.SubStatusCode);
+        return null;
+    }
+
+    public string FailureCode => HttpStatus switch
+    {
+        400 => "DataQueryRejected",
+        401 or 403 => "DataAccessDenied",
+        429 => "DataRateLimited",
+        404 or 408 or >= 500 => "DataUnavailable",
+        _ => "DataRequestFailed"
+    };
+}
 
 /// <summary>Maps known protocol failures to fixed diagnostic codes without exposing model or document content.</summary>
 public static class AskAiFailureDiagnostics
 {
     /// <summary>Classifies only server-owned failure messages; unknown errors remain unclassified.</summary>
     public static string GetCode(Exception exception) =>
+        AskAiDataFailure.FromException(exception)?.FailureCode ??
         AskAiProviderFailure.FromException(exception)?.FailureCode ?? (exception.Message switch
     {
         "The model returned an invalid answer or unrecognized citation." => "InvalidModelAnswer",
@@ -34,6 +60,11 @@ public static class AskAiFailureDiagnostics
         "RetrievalFailed" => "Document retrieval failed. No answer was returned.",
         "InvalidToolConfiguration" => "Ask AI has an incompatible tool configuration. A workspace administrator must correct it.",
         "SourceChanged" => "A source document changed or prior evidence is no longer current. Start a new chat to search the current documents.",
+        "DataQueryRejected" => "The document database rejected a search request. No answer was returned. A workspace administrator must inspect the database diagnostic reference.",
+        "DataAccessDenied" => "The application could not access the document database. A workspace administrator must check its data access.",
+        "DataRateLimited" => "The document database is rate limiting requests. Wait before retrying or ask a narrower question.",
+        "DataUnavailable" => "The document database is unavailable. The question was not automatically resubmitted.",
+        "DataRequestFailed" => "A document database request failed. No answer was returned. Open run details for its diagnostic reference.",
         "ProviderContextLimit" => "The AI provider's context limit was reached. Ask a more focused question.",
         "ProviderQuotaExceeded" => "The configured AI provider has no available quota. A workspace administrator must review its quota.",
         "ProviderRateLimited" => "The AI provider's token or request rate limit was reached. Wait before retrying or ask a narrower question.",

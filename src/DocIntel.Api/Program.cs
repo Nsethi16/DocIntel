@@ -16,7 +16,9 @@ var nativeDecisionDiagnosticMode = NativeDecisionDiagnostic.IsRequested(args);
 var isolatedDiagnosticMode = directoryDiagnosticMode || nativeDecisionDiagnosticMode;
 var askContractMode = args.Contains("--diagnose-ask-contract", StringComparer.Ordinal);
 var askSyntheticMode = args.Contains("--diagnose-ask-synthetic", StringComparer.Ordinal);
-var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal) || askContractMode || askSyntheticMode;
+var askDataMode = args.Contains("--diagnose-ask-data", StringComparer.Ordinal);
+var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal) ||
+    askContractMode || askSyntheticMode || askDataMode;
 WebApplicationBuilder builder;
 try
 {
@@ -94,6 +96,17 @@ builder.Services.AddHostedService<AskAiRunWorker>();
 builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);
 
 var app = builder.Build();
+if (askDataMode)
+{
+    Environment.ExitCode = await AskAiDataDiagnostic.ExecuteAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty,
+        builder.Configuration["diagnose-ask-data"] ?? String.Empty,
+        app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.IAskAiRunStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Authorization.ITenantAccessResolver>(),
+        app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobStore>(), Console.Out);
+    await app.DisposeAsync();
+    return;
+}
 if (askSyntheticMode)
 {
     Environment.ExitCode = await AskAiSyntheticDiagnostic.ExecuteAsync(

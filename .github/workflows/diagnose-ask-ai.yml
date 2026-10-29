@@ -12,9 +12,9 @@ on:
         type: string
         required: false
       mode:
-        description: Inspect is read-only. Contract checks API shapes. Synthetic tests two fake quotes with at most eight model calls. Neither reads customer documents. Replay uses a saved question.
+        description: Inspect reads metadata. Data checks storage with no model calls or question replay. Contract checks API shapes. Synthetic tests fake quotes. Replay uses a saved question.
         type: choice
-        options: [Inspect, Replay, Contract, Synthetic]
+        options: [Inspect, Data, Replay, Contract, Synthetic]
         default: Inspect
       confirmation:
         description: Type REPLAY to authorize a bounded, in-memory replay. Model usage can incur charges.
@@ -56,7 +56,7 @@ jobs:
           if ($env:DIAGNOSTIC_MODE -eq 'Replay' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'REPLAY') {
             throw 'Replay requires the exact confirmation REPLAY.'
           }
-          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Replay', 'Contract', 'Synthetic')) { throw 'Invalid diagnostic mode.' }
+          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic')) { throw 'Invalid diagnostic mode.' }
           if ($env:DIAGNOSTIC_TENANT -notmatch '^[a-z0-9][a-z0-9-]{0,127}$' -or
             ($env:DIAGNOSTIC_MODE -notin @('Contract', 'Synthetic') -and
              $env:DIAGNOSTIC_RUN -notmatch '^[a-fA-F0-9]{32}$' -and
@@ -105,7 +105,11 @@ jobs:
           if not replicas:
               raise RuntimeError("The current revision has no active replica.")
           replay = "true" if os.environ["DIAGNOSTIC_MODE"] == "Replay" else "false"
-          if os.environ["DIAGNOSTIC_MODE"] == "Synthetic":
+          if os.environ["DIAGNOSTIC_MODE"] == "Data":
+              diagnostic = shlex.join([
+                  "dotnet", "/app/DocIntel.Api.dll", "--diagnose-ask-data", os.environ["DIAGNOSTIC_RUN"],
+                  "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"]])
+          elif os.environ["DIAGNOSTIC_MODE"] == "Synthetic":
               diagnostic = shlex.join([
                   "dotnet", "/app/DocIntel.Api.dll", "--diagnose-ask-synthetic", "true",
                   "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"]])
@@ -138,15 +142,15 @@ jobs:
                   "matchedDocuments", "citations", "httpStatus", "providerCode",
                   "providerParameter", "schemaKeyword", "providerHints",
                   "variant", "model", "modelProvider", "calls", "analyses", "runId", "createdAtUtc",
-                  "completedAtUtc", "lastStep", "analyticalAttempts") if key in value}
+                  "completedAtUtc", "lastStep", "analyticalAttempts", "matches", "subStatus") if key in value}
               print(json.dumps(safe))
               records.append(safe)
           if not records:
               raise RuntimeError("The runtime diagnostic returned no verified result. Raw process output was not published.")
-          expected_phase = os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Contract", "Synthetic") else (
+          expected_phase = os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic") else (
               "Replay" if replay == "true" else "Stored")
           if records[-1].get("phase") != expected_phase:
               raise RuntimeError("The requested diagnostic did not complete.")
           if records[-1].get("status") in ("Refused", "NotFound") or (
-                  expected_phase in ("Replay", "Contract", "Synthetic") and records[-1].get("status") == "Failed"):
+                  expected_phase in ("Data", "Replay", "Contract", "Synthetic") and records[-1].get("status") == "Failed"):
               sys.exit(1)
