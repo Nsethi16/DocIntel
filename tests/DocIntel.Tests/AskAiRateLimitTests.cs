@@ -38,6 +38,26 @@ public sealed class AskAiRateLimitTests
         Assert.Equal(8192, contract.MaxOutputTokens);
     }
 
+    [Fact]
+    public async Task Token_Exhaustion_Never_Publishes_A_Partial_Answer()
+    {
+        // Arrange
+        var client = new Mock<IChatClient>();
+        client.Setup(chat => chat.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<ChatOptions?>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new ChatResponse(new ChatMessage(ChatRole.Assistant, "Partial private content"))
+                { FinishReason = ChatFinishReason.Length });
+        using var resilient = new AskAiRateLimitChatClient(client.Object, NullLogger.Instance);
+
+        // Act
+        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            resilient.GetResponseAsync([new(ChatRole.User, "Question")]));
+
+        // Assert
+        Assert.Equal("ResponseTokenLimit", AskAiFailureDiagnostics.GetCode(exception));
+        Assert.DoesNotContain("private", exception.Message);
+    }
+
     [Theory]
     [InlineData("retry-after-ms", "2500", 2.5)]
     [InlineData("x-ms-retry-after-ms", "3000", 3)]
@@ -183,8 +203,8 @@ public sealed class AskAiRateLimitTests
         var response = new Mock<PipelineResponse>();
         response.SetupGet(result => result.Status).Returns(status);
         response.SetupGet(result => result.Headers).Returns(headers.Object);
-        response.SetupGet(result => result.Content).Returns(BinaryData.FromString(
-            $$"""{"error":{"code":"{{code}}","message":"Private provider content"}}"""));
+        response.SetupGet(result => result.Content).Returns(BinaryData.FromObjectAsJson(
+            new { error = new { code, message = "Private provider content" } }));
         return new ClientResultException("Private provider exception", response.Object);
     }
 }
