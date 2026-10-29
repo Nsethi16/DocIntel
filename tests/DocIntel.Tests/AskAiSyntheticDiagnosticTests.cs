@@ -50,7 +50,13 @@ public sealed class AskAiSyntheticDiagnosticTests
                     return await tool.InvokeAsync(arguments, token);
                 }
                 await Invoke("search_documents", new()
-                    { ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery()) });
+                {
+                    ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery
+                    {
+                        DocumentType = "Quote", Entities = [new("Billing Currency", "USD")]
+                    })
+                });
+                Assert.Contains("- \"Quote\":", options.Instructions);
                 var rows = new List<AskAiAnalysisInputRow>();
                 var customers = new[]
                 {
@@ -61,9 +67,9 @@ public sealed class AskAiSyntheticDiagnosticTests
                     "5,000.00", "5,000.00", "1,000.00", "9,000.00", null];
                 for (var index = 1; index <= 9; index++)
                 {
+                    if (index == 8) continue;
                     using var inspected = JsonSerializer.SerializeToDocument(await Invoke("inspect_document_slice",
                         new() { ["jobId"] = $"synthetic-quote-{index}", ["sliceIndex"] = 0, ["textOffset"] = 0 }));
-                    if (index == 8) continue;
                     rows.Add(new()
                     {
                         EvidenceId = inspected.RootElement.GetProperty("evidenceId").GetString()!,
@@ -113,5 +119,7 @@ public sealed class AskAiSyntheticDiagnosticTests
         Assert.Contains("\"citations\":7", output.ToString());
         Assert.DoesNotContain("Northwind", output.ToString());
         Assert.DoesNotContain("Fabrikam", output.ToString());
+        harness.Verify(store => store.GetTenantAsync("workspace", It.IsAny<CancellationToken>()), Times.Once);
+        harness.VerifyNoOtherCalls();
     }
 }

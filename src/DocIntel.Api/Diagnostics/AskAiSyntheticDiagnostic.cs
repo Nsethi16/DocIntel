@@ -62,12 +62,20 @@ public static class AskAiSyntheticDiagnostic
                     AppliedHarnessVersion = 1, FileName = id + ".pdf", Status = JobStatus.Completed,
                     TotalPages = 1, HasDevelopmentResults = false,
                     OriginalSha256 = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(sourceText))),
+                    PacketSummary = $"Synthetic {currency} quote {quote} for {customer}.",
                     Segments =
                     [
                         new()
                         {
                             SegmentIndex = 0, StartPage = 1, EndPage = 1, IdentifiedDocumentName = "Quote",
-                            BodyText = sourceText
+                            BodyText = sourceText,
+                            ExtractedEntities =
+                            [
+                                new("Customer Name", customer, "Party"),
+                                new("Quote Number", quote, "Identifier"),
+                                new("Billing Currency", currency, "Financial"),
+                                new("Total Deal Value", amount, "Financial")
+                            ]
                         }
                     ]
                 }, deadline.Token);
@@ -76,7 +84,31 @@ public static class AskAiSyntheticDiagnostic
             using var bounded = new BoundedClient(models.ResolveRequiredChatClient(tenant, feature.ModelIdOverride));
             var probeModels = new ModelCatalog(descriptors: models.ListModels(),
                 customClients: new Dictionary<string, IChatClient> { [modelId] = bounded });
-            var orchestrator = new AskAiOrchestrator(harness, jobs, probeModels, [],
+            var syntheticSettings = new TenantHarness
+            {
+                TenantId = tenantId, DisplayName = "Synthetic diagnostic", DefaultModelId = modelId,
+                AllowedModels = [modelId],
+                Capabilities = new(StringComparer.OrdinalIgnoreCase)
+                {
+                    [FeatureHarness.AskAiKey] = new() { Enabled = true, ModelIdOverride = modelId },
+                    [FeatureHarness.IdentifyDocumentsKey] = new()
+                    {
+                        Enabled = true, IdentifyDocuments = new()
+                        {
+                            Rules = [new()
+                                { DocumentName = "Quote", IdentificationPrompt = "An authored synthetic quote record." }]
+                        }
+                    },
+                    [FeatureHarness.EntityExtractionKey] = new()
+                    {
+                        Enabled = true, EntityExtraction = new()
+                        {
+                            ExtractionPrompt = "Customer Name, Quote Number, Billing Currency and Total Deal Value."
+                        }
+                    }
+                }
+            };
+            var orchestrator = new AskAiOrchestrator(new SyntheticHarness(syntheticSettings), jobs, probeModels, [],
                 NullLogger<AskAiOrchestrator>.Instance, executionOptions: executionOptions);
             var run = await orchestrator.ExecuteRunAsync(new AskAiRun
             {
@@ -100,7 +132,8 @@ public static class AskAiSyntheticDiagnostic
                         row.Cells.GetValueOrDefault("sharePercent") is decimal share && share == value / 250m));
             await WriteAsync(output, valid ? "Completed" : "Failed",
                 valid ? "None" : "SyntheticResultMismatch", calls: bounded.Calls,
-                citations: run.Citations.Count, analyses: run.Analyses.Count);
+                citations: run.Citations.Count, analyses: run.Analyses.Count,
+                inspections: run.Steps.Count(step => step.StepName == "inspect_document_slice"));
             return valid ? 0 : 1;
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
@@ -118,14 +151,29 @@ public static class AskAiSyntheticDiagnostic
 
     private static Task WriteAsync(
         TextWriter output, string status, string failureCode, AskAiProviderFailure? provider = null,
-        int calls = 0, int citations = 0, int analyses = 0) =>
+        int calls = 0, int citations = 0, int analyses = 0, int inspections = 0) =>
         output.WriteLineAsync("DOCINTEL_DIAGNOSTIC " + JsonSerializer.Serialize(new
         {
-            phase = "Synthetic", status, failureCode, calls, citations, analyses,
+            phase = "Synthetic", status, failureCode, calls, citations, analyses, inspections,
             httpStatus = provider?.HttpStatus, providerCode = provider?.Code,
             providerParameter = provider?.Parameter, schemaKeyword = provider?.SchemaKeyword,
             providerHints = provider?.Hints
         }));
+
+    private sealed class SyntheticHarness(TenantHarness settings) : IHarnessStore
+    {
+        public Task<TenantHarness?> GetTenantAsync(string tenantId, CancellationToken cancellationToken = default)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return Task.FromResult<TenantHarness?>(tenantId == settings.TenantId ? settings : null);
+        }
+
+        public Task<IReadOnlyList<TenantHarness>> ListTenantsAsync(CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("The synthetic diagnostic reads only its isolated harness.");
+
+        public Task<TenantHarness> UpsertTenantAsync(TenantHarness harness, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("The synthetic diagnostic cannot persist workspace settings.");
+    }
 
     private sealed class BoundedClient(IChatClient inner) : DelegatingChatClient(inner)
     {

@@ -496,6 +496,8 @@ with a missing amount. It is limited to 24 model requests and 300 seconds, requi
 probing opt-in, checks exact customer totals/shares, missing-data coverage and cited bar-chart data,
 and never resolves a production job/run
 store, persists an answer, reads customer files, or delivers a message.
+Its read-only, in-memory harness describes only the synthetic quote catalog; the real workspace
+is read solely to select its configured model, not to apply unrelated document types to fake records.
 
 `AskAi:MaxOutputTokens` bounds each completion, including reasoning tokens, to 16,384 by default
 (configurable from 1,024 to 65,536). Exhausting it fails explicitly rather than publishing a partial
