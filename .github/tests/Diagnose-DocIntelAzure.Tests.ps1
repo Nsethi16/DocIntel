@@ -175,6 +175,11 @@ try {
         $output -match 'customer-private-value') {
         throw 'Historical logs must use the same safe error projection as replica logs.'
     }
+    $currentLogs = @($global:DocIntelDiagnosticsFixture.calls |
+        Where-Object { $_[0..1] -join ' ' -eq 'containerapp logs' })
+    if ($currentLogs.Count -ne $logs.Count) {
+        throw 'An exact historical lookup must not depend on unrelated current-replica log streaming.'
+    }
     $env:DIAGNOSTIC_RUN_REF = "invalid' | take 1000"
     Assert-DiagnosticFailure '' 'opaque Ask AI run ID'
     $env:DIAGNOSTIC_RUN_REF = ''

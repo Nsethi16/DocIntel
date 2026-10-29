@@ -109,7 +109,7 @@ jobs:
             'TimeoutException', 'ArgumentException', 'ArgumentNullException', 'TypeInitializationException',
             'InvalidDataException')
           $diagnosticLines = [Collections.Generic.List[string]]::new()
-          foreach ($replica in $replicas | Select-Object -First 3) {
+          foreach ($replica in $replicas | Where-Object { -not $env:DIAGNOSTIC_RUN_REF } | Select-Object -First 3) {
             $lines = az containerapp logs show --resource-group $env:AZURE_RESOURCE_GROUP `
               --name $env:AZURE_CONTAINER_APP_NAME --revision $revision --replica $replica.name `
               --container $container.name --type console --tail 300 --follow false `
