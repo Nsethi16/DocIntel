@@ -12,7 +12,7 @@ on:
         type: string
         required: false
       mode:
-        description: Inspect is read-only. Contract sends one synthetic one-token request with no documents. Replay uses a saved question.
+        description: Inspect is read-only. Contract checks four synthetic one-token variants with no documents. Replay uses a saved question.
         type: choice
         options: [Inspect, Replay, Contract]
         default: Inspect
@@ -129,7 +129,8 @@ jobs:
               safe = {key: value[key] for key in (
                   "phase", "status", "failureCode", "searches", "inspections",
                   "matchedDocuments", "citations", "httpStatus", "providerCode",
-                  "providerParameter", "schemaKeyword") if key in value}
+                  "providerParameter", "schemaKeyword", "providerHints",
+                  "variant", "model", "modelProvider") if key in value}
               print(json.dumps(safe))
               records.append(safe)
           if not records:

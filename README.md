@@ -471,8 +471,8 @@ Provider errors expose only allowlisted HTTP status/code/schema-keyword/paramete
 provider messages, requests or document content. A saved error remains historical; viewing details only
 polls that run and never resubmits the question.
 The manual Ask AI diagnostic workflow also has a `Contract` mode. It requires the existing
-`Readiness:ProbeModelsOnStartup` live-probing opt-in, sends one synthetic one-output-token request
-with the exact built-in tool/response schemas, disables tool execution, and emits only redacted
+`Readiness:ProbeModelsOnStartup` live-probing opt-in, sends at most four synthetic one-output-token requests
+to compare plain, JSON-only, tools-only and combined contracts, disables tool execution, and emits only redacted
 provider diagnostics. It has no document or run-store dependency and accepts no saved run ID.
 `Inspect` remains read-only and `Replay` still requires its separate explicit confirmation.
 

@@ -34,16 +34,41 @@ public static class AskAiContractDiagnostic
                 return 2;
             }
             using var client = models.ResolveRequiredChatClient(tenant, feature.ModelIdOverride);
-            var response = await client.GetResponseAsync(
-                [new ChatMessage(ChatRole.User, "Synthetic connectivity check. Say hello without calling tools.")],
-                AskAiOrchestrator.CreateProviderContractOptions(), deadline.Token);
-            if (response.Messages.SelectMany(message => message.Contents).Any(content => content is FunctionCallContent))
+            var selectedModel = models.ResolveModelId(tenant, feature.ModelIdOverride);
+            var descriptor = models.ListModels().FirstOrDefault(model => model.ModelId == selectedModel);
+            var knownModel = ModelCatalog.CreateDefaultDescriptors().Any(model => model.ModelId == selectedModel)
+                ? selectedModel : "OtherConfiguredModel";
+            var fullAccepted = false;
+            foreach (var variant in new[] { "Plain", "Json", "Tools", "Combined" })
             {
-                await WriteAsync(output, "Refused", "UnexpectedToolCall");
-                return 2;
+                var options = AskAiOrchestrator.CreateProviderContractOptions();
+                if (variant is "Plain" or "Json")
+                {
+                    options.Tools = null;
+                    options.ToolMode = null;
+                    options.AllowMultipleToolCalls = null;
+                }
+                if (variant is "Plain" or "Tools") options.ResponseFormat = null;
+                try
+                {
+                    var response = await client.GetResponseAsync(
+                        [new ChatMessage(ChatRole.User, "Synthetic connectivity check. Say hello without calling tools.")],
+                        options, deadline.Token);
+                    var unexpectedCall = response.Messages.SelectMany(message => message.Contents)
+                        .Any(content => content is FunctionCallContent);
+                    await WriteAsync(output, unexpectedCall ? "Refused" : "Accepted",
+                        unexpectedCall ? "UnexpectedToolCall" : "None", variant: variant,
+                        model: knownModel, modelProvider: descriptor?.Provider.ToString());
+                    if (variant == "Combined") fullAccepted = !unexpectedCall;
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    await WriteAsync(output, "Failed", AskAiFailureDiagnostics.GetCode(exception),
+                        AskAiProviderFailure.FromException(exception), variant, knownModel,
+                        descriptor?.Provider.ToString());
+                }
             }
-            await WriteAsync(output, "Accepted", "None");
-            return 0;
+            return fullAccepted ? 0 : 1;
         }
         catch (OperationCanceledException) when (deadline.IsCancellationRequested)
         {
@@ -59,11 +84,13 @@ public static class AskAiContractDiagnostic
     }
 
     private static Task WriteAsync(
-        TextWriter output, string status, string failureCode, AskAiProviderFailure? provider = null) =>
+        TextWriter output, string status, string failureCode, AskAiProviderFailure? provider = null,
+        string? variant = null, string? model = null, string? modelProvider = null) =>
         output.WriteLineAsync("DOCINTEL_DIAGNOSTIC " + JsonSerializer.Serialize(new
         {
             phase = "Contract", status, failureCode, httpStatus = provider?.HttpStatus,
             providerCode = provider?.Code, providerParameter = provider?.Parameter,
-            schemaKeyword = provider?.SchemaKeyword
+            schemaKeyword = provider?.SchemaKeyword, providerHints = provider?.Hints,
+            variant, model, modelProvider
         }));
 }

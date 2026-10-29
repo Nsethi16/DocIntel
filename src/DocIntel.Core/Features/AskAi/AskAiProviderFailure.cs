@@ -11,7 +11,8 @@ public sealed record AskAiProviderFailure(
     [property: JsonPropertyName("code")] string Code,
     [property: JsonPropertyName("parameter")] string? Parameter,
     [property: JsonPropertyName("schemaKeyword")] string? SchemaKeyword,
-    [property: JsonPropertyName("origin")] string Origin)
+    [property: JsonPropertyName("origin")] string Origin,
+    [property: JsonPropertyName("hints")] IReadOnlyList<string> Hints)
 {
     private static readonly string[] Codes =
     [
@@ -64,8 +65,20 @@ public sealed record AskAiProviderFailure(
                 RegexOptions.CultureInvariant);
         var keyword = new[] { "additionalProperties", "required", "$defs", "$ref", "default", "format" }
             .FirstOrDefault(value => message.Contains(value, StringComparison.Ordinal));
+        var terms = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["tool_choice"] = "ToolChoice", ["tools"] = "Tools", ["function"] = "Functions",
+            ["response_format"] = "ResponseFormat", ["json"] = "Json",
+            ["api-version"] = "ApiVersion", ["API version"] = "ApiVersion",
+            ["max_tokens"] = "MaxTokens", ["max_completion_tokens"] = "MaxCompletionTokens",
+            ["token"] = "Tokens", ["reasoning"] = "Reasoning", ["operation"] = "Operation",
+            ["not support"] = "Unsupported", ["not available"] = "Unavailable",
+            ["not found"] = "NotFound", ["combination"] = "Combination", ["simultaneous"] = "Combination"
+        };
+        var hints = terms.Where(term => message.Contains(term.Key, StringComparison.OrdinalIgnoreCase))
+            .Select(term => term.Value).Distinct(StringComparer.Ordinal).ToArray();
         return new(status is >= 100 and <= 599 ? status : null, code ?? "Unknown",
-            parameter.Success ? parameter.Value : null, keyword, origin);
+            parameter.Success ? parameter.Value : null, keyword, origin, hints);
     }
 
     private static string? Text(JsonElement element, string key) =>

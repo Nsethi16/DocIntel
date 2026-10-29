@@ -41,9 +41,12 @@ public sealed class AskAiContractDiagnosticTests
             {
                 Assert.Single(messages);
                 Assert.Equal(1, options.MaxOutputTokens);
-                Assert.False(options.AllowMultipleToolCalls);
-                Assert.Equal(ChatToolMode.None, options.ToolMode);
-                Assert.Equal(4, options.Tools!.Count);
+                if (options.Tools is not null)
+                {
+                    Assert.False(options.AllowMultipleToolCalls);
+                    Assert.Equal(ChatToolMode.None, options.ToolMode);
+                    Assert.Equal(4, options.Tools.Count);
+                }
                 return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "PRIVATE_GENERATED_TEXT")));
             });
         using var output = new StringWriter();
@@ -57,7 +60,7 @@ public sealed class AskAiContractDiagnosticTests
         Assert.Contains("\"status\":\"Accepted\"", output.ToString());
         Assert.DoesNotContain("PRIVATE", output.ToString());
         fixture.Client.Verify(client => client.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
-            It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Once);
+            It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Exactly(4));
     }
 
     [Fact]
@@ -96,6 +99,8 @@ public sealed class AskAiContractDiagnosticTests
         var client = new Mock<IChatClient>();
         var models = new Mock<IModelCatalog>(MockBehavior.Strict);
         models.Setup(catalog => catalog.ResolveRequiredChatClient(tenant, It.IsAny<string?>())).Returns(client.Object);
+        models.Setup(catalog => catalog.ResolveModelId(tenant, It.IsAny<string?>())).Returns(tenant.DefaultModelId);
+        models.Setup(catalog => catalog.ListModels()).Returns(ModelCatalog.CreateDefaultDescriptors());
         return (harness, models, client);
     }
 }
