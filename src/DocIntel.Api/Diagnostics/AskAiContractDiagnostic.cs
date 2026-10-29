@@ -1,5 +1,4 @@
 using System.Text.Json;
-using System.Globalization;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Models;
@@ -39,30 +38,6 @@ public static class AskAiContractDiagnostic
             var descriptor = models.ListModels().FirstOrDefault(model => model.ModelId == selectedModel);
             var knownModel = ModelCatalog.CreateDefaultDescriptors().Any(model => model.ModelId == selectedModel)
                 ? selectedModel : "OtherConfiguredModel";
-            if (client.GetService<OpenAI.Chat.ChatClient>() is { } transport)
-            {
-                try
-                {
-                    var result = await transport.CompleteChatAsync(
-                        [new OpenAI.Chat.UserChatMessage("Synthetic quota check. Reply OK.")],
-                        new OpenAI.Chat.ChatCompletionOptions
-                        {
-                            MaxOutputTokenCount = (executionOptions ?? new()).MaxOutputTokens
-                        }, deadline.Token);
-                    var headers = result.GetRawResponse().Headers;
-                    long? Limit(string name) =>
-                        headers.TryGetValue(name, out var value) && Int64.TryParse(value, NumberStyles.None,
-                            CultureInfo.InvariantCulture, out var number) && number >= 0 ? number : null;
-                    await WriteAsync(output, "Accepted", "None", variant: "Limits",
-                        tokensPerMinute: Limit("x-ratelimit-limit-tokens"),
-                        requestsPerMinute: Limit("x-ratelimit-limit-requests"));
-                }
-                catch (Exception exception) when (exception is not OperationCanceledException)
-                {
-                    await WriteAsync(output, "Failed", AskAiFailureDiagnostics.GetCode(exception),
-                        AskAiProviderFailure.FromException(exception), variant: "Limits");
-                }
-            }
             var fullAccepted = false;
             foreach (var variant in new[] { "Plain", "Json", "Tools", "Combined" })
             {
@@ -110,13 +85,12 @@ public static class AskAiContractDiagnostic
 
     private static Task WriteAsync(
         TextWriter output, string status, string failureCode, AskAiProviderFailure? provider = null,
-        string? variant = null, string? model = null, string? modelProvider = null,
-        long? tokensPerMinute = null, long? requestsPerMinute = null) =>
+        string? variant = null, string? model = null, string? modelProvider = null) =>
         output.WriteLineAsync("DOCINTEL_DIAGNOSTIC " + JsonSerializer.Serialize(new
         {
             phase = "Contract", status, failureCode, httpStatus = provider?.HttpStatus,
             providerCode = provider?.Code, providerParameter = provider?.Parameter,
             schemaKeyword = provider?.SchemaKeyword, providerHints = provider?.Hints,
-            variant, model, modelProvider, tokensPerMinute, requestsPerMinute
+            variant, model, modelProvider
         }));
 }
