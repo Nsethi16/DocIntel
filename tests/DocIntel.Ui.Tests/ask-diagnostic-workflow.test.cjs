@@ -30,9 +30,10 @@ test('runtime execution uses the selected revision and built-in command without 
 });
 
 test('contract probing is a distinct document-free mode and does not weaken saved-question replay approval', () => {
-  assert.match(workflow, /options: \[Inspect, Replay, Contract\]/);
+  assert.match(workflow, /options: \[Inspect, Replay, Contract, Synthetic\]/);
   assert.match(workflow, /Contract checks do not accept saved run identifiers/);
   assert.match(workflow, /"--diagnose-ask-contract", "true"/);
+  assert.match(workflow, /"--diagnose-ask-synthetic", "true"/);
   assert.match(workflow, /Replay requires the exact confirmation REPLAY/);
   assert.match(workflow, /"httpStatus", "providerCode"/);
   assert.match(program, /startupReadiness\.ProbeModelsOnStartup/);

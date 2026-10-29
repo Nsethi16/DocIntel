@@ -477,6 +477,10 @@ settings instead of introducing a reasoning-model-incompatible token override, d
 and emits only redacted
 provider diagnostics. It has no document or run-store dependency and accepts no saved run ID.
 `Inspect` remains read-only and `Replay` still requires its separate explicit confirmation.
+`Synthetic` exercises the real configured model and the complete analytical agent over two authored,
+in-memory fake quotes. It is limited to eight model requests and 120 seconds, requires the same live
+probing opt-in, checks exact totals/citations/bar-chart data, and never resolves a production job/run
+store, persists an answer, reads customer files, or delivers a message.
 
 Web submissions may send `previousRunId`. The server loads at most four completed prior turns
 owned by that same actor and workspace, checks current permissions and document fingerprints,

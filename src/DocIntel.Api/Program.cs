@@ -15,7 +15,8 @@ var directoryDiagnosticMode = DirectoryConnectionDiagnostic.IsRequested(args);
 var nativeDecisionDiagnosticMode = NativeDecisionDiagnostic.IsRequested(args);
 var isolatedDiagnosticMode = directoryDiagnosticMode || nativeDecisionDiagnosticMode;
 var askContractMode = args.Contains("--diagnose-ask-contract", StringComparer.Ordinal);
-var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal) || askContractMode;
+var askSyntheticMode = args.Contains("--diagnose-ask-synthetic", StringComparer.Ordinal);
+var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal) || askContractMode || askSyntheticMode;
 WebApplicationBuilder builder;
 try
 {
@@ -93,6 +94,15 @@ builder.Services.AddHostedService<AskAiRunWorker>();
 builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);
 
 var app = builder.Build();
+if (askSyntheticMode)
+{
+    Environment.ExitCode = await AskAiSyntheticDiagnostic.ExecuteAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty, startupReadiness.ProbeModelsOnStartup,
+        app.Services.GetRequiredService<DocIntel.Core.Harness.IHarnessStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Models.IModelCatalog>(), Console.Out);
+    await app.DisposeAsync();
+    return;
+}
 if (askContractMode)
 {
     Environment.ExitCode = await AskAiContractDiagnostic.ExecuteAsync(
