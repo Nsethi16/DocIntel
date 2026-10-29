@@ -29,7 +29,7 @@ public static class AskAiRunDiagnostic
                 .OrderByDescending(run => run.CreatedAtUtc).Take(10).ToArray();
             if (recent.Any(run => run.TenantId != tenantId || !Guid.TryParseExact(run.RunId, "N", out _)))
                 throw new InvalidDataException("A stored diagnostic run does not match the selected workspace.");
-            foreach (var run in recent) await WriteAsync(output, "Stored", run, StoredCode(run));
+            foreach (var snapshot in recent) await WriteAsync(output, "Stored", snapshot, StoredCode(snapshot));
             if (recent.Length == 0)
                 await output.WriteLineAsync(Prefix + """{"phase":"Stored","status":"NotFound"}""");
             return recent.Length > 0 ? 0 : 2;
