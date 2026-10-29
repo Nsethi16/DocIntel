@@ -1138,7 +1138,7 @@ public sealed class AskAiOrchestrator
         public List<string> AnalysisIds { get; set; } = [];
     }
 
-    /// <summary>Builds the actual provider contract with non-executable tools and a one-token synthetic request.</summary>
+    /// <summary>Builds the actual provider contract with non-executable tools and no artificial token override.</summary>
     public static ChatOptions CreateProviderContractOptions()
     {
         static Task<DocumentQueryPage> Search(DocumentQuery query, CancellationToken ct) =>
@@ -1153,7 +1153,7 @@ public sealed class AskAiOrchestrator
 
         return new ChatOptions
         {
-            AllowMultipleToolCalls = false, ToolMode = ChatToolMode.None, MaxOutputTokens = 1,
+            AllowMultipleToolCalls = false,
             Instructions = "This is a synthetic provider-contract check. Return a Conversation JSON greeting " +
                 "with empty evidenceIds and analysisIds. Do not call tools.",
             Tools = CreateBuiltInTools(Search, Inspect, Browse, Analyze).Select(tool =>

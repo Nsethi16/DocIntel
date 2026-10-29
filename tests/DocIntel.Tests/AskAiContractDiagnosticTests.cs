@@ -31,7 +31,7 @@ public sealed class AskAiContractDiagnosticTests
     }
 
     [Fact]
-    public async Task Contract_Check_Uses_One_Token_And_Disabled_Tools_Without_Printing_Generated_Content()
+    public async Task Contract_Check_Preserves_App_Token_Settings_Without_Printing_Generated_Content()
     {
         // Arrange
         var fixture = Fixture();
@@ -40,11 +40,11 @@ public sealed class AskAiContractDiagnosticTests
             .Returns((IEnumerable<ChatMessage> messages, ChatOptions options, CancellationToken _) =>
             {
                 Assert.Single(messages);
-                Assert.Equal(1, options.MaxOutputTokens);
+                Assert.Null(options.MaxOutputTokens);
                 if (options.Tools is not null)
                 {
                     Assert.False(options.AllowMultipleToolCalls);
-                    Assert.Equal(ChatToolMode.None, options.ToolMode);
+                    Assert.Null(options.ToolMode);
                     Assert.Equal(4, options.Tools.Count);
                 }
                 return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, "PRIVATE_GENERATED_TEXT")));

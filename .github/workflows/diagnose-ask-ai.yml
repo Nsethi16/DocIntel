@@ -12,7 +12,7 @@ on:
         type: string
         required: false
       mode:
-        description: Inspect is read-only. Contract checks four synthetic one-token variants with no documents. Replay uses a saved question.
+        description: Inspect is read-only. Contract checks four tiny synthetic requests using app token settings, with no documents. Replay uses a saved question.
         type: choice
         options: [Inspect, Replay, Contract]
         default: Inspect
