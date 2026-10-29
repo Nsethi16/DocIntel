@@ -477,6 +477,10 @@ settings instead of introducing a reasoning-model-incompatible token override, d
 and emits only redacted
 provider diagnostics. It has no document or run-store dependency and accepts no saved run ID.
 `Inspect` remains read-only and `Replay` still requires its separate explicit confirmation.
+For a screenshot without a run URL, `Inspect` with run ID `recent` reports at most ten failed runs
+from the past seven days in the selected workspace. Only opaque run references, timestamps, fixed
+failure categories, bounded stage counts and safe HTTP status are printed; questions, actors,
+source content and generated answers are never published. `recent` cannot be used with `Replay`.
 `Synthetic` exercises the real configured model and the complete analytical agent over two authored,
 in-memory fake quotes. It is limited to eight model requests and 120 seconds, requires the same live
 probing opt-in, checks exact totals/citations/bar-chart data, and never resolves a production job/run

@@ -128,6 +128,8 @@ jobs:
               $runtime = [regex]::Match($line,
                 '(?<kind>Request|Document|Ask AI run) [A-Za-z0-9:._-]{1,160} failed with (?<type>[A-Za-z_][A-Za-z0-9_]{0,79}); (?:root cause (?<cause>[A-Za-z_][A-Za-z0-9_]{0,79}); )?code (?<code>[0-9]{1,10}); site (?<site>[A-Za-z0-9_+.<>,]{1,200})\.')
               if ($runtime.Success) {
+                $reference = [regex]::Match($line,
+                  'Ask AI run (?<run>[a-f0-9]{32}) failed with ')
                 $type = if ($runtime.Groups['cause'].Success) {
                   $runtime.Groups['cause'].Value
                 } else { $runtime.Groups['type'].Value }
@@ -152,6 +154,10 @@ jobs:
                 }
                 $runtimeErrors.Add(('{0}: {1}; code {2}; component {3}; site {4}' -f
                   $kind, $safeType, $runtime.Groups['code'].Value, $component, $safeSite)) | Out-Null
+                if ($reference.Success) {
+                  Write-Output ('Ask AI failure reference: {0}; root {1}; code {2}; site {3}' -f
+                    $reference.Groups['run'].Value, $safeType, $runtime.Groups['code'].Value, $safeSite)
+                }
               }
             }
           }

@@ -8,7 +8,7 @@ on:
         type: string
         default: contoso-legal
       run_id:
-        description: Existing run ID from the failure log.
+        description: Existing run ID, or recent for read-only inspection of up to ten failures from the past seven days.
         type: string
         required: false
       mode:
@@ -59,7 +59,10 @@ jobs:
           if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Replay', 'Contract', 'Synthetic')) { throw 'Invalid diagnostic mode.' }
           if ($env:DIAGNOSTIC_TENANT -notmatch '^[a-z0-9][a-z0-9-]{0,127}$' -or
             ($env:DIAGNOSTIC_MODE -notin @('Contract', 'Synthetic') -and
-             $env:DIAGNOSTIC_RUN -notmatch '^[a-fA-F0-9]{32}$')) { throw 'Invalid tenant/run identifiers.' }
+             $env:DIAGNOSTIC_RUN -notmatch '^[a-fA-F0-9]{32}$' -and
+             -not ($env:DIAGNOSTIC_MODE -eq 'Inspect' -and $env:DIAGNOSTIC_RUN -ceq 'recent'))) {
+            throw 'Invalid tenant/run identifiers.'
+          }
           if ($env:DIAGNOSTIC_MODE -in @('Contract', 'Synthetic') -and $env:DIAGNOSTIC_RUN) {
             throw 'Contract checks do not accept saved run identifiers.'
           }
@@ -134,7 +137,8 @@ jobs:
                   "phase", "status", "failureCode", "searches", "inspections",
                   "matchedDocuments", "citations", "httpStatus", "providerCode",
                   "providerParameter", "schemaKeyword", "providerHints",
-                  "variant", "model", "modelProvider", "calls", "analyses") if key in value}
+                  "variant", "model", "modelProvider", "calls", "analyses", "runId", "createdAtUtc",
+                  "completedAtUtc", "lastStep", "analyticalAttempts") if key in value}
               print(json.dumps(safe))
               records.append(safe)
           if not records:

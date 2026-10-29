@@ -70,6 +70,86 @@ public sealed class AskAiDiagnosticTests
     }
 
     [Fact]
+    public async Task Recent_Inspection_Is_Read_Only_Bounded_And_Reports_No_Private_Content()
+    {
+        // Arrange
+        var sources = Enumerable.Range(0, 12)
+            .Select(index => Source(DateTimeOffset.UtcNow.AddMinutes(-index))).ToList();
+        sources.Add(Source(DateTimeOffset.UtcNow.AddDays(-8)));
+        var completed = Source();
+        completed.Status = JobStatus.Completed;
+        sources.Add(completed);
+        sources[0].ProviderFailure = new(429, "private-code", "private-parameter", null, "private-origin", []);
+        sources[0].Steps.Add(new("analyze_evidence", "private-query", 0, "private-notes"));
+        sources[1].Steps.Add(new("private-stage", "private-query", 0, "private-notes"));
+        var original = JsonSerializer.Serialize(sources);
+        var store = new Mock<IAskAiRunStore>(MockBehavior.Strict);
+        store.Setup(s => s.ListRunsByTenantAsync("tenant", It.IsAny<CancellationToken>())).ReturnsAsync(sources);
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+        using var output = new StringWriter();
+
+        // Act
+        var result = await AskAiRunDiagnostic.ExecuteAsync("tenant", "recent", false, store.Object,
+            Orchestrator(client, Access(DocumentAccessScope.Unrestricted)), output);
+
+        // Assert
+        Assert.Equal(0, result);
+        var lines = output.ToString().Split(Environment.NewLine, StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(10, lines.Length);
+        Assert.Contains(sources[0].RunId, lines[0]);
+        Assert.Contains("\"failureCode\":\"ProviderRateLimited\"", lines[0]);
+        Assert.Contains("\"httpStatus\":429", lines[0]);
+        Assert.Contains("\"lastStep\":\"analyze_evidence\"", lines[0]);
+        Assert.Contains("\"lastStep\":null", lines[1]);
+        Assert.DoesNotContain(sources[10].RunId, output.ToString());
+        Assert.DoesNotContain(completed.RunId, output.ToString());
+        Assert.DoesNotContain("private-", output.ToString());
+        Assert.Equal(original, JsonSerializer.Serialize(sources));
+        client.VerifyNoOtherCalls();
+        store.Verify(s => s.ListRunsByTenantAsync("tenant", It.IsAny<CancellationToken>()), Times.Once);
+        store.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Recent_Cannot_Be_Replayed()
+    {
+        // Arrange
+        var store = new Mock<IAskAiRunStore>(MockBehavior.Strict);
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+        using var output = new StringWriter();
+
+        // Act
+        await Assert.ThrowsAsync<ArgumentException>(() => AskAiRunDiagnostic.ExecuteAsync(
+            "tenant", "recent", true, store.Object,
+            Orchestrator(client, Access(DocumentAccessScope.Unrestricted)), output));
+
+        // Assert
+        Assert.Equal(String.Empty, output.ToString());
+        store.VerifyNoOtherCalls();
+        client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Recent_Refuses_Cross_Workspace_Snapshots_Before_Printing_Any_References()
+    {
+        // Arrange
+        var store = new Mock<IAskAiRunStore>(MockBehavior.Strict);
+        store.Setup(s => s.ListRunsByTenantAsync("another", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([Source()]);
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+        using var output = new StringWriter();
+
+        // Act
+        await Assert.ThrowsAsync<InvalidDataException>(() => AskAiRunDiagnostic.ExecuteAsync(
+            "another", "recent", false, store.Object,
+            Orchestrator(client, Access(DocumentAccessScope.Unrestricted)), output));
+
+        // Assert
+        Assert.Equal(String.Empty, output.ToString());
+        client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task A_Revoked_Actor_Cannot_Use_Replay_To_Bypass_Current_Tenant_Access()
     {
         // Arrange
@@ -167,14 +247,15 @@ public sealed class AskAiDiagnosticTests
         Assert.DoesNotContain("private-provider-details", message);
     }
 
-    private static AskAiRun Source() => new()
+    private static AskAiRun Source(DateTimeOffset? createdAtUtc = null) => new()
     {
         RunId = Guid.NewGuid().ToString("N"),
         TenantId = "tenant",
         Actor = new ActorIdentity(Guid.NewGuid(), Guid.NewGuid()),
         Question = "private-question",
         Status = JobStatus.Failed,
-        ErrorCode = "ExecutionFailed"
+        ErrorCode = "ExecutionFailed",
+        CreatedAtUtc = createdAtUtc ?? DateTimeOffset.UtcNow
     };
 
     private static Mock<IAskAiRunStore> Store(AskAiRun source)

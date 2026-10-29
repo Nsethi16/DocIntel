@@ -29,6 +29,13 @@ test('runtime execution uses the selected revision and built-in command without 
   assert.match(workflow, /Raw process output was not published/);
 });
 
+test('recent failure references can only be inspected and cannot authorize a replay', () => {
+  assert.match(workflow, /\$env:DIAGNOSTIC_MODE -eq 'Inspect' -and \$env:DIAGNOSTIC_RUN -ceq 'recent'/);
+  assert.match(workflow, /"runId", "createdAtUtc"/);
+  assert.match(workflow, /"completedAtUtc", "lastStep", "analyticalAttempts"/);
+  assert.doesNotMatch(workflow, /"question",|"actor",|"answer",/);
+});
+
 test('contract probing is a distinct document-free mode and does not weaken saved-question replay approval', () => {
   assert.match(workflow, /options: \[Inspect, Replay, Contract, Synthetic\]/);
   assert.match(workflow, /Contract checks do not accept saved run identifiers/);
