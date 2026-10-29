@@ -14,7 +14,8 @@ using Microsoft.AspNetCore.Http.Features;
 var directoryDiagnosticMode = DirectoryConnectionDiagnostic.IsRequested(args);
 var nativeDecisionDiagnosticMode = NativeDecisionDiagnostic.IsRequested(args);
 var isolatedDiagnosticMode = directoryDiagnosticMode || nativeDecisionDiagnosticMode;
-var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal);
+var askContractMode = args.Contains("--diagnose-ask-contract", StringComparer.Ordinal);
+var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal) || askContractMode;
 WebApplicationBuilder builder;
 try
 {
@@ -92,6 +93,16 @@ builder.Services.AddHostedService<AskAiRunWorker>();
 builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);
 
 var app = builder.Build();
+if (askContractMode)
+{
+    Environment.ExitCode = await AskAiContractDiagnostic.ExecuteAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty,
+        startupReadiness.ProbeModelsOnStartup,
+        app.Services.GetRequiredService<DocIntel.Core.Harness.IHarnessStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Models.IModelCatalog>(), Console.Out);
+    await app.DisposeAsync();
+    return;
+}
 if (diagnosticMode)
 {
     Environment.ExitCode = await AskAiRunDiagnostic.ExecuteAsync(

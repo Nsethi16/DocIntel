@@ -29,6 +29,17 @@ test('runtime execution uses the selected revision and built-in command without 
   assert.match(workflow, /Raw process output was not published/);
 });
 
+test('contract probing is a distinct document-free mode and does not weaken saved-question replay approval', () => {
+  assert.match(workflow, /options: \[Inspect, Replay, Contract\]/);
+  assert.match(workflow, /Contract checks do not accept saved run identifiers/);
+  assert.match(workflow, /"--diagnose-ask-contract", "true"/);
+  assert.match(workflow, /Replay requires the exact confirmation REPLAY/);
+  assert.match(workflow, /"httpStatus", "providerCode"/);
+  assert.match(program, /startupReadiness\.ProbeModelsOnStartup/);
+  const contract = program.indexOf('if (askContractMode)', program.indexOf('var app = builder.Build()'));
+  assert.ok(contract > 0 && contract < program.indexOf('app.UseDocIntelResponseHeaders()'));
+});
+
 test('the diagnostic CLI exits before web hosting and background workers start', () => {
   const diagnostic = program.indexOf('if (diagnosticMode)', program.indexOf('var app = builder.Build()'));
   assert.ok(diagnostic > 0);

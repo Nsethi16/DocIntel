@@ -893,28 +893,8 @@ public sealed class AskAiOrchestrator
             }
         }
 
-        var tools = new List<AIFunction>
-        {
-            AIFunctionFactory.Create(SearchDocumentsAsync, "search_documents",
-                "Search completed workspace documents. Conditions are ANDed. Follow continuation tokens; " +
-                "a single page is not a total count. Empty results mean no matches. " +
-                "Results are document references, not citation evidence. Before listing or describing a matching document, " +
-                "call inspect_document_slice with its jobId; never use a jobId as an evidenceId."),
-            AIFunctionFactory.Create(InspectDocumentSliceAsync, "inspect_document_slice",
-                "Read one previously found document slice and receive a server evidenceId. " +
-                "Results include original text, insights, entities, structured data, and prompt-column outcomes. " +
-                "Use nextTextOffset to read more source text."),
-            AIFunctionFactory.Create(BrowseDocumentsAsync, "browse_documents",
-                "Discover relevant documents by meaning from file/document summary previews and field names. " +
-                "Accepts the same bounded query as search_documents; use null searchText and [] entities to browse. " +
-                "Follow continuation tokens and then inspect matching logical documents; previews are not evidence."),
-            AIFunctionFactory.Create(AnalyzeEvidenceAsync, "analyze_evidence",
-                "Compute a source-backed table or chart from inspected records. Supports rows, sum, average, count, " +
-                "min, max and IQR outliers. Use exact source quotes, explicit parsing formats and source-supported " +
-                "units. Returns validated calculations, coverage and an analysisId. Include that ID and its " +
-                "evidenceIds in the final answer. Detailed request rules are in the system instructions. " +
-                "An error means no result was published.")
-        };
+        var tools = CreateBuiltInTools(
+            SearchDocumentsAsync, InspectDocumentSliceAsync, BrowseDocumentsAsync, AnalyzeEvidenceAsync);
         tools.AddRange(_toolProviders.SelectMany(p => p.GetTools(tenant)));
         if (tools.Select(t => t.Name).Distinct(StringComparer.Ordinal).Count() != tools.Count)
         {
@@ -1156,6 +1136,68 @@ public sealed class AskAiOrchestrator
         public List<string> EvidenceIds { get; set; } = [];
         [JsonPropertyName("analysisIds")]
         public List<string> AnalysisIds { get; set; } = [];
+    }
+
+    /// <summary>Builds the actual provider contract with non-executable tools and a one-token synthetic request.</summary>
+    public static ChatOptions CreateProviderContractOptions()
+    {
+        static Task<DocumentQueryPage> Search(DocumentQuery query, CancellationToken ct) =>
+            throw new NotSupportedException("Contract checks cannot execute tools.");
+        static Task<object> Inspect(
+            string jobId, int sliceIndex = 0, int textOffset = 0, CancellationToken ct = default) =>
+            throw new NotSupportedException("Contract checks cannot execute tools.");
+        static Task<object> Browse(DocumentQuery query, CancellationToken ct) =>
+            throw new NotSupportedException("Contract checks cannot execute tools.");
+        static Task<object> Analyze(AskAiAnalysisRequest request, CancellationToken ct) =>
+            throw new NotSupportedException("Contract checks cannot execute tools.");
+
+        return new ChatOptions
+        {
+            AllowMultipleToolCalls = false, ToolMode = ChatToolMode.None, MaxOutputTokens = 1,
+            Instructions = "This is a synthetic provider-contract check. Return a Conversation JSON greeting " +
+                "with empty evidenceIds and analysisIds. Do not call tools.",
+            Tools = CreateBuiltInTools(Search, Inspect, Browse, Analyze).Select(tool =>
+                (AITool)new ContractFunction(tool,
+                    tool.Name is "search_documents" or "browse_documents" ? SearchToolSchema : null)).ToList(),
+            ResponseFormat = ChatResponseFormat.ForJsonSchema(AnswerSchema,
+                schemaName: "ask_ai_answer",
+                schemaDescription: "A grounded answer using only inspected server-issued evidence IDs")
+        };
+    }
+
+    private static List<AIFunction> CreateBuiltInTools(
+        Func<DocumentQuery, CancellationToken, Task<DocumentQueryPage>> search,
+        Func<string, int, int, CancellationToken, Task<object>> inspect,
+        Func<DocumentQuery, CancellationToken, Task<object>> browse,
+        Func<AskAiAnalysisRequest, CancellationToken, Task<object>> analyze) =>
+    [
+        AIFunctionFactory.Create(search, "search_documents",
+            "Search completed workspace documents. Conditions are ANDed. Follow continuation tokens; " +
+            "a single page is not a total count. Empty results mean no matches. " +
+            "Results are document references, not citation evidence. Before listing or describing a matching document, " +
+            "call inspect_document_slice with its jobId; never use a jobId as an evidenceId."),
+        AIFunctionFactory.Create(inspect, "inspect_document_slice",
+            "Read one previously found document slice and receive a server evidenceId. " +
+            "Results include original text, insights, entities, structured data, and prompt-column outcomes. " +
+            "Use nextTextOffset to read more source text."),
+        AIFunctionFactory.Create(browse, "browse_documents",
+            "Discover relevant documents by meaning from file/document summary previews and field names. " +
+            "Accepts the same bounded query as search_documents; use null searchText and [] entities to browse. " +
+            "Follow continuation tokens and then inspect matching logical documents; previews are not evidence."),
+        AIFunctionFactory.Create(analyze, "analyze_evidence",
+            "Compute a source-backed table or chart from inspected records. Supports rows, sum, average, count, " +
+            "min, max and IQR outliers. Use exact source quotes, explicit parsing formats and source-supported " +
+            "units. Returns validated calculations, coverage and an analysisId. Include that ID and its " +
+            "evidenceIds in the final answer. Detailed request rules are in the system instructions. " +
+            "An error means no result was published.")
+    ];
+
+    private sealed class ContractFunction(AIFunction inner, JsonElement? schema) : DelegatingAIFunction(inner)
+    {
+        public override JsonElement JsonSchema => schema ?? base.JsonSchema;
+        protected override ValueTask<object?> InvokeCoreAsync(
+            AIFunctionArguments arguments, CancellationToken cancellationToken = default) =>
+            throw new NotSupportedException("Contract checks cannot execute tools.");
     }
 
     internal static string FormatAnalysisFallback(IReadOnlyList<AskAiAnalysis> analyses)

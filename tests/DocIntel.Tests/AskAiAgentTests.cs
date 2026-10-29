@@ -346,6 +346,14 @@ public sealed class AskAiAgentTests
         // Assert
         Assert.NotNull(captured);
         Assert.False(captured.AllowMultipleToolCalls);
+        var contract = AskAiOrchestrator.CreateProviderContractOptions();
+        foreach (var tool in captured.Tools!.OfType<AIFunction>())
+        {
+            var probeTool = Assert.IsAssignableFrom<AIFunction>(
+                Assert.Single(contract.Tools!, candidate => candidate.Name == tool.Name));
+            Assert.Equal(tool.Description, probeTool.Description);
+            Assert.Equal(tool.JsonSchema.GetRawText(), probeTool.JsonSchema.GetRawText());
+        }
         Assert.All(captured.Tools!, tool => Assert.InRange(tool.Description?.Length ?? 0, 0, 1_024));
         Assert.Contains("analyze_evidence request rules:", captured.Instructions);
         Assert.Contains("dateBucket is none/month/quarter/year", captured.Instructions);
