@@ -4,6 +4,7 @@ using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging.Abstractions;
 using DocIntel.Core.Features.AskAi;
 using Moq;
+using Moq.Protected;
 using Xunit;
 
 namespace DocIntel.Tests;
@@ -202,7 +203,7 @@ public sealed class AskAiRateLimitTests
         headers.Setup(collection => collection.TryGetValue(header, out text)).Returns(true);
         var response = new Mock<PipelineResponse>();
         response.SetupGet(result => result.Status).Returns(status);
-        response.SetupGet(result => result.Headers).Returns(headers.Object);
+        response.Protected().SetupGet<PipelineResponseHeaders>("HeadersCore").Returns(headers.Object);
         response.SetupGet(result => result.Content).Returns(BinaryData.FromObjectAsJson(
             new { error = new { code, message = "Private provider content" } }));
         return new ClientResultException("Private provider exception", response.Object);
