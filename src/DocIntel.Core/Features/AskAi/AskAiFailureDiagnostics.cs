@@ -41,6 +41,7 @@ public static class AskAiFailureDiagnostics
         "The evidence limit was reached. Narrow the question." => "EvidenceLimit",
         "The Ask AI document scope limit was reached. Narrow the question." => "EvidenceLimit",
         "The Ask AI tool configuration exceeds the provider description limit." => "InvalidToolConfiguration",
+        "The model exhausted the response token limit." => "ResponseTokenLimit",
         "A document used by this conversation changed; start a new question without prior context." => "SourceChanged",
         "Document retrieval failed; no answer was produced."
             when exception.GetBaseException() is ArgumentException => "InvalidToolArguments",
@@ -59,6 +60,7 @@ public static class AskAiFailureDiagnostics
         "InvalidToolArguments" => "The model generated invalid document-search or inspection arguments. No answer was returned.",
         "RetrievalFailed" => "Document retrieval failed. No answer was returned.",
         "InvalidToolConfiguration" => "Ask AI has an incompatible tool configuration. A workspace administrator must correct it.",
+        "ResponseTokenLimit" => "The AI model reached its response limit, including reasoning. No partial answer was returned. A workspace administrator can review the output-token budget.",
         "SourceChanged" => "A source document changed or prior evidence is no longer current. Start a new chat to search the current documents.",
         "DataQueryRejected" => "The document database rejected a search request. No answer was returned. A workspace administrator must inspect the database diagnostic reference.",
         "DataAccessDenied" => "The application could not access the document database. A workspace administrator must check its data access.",

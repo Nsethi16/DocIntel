@@ -52,10 +52,18 @@ public sealed class AskAiSyntheticDiagnosticTests
                 await Invoke("search_documents", new()
                     { ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery()) });
                 var rows = new List<AskAiAnalysisInputRow>();
-                for (var index = 1; index <= 2; index++)
+                var customers = new[]
+                {
+                    "Northwind Demo", "Northwind Demo", "Fabrikam Demo", "Fabrikam Demo",
+                    "Adventure Demo", "Adventure Demo", "Northwind Demo", "Euro Demo", "Unknown Demo"
+                };
+                string?[] amounts = ["1,000.00", "4,000.00", "2,500.00", "7,500.00",
+                    "5,000.00", "5,000.00", "1,000.00", "9,000.00", null];
+                for (var index = 1; index <= 9; index++)
                 {
                     using var inspected = JsonSerializer.SerializeToDocument(await Invoke("inspect_document_slice",
                         new() { ["jobId"] = $"synthetic-quote-{index}", ["sliceIndex"] = 0, ["textOffset"] = 0 }));
+                    if (index == 8) continue;
                     rows.Add(new()
                     {
                         EvidenceId = inspected.RootElement.GetProperty("evidenceId").GetString()!,
@@ -63,12 +71,12 @@ public sealed class AskAiSyntheticDiagnosticTests
                         Unit = "USD",
                         Cells = new()
                         {
-                            ["customer"] = index == 1 ? "Northwind Demo" : "Fabrikam Demo",
-                            ["amount"] = index == 1 ? "1,000.00" : "2,500.00"
+                            ["customer"] = customers[index - 1],
+                            ["amount"] = amounts[index - 1]
                         }
                     });
                 }
-                await Invoke("analyze_evidence", new()
+                using var analysis = JsonSerializer.SerializeToDocument(await Invoke("analyze_evidence", new()
                 {
                     ["request"] = JsonSerializer.SerializeToElement(new AskAiAnalysisRequest
                     {
@@ -80,9 +88,14 @@ public sealed class AskAiSyntheticDiagnosticTests
                             new() { Key = "amount", Label = "Amount", Kind = "number" }
                         ]
                     })
-                });
+                }));
                 return new ChatResponse(new ChatMessage(ChatRole.Assistant,
-                    """{"kind":"DocumentAnswer","answer":"Synthetic totals.","evidenceIds":["e1","e2"],"analysisIds":["a1"]}"""));
+                    JsonSerializer.Serialize(new
+                    {
+                        kind = "DocumentAnswer", answer = "Synthetic totals.",
+                        evidenceIds = analysis.RootElement.GetProperty("evidenceIds"),
+                        analysisIds = new[] { "a1" }
+                    })));
             });
         var models = new Mock<IModelCatalog>();
         models.Setup(catalog => catalog.ResolveModelId(tenant, It.IsAny<string?>())).Returns(tenant.DefaultModelId);
@@ -97,7 +110,7 @@ public sealed class AskAiSyntheticDiagnosticTests
         // Assert
         Assert.Equal(0, result);
         Assert.Contains("\"status\":\"Completed\"", output.ToString());
-        Assert.Contains("\"citations\":2", output.ToString());
+        Assert.Contains("\"citations\":7", output.ToString());
         Assert.DoesNotContain("Northwind", output.ToString());
         Assert.DoesNotContain("Fabrikam", output.ToString());
     }

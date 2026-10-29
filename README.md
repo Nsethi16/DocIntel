@@ -471,10 +471,9 @@ Provider errors expose only allowlisted HTTP status/code/schema-keyword/paramete
 provider messages, requests or document content. A saved error remains historical; viewing details only
 polls that run and never resubmits the question.
 The manual Ask AI diagnostic workflow also has a `Contract` mode. It requires the existing
-`Readiness:ProbeModelsOnStartup` live-probing opt-in, sends at most four tiny synthetic requests
-to compare plain, JSON-only, tools-only and combined contracts, keeps the app's provider-default token
-settings instead of introducing a reasoning-model-incompatible token override, disables tool execution,
-and emits only redacted
+`Readiness:ProbeModelsOnStartup` live-probing opt-in, sends at most five tiny synthetic requests
+to compare plain, JSON-only, tools-only and combined contracts and inspect numeric rate-limit headers,
+uses the app's actual output-token budget, disables tool execution, and emits only redacted
 provider diagnostics. It has no document or run-store dependency and accepts no saved run ID.
 `Inspect` remains read-only and `Replay` still requires its separate explicit confirmation.
 For a screenshot without a run URL, `Inspect` with run ID `recent` reports at most ten failed runs
@@ -488,10 +487,20 @@ exception types/codes/sites, never raw log messages; missing logs or lookup fail
 read-only search shapes and at most one continuation per shape. It makes no model calls, never replays
 the question, writes no results and prints only counts plus numeric database HTTP/substatus on failure.
 Database rejection, access, throttling and availability errors are distinct from AI-provider errors.
-`Synthetic` exercises the real configured model and the complete analytical agent over two authored,
-in-memory fake quotes. It is limited to eight model requests and 120 seconds, requires the same live
-probing opt-in, checks exact totals/citations/bar-chart data, and never resolves a production job/run
+`Synthetic` exercises the real configured model and complete analytical agent over nine authored,
+in-memory fake records: six distinct USD quotes, one repeated copy, one EUR quote and one USD record
+with a missing amount. It is limited to 24 model requests and 300 seconds, requires the same live
+probing opt-in, checks exact customer totals/shares, missing-data coverage and cited bar-chart data,
+and never resolves a production job/run
 store, persists an answer, reads customer files, or delivers a message.
+
+`AskAi:MaxOutputTokens` bounds each completion, including reasoning tokens, to 16,384 by default
+(configurable from 1,024 to 65,536). Exhausting it fails explicitly rather than publishing a partial
+answer. Transient provider HTTP 429 responses can pause and retry the same pending model request
+up to three additional times, respecting Retry-After headers with at most 180 seconds of additional
+waiting and the existing run deadline. This never repeats successful tools or restarts the question.
+Quota-exhaustion and other provider failures are not retried by this layer, and models never change
+automatically. The web UI reports the provider pause while the durable run remains active.
 
 Web submissions may send `previousRunId`. The server loads at most four completed prior turns
 owned by that same actor and workspace, checks current permissions and document fingerprints,

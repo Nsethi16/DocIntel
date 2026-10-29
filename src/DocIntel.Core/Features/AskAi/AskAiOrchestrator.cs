@@ -563,6 +563,7 @@ public sealed class AskAiOrchestrator
     private readonly ILogger<AskAiOrchestrator> _logger;
     private readonly ITenantAccessResolver? _accessResolver;
     private readonly IAskAiRunStore? _runStore;
+    private readonly AskAiExecutionOptions _executionOptions;
 
     public bool CanAutomaticallyReplay => !_toolProviders.Any();
 
@@ -573,7 +574,7 @@ public sealed class AskAiOrchestrator
         IEnumerable<IAskAiToolProvider>? toolProviders,
         ILogger<AskAiOrchestrator> logger,
         ITenantAccessResolver? accessResolver = null, ReviewService? reviews = null, IReviewStore? reviewStore = null,
-        IAskAiRunStore? runStore = null)
+        IAskAiRunStore? runStore = null, AskAiExecutionOptions? executionOptions = null)
     {
         _harnessStore = harnessStore ?? throw new ArgumentNullException(nameof(harnessStore));
         _jobStore = jobStore ?? throw new ArgumentNullException(nameof(jobStore));
@@ -582,6 +583,8 @@ public sealed class AskAiOrchestrator
         _logger = logger ?? throw new ArgumentNullException(nameof(logger));
         _accessResolver = accessResolver;
         _runStore = runStore;
+        _executionOptions = executionOptions ?? new();
+        _executionOptions.Validate();
     }
 
     public async Task<AskAiRun> ExecuteRunAsync(
@@ -905,6 +908,7 @@ public sealed class AskAiOrchestrator
 
         var options = new ChatOptions
         {
+            MaxOutputTokens = _executionOptions.MaxOutputTokens,
             AllowMultipleToolCalls = false,
             Instructions = systemPrompt + $"\nReference time for this question: {run.CreatedAtUtc:O} (UTC).\n" + """
 
@@ -978,7 +982,14 @@ public sealed class AskAiOrchestrator
                 schemaName: "ask_ai_answer",
                 schemaDescription: "A grounded answer using only inspected server-issued evidence IDs")
         };
-        using var agentClient = new FunctionInvokingChatClient(chatClient)
+        async Task RecordThrottleAsync(TimeSpan delay, CancellationToken ct)
+        {
+            run.Steps.Add(new AskAiStepTrace("provider_throttled", null, 0,
+                $"Waiting {Math.Ceiling(delay.TotalSeconds)} seconds before retrying the same model request."));
+            if (onStepProgress is not null) await onStepProgress(run, ct);
+        }
+        using var agentClient = new FunctionInvokingChatClient(
+            new AskAiRateLimitChatClient(chatClient, _logger, RecordThrottleAsync))
         {
             AllowConcurrentInvocation = false,
             IncludeDetailedErrors = false,
@@ -1138,9 +1149,11 @@ public sealed class AskAiOrchestrator
         public List<string> AnalysisIds { get; set; } = [];
     }
 
-    /// <summary>Builds the actual provider contract with non-executable tools and no artificial token override.</summary>
-    public static ChatOptions CreateProviderContractOptions()
+    /// <summary>Builds the actual provider contract with non-executable tools and the application's token budget.</summary>
+    public static ChatOptions CreateProviderContractOptions(AskAiExecutionOptions? executionOptions = null)
     {
+        executionOptions ??= new();
+        executionOptions.Validate();
         static Task<DocumentQueryPage> Search(DocumentQuery query, CancellationToken ct) =>
             throw new NotSupportedException("Contract checks cannot execute tools.");
         static Task<object> Inspect(
@@ -1153,6 +1166,7 @@ public sealed class AskAiOrchestrator
 
         return new ChatOptions
         {
+            MaxOutputTokens = executionOptions.MaxOutputTokens,
             AllowMultipleToolCalls = false,
             Instructions = "This is a synthetic provider-contract check. Return a Conversation JSON greeting " +
                 "with empty evidenceIds and analysisIds. Do not call tools.",

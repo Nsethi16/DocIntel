@@ -1,6 +1,7 @@
 using System.ClientModel;
 using System.ClientModel.Primitives;
 using DocIntel.Api.Diagnostics;
+using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Models;
 using Microsoft.Extensions.AI;
@@ -40,7 +41,7 @@ public sealed class AskAiContractDiagnosticTests
             .Returns((IEnumerable<ChatMessage> messages, ChatOptions options, CancellationToken _) =>
             {
                 Assert.Single(messages);
-                Assert.Null(options.MaxOutputTokens);
+                Assert.Equal(AskAiExecutionOptions.DefaultMaxOutputTokens, options.MaxOutputTokens);
                 if (options.Tools is not null)
                 {
                     Assert.False(options.AllowMultipleToolCalls);

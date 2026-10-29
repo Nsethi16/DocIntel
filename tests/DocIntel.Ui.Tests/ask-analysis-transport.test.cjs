@@ -15,12 +15,14 @@ test('analytical requests satisfy provider metadata limits and round-trip real S
     let calls = 0;
     let selectedJobId;
     let inspected;
+    let throttledRequests = 0;
     const provider = http.createServer(async (request, response) => {
       try {
         const chunks = [];
         for await (const chunk of request) chunks.push(chunk);
         const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
         calls++;
+        assert.equal(body.max_completion_tokens ?? body.max_tokens, 16384);
         assert.equal(body.parallel_tool_calls, false,
           'Structured JSON responses must explicitly disable parallel tool calls at the provider boundary.');
         const tools = body.tools || [];
@@ -40,6 +42,14 @@ test('analytical requests satisfy provider metadata limits and round-trip real S
         assert.match(instructions, /analyze_evidence request rules:/);
         assert.match(instructions, /dateBucket is none\/month\/quarter\/year/);
         const results = body.messages.filter(message => message.role === 'tool');
+        if (results.length === 2 && throttledRequests < 4) {
+          throttledRequests++;
+          response.writeHead(429, { 'Content-Type': 'application/json', 'retry-after-ms': '1' });
+          response.end(JSON.stringify({ error: {
+            code: 'rate_limit_exceeded', message: 'Synthetic throttling; retry the same model request.'
+          } }));
+          return;
+        }
         let message;
         const call = (name, args) => ({ role: 'assistant', tool_calls: [{
           id: `step-${results.length}`, type: 'function',
@@ -117,7 +127,10 @@ test('analytical requests satisfy provider metadata limits and round-trip real S
       }) });
       const data = await result.json();
       assert.equal(result.status, 200, `${JSON.stringify(data)}\n${providerErrors.join('\n')}\n${api.getLogs()}`);
-      assert.equal(calls, 4);
+      assert.equal(calls, 8);
+      assert.equal(throttledRequests, 4);
+      assert.equal(data.steps.filter(step => step.stepName === 'inspect_document_slice').length, 1);
+      assert.ok(data.steps.some(step => step.stepName === 'provider_throttled'));
       assert.deepEqual(providerErrors, []);
       assert.equal(data.analyses.length, 1);
       assert.equal(data.analyses[0].visualization, 'bar');

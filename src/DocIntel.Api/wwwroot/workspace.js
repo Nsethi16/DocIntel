@@ -2241,6 +2241,8 @@ let tenants = [];
         }
         const finalData = await DocIntelAskAi.waitForRun(tenantId, chat.pendingAskAi.runId, run => {
           askAiProgressText = run.status === 'Queued' ? 'Your question is queued...'
+            : run.steps?.at(-1)?.stepName === 'provider_throttled'
+              ? 'The AI provider is rate limited. Waiting to continue your analysis...'
             : (run.steps?.length ? 'Reviewing document evidence...' : 'Working on your question...');
           if (currentTenant?.tenantId === tenantId && activeChatId === chat.id) {
             const progress = document.getElementById('askAiProgress');

@@ -32,7 +32,7 @@ jobs:
   diagnose:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     environment: docintel-dev
     permissions:
       contents: read
@@ -128,7 +128,7 @@ jobs:
                      "--command", diagnostic, "--only-show-errors"]
           result = subprocess.run(
               ["script", "-q", "-e", "-c", shlex.join(command), "/dev/null"],
-              capture_output=True, text=True, timeout=180,
+              capture_output=True, text=True, timeout=420,
               env={**os.environ, "TERM": "dumb"})
           records = []
           for line in result.stdout.splitlines():
@@ -142,7 +142,8 @@ jobs:
                   "matchedDocuments", "citations", "httpStatus", "providerCode",
                   "providerParameter", "schemaKeyword", "providerHints",
                   "variant", "model", "modelProvider", "calls", "analyses", "runId", "createdAtUtc",
-                  "completedAtUtc", "lastStep", "analyticalAttempts", "matches", "subStatus") if key in value}
+                  "completedAtUtc", "lastStep", "analyticalAttempts", "matches", "subStatus",
+                  "tokensPerMinute", "requestsPerMinute") if key in value}
               print(json.dumps(safe))
               records.append(safe)
           if not records:

@@ -33,8 +33,10 @@ public static class AskAiRequestValidator
 public sealed class AskAiExecutionOptions
 {
     public const string SectionName = "AskAi";
+    public const int DefaultMaxOutputTokens = 16_384;
 
     public int MaxRunSeconds { get; set; } = 600;
+    public int MaxOutputTokens { get; set; } = DefaultMaxOutputTokens;
 
     public string? RunStorageDirectory { get; set; }
 
@@ -48,6 +50,9 @@ public sealed class AskAiExecutionOptions
 
     public void Validate()
     {
+        if (MaxOutputTokens is < 1_024 or > 65_536)
+            throw new ArgumentOutOfRangeException(nameof(MaxOutputTokens),
+                "Ask AI output tokens must be between 1,024 and 65,536, including reasoning tokens.");
         if (MaxRunSeconds is < 1 or > 3_600)
         {
             throw new ArgumentOutOfRangeException(nameof(MaxRunSeconds),

@@ -112,7 +112,8 @@ if (askSyntheticMode)
     Environment.ExitCode = await AskAiSyntheticDiagnostic.ExecuteAsync(
         builder.Configuration["diagnose-tenant"] ?? String.Empty, startupReadiness.ProbeModelsOnStartup,
         app.Services.GetRequiredService<DocIntel.Core.Harness.IHarnessStore>(),
-        app.Services.GetRequiredService<DocIntel.Core.Models.IModelCatalog>(), Console.Out);
+        app.Services.GetRequiredService<DocIntel.Core.Models.IModelCatalog>(), Console.Out,
+        executionOptions: app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.AskAiExecutionOptions>());
     await app.DisposeAsync();
     return;
 }
@@ -122,7 +123,8 @@ if (askContractMode)
         builder.Configuration["diagnose-tenant"] ?? String.Empty,
         startupReadiness.ProbeModelsOnStartup,
         app.Services.GetRequiredService<DocIntel.Core.Harness.IHarnessStore>(),
-        app.Services.GetRequiredService<DocIntel.Core.Models.IModelCatalog>(), Console.Out);
+        app.Services.GetRequiredService<DocIntel.Core.Models.IModelCatalog>(), Console.Out,
+        executionOptions: app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.AskAiExecutionOptions>());
     await app.DisposeAsync();
     return;
 }

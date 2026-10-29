@@ -24,7 +24,7 @@ test('runtime execution uses the selected revision and built-in command without 
   assert.match(workflow, /"--diagnose-tenant", os.environ\["DIAGNOSTIC_TENANT"\]/);
   assert.match(workflow, /shlex.join\(command\)/);
   assert.match(workflow, /capture_output=True/);
-  assert.match(workflow, /timeout=180/);
+  assert.match(workflow, /timeout=420/);
   assert.doesNotMatch(workflow, /print\(result\.(stdout|stderr)\)|set-env-vars|role assignment|ad app/);
   assert.match(workflow, /Raw process output was not published/);
 });
