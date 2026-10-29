@@ -481,6 +481,9 @@ For a screenshot without a run URL, `Inspect` with run ID `recent` reports at mo
 from the past seven days in the selected workspace. Only opaque run references, timestamps, fixed
 failure categories, bounded stage counts and safe HTTP status are printed; questions, actors,
 source content and generated answers are never published. `recent` cannot be used with `Replay`.
+The Azure diagnostic workflow's optional `ask_run_id` looks up that opaque reference in the app's
+linked log workspace over the past day, including prior revisions. It prints only allowlisted
+exception types/codes/sites, never raw log messages; missing logs or lookup failure are explicit.
 `Synthetic` exercises the real configured model and the complete analytical agent over two authored,
 in-memory fake quotes. It is limited to eight model requests and 120 seconds, requires the same live
 probing opt-in, checks exact totals/citations/bar-chart data, and never resolves a production job/run

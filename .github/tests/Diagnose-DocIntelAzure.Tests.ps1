@@ -18,6 +18,7 @@ if ($source -match 'az (?:deployment|role|ad|storage)|containerapp (?:update|exe
 $savedGroup = $env:AZURE_RESOURCE_GROUP
 $savedApp = $env:AZURE_CONTAINER_APP_NAME
 $savedContainer = $env:DOCINTEL_CONTAINER_NAME
+$savedRun = $env:DIAGNOSTIC_RUN_REF
 $global:DocIntelDiagnosticsFixture = @{
     scenario = ''; calls = [Collections.Generic.List[object]]::new()
 }
@@ -45,6 +46,7 @@ function az {
             @{
                 properties = @{
                     latestRevisionName = 'revision-current'; latestReadyRevisionName = 'revision-current'
+                    managedEnvironmentId = '/subscriptions/01234567-89ab-cdef-0123-456789abcdef/resourceGroups/test-group/providers/Microsoft.App/managedEnvironments/test-environment'
                     template = @{ containers = $containers }
                 }
             } | ConvertTo-Json -Depth 20 -Compress
@@ -94,6 +96,26 @@ function az {
                 ) | ConvertTo-Json -Depth 10 -Compress
             } else { throw 'Diagnostics must only list management-plane accounts and deployments.' }
         }
+        'resource show' {
+            if ($Arguments -notcontains '/subscriptions/01234567-89ab-cdef-0123-456789abcdef/resourceGroups/test-group/providers/Microsoft.App/managedEnvironments/test-environment') {
+                throw 'Historical lookup must inspect only the exact application environment.'
+            }
+            @{ properties = @{ appLogsConfiguration = @{ logAnalyticsConfiguration = @{
+                customerId = '01234567-89ab-cdef-0123-456789abcdef'
+            } } } } | ConvertTo-Json -Depth 10 -Compress
+        }
+        'monitor log-analytics' {
+            $query = $Arguments[[Array]::IndexOf($Arguments, '--analytics-query') + 1]
+            if ($query -notmatch "where ContainerAppName_s == 'test-app'" -or
+                $query -notmatch "where Log_s contains '0123456789abcdef0123456789abcdef'" -or
+                $query -notmatch 'ago\(1d\)' -or $query -notmatch 'take 30') {
+                throw 'Historical lookup must remain app-scoped, run-scoped and bounded.'
+            }
+            @(
+                @{ Log_s = 'Ask AI run 0123456789abcdef0123456789abcdef failed with JsonException; code 123; site JsonSerializer.Deserialize.' },
+                @{ Log_s = 'customer-private-value must never be copied' }
+            ) | ConvertTo-Json -Depth 10 -Compress
+        }
         default { throw 'Unexpected Azure command in diagnostic tests.' }
     }
 }
@@ -113,6 +135,7 @@ try {
     $env:AZURE_RESOURCE_GROUP = 'test-group'
     $env:AZURE_CONTAINER_APP_NAME = 'test-app'
     $env:DOCINTEL_CONTAINER_NAME = ''
+    $env:DIAGNOSTIC_RUN_REF = ''
     $output = & $command 3>&1 | Out-String
     if ($output -notmatch 'Startup provider error type: NotSupportedException' -or
         $output -notmatch 'Startup provider HTTP status: 404' -or
@@ -143,6 +166,16 @@ try {
     $logs = @($global:DocIntelDiagnosticsFixture.calls | Where-Object { $_[0..1] -join ' ' -eq 'containerapp logs' })
     if ($logs.Count -ne 2) { throw 'Each sampled replica must be inspected.' }
 
+    $env:DIAGNOSTIC_RUN_REF = '0123456789abcdef0123456789abcdef'
+    $output = & $command 3>&1 | Out-String
+    if ($output -notmatch 'Ask AI failure reference: 0123456789abcdef0123456789abcdef; root JsonException' -or
+        $output -match 'customer-private-value') {
+        throw 'Historical logs must use the same safe error projection as replica logs.'
+    }
+    $env:DIAGNOSTIC_RUN_REF = "invalid' | take 1000"
+    Assert-DiagnosticFailure '' 'opaque Ask AI run ID'
+    $env:DIAGNOSTIC_RUN_REF = ''
+
     Assert-DiagnosticFailure 'multiple-containers' 'Select exactly one'
     $env:DOCINTEL_CONTAINER_NAME = 'api'
     & $command | Out-Null
@@ -169,4 +202,5 @@ finally {
     $env:AZURE_RESOURCE_GROUP = $savedGroup
     $env:AZURE_CONTAINER_APP_NAME = $savedApp
     $env:DOCINTEL_CONTAINER_NAME = $savedContainer
+    $env:DIAGNOSTIC_RUN_REF = $savedRun
 }

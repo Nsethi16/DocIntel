@@ -3,6 +3,10 @@ name: Diagnose DocIntel Azure
 on:
   workflow_dispatch:
     inputs:
+      ask_run_id:
+        description: Optional opaque Ask AI run ID for read-only historical error-type lookup; no question or answer is printed.
+        type: string
+        required: false
       probe_decision:
         description: Make one synthetic native Decision request using the deployed runtime identity; no documents are read.
         type: boolean
@@ -28,6 +32,7 @@ jobs:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'Docintel' }}
       AZURE_CONTAINER_APP_NAME: ${{ vars.AZURE_CONTAINER_APP_NAME || 'ca-docintel-dev' }}
       DOCINTEL_CONTAINER_NAME: ${{ vars.DOCINTEL_CONTAINER_NAME }}
+      DIAGNOSTIC_RUN_REF: ${{ inputs.ask_run_id }}
     steps:
       - uses: actions/checkout@v4
       - name: Verify diagnostic safety without Azure calls
@@ -56,6 +61,9 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $PSNativeCommandUseErrorActionPreference = $true
+          if ($env:DIAGNOSTIC_RUN_REF -and $env:DIAGNOSTIC_RUN_REF -cnotmatch '^[a-f0-9]{32}$') {
+            throw 'Historical diagnostics require an opaque Ask AI run ID.'
+          }
           $app = az containerapp show --resource-group $env:AZURE_RESOURCE_GROUP `
             --name $env:AZURE_CONTAINER_APP_NAME --only-show-errors --output json |
             ConvertFrom-Json -Depth 100
@@ -100,12 +108,43 @@ jobs:
             'ClientResultException', 'JsonException', 'HttpRequestException', 'IOException',
             'TimeoutException', 'ArgumentException', 'ArgumentNullException', 'TypeInitializationException',
             'InvalidDataException')
+          $diagnosticLines = [Collections.Generic.List[string]]::new()
           foreach ($replica in $replicas | Select-Object -First 3) {
             $lines = az containerapp logs show --resource-group $env:AZURE_RESOURCE_GROUP `
               --name $env:AZURE_CONTAINER_APP_NAME --revision $revision --replica $replica.name `
               --container $container.name --type console --tail 300 --follow false `
               --format json --only-show-errors
-            foreach ($line in $lines) {
+            $diagnosticLines.AddRange([string[]]$lines)
+          }
+          if ($env:DIAGNOSTIC_RUN_REF) {
+            if ($env:AZURE_CONTAINER_APP_NAME -cnotmatch '^[a-z][a-z0-9-]{0,31}$') {
+              throw 'Invalid application name for historical diagnostics.'
+            }
+            $environmentId = $app.properties.managedEnvironmentId
+            if (-not $environmentId) { $environmentId = $app.properties.environmentId }
+            if ($environmentId -notmatch '^/subscriptions/[a-fA-F0-9-]{36}/resourceGroups/[^/]+/providers/Microsoft.App/managedEnvironments/[^/]+$') {
+              throw 'The application has no verified managed environment for historical diagnostics.'
+            }
+            try {
+              $environment = az resource show --ids $environmentId --only-show-errors --output json |
+                ConvertFrom-Json -Depth 30
+              $workspace = $environment.properties.appLogsConfiguration.logAnalyticsConfiguration.customerId
+              if ($workspace -notmatch '^[a-fA-F0-9-]{36}$') { throw 'No linked log workspace.' }
+              $query = "ContainerAppConsoleLogs_CL | where TimeGenerated > ago(1d) " +
+                "| where ContainerAppName_s == '$env:AZURE_CONTAINER_APP_NAME' " +
+                "| where Log_s contains '$env:DIAGNOSTIC_RUN_REF' " +
+                "| project TimeGenerated, Log_s | take 30"
+              $history = @(az monitor log-analytics query --workspace $workspace --analytics-query $query `
+                --timespan P1D --only-show-errors --output json | ConvertFrom-Json -Depth 30)
+              foreach ($entry in $history) { $diagnosticLines.Add([string]$entry.Log_s) }
+              if (-not $history.Count) {
+                Write-Warning 'No historical log records matched the selected run in the past day. No diagnosis is assumed.'
+              }
+            } catch {
+              throw 'Read-only historical log lookup failed; no diagnostic result is assumed.'
+            }
+          }
+          foreach ($line in $diagnosticLines) {
               $stage = [regex]::Match($line,
                 'Operation Executor\.(?<stage>[A-Za-z0-9_]{1,80}) failed after [0-9.]+ ms; error type (?<type>[A-Za-z0-9_]{1,80})\.')
               if ($stage.Success -and $stage.Groups['stage'].Value -cin $knownStages) {
@@ -157,7 +196,6 @@ jobs:
                 if ($reference.Success) {
                   Write-Output ('Ask AI failure reference: {0}; root {1}; code {2}; site {3}' -f
                     $reference.Groups['run'].Value, $safeType, $runtime.Groups['code'].Value, $safeSite)
-                }
               }
             }
           }
