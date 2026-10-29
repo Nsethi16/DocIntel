@@ -476,6 +476,9 @@ to compare plain, JSON-only, tools-only and combined contracts and inspect numer
 uses the app's actual output-token budget, disables tool execution, and emits only redacted
 provider diagnostics. It has no document or run-store dependency and accepts no saved run ID.
 `Inspect` remains read-only and `Replay` still requires its separate explicit confirmation.
+An explicitly confirmed failed-web-question replay is bounded to 300 seconds, preserves the original
+actor's current access, executes only replay-safe built-ins, and never modifies the saved run or delivers
+an answer. Only fixed diagnostic metadata and counts, including whether a bar dataset was produced, are printed.
 For a screenshot without a run URL, `Inspect` with run ID `recent` reports at most ten failed runs
 from the past seven days in the selected workspace. Only opaque run references, timestamps, fixed
 failure categories, bounded stage counts and safe HTTP status are printed; questions, actors,

@@ -21,7 +21,7 @@ public static class AskAiRunDiagnostic
             throw new ArgumentException("A valid tenant ID and opaque run ID are required.");
 
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-        deadline.CancelAfter(TimeSpan.FromSeconds(120));
+        deadline.CancelAfter(TimeSpan.FromSeconds(replay ? 300 : 120));
         if (runId == "recent")
         {
             var recent = (await store.ListRunsByTenantAsync(tenantId, deadline.Token))
@@ -79,6 +79,7 @@ public static class AskAiRunDiagnostic
         }
         catch (Exception exception)
         {
+            run.ProviderFailure = AskAiProviderFailure.FromException(exception);
             await WriteAsync(output, "Replay", run, AskAiFailureDiagnostics.GetCode(exception));
             return 1;
         }
@@ -88,7 +89,9 @@ public static class AskAiRunDiagnostic
         source.ProviderFailure?.FailureCode ?? (source.ErrorCode is
             "ExecutionFailed" or "MissingEvidence" or "CitationMismatch" or
             "InvalidModelAnswer" or "UnknownCitation" or "InvalidToolArguments" or "RetrievalFailed" or "ToolCallLimit" or
-            "EvidenceLimit" or "TimedOut" or "AccessRevoked" or "SourceChanged" ? source.ErrorCode : "StoredFailure");
+            "EvidenceLimit" or "TimedOut" or "AccessRevoked" or "SourceChanged" or "ResponseTokenLimit" or
+            "DataQueryRejected" or "DataAccessDenied" or "DataRateLimited" or "DataUnavailable" or
+            "DataRequestFailed" ? source.ErrorCode : "StoredFailure");
 
     private static Task WriteAsync(TextWriter output, string phase, AskAiRun run, string failureCode) =>
         output.WriteLineAsync(Prefix + JsonSerializer.Serialize(new
@@ -106,6 +109,8 @@ public static class AskAiRunDiagnostic
             searches = run.Steps.Count(step => step.StepName == "search_documents"),
             inspections = run.Steps.Count(step => step.StepName == "inspect_document_slice"),
             analyticalAttempts = run.Steps.Count(step => step.StepName == "analyze_evidence"),
+            analyses = run.Analyses.Count,
+            hasBarChart = run.Analyses.Any(analysis => analysis.Visualization == "bar"),
             matchedDocuments = run.DocumentsEvaluated,
             citations = run.Citations.Count
         }));

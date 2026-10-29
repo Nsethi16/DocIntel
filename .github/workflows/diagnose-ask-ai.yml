@@ -143,7 +143,7 @@ jobs:
                   "providerParameter", "schemaKeyword", "providerHints",
                   "variant", "model", "modelProvider", "calls", "analyses", "runId", "createdAtUtc",
                   "completedAtUtc", "lastStep", "analyticalAttempts", "matches", "subStatus",
-                  "tokensPerMinute", "requestsPerMinute") if key in value}
+                  "tokensPerMinute", "requestsPerMinute", "hasBarChart") if key in value}
               print(json.dumps(safe))
               records.append(safe)
           if not records:
