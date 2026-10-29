@@ -74,6 +74,7 @@ function az {
             Write-Output '{"Log":"Ask AI run private-run-id failed with InvalidOperationException; root cause CosmosException; code 500; site <SearchDocumentsAsync>d__2.MoveNext."}'
             Write-Output '{"Log":"Ask AI run private-run-id failed with InvalidOperationException; root cause ArgumentException; code 87; site DocumentQuery.Validate."}'
             Write-Output '{"Log":"Ask AI run 0123456789abcdef0123456789abcdef failed with InvalidOperationException; code 5385; site Unknown.Read."}'
+            Write-Output '{"Log":"Ask AI run 0123456789abcdef0123456789abcdef failed with JsonException; code 123; site JsonConverter`1.ReadCore."}'
             $type = if ($global:DocIntelDiagnosticsFixture.scenario -eq 'unknown-type') {
                 'SensitiveCustomerIdentifier'
             } else { 'NotSupportedException' }
@@ -108,6 +109,7 @@ function az {
             $query = $Arguments[[Array]::IndexOf($Arguments, '--analytics-query') + 1]
             if ($query -notmatch "where ContainerAppName_s == 'test-app'" -or
                 $query -notmatch "where Log_s contains '0123456789abcdef0123456789abcdef'" -or
+                $query -notmatch "where Log_s contains 'failed with'" -or
                 $query -notmatch 'ago\(1d\)' -or $query -notmatch 'take 30') {
                 throw 'Historical lookup must remain app-scoped, run-scoped and bounded.'
             }
@@ -158,6 +160,7 @@ try {
         $output -notmatch 'AskAI: CosmosException; code 500; component Other; site SearchDocumentsAsync.MoveNext' -or
         $output -notmatch 'AskAI: ArgumentException; code 87; component Other; site DocumentQuery.Validate' -or
         $output -notmatch 'Ask AI failure reference: 0123456789abcdef0123456789abcdef' -or
+        $output -notmatch 'Ask AI failure reference: 0123456789abcdef0123456789abcdef; root JsonException; code 123; site UnclassifiedSite' -or
         $output -match 'private-run-id' -or
         $output -match 'PrivateCustomerIdentifier' -or
         $output -match 'private-correlation-id|private-job-id|secret-id|SensitiveCustomerIdentifier|CustomerException') {

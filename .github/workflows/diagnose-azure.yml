@@ -133,10 +133,12 @@ jobs:
               $query = "ContainerAppConsoleLogs_CL | where TimeGenerated > ago(1d) " +
                 "| where ContainerAppName_s == '$env:AZURE_CONTAINER_APP_NAME' " +
                 "| where Log_s contains '$env:DIAGNOSTIC_RUN_REF' " +
-                "| project TimeGenerated, Log_s | take 30"
+                "| where Log_s contains 'failed with' " +
+                "| project TimeGenerated, Log_s | order by TimeGenerated desc | take 30"
               $history = @(az monitor log-analytics query --workspace $workspace --analytics-query $query `
                 --timespan P1D --only-show-errors --output json | ConvertFrom-Json -Depth 30)
               foreach ($entry in $history) { $diagnosticLines.Add([string]$entry.Log_s) }
+              Write-Output ('Historical matching record count: ' + $history.Count)
               if (-not $history.Count) {
                 Write-Warning 'No historical log records matched the selected run in the past day. No diagnosis is assumed.'
               }
@@ -165,7 +167,7 @@ jobs:
                 Write-Output ('Startup provider HTTP status: ' + $http.Groups['code'].Value)
               }
               $runtime = [regex]::Match($line,
-                '(?<kind>Request|Document|Ask AI run) [A-Za-z0-9:._-]{1,160} failed with (?<type>[A-Za-z_][A-Za-z0-9_]{0,79}); (?:root cause (?<cause>[A-Za-z_][A-Za-z0-9_]{0,79}); )?code (?<code>[0-9]{1,10}); site (?<site>[A-Za-z0-9_+.<>,]{1,200})\.')
+                '(?<kind>Request|Document|Ask AI run) [A-Za-z0-9:._-]{1,160} failed with (?<type>[A-Za-z_][A-Za-z0-9_]{0,79}); (?:root cause (?<cause>[A-Za-z_][A-Za-z0-9_]{0,79}); )?code (?<code>[0-9]{1,10});')
               if ($runtime.Success) {
                 $reference = [regex]::Match($line,
                   'Ask AI run (?<run>[a-f0-9]{32}) failed with ')
@@ -173,7 +175,8 @@ jobs:
                   $runtime.Groups['cause'].Value
                 } else { $runtime.Groups['type'].Value }
                 $safeType = if ($type -cin $knownTypes) { $type } else { 'UnclassifiedException' }
-                $site = $runtime.Groups['site'].Value
+                $siteMatch = [regex]::Match($line, '; site (?<site>[A-Za-z0-9_+.<>,\x60]{1,200})\.')
+                $site = $siteMatch.Groups['site'].Value
                 $component = switch -Regex ($site) {
                   'Blob|BlockBlob' { 'BlobStorage'; break }
                   'Queue' { 'QueueStorage'; break }
