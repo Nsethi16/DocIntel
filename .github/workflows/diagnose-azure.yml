@@ -238,6 +238,14 @@ jobs:
                 @{
                   deployment = if ($_.name -cin $knownDeployments) { $_.name } else { 'OtherDeployment' }
                   model = if ($_.properties.model.name -cin $knownModels) { $_.properties.model.name } else { 'OtherModel' }
+                  capacityUnits = if ($_.sku.capacity -is [long] -or $_.sku.capacity -is [int]) {
+                    $_.sku.capacity
+                  } else { $null }
+                  rateLimits = @($_.properties.rateLimits |
+                    Where-Object { $_.key -cin @('token', 'request') -and
+                      ($_.count -is [long] -or $_.count -is [int]) -and
+                      ($_.renewalPeriod -is [long] -or $_.renewalPeriod -is [int]) } |
+                    ForEach-Object { @{ kind = $_.key; count = $_.count; periodSeconds = $_.renewalPeriod } })
                 }
               })
             } | ConvertTo-Json -Depth 10 -Compress

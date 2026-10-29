@@ -92,7 +92,13 @@ function az {
                 ) | ConvertTo-Json -Depth 10 -Compress
             } elseif ($Arguments[2..3] -join ' ' -eq 'deployment list') {
                 @(
-                    @{ name = 'gpt-5-mini'; properties = @{ model = @{ name = 'gpt-5-mini' } } },
+                    @{ name = 'gpt-5-mini'; sku = @{ capacity = 30 }; properties = @{
+                        model = @{ name = 'gpt-5-mini' }
+                        rateLimits = @(
+                            @{ key = 'token'; count = 30000; renewalPeriod = 60 },
+                            @{ key = 'private-limit'; count = 1; renewalPeriod = 1 }
+                        )
+                    } },
                     @{ name = 'PrivateCustomDeployment'; properties = @{ model = @{ name = 'PrivateCustomModel' } } }
                 ) | ConvertTo-Json -Depth 10 -Compress
             } else { throw 'Diagnostics must only list management-plane accounts and deployments.' }
@@ -148,7 +154,8 @@ try {
         throw 'Diagnostics leaked raw configuration, logs or customer data.'
     }
     if ($output -notmatch 'test-account' -or $output -notmatch 'gpt-5-mini' -or
-        $output -match 'PrivateCustomDeployment|PrivateCustomModel') {
+        $output -notmatch '"capacityUnits":30' -or $output -notmatch '"count":30000' -or
+        $output -match 'PrivateCustomDeployment|PrivateCustomModel|private-limit') {
         throw 'Model diagnostics must mask custom deployment/model names and show known deployments.'
     }
     if ($output -notmatch 'Runtime failure: Request: RequestFailedException; code 403; component BlobStorage' -or
