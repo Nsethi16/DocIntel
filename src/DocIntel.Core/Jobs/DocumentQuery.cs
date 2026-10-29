@@ -114,7 +114,7 @@ public static class DocumentQueryCompiler
         for (var i = 0; i < query.Entities.Count; i++)
         {
             sql.Append($" AND EXISTS(SELECT VALUE s FROM s IN c.segments JOIN e IN s.extractedEntities " +
-                       $"WHERE STRINGEQUALS(e.name, @name{i}, true) AND STRINGEQUALS(e.value, @value{i}, true))");
+                       $"WHERE STRINGEQUALS(e.name, @name{i}, true) AND STRINGEQUALS(e[\"value\"], @value{i}, true))");
             parameters[$"@name{i}"] = query.Entities[i].Name;
             parameters[$"@value{i}"] = query.Entities[i].Value;
         }

@@ -55,6 +55,32 @@ public sealed class DocumentQueryTests
     }
 
     [Fact]
+    public void Entity_Filters_Quote_The_Cosmos_Reserved_Value_Property_And_Keep_Values_Parameterized()
+    {
+        // Arrange
+        var query = new DocumentQuery
+        {
+            Entities =
+            [
+                new("Customer Name", "O'XXO"),
+                new("Billing Currency", "USD")
+            ]
+        };
+
+        // Act
+        var compiled = DocumentQueryCompiler.Compile("tenant-one", query);
+
+        // Assert
+        Assert.Contains("STRINGEQUALS(e[\"value\"], @value0, true)", compiled.Sql);
+        Assert.Contains("STRINGEQUALS(e[\"value\"], @value1, true)", compiled.Sql);
+        Assert.DoesNotContain("e.value", compiled.Sql);
+        Assert.DoesNotContain("O'XXO", compiled.Sql);
+        Assert.Equal("O'XXO", compiled.Parameters["@value0"]);
+        Assert.Equal("USD", compiled.Parameters["@value1"]);
+        Assert.Contains("ORDER BY c.createdAtUtc DESC", compiled.Sql);
+    }
+
+    [Fact]
     public async Task No_Matches_Remains_Empty()
     {
         // Arrange
