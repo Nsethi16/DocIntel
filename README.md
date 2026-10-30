@@ -87,7 +87,12 @@ Admins can manage isolated **Workspaces** and configure each workspace's **Agent
   1. **File Splitting & Grouping**: Deterministic `PdfPig` layout, coordinate, pagination (`Page X of Y`), orientation-shift, and Levenshtein footer clustering that slices multi-document PDFs into standalone PDFs.
   2. **Identify Documents**: Scores extracted slice text against admin-defined `(DocumentName, IdentificationPrompt)`
      criteria plus `"Undefined"` using the configured **Microsoft-Decision-1** deployment and its native decision API.
-  3. **Document Translation**: Translates non-target-language slices using **Azure Document Translation** (`Azure.AI.Translation.Document` / `Text` on the same Microsoft Foundry resource) while honoring `DoNotTranslateTerms`.
+  3. **Document Translation**: Uses the configured Azure Document Translation endpoint and `DoNotTranslateTerms`.
+     **Known PDF limitation:** the current path submits PDF slices through `SingleDocumentTranslationClient`.
+     Azure's [supported-format list](https://learn.microsoft.com/en-us/azure/ai-services/translator/document-translation/overview#supported-document-and-glossary-formats)
+     supports PDF in asynchronous batch translation, not the synchronous API used here. Translation-enabled
+     PDF jobs can therefore fail with HTTP 400 `InvalidRequest` after identification succeeds. This needs a
+     PDF-capable batch translation integration; the current synchronous PDF path is not a working substitute.
   4. **Document Insights**: Generates one integrated insight for the complete file, or one per complete
      identified logical document when splitting and identification are enabled and all documents are
      identified. Disabled, absent or incomplete identification falls back to one file insight covering
