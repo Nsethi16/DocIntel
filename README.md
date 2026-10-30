@@ -497,6 +497,8 @@ only stored status, stage names, counts and dates. It never prints filenames, so
 live-probing opt-in and the submitter's current processing permission. It reuses the accepted harness
 and first untranslated active-attempt source slice for one in-memory provider request, reports only
 safe HTTP/error-code metadata, and never saves a translation, modifies the job or reprocesses the file.
+Its explicit `WithoutGlossary` diagnostic comparison discards the result and leaves protected-term
+settings unchanged; it is not a production fallback.
 `Synthetic` exercises the real configured model and complete analytical agent over nine authored,
 in-memory fake records: six distinct USD quotes, one repeated copy, one EUR quote and one USD record
 with a missing amount. It is limited to 24 model requests and 300 seconds, requires the same live

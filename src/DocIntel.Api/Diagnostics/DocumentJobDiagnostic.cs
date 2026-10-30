@@ -29,8 +29,10 @@ public static class DocumentJobDiagnostic
         string tenantId, string reference, bool probe, bool liveProbingEnabled, IJobStore jobs,
         ITenantAccessResolver access, IArtifactStore artifacts, IPdfSlicer slicer,
         IDocumentTranslationService translation, AzureIntegrationOptions azure, TextWriter output,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, string variant = "Configured")
     {
+        if (variant is not ("Configured" or "WithoutGlossary") || variant == "WithoutGlossary" && !probe)
+            throw new ArgumentException("A glossary comparison requires an explicit translation probe.");
         var exactId = Guid.TryParseExact(reference, "N", out _);
         if (String.IsNullOrEmpty(tenantId) || !Regex.IsMatch(tenantId, "^[a-z0-9][a-z0-9-]{0,127}$") ||
             !exactId && !Regex.IsMatch(reference, "^[a-fA-F0-9]{64}$"))
@@ -106,10 +108,10 @@ public static class DocumentJobDiagnostic
                 var result = await translation.TranslatePdfSliceAsync(bytes,
                     $"slice-{slice.SegmentIndex + 1}-pages-{slice.StartPage}-{slice.EndPage}.pdf",
                     slice.BodyText, slice.Footers, String.IsNullOrWhiteSpace(config.TargetLanguage) ? "en" : config.TargetLanguage.Trim(),
-                    endpoint, config.DoNotTranslateTerms, deadline.Token);
+                    endpoint, variant == "WithoutGlossary" ? [] : config.DoNotTranslateTerms, deadline.Token);
                 if (result.IsDevelopmentSimulation)
                     throw new InvalidOperationException("A simulated translation cannot verify the production provider.");
-                await WriteAsync(output, phase, "Completed", "None", selected, stage, sliceIndex);
+                await WriteAsync(output, phase, "Completed", "None", selected, stage, sliceIndex, variant: variant);
                 return 0;
             }
             await WriteAsync(output, phase, "Refused", "NoUntranslatedSliceWithinProbeLimit", selected, stage);
@@ -143,22 +145,26 @@ public static class DocumentJobDiagnostic
                 ["target language"] = "TargetLanguage", ["same language"] = "SameLanguage",
                 ["unsupported"] = "Unsupported", ["format"] = "Format", ["size"] = "Size",
                 ["password"] = "Password", ["authorization"] = "Access", ["rate limit"] = "RateLimit",
-                ["contains no text"] = "NoText"
+                ["contains no text"] = "NoText", ["not supported"] = "Unsupported",
+                ["application/pdf"] = "Pdf", [".pdf"] = "Pdf", [".tsv"] = "Tsv",
+                ["tab-separated"] = "Tsv", ["multipart"] = "Multipart", ["content type"] = "ContentType",
+                ["content-type"] = "ContentType", ["filename"] = "FileName", ["file name"] = "FileName",
+                ["extension"] = "Extension", ["required"] = "Required", ["missing"] = "Missing"
             };
             var hints = terms.Where(term => message.Contains(term.Key, StringComparison.OrdinalIgnoreCase))
-                .Select(term => term.Value).ToArray();
+                .Select(term => term.Value).Distinct(StringComparer.Ordinal).ToArray();
             await WriteAsync(output, phase, "Failed", failure is null ? "DiagnosticFailed" : "ProviderRequestFailed",
-                selected, stage, sliceIndex, failure?.Status, safeCode, hints);
+                selected, stage, sliceIndex, failure?.Status, safeCode, hints, variant);
             return 1;
         }
     }
 
     private static Task WriteAsync(TextWriter output, string phase, string status, string failureCode,
         DocumentJob? job = null, string? stage = null, int? sliceIndex = null, int? httpStatus = null,
-        string? providerCode = null, IReadOnlyList<string>? providerHints = null) =>
+        string? providerCode = null, IReadOnlyList<string>? providerHints = null, string? variant = null) =>
         output.WriteLineAsync("DOCINTEL_DIAGNOSTIC " + JsonSerializer.Serialize(new
         {
-            phase, status, failureCode, stage, sliceIndex, httpStatus, providerCode, providerHints,
+            phase, status, failureCode, stage, sliceIndex, httpStatus, providerCode, providerHints, variant,
             jobId = job?.JobId, createdAtUtc = job?.CreatedAtUtc, completedAtUtc = job?.CompletedAtUtc,
             pages = job?.TotalPages, slices = job?.Segments.Count,
             lastStep = job?.ExecutionTrace.LastOrDefault()?.ExecutorName is { } name && Stages.Contains(name) ? name : null,

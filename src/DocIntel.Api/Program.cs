@@ -109,7 +109,8 @@ if (documentDiagnosticMode)
         app.Services.GetRequiredService<DocIntel.Core.Storage.IArtifactStore>(),
         app.Services.GetRequiredService<DocIntel.Core.Features.DocumentSplitting.IPdfSlicer>(),
         app.Services.GetRequiredService<DocIntel.Core.Features.DocumentTranslation.IDocumentTranslationService>(),
-        app.Services.GetRequiredService<DocIntel.Core.AzureIntegrationOptions>(), Console.Out);
+        app.Services.GetRequiredService<DocIntel.Core.AzureIntegrationOptions>(), Console.Out,
+        variant: builder.Configuration["diagnose-translation-variant"] ?? "Configured");
     await app.DisposeAsync();
     return;
 }

@@ -52,6 +52,8 @@ test('contract probing is a distinct document-free mode and does not weaken save
 test('document lookup uses opaque references and translation probing needs its own explicit confirmation', () => {
   assert.match(workflow, /SHA-256 of its exact UTF-8 filename/);
   assert.match(workflow, /TranslationProbe requires the exact confirmation PROBE/);
+  assert.match(workflow, /A glossary comparison requires an explicit TranslationProbe/);
+  assert.match(workflow, /options: \[Configured, WithoutGlossary\]/);
   assert.match(workflow, /"--diagnose-document", os.environ\["DIAGNOSTIC_RUN"\]/);
   assert.match(workflow, /"--diagnose-translation-probe", "true" if os.environ\["DIAGNOSTIC_MODE"\] == "TranslationProbe" else "false"/);
   assert.doesNotMatch(workflow, /"fileName",|"bodyText",|"translatedText",/);

@@ -20,6 +20,11 @@ on:
         description: REPLAY authorizes an in-memory question replay; PROBE authorizes one in-memory translation request. Provider usage can incur charges.
         type: string
         default: ''
+      translation_variant:
+        description: TranslationProbe only. WithoutGlossary is an explicit discarded comparison, never a setting change.
+        type: choice
+        options: [Configured, WithoutGlossary]
+        default: Configured
 
 permissions:
   contents: read
@@ -44,6 +49,7 @@ jobs:
       DIAGNOSTIC_TENANT: ${{ inputs.tenant_id }}
       DIAGNOSTIC_RUN: ${{ inputs.run_id }}
       DIAGNOSTIC_MODE: ${{ inputs.mode }}
+      TRANSLATION_VARIANT: ${{ inputs.translation_variant }}
     steps:
       - name: Validate explicit diagnostic input and Azure identity consistency
         shell: pwsh
@@ -58,6 +64,10 @@ jobs:
           }
           if ($env:DIAGNOSTIC_MODE -eq 'TranslationProbe' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'PROBE') {
             throw 'TranslationProbe requires the exact confirmation PROBE.'
+          }
+          if ($env:TRANSLATION_VARIANT -and $env:TRANSLATION_VARIANT -notin @('Configured', 'WithoutGlossary') -or
+            $env:TRANSLATION_VARIANT -eq 'WithoutGlossary' -and $env:DIAGNOSTIC_MODE -ne 'TranslationProbe') {
+            throw 'A glossary comparison requires an explicit TranslationProbe.'
           }
           if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe')) { throw 'Invalid diagnostic mode.' }
           if ($env:DIAGNOSTIC_TENANT -notmatch '^[a-z0-9][a-z0-9-]{0,127}$' -or
@@ -113,7 +123,8 @@ jobs:
               diagnostic = shlex.join([
                   "dotnet", "/app/DocIntel.Api.dll", "--diagnose-document", os.environ["DIAGNOSTIC_RUN"],
                   "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"],
-                  "--diagnose-translation-probe", "true" if os.environ["DIAGNOSTIC_MODE"] == "TranslationProbe" else "false"])
+                  "--diagnose-translation-probe", "true" if os.environ["DIAGNOSTIC_MODE"] == "TranslationProbe" else "false",
+                  "--diagnose-translation-variant", os.environ.get("TRANSLATION_VARIANT") or "Configured"])
           elif os.environ["DIAGNOSTIC_MODE"] == "Data":
               diagnostic = shlex.join([
                   "dotnet", "/app/DocIntel.Api.dll", "--diagnose-ask-data", os.environ["DIAGNOSTIC_RUN"],

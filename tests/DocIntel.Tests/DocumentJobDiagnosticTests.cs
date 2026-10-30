@@ -62,8 +62,11 @@ public sealed class DocumentJobDiagnosticTests
         fixture.Translation.VerifyNoOtherCalls();
     }
 
-    [Fact]
-    public async Task Translation_Probe_Reports_Real_HTTP_Status_Without_Exposing_Provider_Text_Or_Writing_Results()
+    [Theory]
+    [InlineData("Configured")]
+    [InlineData("WithoutGlossary")]
+    public async Task Translation_Probe_Reports_Real_HTTP_Status_Without_Exposing_Provider_Text_Or_Writing_Results(
+        string variant)
     {
         // Arrange
         var source = Source();
@@ -79,17 +82,20 @@ public sealed class DocumentJobDiagnosticTests
             It.IsAny<CancellationToken>(), false)).ReturnsAsync("%PDF-synthetic"u8.ToArray());
         fixture.Translation.Setup(service => service.TranslatePdfSliceAsync(
             It.IsAny<byte[]>(), "slice-1-pages-1-1.pdf", "private-source", It.IsAny<IReadOnlyList<string>>(),
-            "en", "https://configured.example/", It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            "en", "https://configured.example/",
+            It.Is<IReadOnlyList<string>>(terms => (terms.Count == 0) == (variant == "WithoutGlossary")),
+            It.IsAny<CancellationToken>()))
             .ThrowsAsync(new RequestFailedException(400, "private-provider-body", "400070", null));
         using var output = new StringWriter();
 
         // Act
-        var result = await fixture.Run(source.JobId, true, true, output);
+        var result = await fixture.Run(source.JobId, true, true, output, variant);
 
         // Assert
         Assert.Equal(1, result);
         Assert.Contains("\"stage\":\"Translate\"", output.ToString());
         Assert.Contains("\"httpStatus\":400,\"providerCode\":\"400070\"", output.ToString());
+        Assert.Contains("\"variant\":\"" + variant + "\"", output.ToString());
         Assert.DoesNotContain("private", output.ToString());
         Assert.Equal(before, JsonSerializer.Serialize(source));
         fixture.Artifacts.Verify(store => store.GetSlicePdfAsync("workspace", source.ArtifactDocumentId!, 0,
@@ -142,9 +148,9 @@ public sealed class DocumentJobDiagnosticTests
         public Mock<IPdfSlicer> Slicer { get; } = new(MockBehavior.Strict);
         public Mock<IDocumentTranslationService> Translation { get; } = new(MockBehavior.Strict);
 
-        public Task<int> Run(string reference, bool probe, bool live, TextWriter output) =>
+        public Task<int> Run(string reference, bool probe, bool live, TextWriter output, string variant = "Configured") =>
             DocumentJobDiagnostic.ExecuteAsync("workspace", reference, probe, live, Jobs.Object, Access.Object,
                 Artifacts.Object, Slicer.Object, Translation.Object,
-                new AzureIntegrationOptions { TranslatorEndpoint = "https://configured.example/" }, output);
+                new AzureIntegrationOptions { TranslatorEndpoint = "https://configured.example/" }, output, variant: variant);
     }
 }
