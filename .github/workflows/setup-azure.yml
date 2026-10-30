@@ -16,6 +16,14 @@ on:
         description: For Apply, paste plan_hash from the Preview run you reviewed.
         type: string
         default: ''
+      translation_only:
+        description: Reconcile only PDF batch Translator/private staging/RBAC. Preserve app image, models and all other bindings.
+        type: boolean
+        default: true
+      replace_translation_endpoint:
+        description: Explicitly propose replacing the saved Translator endpoint. Review its before/after in Preview.
+        type: boolean
+        default: false
       configure_directory:
         description: Also create/configure web/API registrations and runtime federation (requires approved Graph access).
         type: boolean
@@ -45,6 +53,8 @@ env:
   SETUP_FOUNDRY: ${{ vars.DOCINTEL_FOUNDRY_ACCOUNT_NAME }}
   DOCINTEL_DECISION_ENDPOINT: ${{ vars.DOCINTEL_DECISION_ENDPOINT }}
   DOCINTEL_DECISION_DEPLOYMENT: ${{ vars.DOCINTEL_DECISION_DEPLOYMENT }}
+  DOCINTEL_TRANSLATOR_RESOURCE_ID: ${{ vars.DOCINTEL_TRANSLATOR_RESOURCE_ID }}
+  DOCINTEL_TRANSLATOR_ENDPOINT: ${{ vars.DOCINTEL_TRANSLATOR_ENDPOINT }}
 
 jobs:
   preview:
@@ -88,8 +98,21 @@ jobs:
         shell: pwsh
         env:
           CONFIGURE_DIRECTORY: ${{ inputs.configure_directory }}
+          TRANSLATION_ONLY: ${{ inputs.translation_only }}
+          REPLACE_TRANSLATION_ENDPOINT: ${{ inputs.replace_translation_endpoint }}
           REVIEWED_PLAN_HASH: ${{ inputs.mode == 'Apply' && inputs.reviewed_plan_hash || '' }}
         run: |
+          if ($env:TRANSLATION_ONLY -eq 'true') {
+            if ($env:CONFIGURE_DIRECTORY -eq 'true') { throw 'Translation-only setup never changes directory applications.' }
+            $preview = ./scripts/Sync-DocIntelTranslation.ps1 `
+              -ExpectedPlanHash $env:REVIEWED_PLAN_HASH -SubscriptionId $env:SETUP_SUBSCRIPTION_ID `
+              -ResourceGroup $env:SETUP_RESOURCE_GROUP -ContainerAppName $env:SETUP_APP_NAME `
+              -ContainerName $env:SETUP_CONTAINER `
+              -ReplaceExistingEndpoint:($env:REPLACE_TRANSLATION_ENDPOINT -eq 'true') `
+              -OutputDirectory (Join-Path $env:RUNNER_TEMP 'docintel-setup-plan')
+            $preview | ConvertTo-Json -Depth 100
+            return
+          }
           ./scripts/Setup-DocIntelGitHub.ps1 -Mode Preview `
             -ExpectedPlanHash $env:REVIEWED_PLAN_HASH `
             -ResourceGroup $env:SETUP_RESOURCE_GROUP -ContainerAppName $env:SETUP_APP_NAME `
@@ -109,10 +132,12 @@ jobs:
         shell: pwsh
         run: |
           '### DocIntel infrastructure preview' >> $env:GITHUB_STEP_SUMMARY
-          'Download **docintel-infrastructure-preview** to review resources, permissions and the full ARM what-if.' >> $env:GITHUB_STEP_SUMMARY
+          'Download **docintel-infrastructure-preview** to review the bounded translation plan, or the full infrastructure what-if when full setup is selected.' >> $env:GITHUB_STEP_SUMMARY
           'Preview does not mutate Azure or Entra. Provisioning can incur charges.' >> $env:GITHUB_STEP_SUMMARY
           'Reviewed plan hash: `${{ steps.plan.outputs.plan_hash }}`. Paste this into reviewed_plan_hash for Apply.' >> $env:GITHUB_STEP_SUMMARY
           'Apply re-discovers resources and refuses changed plans. Configure required reviewers on docintel-dev for an approval between jobs.' >> $env:GITHUB_STEP_SUMMARY
+          'Translation-only mode creates consumption S1 Translator, an isolated owned Standard_LRS staging account and five narrow roles. It never writes original storage/policies, model deployments, directory or network settings. Endpoint replacement needs its explicit checkbox in both runs.' >> $env:GITHUB_STEP_SUMMARY
+          'Review Plan.StagingResource, StagingBlobEndpoint, StagingOwnership and Lifecycle. New staging gets the exact one-day prefix rule; owned existing staging is verified without replacing its policy. There is no originals fallback.' >> $env:GITHUB_STEP_SUMMARY
 
   apply:
     needs: preview
@@ -135,7 +160,19 @@ jobs:
         env:
           EXPECTED_PLAN_HASH: ${{ needs.preview.outputs.plan_hash }}
           CONFIGURE_DIRECTORY: ${{ inputs.configure_directory }}
+          TRANSLATION_ONLY: ${{ inputs.translation_only }}
+          REPLACE_TRANSLATION_ENDPOINT: ${{ inputs.replace_translation_endpoint }}
         run: |
+          if ($env:TRANSLATION_ONLY -eq 'true') {
+            if ($env:CONFIGURE_DIRECTORY -eq 'true') { throw 'Translation-only setup never changes directory applications.' }
+            ./scripts/Sync-DocIntelTranslation.ps1 -Mode Apply -Confirmation TRANSLATE `
+              -ExpectedPlanHash $env:EXPECTED_PLAN_HASH -SubscriptionId $env:SETUP_SUBSCRIPTION_ID `
+              -ResourceGroup $env:SETUP_RESOURCE_GROUP -ContainerAppName $env:SETUP_APP_NAME `
+              -ContainerName $env:SETUP_CONTAINER `
+              -ReplaceExistingEndpoint:($env:REPLACE_TRANSLATION_ENDPOINT -eq 'true') `
+              -OutputDirectory (Join-Path $env:RUNNER_TEMP 'docintel-setup-applied')
+            return
+          }
           ./scripts/Setup-DocIntelGitHub.ps1 -Mode Apply -Confirmation APPLY `
             -ExpectedPlanHash $env:EXPECTED_PLAN_HASH `
             -ResourceGroup $env:SETUP_RESOURCE_GROUP -ContainerAppName $env:SETUP_APP_NAME `

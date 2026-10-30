@@ -1,6 +1,7 @@
 #Requires -Version 7.3
 $ErrorActionPreference = 'Stop'
 $scriptPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\Setup-DocIntelGitHub.ps1'
+Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\DocIntelRelease.psm1') -Force
 $temporary = Join-Path ([IO.Path]::GetTempPath()) ('docintel-setup-tests-' + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $temporary | Out-Null
 $global:DocIntelSetupFixture = @{}
@@ -40,6 +41,8 @@ $global:DocIntelSetupFixture.app = @{
                 @{ name = 'AzureAI__CosmosEndpoint'; value = 'https://cosmos-docintel-test.documents.azure.com:443/' }
                 @{ name = 'AzureAI__AzureOpenAIEndpoint'; value = 'https://aif-docintel-test.openai.azure.com/' }
                 @{ name = 'AzureAI__ContentUnderstandingEndpoint'; value = 'https://aif-docintel-test.services.ai.azure.com/' }
+                @{ name = 'AzureAI__TranslatorEndpoint'; value = 'https://tr-docintel-test.cognitiveservices.azure.com/' }
+                @{ name = 'DocumentTranslation__StagingBlobEndpoint'; value = 'https://stagingaccount.blob.core.windows.net/' }
                 @{ name = 'AzureAI__DecisionEndpoint'; value = 'https://decision-other.services.ai.azure.com/' }
                 @{ name = 'AzureAI__DecisionDeploymentName'; value = 'Decision-1' }
                 @{ name = 'Identity__DataProtectionKeyIdentifier'; value = 'https://kv-di-test.vault.azure.net/keys/docintel-identity' }
@@ -77,7 +80,23 @@ function az {
             @{ id = $global:DocIntelSetupFixture.runtimeId; clientId = $global:DocIntelSetupFixture.runtimeClient; principalId = $global:DocIntelSetupFixture.runtimePrincipal }; break
         }
         'storage container-rm list --subscription' {
-            @(@{ name = 'ask-ai-runs'; publicAccess = 'None' }, @{ name = 'identity-keys'; publicAccess = 'None' }); break
+            @(@{ name = 'ask-ai-runs'; publicAccess = 'None' }, @{ name = 'identity-keys'; publicAccess = 'None' },
+                @{ name = 'translation-source'; publicAccess = 'None' },
+                @{ name = 'translation-target'; publicAccess = 'None' }); break
+        }
+        'storage account management-policy show' {
+            if ($Arguments -notcontains 'stagingaccount') { throw 'Original storage policy cannot be inspected.' }
+            @{ policy = @{ rules = @((Get-DocIntelTranslationLifecycleRule)) } }; break
+        }
+        'storage account show --subscription' {
+            @{ name = 'stagingaccount'
+                id = "$($global:DocIntelSetupFixture.prefix)/Microsoft.Storage/storageAccounts/stagingaccount"
+                location = 'westus'; kind = 'StorageV2'; sku = @{ name = 'Standard_LRS' }
+                tags = Get-DocIntelTranslationStagingTags $global:DocIntelSetupFixture.appId `
+                    $global:DocIntelSetupFixture.runtimeId `
+                    "$($global:DocIntelSetupFixture.prefix)/Microsoft.CognitiveServices/accounts/tr-docintel-test"
+                minimumTlsVersion = 'TLS1_2'; enableHttpsTrafficOnly = $true
+                allowBlobPublicAccess = $false; allowSharedKeyAccess = $false }; break
         }
         'rest --method GET --url' {
             $url = $Arguments[4]
@@ -116,11 +135,20 @@ function az {
             }
             $page; break
         }
+        'cognitiveservices account list --subscription' {
+            @(@{ id = "$($global:DocIntelSetupFixture.prefix)/Microsoft.CognitiveServices/accounts/tr-docintel-test"
+                kind = $(if ($global:DocIntelSetupFixture.scenario -eq 'unsupported-translator') {
+                    'AIServices'
+                } else { 'TextTranslation' }); sku = @{ name = 'S1' }; location = 'westus'
+                identity = @{ type = 'SystemAssigned' }
+                properties = @{ customSubDomainName = 'tr-docintel-test'; disableLocalAuth = $true } }); break
+        }
         'cognitiveservices account show --subscription' {
             @{ kind = 'AIServices'; properties = @{ customSubDomainName = 'aif-docintel-test' } }; break
         }
         'cognitiveservices account deployment list' {
-            @(@{ name = 'gpt-5-mini'; properties = @{ model = @{ name = 'gpt-5-mini' } } }); break
+            @(@{ name = 'gpt-5-mini'; sku = @{ capacity = 100 }
+                properties = @{ model = @{ name = 'gpt-5-mini' } } }); break
         }
         'cosmosdb sql database list' { @(@{ name = 'DocIntel' }); break }
         'cosmosdb sql container list' {
@@ -197,7 +225,8 @@ function az {
                 azureOpenAiEndpoint = 'https://aif-docintel-test.openai.azure.com/'
                 contentUnderstandingEndpoint = 'https://aif-docintel-test.services.ai.azure.com/'
                 foundryEndpoint = 'https://aif-docintel-test.services.ai.azure.com/models'
-                translatorEndpoint = 'https://aif-docintel-test.cognitiveservices.azure.com/'
+                translatorEndpoint = 'https://tr-docintel-test.cognitiveservices.azure.com/'
+                translationStagingBlobEndpoint = 'https://stagingaccount.blob.core.windows.net/'
                 identityKeyIdentifier = 'https://kv-di-test.vault.azure.net/keys/docintel-identity'
             }.GetEnumerator()) { $outputs[$pair.Key] = @{ value = $pair.Value } }
             @{ properties = @{ outputs = $outputs } }; break
@@ -271,6 +300,7 @@ try {
         Assert-Equal $true $global:DocIntelSetupFixture.parameters.parameters.$flag.value "Existing resources must be adopted: $flag."
     }
     Assert-Equal $false $global:DocIntelSetupFixture.parameters.parameters.deployModels.value 'An existing model must not be reset.'
+    Assert-Equal $false $global:DocIntelSetupFixture.parameters.parameters.configureTranslation.value 'A reconciled Translator must be preserved independently of Foundry.'
     Assert-Equal $true $global:DocIntelSetupFixture.parameters.parameters.reuseCosmosDatabase.value 'An existing database must retain its configuration.'
     Assert-Equal 'harnesses' $global:DocIntelSetupFixture.parameters.parameters.existingCosmosContainers.value[0] 'Existing container settings must be preserved.'
     $plan = Get-Content (Join-Path $base.OutputDirectory 'setup-plan.json') -Raw | ConvertFrom-Json
@@ -409,6 +439,7 @@ try {
         })
         $global:DocIntelSetupFixture.app.properties.template.containers[0].env = @($originalEnvironment | Where-Object {
             $_.name -notlike 'AzureAI__*' -and
+                $_.name -cne 'DocumentTranslation__StagingBlobEndpoint' -and
                 $_.name -notin @('Identity__DataProtectionKeyIdentifier', 'Identity__DataProtectionBlobUri')
         })
         & $scriptPath @base | Out-Null
@@ -437,6 +468,10 @@ try {
         }
         finally { $global:DocIntelSetupFixture.app.properties.template.containers[0].env = $baselineEnvironment }
     }
+    Reset-Calls
+    $global:DocIntelSetupFixture.scenario = 'unsupported-translator'
+    Assert-Failure $base 'AIServices is insufficient'
+    Assert-Equal 0 $global:DocIntelSetupFixture.mutations.Count 'An unsupported PDF binding must require scoped reconciliation, not silent retention.'
     Write-Output 'GitHub setup discovery, preview-only safety, adoption, plan fencing and runtime merge tests passed without Azure calls.'
 }
 finally {

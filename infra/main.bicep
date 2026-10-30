@@ -115,8 +115,14 @@ param decisionEndpoint string = ''
 @description('Case-sensitive native Microsoft-Decision-1 deployment name.')
 param decisionDeploymentName string = 'Decision-1'
 
-@description('Optional existing Azure AI Translator endpoint. Defaults to the provisioned Foundry resource when empty.')
+@description('Verified existing single-service Translator root, only when configureTranslation=false. Fresh installs leave empty.')
 param translatorEndpoint string = ''
+
+@description('Verified existing isolated staging endpoint, only when configureTranslation=false. Never use the originals account.')
+param translationStagingEndpoint string = ''
+
+@description('Provision dedicated regional S1 Translator and private batch staging. False preserves an already reconciled connection.')
+param configureTranslation bool = true
 
 @description('Content Understanding Foundry resource root endpoint in a supported region. Empty uses the provisioned Foundry resource.')
 param contentUnderstandingEndpoint string = ''
@@ -178,7 +184,7 @@ resource foundry 'Microsoft.CognitiveServices/accounts@2024-10-01' existing = {
   name: foundryName
 }
 
-// 1b. Microsoft Foundry (Azure AI Services multi-service account: Models + OpenAI + Translator)
+// 1b. Microsoft Foundry (models, OpenAI and Content Understanding; PDF translation is single-service).
 resource newFoundry 'Microsoft.CognitiveServices/accounts@2024-10-01' = if (createFoundryResource) {
   name: foundryName
   location: location
@@ -315,9 +321,14 @@ var effectiveFoundryEndpoint = !empty(foundryInferenceEndpoint)
 var effectiveOpenAiEndpoint = !empty(azureOpenAiEndpoint)
   ? azureOpenAiEndpoint
   : (!empty(foundrySubdomain) ? 'https://${foundrySubdomain}.openai.azure.com/' : foundryRootEndpoint)
+var translatorName = 'tr-docintel-${environmentName}-${uniqueSuffix}'
+var translationStagingName = 'stditr${uniqueString(resourceGroup().id, appName, 'translation-staging-v1')}'
+var effectiveTranslationStagingEndpoint = !empty(translationStagingEndpoint)
+  ? (!configureTranslation ? translationStagingEndpoint : fail('Existing staging requires scoped ownership validation.'))
+  : 'https://${translationStagingName}.blob.core.windows.net/'
 var effectiveTranslatorEndpoint = !empty(translatorEndpoint)
-  ? translatorEndpoint
-  : (!empty(foundrySubdomain) ? 'https://${foundrySubdomain}.cognitiveservices.azure.com/' : foundryRootEndpoint)
+  ? (!configureTranslation ? translatorEndpoint : fail('Existing translation bindings require scoped reconciliation, not account replacement.'))
+  : 'https://${translatorName}.cognitiveservices.azure.com/'
 var effectiveContentUnderstandingEndpoint = !empty(contentUnderstandingEndpoint)
   ? contentUnderstandingEndpoint
   : foundryRootEndpoint
@@ -376,6 +387,26 @@ resource identityKeys 'Microsoft.Storage/storageAccounts/blobServices/containers
   }
   dependsOn: [
     newBlobService
+  ]
+}
+
+module translation './translation-connection.bicep' = if (configureTranslation) {
+  name: 'docintel-translation'
+  params: {
+    accountName: translatorName
+    location: location
+    stagingAccountName: translationStagingName
+    applicationResourceId: resourceId('Microsoft.App/containerApps', appName)
+    runtimePrincipalId: uami.properties.principalId
+    runtimeIdentityResourceId: uami.id
+    assignRuntimeRole: deployRuntimeRoles
+    assignSourceRole: deployRuntimeRoles
+    assignTargetRole: deployRuntimeRoles
+    assignRuntimeSourceRole: deployRuntimeRoles
+    assignRuntimeTargetRole: deployRuntimeRoles
+  }
+  dependsOn: [
+    newUami
   ]
 }
 
@@ -771,6 +802,10 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
               value: effectiveTranslatorEndpoint
             }
             {
+              name: 'DocumentTranslation__StagingBlobEndpoint'
+              value: effectiveTranslationStagingEndpoint
+            }
+            {
               name: 'AzureAI__ContentUnderstandingEndpoint'
               value: effectiveContentUnderstandingEndpoint
             }
@@ -928,6 +963,7 @@ resource containerApp 'Microsoft.App/containerApps@2025-07-01' = if (deployAppli
     jobsContainer
     ocrUsageContainer
     reviewsContainer
+    translation
   ]
 }
 
@@ -949,6 +985,7 @@ output contentUnderstandingEndpoint string = effectiveContentUnderstandingEndpoi
 output decisionEndpoint string = effectiveDecisionEndpoint
 output decisionDeploymentName string = decisionDeploymentName
 output translatorEndpoint string = effectiveTranslatorEndpoint
+output translationStagingBlobEndpoint string = effectiveTranslationStagingEndpoint
 output containerEnvironmentId string = effectiveEnvironmentId
 output identityKeyIdentifier string = '${keyVault.properties.vaultUri}keys/${identityEncryptionKey.name}'
 output requiredWebRedirectUri string = '${effectivePublicOrigin}/signin-oidc'

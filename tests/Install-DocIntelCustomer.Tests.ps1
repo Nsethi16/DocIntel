@@ -3,6 +3,7 @@ param([string]$ReleaseRoot = '')
 $ErrorActionPreference = 'Stop'
 $root = if ($ReleaseRoot) { $ReleaseRoot } else { Split-Path $PSScriptRoot -Parent }
 $scriptPath = Join-Path $root 'scripts\Install-DocIntelCustomer.ps1'
+Import-Module (Join-Path $root 'scripts\DocIntelRelease.psm1') -Force
 $tokens = $null
 $parseErrors = $null
 [Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$tokens, [ref]$parseErrors) | Out-Null
@@ -15,8 +16,23 @@ if ($module.properties.parameters.enableContainerRegistry.value -cne "[parameter
     $template.parameters.buildImageInCustomerRegistry.defaultValue -ne $false -or
     $module.properties.parameters.reuseIdentityKey.value -cne "[parameters('infrastructureReady')]" -or
     $module.properties.parameters.deployRuntimeRoles.value -cne "[not(parameters('infrastructureReady'))]" -or
-    $module.properties.parameters.deployModels.value -cne "[not(parameters('infrastructureReady'))]") {
+    $module.properties.parameters.deployModels.value -cne "[not(parameters('infrastructureReady'))]" -or
+    $module.properties.parameters.configureTranslation.value -cne "[not(parameters('infrastructureReady'))]") {
     throw 'The customer second phase must preserve data/key/model roots, and public images must not create ACR.'
+}
+$translation = @($module.properties.template.resources | Where-Object {
+    $_.type -ceq 'Microsoft.Resources/deployments' -and $_.name -ceq 'docintel-translation'
+})
+if ($translation.Count -ne 1 -or $translation[0].condition -cne "[parameters('configureTranslation')]" -or
+    @($translation[0].properties.template.resources | Where-Object {
+        $_.type -ceq 'Microsoft.CognitiveServices/accounts' -and $_.kind -ceq 'TextTranslation' -and $_.sku.name -ceq 'S1'
+    }).Count -ne 1) {
+    throw 'The fresh-install plan must include dedicated Translator, while the app-only phase preserves it.'
+}
+if ($translation[0].properties.parameters.PSObject.Properties['storageAccountName'] -or
+    $translation[0].properties.parameters.stagingAccountName.value -notmatch 'translationStagingName' -or
+    $translation[0].properties.template.parameters.provisionStagingAccount.defaultValue -ne $true) {
+    throw 'Fresh translation must own a separate staging account, never the originals account.'
 }
 foreach ($role in $module.properties.template.resources | Where-Object {
     $_.type -in @('Microsoft.Authorization/roleAssignments', 'Microsoft.DocumentDB/databaseAccounts/sqlRoleAssignments')
@@ -300,6 +316,24 @@ function az {
             }
             @{ properties = @{ tags = $f.tags } }; break
         }
+        'storage account management-policy' {
+            if ($Arguments -notcontains 'stagingaccount') { throw 'Customer readiness cannot inspect original retention.' }
+            @{ policy = @{ rules = @((Get-DocIntelTranslationLifecycleRule)) } }; break
+        }
+        'cognitiveservices account list' {
+            @(@{ id = "$($f.groupId)/providers/Microsoft.CognitiveServices/accounts/translator"
+                kind = 'TextTranslation'; sku = @{ name = 'S1' }; location = 'westus'
+                properties = @{ customSubDomainName = 'translator' } }); break
+        }
+        'storage account show' {
+            @{ name = 'stagingaccount'; id = "$($f.groupId)/providers/Microsoft.Storage/storageAccounts/stagingaccount"
+                kind = 'StorageV2'; sku = @{ name = 'Standard_LRS' }; location = 'westus'
+                tags = Get-DocIntelTranslationStagingTags `
+                    "$($f.groupId)/providers/Microsoft.App/containerApps/di-acme-prod-fixture" $f.runtimeId `
+                    "$($f.groupId)/providers/Microsoft.CognitiveServices/accounts/translator"
+                minimumTlsVersion = 'TLS1_2'; enableHttpsTrafficOnly = $true
+                allowBlobPublicAccess = $false; allowSharedKeyAccess = $false }; break
+        }
         'containerapp show --resource-group' {
             $settings = @{
                 AZURE_CLIENT_ID = $f.runtimeClient; Identity__DirectoryTenantId = $f.directory
@@ -309,15 +343,18 @@ function az {
                 Identity__Mode = 'Entra'; Identity__UseManagedIdentityAssertion = 'true'
                 Identity__DataProtectionBlobUri = 'https://storage.example/identity-keys/keyring.xml'
                 Identity__DataProtectionKeyIdentifier = 'https://vault.example/keys/key'
-                AzureAI__BlobEndpoint = 'https://storage.example'; AzureAI__QueueEndpoint = 'https://queue.example'
+                AzureAI__BlobEndpoint = 'https://primaryaccount.blob.core.windows.net/'; AzureAI__QueueEndpoint = 'https://queue.example'
+                DocumentTranslation__StagingBlobEndpoint = 'https://stagingaccount.blob.core.windows.net/'
                 AzureAI__CosmosEndpoint = 'https://cosmos.example'; AzureAI__AzureOpenAIEndpoint = 'https://ai.example'
                 AzureAI__ContentUnderstandingEndpoint = 'https://ai.example'; HarnessBootstrap__TenantId = 'acme'
+                AzureAI__TranslatorEndpoint = 'https://translator.cognitiveservices.azure.com/'
                 AzureAI__DecisionEndpoint = 'https://decision.example'; AzureAI__DecisionDeploymentName = 'Decision-1'
                 DOCINTEL_IDENTITY_GRANTS = (@{ PlatformAdministrators = @(@{
                     DirectoryTenantId = $f.directory; ObjectId = $f.owner
                 }) } | ConvertTo-Json -Depth 10 -Compress)
             }
-            @{ identity = @{ userAssignedIdentities = @{ $f.runtimeId = @{
+            @{ id = "$($f.groupId)/providers/Microsoft.App/containerApps/di-acme-prod-fixture"
+                identity = @{ userAssignedIdentities = @{ $f.runtimeId = @{
                 clientId = $f.runtimeClient; principalId = $f.principal
             } } }; properties = @{ latestRevisionName = 'new'; latestReadyRevisionName = 'new'
                 configuration = @{ activeRevisionsMode = 'Single'

@@ -29,6 +29,7 @@ try {
         'scripts/Wait-DocIntelReady.ps1', 'scripts/DocIntelRelease.psm1',
         'scripts/Connect-DocIntelDirectory.ps1', 'scripts/Invoke-DocIntelDirectoryProbe.py',
         'scripts/Approve-DocIntelDirectory.ps1',
+        'scripts/Sync-DocIntelTranslation.ps1', 'infra/translation-connection.bicep',
         'infra/customer.bicep', 'infra/main.bicep', 'docs/customer-deployment.md')
     foreach ($relative in $files) {
         $path = $relative.Replace('/', [IO.Path]::DirectorySeparatorChar)
@@ -39,13 +40,16 @@ try {
     & az bicep build --file (Join-Path $stage 'infra\customer.bicep') `
         --outfile (Join-Path $stage 'infra\customer.json') --only-show-errors
     if ($LASTEXITCODE -ne 0) { throw 'Release template compilation failed; no bundle is published.' }
-    $files += 'infra/customer.json'
+    & az bicep build --file (Join-Path $stage 'infra\translation-connection.bicep') `
+        --outfile (Join-Path $stage 'infra\translation-connection.json') --only-show-errors
+    if ($LASTEXITCODE -ne 0) { throw 'Translation template compilation failed; no bundle is published.' }
+    $files += @('infra/customer.json', 'infra/translation-connection.json')
     $hashes = [ordered]@{}
     foreach ($relative in $files | Sort-Object -CaseSensitive) {
         $path = Join-Path $stage $relative.Replace('/', [IO.Path]::DirectorySeparatorChar)
         $hashes[$relative] = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
     }
-    $manifest = [ordered]@{ schemaVersion = 3; version = $Version; sourceCommit = $SourceCommit
+    $manifest = [ordered]@{ schemaVersion = 4; version = $Version; sourceCommit = $SourceCommit
         imageSource = $ImageSource; sourceRepository = 'Nsethi16/DocIntel'; image = $Image; files = $hashes }
     $manifest | ConvertTo-Json -Depth 30 | Set-Content -LiteralPath (Join-Path $stage 'release.json') -Encoding utf8
     Import-Module (Join-Path $stage 'scripts\DocIntelRelease.psm1') -Force

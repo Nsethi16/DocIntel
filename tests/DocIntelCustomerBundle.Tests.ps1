@@ -12,6 +12,11 @@ try {
     Expand-Archive -LiteralPath $bundle.Bundle -DestinationPath $extracted
     Import-Module (Join-Path $extracted 'scripts\DocIntelRelease.psm1') -Force
     $release = Read-DocIntelRelease -Root $extracted
+    if ($release.schemaVersion -ne 4 -or -not $release.files.'infra/translation-connection.bicep' -or
+        -not $release.files.'infra/translation-connection.json' -or
+        -not $release.files.'scripts/Sync-DocIntelTranslation.ps1') {
+        throw 'Fresh installs and scoped upgrades must include integrity-checked batch translation support.'
+    }
     if ($release.image -cne $arguments.Image -or $release.version -cne $arguments.Version -or
         $release.sourceCommit -cne $arguments.SourceCommit -or
         $bundle.Sha256 -cne (Get-FileHash $bundle.Bundle -Algorithm SHA256).Hash.ToLowerInvariant()) {
@@ -38,7 +43,7 @@ try {
         try {
             $invalid = $originalManifest | ConvertFrom-Json -AsHashtable
             switch ($bad) {
-                'schema' { $invalid.schemaVersion = 4 }
+                'schema' { $invalid.schemaVersion = 5 }
                 'image' { $invalid.image = 'ghcr.io/nsethi16/docintel-api:latest' }
                 'path' { $invalid.files['../escape.ps1'] = 'a' * 64 }
             }
@@ -48,6 +53,7 @@ try {
             if (-not $failed) { throw 'Invalid release schema/image/inventory was accepted.' }
         } finally { $originalManifest | Set-Content -LiteralPath $manifestPath }
     }
+    & (Join-Path $PSScriptRoot 'Sync-DocIntelTranslation.Tests.ps1') -ReleaseRoot $extracted
     & (Join-Path $PSScriptRoot 'Install-DocIntelCustomer.Tests.ps1') -ReleaseRoot $extracted
     $sourceArguments = $arguments.Clone()
     $sourceArguments.Remove('Image')

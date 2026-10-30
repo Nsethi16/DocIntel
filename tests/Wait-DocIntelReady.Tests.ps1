@@ -1,6 +1,7 @@
 #Requires -Version 7.3
 $ErrorActionPreference = 'Stop'
 $file = Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\Wait-DocIntelReady.ps1'
+Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts\DocIntelRelease.psm1') -Force
 $global:DocIntelReadinessFixture = @{
     image = 'fixture.azurecr.io/docintel:commit'
     revision = 'new-revision'
@@ -13,15 +14,49 @@ $global:DocIntelReadinessFixture = @{
     environment = @()
     transport = 'auto'
     additionalPorts = @()
+    policyReady = $true
+    appId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/fixture/providers/Microsoft.App/containerApps/fixture'
+    runtimeId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/fixture/providers/Microsoft.ManagedIdentity/userAssignedIdentities/runtime'
+    translatorId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/fixture/providers/Microsoft.CognitiveServices/accounts/translator'
 }
 function az {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
+    if (($Arguments | Select-Object -First 4) -join ' ' -ceq 'storage account management-policy show') {
+        if ($Arguments -notcontains 'stagingaccount') { throw 'Readiness must never inspect the originals policy.' }
+        $global:LASTEXITCODE = 0
+        @{ policy = @{ rules = @($(if ($global:DocIntelReadinessFixture.policyReady) {
+            Get-DocIntelTranslationLifecycleRule
+        })) } } | ConvertTo-Json -Depth 30 -Compress
+        return
+    }
+    if (($Arguments | Select-Object -First 3) -join ' ' -ceq 'cognitiveservices account list') {
+        $global:LASTEXITCODE = 0
+        @(@{ id = $global:DocIntelReadinessFixture.translatorId
+            kind = 'TextTranslation'; sku = @{ name = 'S1' }; location = 'westus'
+            properties = @{ customSubDomainName = 'translator' } }) | ConvertTo-Json -Depth 20 -Compress
+        return
+    }
+    if (($Arguments | Select-Object -First 3) -join ' ' -ceq 'storage account show') {
+        $global:LASTEXITCODE = 0
+        @{ id = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/fixture/providers/Microsoft.Storage/storageAccounts/stagingaccount'
+            name = 'stagingaccount'; kind = 'StorageV2'; sku = @{ name = 'Standard_LRS' }; location = 'westus'
+            tags = Get-DocIntelTranslationStagingTags $global:DocIntelReadinessFixture.appId `
+                $global:DocIntelReadinessFixture.runtimeId $global:DocIntelReadinessFixture.translatorId
+            minimumTlsVersion = 'TLS1_2'; enableHttpsTrafficOnly = $true
+            allowBlobPublicAccess = $false; allowSharedKeyAccess = $false } |
+            ConvertTo-Json -Depth 20 -Compress
+        return
+    }
     if (($Arguments | Select-Object -First 2) -join ' ' -ne 'containerapp show') {
         throw 'Readiness must never mutate Azure.'
     }
     $global:DocIntelReadinessFixture.calls++
     $global:LASTEXITCODE = 0
     @{
+        id = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/fixture/providers/Microsoft.App/containerApps/fixture'
+        identity = @{ userAssignedIdentities = @{
+            $global:DocIntelReadinessFixture.runtimeId = @{ clientId = 'runtime-client' }
+        } }
         properties = @{
             latestRevisionName = $global:DocIntelReadinessFixture.revision
             latestReadyRevisionName = $global:DocIntelReadinessFixture.latestReady
@@ -91,14 +126,42 @@ try {
         Identity__Mode = 'Entra'; Identity__UseManagedIdentityAssertion = 'true'
         Identity__DataProtectionBlobUri = 'https://storage.example/keyring.xml'
         Identity__DataProtectionKeyIdentifier = 'https://vault.example/keys/key'
-        AzureAI__BlobEndpoint = 'https://storage.example'; AzureAI__QueueEndpoint = 'https://queue.example'
+        AzureAI__BlobEndpoint = 'https://primaryaccount.blob.core.windows.net/'; AzureAI__QueueEndpoint = 'https://queue.example'
+        DocumentTranslation__StagingBlobEndpoint = 'https://stagingaccount.blob.core.windows.net/'
         AzureAI__CosmosEndpoint = 'https://cosmos.example'; AzureAI__AzureOpenAIEndpoint = 'https://ai.example'
         AzureAI__ContentUnderstandingEndpoint = 'https://layout.example'
+        AzureAI__TranslatorEndpoint = 'https://translator.cognitiveservices.azure.com/'
         AzureAI__DecisionEndpoint = 'https://decision.example'; AzureAI__DecisionDeploymentName = 'Decision-1'
         DOCINTEL_IDENTITY_GRANTS = '{"Memberships":[{"ObjectId":"fixture"}]}'
     }.GetEnumerator() | ForEach-Object { @{ name = $_.Key; value = $_.Value } })
     & $file -ConfigurationOnly -ResourceGroup fixture -ContainerAppName fixture | Out-Null
+    $global:DocIntelReadinessFixture.policyReady = $false
+    $failed = $false
+    try { & $file -ConfigurationOnly -ResourceGroup fixture -ContainerAppName fixture | Out-Null }
+    catch {
+        if ($_.Exception.Message -notlike '*lifecycle expiry is not verified*') { throw }
+        $failed = $true
+    }
+    if (-not $failed) { throw 'Readiness must require the exact deferred-cleanup policy.' }
+    $global:DocIntelReadinessFixture.policyReady = $true
     $completeEnvironment = $global:DocIntelReadinessFixture.environment
+    foreach ($case in 'missing-staging', 'originals-fallback') {
+        $global:DocIntelReadinessFixture.environment = @($completeEnvironment |
+            Where-Object name -CNE 'DocumentTranslation__StagingBlobEndpoint')
+        if ($case -eq 'originals-fallback') {
+            $global:DocIntelReadinessFixture.environment += @{
+                name = 'DocumentTranslation__StagingBlobEndpoint'; value = 'https://primaryaccount.blob.core.windows.net/'
+            }
+        }
+        $failed = $false
+        try { & $file -ConfigurationOnly -ResourceGroup fixture -ContainerAppName fixture | Out-Null }
+        catch {
+            if ($_.Exception.Message -notmatch 'StagingBlobEndpoint|Original-artifact storage is forbidden') { throw }
+            $failed = $true
+        }
+        if (-not $failed) { throw 'Readiness must never fall back to original-artifact storage.' }
+    }
+    $global:DocIntelReadinessFixture.environment = $completeEnvironment
     $global:DocIntelReadinessFixture.environment = @($completeEnvironment |
         Where-Object { $_.name -notlike 'AzureAI__Decision*' })
     & $file -ConfigurationOnly -BeforeDecisionSetup -ResourceGroup fixture -ContainerAppName fixture | Out-Null

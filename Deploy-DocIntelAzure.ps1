@@ -58,6 +58,9 @@ foreach ($entry in @{
     }
 }
 if ($WebClientId -eq $ApiClientId) { throw "Web and API registrations must be separate." }
+if ($TranslatorEndpoint) {
+    throw 'Existing translation endpoints require scripts\Sync-DocIntelTranslation.ps1 preview/reconciliation. Fresh deployments leave TranslatorEndpoint empty to provision a dedicated regional S1 resource.'
+}
 if ($EnvironmentName -notmatch '^[a-z0-9]{2,8}$') { throw "EnvironmentName must contain 2-8 lowercase letters/digits." }
 if ([string]::IsNullOrWhiteSpace($IdentityGrantsPath) -or
     -not (Test-Path -LiteralPath $IdentityGrantsPath -PathType Leaf)) {
@@ -113,6 +116,13 @@ try {
     }
     $parameters | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $parameterPath -Encoding utf8
     $exists = az group exists --subscription $SubscriptionId --name $ResourceGroup --output tsv --only-show-errors
+    if ($exists -eq 'true') {
+        $existingStorage = @(az storage account list --subscription $SubscriptionId `
+            --resource-group $ResourceGroup --output json --only-show-errors | ConvertFrom-Json)
+        if ($existingStorage.Count) {
+            throw 'This fresh-deployment helper never initializes lifecycle policies on existing accounts. Use scripts\Sync-DocIntelTranslation.ps1 for reviewed adoption and expiry verification.'
+        }
+    }
     if ($exists -ne 'true') {
         if (-not $Apply) {
             Write-Host "Bicep and identity preflight passed. The resource group is absent; no what-if or resource changes were performed."
@@ -166,6 +176,7 @@ try {
     $login = $null
 
     $parameters.parameters.deployApplication.value = $true
+    $parameters.parameters.configureTranslation = @{ value = $false }
     $parameters | ConvertTo-Json -Depth 50 | Set-Content -LiteralPath $parameterPath -Encoding utf8
     $deployed = az deployment group create --subscription $SubscriptionId --resource-group $ResourceGroup `
         --template-file "$PSScriptRoot\infra\main.bicep" --parameters "@$parameterPath" `

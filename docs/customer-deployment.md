@@ -87,6 +87,96 @@ for fresh installs. It does not create Contoso/Fabrikam sample definitions.
 Existing saved workspace settings are never replaced by customer bootstrap. Installations
 without bootstrap settings retain their existing legacy seeding/migration behavior.
 
+### PDF batch translation infrastructure and existing-installation upgrade
+
+PDF translation uses the **asynchronous document batch** API, not the synchronous single-document
+API. Fresh installations provision a separate **regional TextTranslation S1** resource (normal
+usage-based consumption, not a reservation), with local/key authentication disabled. Its custom
+HTTPS resource root is the `AzureAI__TranslatorEndpoint` for both language detection and document
+translation. An automatically derived AIServices/Foundry text endpoint is not a compatible replacement.
+Language/OpenAI and native Decision deployments remain independent.
+
+Translation owns a **new, separate Standard_LRS StorageV2 staging account**, with HTTPS/TLS 1.2,
+shared-key authentication disabled, no anonymous Blob access, and two private containers:
+`translation-source` and `translation-target`. The Translator's **system-assigned identity** receives **Storage Blob Data
+Reader** only on the source container (including request-owned glossaries), and **Storage Blob Data
+Contributor** only on the target container. It receives no account-wide storage, originals, layouts,
+exports, Cosmos or Key Vault permissions. The runtime identity receives **Cognitive Services User**
+only on the Translator, plus **Storage Blob Data Contributor** separately on each staging container.
+No new account-wide data role is granted. Its existing original-artifact storage permissions are unchanged.
+`DocumentTranslation__StagingBlobEndpoint` is the trusted batch-storage binding: it never falls back
+to `AzureAI__BlobEndpoint`, which continues to hold original artifacts. Requests use exact random per-request
+blob paths, no account keys or SAS. The runtime cleans up its own staged blobs and waits for terminal
+batch state when cancelling, but provider cancellation is best-effort and a late target can still appear.
+
+New staging accounts therefore get one enabled lifecycle rule, `docintel-translation-staging-v1`.
+It makes block blobs eligible for deletion **after one day since modification**, and their snapshots
+and versions after one day since creation, **only** beneath these exact application-owned prefixes:
+
+- `translation-source/docintel-translation-v1/`
+- `translation-target/docintel-translation-v1/`
+
+No whole-container or customer-original prefix is added. Storage lifecycle processing is asynchronous,
+not a 24-hour hard-purge guarantee. Existing soft-delete, versioning, immutability and account settings
+are not changed and can delay physical deletion.
+
+**The original account's management policy is not read or written.** Its missing policy (404),
+existing retention rules, or firewall configuration do not authorize any change to that account.
+The new isolated account owns its initial lifecycle policy, so original-policy owner action is not
+needed. Creating it incurs normal usage-based storage/operation charges, not a reservation.
+
+Staging ownership tags bind the account to the exact app, runtime identity and Translator resource.
+Unknown ownership, deterministic/global name collisions, ambiguous discovery, insecure settings,
+or a configured staging endpoint that points at originals are refused. Already-owned staging can
+be rediscovered after a partial apply, but its account settings and lifecycle policy are read-only:
+missing/unreadable/changed expiry blocks adoption rather than silently replacing a policy. Preview
+reports `StagingResource`, `StagingBlobEndpoint`, `StagingOwnership` and `Lifecycle` metadata, and the
+full existing staging-policy snapshot participates in the approval hash without exporting its raw rules.
+
+Existing installations must approve this bounded connection before releasing an image that requires
+PDF batch support. In **Set up DocIntel Azure**, keep **Translation only** selected and directory
+configuration off. Run **Preview** first. If replacing the saved endpoint, explicitly select
+**replace_translation_endpoint** in both Preview and Apply and review `PreviousEndpoint`, `Endpoint`,
+the region, S1/Standard_LRS charges and all five role scopes in `translation-plan.json`. Run **Apply** with
+confirmation `APPLY` and that preview's exact `plan_hash`. The workflow re-discovers resources and
+refuses drift before any writes. Normal image-release automation only checks this connection; it
+does not authorize resource creation, endpoint replacement or permissions automatically.
+Translation preview exports resource/change metadata and snapshot hashes, not raw ARM before/after
+payloads that might contain unrelated application settings. The complete what-if change set remains
+bound to the approval through `WhatIfSnapshotHash`; credential-bearing saved endpoints are rejected.
+
+The same scoped operation is included in the integrity-checked installer bundle:
+
+```powershell
+# Sign in to the intended subscription first. App/storage/identity bindings are discovered, not guessed.
+$target = @{ ResourceGroup = 'Docintel'; ContainerAppName = 'ca-docintel-dev' }
+$preview = .\scripts\Sync-DocIntelTranslation.ps1 @target -ReplaceExistingEndpoint
+$preview.Plan | ConvertTo-Json -Depth 100
+# Review the persisted TestOutput\translation-connection\translation-plan.json before proceeding.
+.\scripts\Sync-DocIntelTranslation.ps1 @target -ReplaceExistingEndpoint `
+    -Mode Apply -Confirmation TRANSLATE -ExpectedPlanHash $preview.PlanHash
+```
+
+Omit `-ReplaceExistingEndpoint` if no endpoint is being replaced. To reuse an already approved
+compatible resource in the same group, pass `-TranslatorResourceId '<full-resource-id>'` in both
+commands; an optional `-TranslatorEndpoint` must match that resource's custom HTTPS root. These
+overrides can also be supplied as GitHub variables `DOCINTEL_TRANSLATOR_RESOURCE_ID` and
+`DOCINTEL_TRANSLATOR_ENDPOINT`. Unsupported kinds/SKUs, global resources, conditional grants,
+public staging, cross-group bindings, incomplete ARM previews and broader Translator grants require
+operator review instead of automatic changes. Resource creation needs Cognitive Services/container
+provisioning authority, and the scoped grants need `Microsoft.Authorization/roleAssignments/write`
+at the Translator and the two containers. The helper never grants itself either authority.
+Discovery also needs resource/role metadata read access; it inventories the selected Translator
+principal's subscription assignments without Microsoft Graph lookups to reject broader existing grants.
+
+The existing app image, assigned identity, ingress, storage root, other settings and all model
+deployments/capacities are preserved; **GPT-5 Mini's manually increased capacity is not reset**.
+Full infrastructure setup refuses an unsupported saved Translator rather than silently retaining it.
+Restricted storage networking may require a separate approved resource-instance/private networking
+configuration; this helper reports `NetworkReviewRequired` and never changes networking. After
+approved application, allow Azure RBAC propagation and verify language detection and an actual PDF
+batch using the runtime identity. Provisioning alone is not proof of end-to-end translation.
+
 If Decision is already deployed on a different resource, use
 `-DecisionEndpoint 'https://<decision-resource>.services.ai.azure.com/'`
 and `-DecisionDeploymentName '<exact-deployment-name>'`. The runtime identity must have approved

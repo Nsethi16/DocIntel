@@ -127,6 +127,17 @@ public static class DocumentJobDiagnostic
             await WriteAsync(output, phase, "Refused", "AccessRevoked", selected, stage, sliceIndex);
             return 2;
         }
+        catch (DocumentTranslationFailureException failure)
+        {
+            var code = failure.Code is "LanguageUndetermined" or "TranslationNotConfigured" or
+                "TranslationConfigurationError" or "TranslationSourceUnavailable" or "TranslationBatchFailed" or
+                "TranslationTargetExists" or "TranslationStagingNotPrivate" or "TranslationTimedOut" or
+                "TranslationCleanupFailed" or "TranslationAccessDenied" or "TranslationInvalidResponse" or
+                "TranslationProviderFailed" ? failure.Code : "TranslationFailed";
+            await WriteAsync(output, phase, "Failed", code, selected, stage, sliceIndex,
+                httpStatus: failure.ProviderStatus, variant: variant);
+            return 1;
+        }
         catch (Exception exception)
         {
             var failure = exception as RequestFailedException;

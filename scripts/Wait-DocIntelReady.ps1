@@ -12,6 +12,7 @@ param(
     [ValidateRange(1, 30)][int]$PollSeconds = 10
 )
 $ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $PSScriptRoot 'DocIntelRelease.psm1') -Force
 if ($BeforeDecisionSetup -and -not $ConfigurationOnly) {
     throw 'BeforeDecisionSetup is only valid for the preliminary configuration check, never release readiness.'
 }
@@ -38,8 +39,8 @@ for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
             'AZURE_CLIENT_ID', 'Identity__DirectoryTenantId', 'Identity__ClientId', 'Identity__ApiClientId',
             'Identity__PublicOrigin', 'Identity__DataProtectionBlobUri', 'Identity__DataProtectionKeyIdentifier',
             'AzureAI__BlobEndpoint', 'AzureAI__QueueEndpoint', 'AzureAI__CosmosEndpoint',
-            'AzureAI__AzureOpenAIEndpoint', 'AzureAI__ContentUnderstandingEndpoint',
-            'DOCINTEL_IDENTITY_GRANTS'
+            'AzureAI__AzureOpenAIEndpoint', 'AzureAI__ContentUnderstandingEndpoint', 'AzureAI__TranslatorEndpoint',
+            'DOCINTEL_IDENTITY_GRANTS', 'DocumentTranslation__StagingBlobEndpoint'
         ) | Where-Object { -not $settings[$_] -or (-not $settings[$_].value -and -not $settings[$_].secretRef) })
         if (-not $BeforeDecisionSetup) {
             $missing += @('AzureAI__DecisionEndpoint', 'AzureAI__DecisionDeploymentName') | Where-Object {
@@ -58,6 +59,49 @@ for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
         }
         if ($settings.Identity__ClientId.value -eq $settings.Identity__ApiClientId.value) {
             throw 'The web and API registrations must be different.'
+        }
+        if ($app.id -notmatch '^/subscriptions/(?<subscription>[a-fA-F0-9-]{36})/resourceGroups/(?<group>[^/]+)/providers/Microsoft.App/containerApps/[^/]+$') {
+            throw 'Cannot verify translation lifecycle expiry without an unambiguous application resource ID.'
+        }
+        $storageSubscription = $Matches.subscription
+        $storageGroup = $Matches.group
+        $stagingEndpoint = $settings.DocumentTranslation__StagingBlobEndpoint.value
+        if ($stagingEndpoint -notmatch '^https://(?<account>[a-z0-9]{3,24})\.blob\.core\.windows\.net/?$') {
+            throw 'Cannot verify isolated staging without its canonical Blob binding; there is no fallback.'
+        }
+        $storageName = $Matches.account
+        if ($stagingEndpoint.TrimEnd('/') -ieq $settings.AzureAI__BlobEndpoint.value.TrimEnd('/')) {
+            throw 'Original-artifact storage is forbidden as translation staging; there is no fallback.'
+        }
+        $storageId = "/subscriptions/$storageSubscription/resourceGroups/$storageGroup/providers/Microsoft.Storage/storageAccounts/$storageName"
+        $runtime = @($app.identity.userAssignedIdentities.PSObject.Properties | Where-Object {
+            $_.Value.clientId -ieq $settings.AZURE_CLIENT_ID.value
+        })
+        if ($runtime.Count -ne 1) { throw 'Cannot verify staging ownership without its assigned runtime identity.' }
+        $accountsJson = & az cognitiveservices account list --subscription $storageSubscription `
+            --resource-group $storageGroup --output json --only-show-errors
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to verify the dedicated Translator binding.' }
+        $accounts = @((($accountsJson -join "`n") | ConvertFrom-Json -Depth 100) | Where-Object {
+            $_.kind -ceq 'TextTranslation' -and $_.sku.name -ceq 'S1' -and
+                "https://$($_.properties.customSubDomainName).cognitiveservices.azure.com/".TrimEnd('/') -ieq
+                    $settings.AzureAI__TranslatorEndpoint.value.TrimEnd('/')
+        })
+        if ($accounts.Count -ne 1) { throw 'A verified dedicated Translator is required for staging ownership.' }
+        $accountJson = & az storage account show --subscription $storageSubscription --ids $storageId `
+            --output json --only-show-errors
+        if ($LASTEXITCODE -ne 0) { throw 'Unable to verify isolated staging; no account is silently adopted.' }
+        $account = ($accountJson -join "`n") | ConvertFrom-Json -Depth 100
+        $tags = Get-DocIntelTranslationStagingTags $app.id $runtime[0].Name $accounts[0].id
+        $null = Assert-DocIntelTranslationStagingAccount $account $tags $storageId $accounts[0].location
+        $PSNativeCommandUseErrorActionPreference = $false
+        $policyJson = & az storage account management-policy show --subscription $storageSubscription `
+            --resource-group $storageGroup --account-name $storageName --output json --only-show-errors 2>$null
+        $policy = if ($LASTEXITCODE -eq 0 -and -not [String]::IsNullOrWhiteSpace(($policyJson -join "`n"))) {
+            ($policyJson -join "`n") | ConvertFrom-Json -Depth 100
+        } else { $null }
+        $expiry = Get-DocIntelTranslationLifecycleState -StorageResourceId $storageId -Policy $policy
+        if ($expiry.Status -cne 'Ready') {
+            throw "Translation staging lifecycle expiry is not verified. $($expiry.Blocker)"
         }
         Write-Output 'Production runtime settings are present. Their live provider access is verified after rollout.'
         return

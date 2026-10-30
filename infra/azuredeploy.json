@@ -5,7 +5,7 @@
     "_generator": {
       "name": "bicep",
       "version": "0.45.15.27210",
-      "templateHash": "11533353696093305915"
+      "templateHash": "16715220426770543336"
     }
   },
   "parameters": {
@@ -276,7 +276,21 @@
       "type": "string",
       "defaultValue": "",
       "metadata": {
-        "description": "Optional existing Azure AI Translator endpoint. Defaults to the provisioned Foundry resource when empty."
+        "description": "Verified existing single-service Translator root, only when configureTranslation=false. Fresh installs leave empty."
+      }
+    },
+    "translationStagingEndpoint": {
+      "type": "string",
+      "defaultValue": "",
+      "metadata": {
+        "description": "Verified existing isolated staging endpoint, only when configureTranslation=false. Never use the originals account."
+      }
+    },
+    "configureTranslation": {
+      "type": "bool",
+      "defaultValue": true,
+      "metadata": {
+        "description": "Provision dedicated regional S1 Translator and private batch staging. False preserves an already reconciled connection."
       }
     },
     "contentUnderstandingEndpoint": {
@@ -315,6 +329,10 @@
     "cognitiveServicesOpenAiUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '5e0bd9bd-7b93-4f28-af87-19fc36ad61bd')]",
     "foundryAiUserRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '53ca6127-db72-4b80-b1b0-d745d6d5456d')]",
     "acrPullRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', parameters('registryPullRoleDefinitionId'))]",
+    "translatorName": "[format('tr-docintel-{0}-{1}', parameters('environmentName'), variables('uniqueSuffix'))]",
+    "translationStagingName": "[format('stditr{0}', uniqueString(resourceGroup().id, variables('appName'), 'translation-staging-v1'))]",
+    "effectiveTranslationStagingEndpoint": "[if(not(empty(parameters('translationStagingEndpoint'))), if(not(parameters('configureTranslation')), parameters('translationStagingEndpoint'), fail('Existing staging requires scoped ownership validation.')), format('https://{0}.blob.core.windows.net/', variables('translationStagingName')))]",
+    "effectiveTranslatorEndpoint": "[if(not(empty(parameters('translatorEndpoint'))), if(not(parameters('configureTranslation')), parameters('translatorEndpoint'), fail('Existing translation bindings require scoped reconciliation, not account replacement.')), format('https://{0}.cognitiveservices.azure.com/', variables('translatorName')))]",
     "effectiveEnvironmentId": "[if(not(empty(parameters('existingEnvironmentId'))), parameters('existingEnvironmentId'), extensionResourceId(format('/subscriptions/{0}/resourceGroups/{1}', variables('caeSubscriptionId'), variables('caeResourceGroupName')), 'Microsoft.App/managedEnvironments', variables('caeName')))]",
     "storageBlobDataContributorRoleId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'ba92f5b4-2d11-453d-a403-e96b0029c9fe')]",
     "cosmosDataContributorRoleId": "[format('{0}/sqlRoleDefinitions/00000000-0000-0000-0000-000000000002', resourceId('Microsoft.DocumentDB/databaseAccounts', variables('cosmosAccountName')))]"
@@ -868,7 +886,11 @@
                 },
                 {
                   "name": "AzureAI__TranslatorEndpoint",
-                  "value": "[if(not(empty(parameters('translatorEndpoint'))), parameters('translatorEndpoint'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.cognitiveservices.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), '')))]"
+                  "value": "[variables('effectiveTranslatorEndpoint')]"
+                },
+                {
+                  "name": "DocumentTranslation__StagingBlobEndpoint",
+                  "value": "[variables('effectiveTranslationStagingEndpoint')]"
                 },
                 {
                   "name": "AzureAI__ContentUnderstandingEndpoint",
@@ -1027,7 +1049,329 @@
         "[resourceId('Microsoft.DocumentDB/databaseAccounts/sqlDatabases/containers', variables('cosmosAccountName'), variables('cosmosDatabaseName'), 'review-sessions')]",
         "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', variables('storageName'), 'default', 'ask-ai-runs')]",
         "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '974c5e8b-45b9-4653-ba55-5f855dd0fb88'))]",
-        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('storageBlobDataContributorRoleId')))]"
+        "[extensionResourceId(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), 'Microsoft.Authorization/roleAssignments', guid(resourceId('Microsoft.Storage/storageAccounts', variables('storageName')), resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), variables('storageBlobDataContributorRoleId')))]",
+        "[resourceId('Microsoft.Resources/deployments', 'docintel-translation')]"
+      ]
+    },
+    {
+      "condition": "[parameters('configureTranslation')]",
+      "type": "Microsoft.Resources/deployments",
+      "apiVersion": "2025-04-01",
+      "name": "docintel-translation",
+      "properties": {
+        "expressionEvaluationOptions": {
+          "scope": "inner"
+        },
+        "mode": "Incremental",
+        "parameters": {
+          "accountName": {
+            "value": "[variables('translatorName')]"
+          },
+          "location": {
+            "value": "[parameters('location')]"
+          },
+          "stagingAccountName": {
+            "value": "[variables('translationStagingName')]"
+          },
+          "applicationResourceId": {
+            "value": "[resourceId('Microsoft.App/containerApps', variables('appName'))]"
+          },
+          "runtimePrincipalId": {
+            "value": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName')), '2023-01-31').principalId]"
+          },
+          "runtimeIdentityResourceId": {
+            "value": "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
+          },
+          "assignRuntimeRole": {
+            "value": "[parameters('deployRuntimeRoles')]"
+          },
+          "assignSourceRole": {
+            "value": "[parameters('deployRuntimeRoles')]"
+          },
+          "assignTargetRole": {
+            "value": "[parameters('deployRuntimeRoles')]"
+          },
+          "assignRuntimeSourceRole": {
+            "value": "[parameters('deployRuntimeRoles')]"
+          },
+          "assignRuntimeTargetRole": {
+            "value": "[parameters('deployRuntimeRoles')]"
+          }
+        },
+        "template": {
+          "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+          "contentVersion": "1.0.0.0",
+          "metadata": {
+            "_generator": {
+              "name": "bicep",
+              "version": "0.45.15.27210",
+              "templateHash": "8371617757387293332"
+            }
+          },
+          "parameters": {
+            "accountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Dedicated regional single-service Translator, never an AIServices/model account."
+              }
+            },
+            "location": {
+              "type": "string"
+            },
+            "stagingAccountName": {
+              "type": "string",
+              "metadata": {
+                "description": "Dedicated module-owned staging account; never the originals/artifact account."
+              }
+            },
+            "applicationResourceId": {
+              "type": "string"
+            },
+            "runtimePrincipalId": {
+              "type": "string"
+            },
+            "runtimeIdentityResourceId": {
+              "type": "string"
+            },
+            "provisionAccount": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "provisionStagingAccount": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "provisionSourceContainer": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "provisionTargetContainer": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "assignRuntimeRole": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "assignSourceRole": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "assignTargetRole": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "assignRuntimeSourceRole": {
+              "type": "bool",
+              "defaultValue": true
+            },
+            "assignRuntimeTargetRole": {
+              "type": "bool",
+              "defaultValue": true
+            }
+          },
+          "variables": {
+            "cognitiveUserRole": "a97b65f3-24c7-4388-baec-2e87135dc908",
+            "blobReaderRole": "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1",
+            "blobContributorRole": "ba92f5b4-2d11-453d-a403-e96b0029c9fe"
+          },
+          "resources": [
+            {
+              "condition": "[parameters('provisionAccount')]",
+              "type": "Microsoft.CognitiveServices/accounts",
+              "apiVersion": "2024-10-01",
+              "name": "[parameters('accountName')]",
+              "location": "[parameters('location')]",
+              "kind": "TextTranslation",
+              "sku": {
+                "name": "S1"
+              },
+              "identity": {
+                "type": "SystemAssigned"
+              },
+              "properties": {
+                "customSubDomainName": "[parameters('accountName')]",
+                "disableLocalAuth": true
+              }
+            },
+            {
+              "condition": "[parameters('provisionStagingAccount')]",
+              "type": "Microsoft.Storage/storageAccounts",
+              "apiVersion": "2023-05-01",
+              "name": "[parameters('stagingAccountName')]",
+              "location": "[parameters('location')]",
+              "kind": "StorageV2",
+              "sku": {
+                "name": "Standard_LRS"
+              },
+              "tags": {
+                "docintel-purpose": "translation-staging-v1",
+                "docintel-owner-app": "[toLower(parameters('applicationResourceId'))]",
+                "docintel-runtime": "[toLower(parameters('runtimeIdentityResourceId'))]",
+                "docintel-translator": "[toLower(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')))]"
+              },
+              "properties": {
+                "minimumTlsVersion": "TLS1_2",
+                "supportsHttpsTrafficOnly": true,
+                "allowBlobPublicAccess": false,
+                "allowSharedKeyAccess": false,
+                "accessTier": "Hot"
+              }
+            },
+            {
+              "condition": "[parameters('provisionSourceContainer')]",
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', parameters('stagingAccountName'), 'default', 'translation-source')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('stagingAccountName'))]"
+              ]
+            },
+            {
+              "condition": "[parameters('provisionTargetContainer')]",
+              "type": "Microsoft.Storage/storageAccounts/blobServices/containers",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}/{2}', parameters('stagingAccountName'), 'default', 'translation-target')]",
+              "properties": {
+                "publicAccess": "None"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('stagingAccountName'))]"
+              ]
+            },
+            {
+              "condition": "[parameters('provisionStagingAccount')]",
+              "type": "Microsoft.Storage/storageAccounts/managementPolicies",
+              "apiVersion": "2023-05-01",
+              "name": "[format('{0}/{1}', parameters('stagingAccountName'), 'default')]",
+              "properties": {
+                "policy": {
+                  "rules": [
+                    {
+                      "name": "docintel-translation-staging-v1",
+                      "enabled": true,
+                      "type": "Lifecycle",
+                      "definition": {
+                        "filters": {
+                          "blobTypes": [
+                            "blockBlob"
+                          ],
+                          "prefixMatch": [
+                            "translation-source/docintel-translation-v1/",
+                            "translation-target/docintel-translation-v1/"
+                          ]
+                        },
+                        "actions": {
+                          "baseBlob": {
+                            "delete": {
+                              "daysAfterModificationGreaterThan": 1
+                            }
+                          },
+                          "snapshot": {
+                            "delete": {
+                              "daysAfterCreationGreaterThan": 1
+                            }
+                          },
+                          "version": {
+                            "delete": {
+                              "daysAfterCreationGreaterThan": 1
+                            }
+                          }
+                        }
+                      }
+                    }
+                  ]
+                }
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts', parameters('stagingAccountName'))]"
+              ]
+            },
+            {
+              "condition": "[parameters('assignRuntimeRole')]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]",
+              "name": "[guid(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), parameters('runtimeIdentityResourceId'), variables('cognitiveUserRole'))]",
+              "properties": {
+                "principalId": "[parameters('runtimePrincipalId')]",
+                "principalType": "ServicePrincipal",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('cognitiveUserRole'))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            },
+            {
+              "condition": "[parameters('assignSourceRole')]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('stagingAccountName'), 'default', 'translation-source')]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('stagingAccountName'), 'default', 'translation-source'), resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), variables('blobReaderRole'))]",
+              "properties": {
+                "principalId": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), '2024-10-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('blobReaderRole'))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('stagingAccountName'), 'default', 'translation-source')]",
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            },
+            {
+              "condition": "[parameters('assignTargetRole')]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('stagingAccountName'), 'default', 'translation-target')]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('stagingAccountName'), 'default', 'translation-target'), resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), variables('blobContributorRole'))]",
+              "properties": {
+                "principalId": "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), '2024-10-01', 'full').identity.principalId]",
+                "principalType": "ServicePrincipal",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('blobContributorRole'))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('stagingAccountName'), 'default', 'translation-target')]",
+                "[resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName'))]"
+              ]
+            },
+            {
+              "condition": "[parameters('assignRuntimeSourceRole')]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('stagingAccountName'), 'default', 'translation-source')]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('stagingAccountName'), 'default', 'translation-source'), parameters('runtimeIdentityResourceId'), variables('blobContributorRole'))]",
+              "properties": {
+                "principalId": "[parameters('runtimePrincipalId')]",
+                "principalType": "ServicePrincipal",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('blobContributorRole'))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('stagingAccountName'), 'default', 'translation-source')]"
+              ]
+            },
+            {
+              "condition": "[parameters('assignRuntimeTargetRole')]",
+              "type": "Microsoft.Authorization/roleAssignments",
+              "apiVersion": "2022-04-01",
+              "scope": "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('stagingAccountName'), 'default', 'translation-target')]",
+              "name": "[guid(resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('stagingAccountName'), 'default', 'translation-target'), parameters('runtimeIdentityResourceId'), variables('blobContributorRole'))]",
+              "properties": {
+                "principalId": "[parameters('runtimePrincipalId')]",
+                "principalType": "ServicePrincipal",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', variables('blobContributorRole'))]"
+              },
+              "dependsOn": [
+                "[resourceId('Microsoft.Storage/storageAccounts/blobServices/containers', parameters('stagingAccountName'), 'default', 'translation-target')]"
+              ]
+            }
+          ]
+        }
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', variables('uamiName'))]"
       ]
     }
   ],
@@ -1102,7 +1446,11 @@
     },
     "translatorEndpoint": {
       "type": "string",
-      "value": "[if(not(empty(parameters('translatorEndpoint'))), parameters('translatorEndpoint'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.cognitiveservices.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), if(variables('hasFoundryAccount'), if(not(empty(if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), ''))), format('https://{0}.services.ai.azure.com/', if(variables('hasFoundryAccount'), if(parameters('reuseFoundryAccount'), coalesce(tryGet(reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01'), 'customSubDomainName'), ''), variables('foundryName')), '')), reference(resourceId('Microsoft.CognitiveServices/accounts', variables('foundryName')), '2024-10-01').endpoint), '')))]"
+      "value": "[variables('effectiveTranslatorEndpoint')]"
+    },
+    "translationStagingBlobEndpoint": {
+      "type": "string",
+      "value": "[variables('effectiveTranslationStagingEndpoint')]"
     },
     "containerEnvironmentId": {
       "type": "string",

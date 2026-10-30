@@ -103,6 +103,7 @@ module installation './main.bicep' = {
     reuseKeyVault: infrastructureReady
     reuseIdentityKey: infrastructureReady
     deployModels: !infrastructureReady
+    configureTranslation: !infrastructureReady
     existingBlobContainers: infrastructureReady ? ['ask-ai-runs', 'identity-keys'] : []
     existingQueues: infrastructureReady
       ? ['ask-ai', 'ask-ai-poison', 'document-jobs', 'document-jobs-poison']

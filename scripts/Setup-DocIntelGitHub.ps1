@@ -36,6 +36,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $false
+Import-Module (Join-Path $PSScriptRoot 'DocIntelRelease.psm1') -Force
 
 function Test-GuidValue([string]$Value) {
     $parsed = [guid]::Empty
@@ -339,7 +340,7 @@ try {
     }
     $aiBound = ''
     foreach ($setting in @('AzureAI__AzureOpenAIEndpoint', 'AzureAI__ContentUnderstandingEndpoint',
-        'AzureAI__FoundryInferenceEndpoint', 'AzureAI__TranslatorEndpoint')) {
+        'AzureAI__FoundryInferenceEndpoint')) {
         $bound = Get-BoundAccount $setting '^https://(?<account>[a-zA-Z0-9-]+)\.(?:openai\.azure\.com|services\.ai\.azure\.com|cognitiveservices\.azure\.com)(?:/models)?/?$'
         if ($bound -and $aiBound -and $bound -ne $aiBound) {
             throw 'AI features currently use different accounts. Setup will not collapse them or move model/data processing; use an explicit reviewed multi-resource configuration.'
@@ -360,7 +361,6 @@ try {
             foundryInferenceEndpoint = "https://$subdomain.services.ai.azure.com/models"
             azureOpenAiEndpoint = "https://$subdomain.openai.azure.com/"
             contentUnderstandingEndpoint = "https://$subdomain.services.ai.azure.com/"
-            translatorEndpoint = "https://$subdomain.cognitiveservices.azure.com/"
         }
         $models = @(Invoke-SetupAzure @('cognitiveservices', 'account', 'deployment', 'list',
             '--subscription', $SubscriptionId, '--resource-group', $ResourceGroup, '--name', $foundry.Name))
@@ -373,6 +373,46 @@ try {
             $_.name -ceq $(if ($DecisionDeploymentName) { $DecisionDeploymentName } else { 'Decision-1' }) -and
                 $_.properties.model.name -ceq 'Microsoft-Decision-1' -and $_.properties.model.format -ceq 'Microsoft'
         }).Count -eq 1
+    }
+    $savedTranslator = Get-ExistingSetting 'AzureAI__TranslatorEndpoint'
+    $savedStage = Get-ExistingSetting 'DocumentTranslation__StagingBlobEndpoint'
+    $configureTranslation = -not $storage.Resource -and -not $savedTranslator -and -not $savedStage
+    if (-not $configureTranslation) {
+        $translationHelp = 'Run the Translation only preview/apply in Set up DocIntel Azure, or scripts\Sync-DocIntelTranslation.ps1, before full setup. No resources were changed.'
+        if ($savedTranslator -notmatch '^https://(?<account>[a-zA-Z0-9][a-zA-Z0-9-]{0,62})\.cognitiveservices\.azure\.com/?$') {
+            throw "A verified dedicated Translator connection is required. $translationHelp"
+        }
+        $translatorName = $Matches.account
+        $translatorMatches = @(Invoke-SetupAzure @('cognitiveservices', 'account', 'list',
+            '--subscription', $SubscriptionId, '--resource-group', $ResourceGroup) | Where-Object {
+                $_.properties.customSubDomainName -ieq $translatorName
+            })
+        if ($translatorMatches.Count -ne 1) { throw "The Translator binding is missing or ambiguous. $translationHelp" }
+        $translator = $translatorMatches[0]
+        if ($translator.kind -cne 'TextTranslation' -or $translator.sku.name -cne 'S1' -or
+            $translator.location -ieq 'global' -or $translator.properties.customSubDomainName -ine $translatorName -or
+            $translator.properties.disableLocalAuth -ne $true -or
+            $translator.identity.type -notmatch '(^|, ?)(SystemAssigned)(,|$)') {
+            throw "The existing binding is not private managed-identity PDF batch translation. AIServices is insufficient. $translationHelp"
+        }
+        $aiEndpoints.translatorEndpoint = $savedTranslator
+        if ($savedStage -notmatch '^https://(?<account>[a-z0-9]{3,24})\.blob\.core\.windows\.net/?$') {
+            throw "Verified isolated staging is required; there is no originals fallback. $translationHelp"
+        }
+        $stageName = $Matches.account
+        if ($stageName -ceq $storage.Name) { throw "Original-artifact storage is forbidden as staging. $translationHelp" }
+        $stageId = "/subscriptions/$SubscriptionId/resourceGroups/$ResourceGroup/providers/Microsoft.Storage/storageAccounts/$stageName"
+        $stage = Invoke-SetupAzure @('storage', 'account', 'show', '--subscription', $SubscriptionId, '--ids', $stageId)
+        $stageTags = Get-DocIntelTranslationStagingTags $app.id $runtime.id $translator.id
+        $null = Assert-DocIntelTranslationStagingAccount $stage $stageTags $stageId $translator.location
+        $aiEndpoints.translationStagingEndpoint = $savedStage
+        $policyJson = & az storage account management-policy show --subscription $SubscriptionId `
+            --resource-group $ResourceGroup --account-name $stageName --output json --only-show-errors 2>$null
+        $policy = if ($LASTEXITCODE -eq 0 -and -not [String]::IsNullOrWhiteSpace(($policyJson -join "`n"))) {
+            ($policyJson -join "`n") | ConvertFrom-Json -Depth 100
+        } else { $null }
+        $expiry = Get-DocIntelTranslationLifecycleState -StorageResourceId $stageId -Policy $policy
+        if ($expiry.Status -cne 'Ready') { throw "$($expiry.Blocker) $translationHelp" }
     }
     if (-not $DecisionEndpoint) { $DecisionEndpoint = Get-ExistingSetting 'AzureAI__DecisionEndpoint' }
     if (-not $DecisionDeploymentName) { $DecisionDeploymentName = Get-ExistingSetting 'AzureAI__DecisionDeploymentName' }
@@ -464,6 +504,7 @@ try {
         deployModels = -not $modelExists
         directoryTenantId = $DirectoryTenantId; webClientId = $web.appId; apiClientId = $api.appId
         identityGrants = @{}
+        configureTranslation = $configureTranslation
         decisionEndpoint = $DecisionEndpoint; decisionDeploymentName = $DecisionDeploymentName
     }
     foreach ($key in $aiEndpoints.Keys) { $parameters[$key] = $aiEndpoints[$key] }
@@ -498,6 +539,11 @@ try {
         changes = @($plan.changes | Sort-Object resourceId)
         appVersion = $app.properties.latestRevisionName
         templateHash = (Get-FileHash -LiteralPath $template -Algorithm SHA256).Hash
+        translationTemplateHash = (Get-FileHash (Join-Path $root 'infra\translation-connection.bicep') -Algorithm SHA256).Hash
+        translationLifecycle = $(if ($configureTranslation) {
+            @{ Status = 'CreateWithNewStagingAccount'; RequiredRule = Get-DocIntelTranslationLifecycleRule }
+        } else { $expiry })
+        translationStagingSnapshot = $(if ($configureTranslation) { '' } else { Get-DocIntelObjectHash $stage })
     }
     $planHash = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData(
         [Text.Encoding]::UTF8.GetBytes((ConvertTo-PlanJson $planIdentity))))
@@ -556,7 +602,9 @@ try {
         '--parameters', "@$parameterFile")
     $outputs = $deployed.properties.outputs
     if (-not $outputs.managedIdentityResourceId.value -or -not $outputs.storageBlobEndpoint.value -or
-        -not $outputs.cosmosEndpoint.value -or -not $outputs.contentUnderstandingEndpoint.value) {
+        -not $outputs.cosmosEndpoint.value -or -not $outputs.contentUnderstandingEndpoint.value -or
+        -not $outputs.translationStagingBlobEndpoint.value -or
+        $outputs.translationStagingBlobEndpoint.value.TrimEnd('/') -ieq $outputs.storageBlobEndpoint.value.TrimEnd('/')) {
         throw 'Infrastructure returned incomplete outputs; the existing app configuration was not changed.'
     }
     if ($ConfigureDirectoryApplications) {
@@ -638,6 +686,7 @@ try {
         AzureAI__ContentUnderstandingEndpoint = $outputs.contentUnderstandingEndpoint.value
         AzureAI__FoundryInferenceEndpoint = $outputs.foundryEndpoint.value
         AzureAI__TranslatorEndpoint = $outputs.translatorEndpoint.value
+        DocumentTranslation__StagingBlobEndpoint = $outputs.translationStagingBlobEndpoint.value
     }
     if ($DecisionEndpoint) {
         $settings.AzureAI__DecisionEndpoint = $DecisionEndpoint

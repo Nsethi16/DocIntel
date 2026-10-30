@@ -410,8 +410,8 @@ try {
     }
     $SubscriptionId = $account.id
     $directoryId = $account.tenantId
-    $files = @('infra\main.bicep', 'infra\customer.bicep', 'scripts\Install-DocIntelCustomer.ps1',
-        'scripts\Wait-DocIntelReady.ps1')
+    $files = @('infra\main.bicep', 'infra\customer.bicep', 'infra\translation-connection.bicep', 'scripts\Install-DocIntelCustomer.ps1',
+        'scripts\Wait-DocIntelReady.ps1', 'scripts\DocIntelRelease.psm1')
     if ($template.EndsWith('.json', [StringComparison]::Ordinal)) { $files += 'infra\customer.json' }
     $fileHashes = @{}
     foreach ($file in $files) { $fileHashes[$file] = (Get-FileHash (Join-Path $root $file) -Algorithm SHA256).Hash }
@@ -616,6 +616,9 @@ try {
         Boundaries = @('No Graph admin consent or deployer self-elevation', 'No existing-resource adoption',
             'No email/Teams/private networking', 'Readiness is not a PDF/Ask AI acceptance test')
         ImageSource = $ImageSource; SourceCommit = $SourceCommit
+        TranslationStagingExpiry = @{ EligibleAfterDays = 1; RequiredRule = Get-DocIntelTranslationLifecycleRule
+            Storage = 'Separate translation-owned Standard_LRS account; no originals endpoint fallback.'
+            ExistingPolicyWrites = 'Never: initialize only with the new staging account; original policies are not read.' }
         DecisionModel = 'Microsoft-Decision-1'; DecisionDeployment = $DecisionDeploymentName
         DecisionResource = $(if ($DecisionEndpoint) {
             'Explicit existing endpoint; the runtime identity must already have approved access.'

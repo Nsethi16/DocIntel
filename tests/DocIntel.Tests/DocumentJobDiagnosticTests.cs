@@ -63,10 +63,12 @@ public sealed class DocumentJobDiagnosticTests
     }
 
     [Theory]
-    [InlineData("Configured")]
-    [InlineData("WithoutGlossary")]
+    [InlineData("Configured", false)]
+    [InlineData("WithoutGlossary", false)]
+    [InlineData("Configured", true)]
+    [InlineData("WithoutGlossary", true)]
     public async Task Translation_Probe_Reports_Real_HTTP_Status_Without_Exposing_Provider_Text_Or_Writing_Results(
-        string variant)
+        string variant, bool normalized)
     {
         // Arrange
         var source = Source();
@@ -85,7 +87,9 @@ public sealed class DocumentJobDiagnosticTests
             "en", "https://configured.example/",
             It.Is<IReadOnlyList<string>>(terms => (terms.Count == 0) == (variant == "WithoutGlossary")),
             It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new RequestFailedException(400, "private-provider-body", "400070", null));
+            .ThrowsAsync(normalized
+                ? new DocumentTranslationFailureException("TranslationProviderFailed", "private-provider-body", "fr", 400)
+                : new RequestFailedException(400, "private-provider-body", "400070", null));
         using var output = new StringWriter();
 
         // Act
@@ -94,7 +98,9 @@ public sealed class DocumentJobDiagnosticTests
         // Assert
         Assert.Equal(1, result);
         Assert.Contains("\"stage\":\"Translate\"", output.ToString());
-        Assert.Contains("\"httpStatus\":400,\"providerCode\":\"400070\"", output.ToString());
+        Assert.Contains("\"httpStatus\":400", output.ToString());
+        Assert.Contains(normalized ? "\"failureCode\":\"TranslationProviderFailed\"" :
+            "\"providerCode\":\"400070\"", output.ToString());
         Assert.Contains("\"variant\":\"" + variant + "\"", output.ToString());
         Assert.DoesNotContain("private", output.ToString());
         Assert.Equal(before, JsonSerializer.Serialize(source));

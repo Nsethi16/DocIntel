@@ -374,15 +374,22 @@ $runtimeOutputs = @{
     'AzureAI__QueueEndpoint' = 'storageQueueEndpoint'; 'AzureAI__FoundryInferenceEndpoint' = 'foundryEndpoint'
     'AzureAI__AzureOpenAIEndpoint' = 'azureOpenAiEndpoint'; 'AzureAI__TranslatorEndpoint' = 'translatorEndpoint'
     'AzureAI__ContentUnderstandingEndpoint' = 'contentUnderstandingEndpoint'
+    'DocumentTranslation__StagingBlobEndpoint' = 'translationStagingBlobEndpoint'
 }
 foreach ($entry in $runtimeOutputs.GetEnumerator()) {
     Assert-Equal $runtimeEnvironment[$entry.Key] $template.outputs.($entry.Value).value `
         "Legacy app and setup runner must use the same $($entry.Key)"
 }
-foreach ($name in @('azureOpenAiEndpoint', 'translatorEndpoint', 'contentUnderstandingEndpoint')) {
+foreach ($name in @('azureOpenAiEndpoint', 'contentUnderstandingEndpoint')) {
     if (-not $template.outputs.$name.value.StartsWith(
         "[if(not(empty(parameters('$name'))), parameters('$name'), ", [StringComparison]::Ordinal)) {
         throw "The explicit $name must take precedence over generated endpoints."
+    }
+    if ($template.parameters.configureTranslation.defaultValue -ne $true -or
+        $template.variables.effectiveTranslatorEndpoint -notmatch 'configureTranslation' -or
+        $template.variables.effectiveTranslatorEndpoint -match 'foundrySubdomain|foundryRootEndpoint' -or
+        $template.variables.effectiveTranslatorEndpoint -notmatch 'translatorName') {
+        throw 'Fresh PDF translation needs its dedicated Translator; existing endpoints require explicit scoped reconciliation.'
     }
 }
 if ($template.outputs.contentUnderstandingEndpoint.value -notmatch 'customSubDomainName' -or
