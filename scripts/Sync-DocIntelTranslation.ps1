@@ -139,6 +139,11 @@ function Assert-NarrowTranslatorRoles([string]$Principal) {
         }
     }
 }
+function Get-TranslationChangeSummary([object]$Change) {
+    $resourceId = if ($Change.resourceId -is [string]) { $Change.resourceId } else { '<unavailable>' }
+    $changeType = if ($Change.changeType -is [string]) { $Change.changeType } else { '<unavailable>' }
+    return [ordered]@{ resourceId = $resourceId; changeType = $changeType } | ConvertTo-Json -Compress
+}
 function Test-SpecPrincipal([object]$Spec, [string]$Actual) {
     if ($Spec.Principal) { return $Actual -ieq $Spec.Principal }
     return $provisionAccount -and (-not $Actual -or
@@ -317,7 +322,8 @@ try {
                     $_.Assign -and $change.resourceId -like "$($_.Scope)/providers/Microsoft.Authorization/roleAssignments/*"
                 }).Count) { continue }
             if ($change.changeType -cne 'Create' -or -not $seen.Add($change.resourceId)) {
-                throw 'Translation preview must only create exact missing resources, never modify/delete existing resources.'
+                throw ('Translation preview must only create exact missing resources, never modify/delete existing resources. ' +
+                    (Get-TranslationChangeSummary $change))
             }
             $kind = $expected[$change.resourceId]
             if ($kind -ceq 'Translator' -and $change.after.kind -ceq 'TextTranslation' -and
@@ -339,7 +345,8 @@ try {
                     (Test-SpecPrincipal $_ ([string]$change.after.properties.principalId))
             })
             if ($matches.Count -eq 1 -and $seenRoles.Add($matches[0].Key)) { continue }
-            throw 'Translation preview escaped exact isolated staging/Translator/container-role scope.'
+            throw ('Translation preview escaped exact isolated staging/Translator/container-role scope. ' +
+                (Get-TranslationChangeSummary $change))
         }
         if ($seen.Count -ne $expected.Count + @($roleSpecs | Where-Object Assign).Count) {
             throw 'Translation preview omitted required resource/role creations.'

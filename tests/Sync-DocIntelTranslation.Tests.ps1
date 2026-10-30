@@ -187,6 +187,22 @@ function az {
                     $changes += @{ resourceId = $f.primary.id; changeType = 'Ignore'
                         before = @{ operatorSetting = 'fixture-sensitive-value'; revision = $f.ignoreRevision } }
                 }
+                'escaped-create' {
+                    $f.rejectedId = "$stage/blobServices/default"
+                    $changes += @{ resourceId = $f.rejectedId; changeType = 'Create'
+                        before = @{ env = @(@{ name = 'PRIVATE_SETTING'; value = 'fixture-before-secret' }) }
+                        after = @{ properties = @{ env = @(@{
+                            name = 'PRIVATE_SETTING'; value = 'fixture-after-secret'
+                        }) } } }
+                }
+                'owned-modify' {
+                    $f.rejectedId = $stage
+                    $changes += @{ resourceId = $f.rejectedId; changeType = 'Modify'
+                        before = @{ env = @(@{ name = 'PRIVATE_SETTING'; value = 'fixture-before-secret' }) }
+                        after = @{ properties = @{ env = @(@{
+                            name = 'PRIVATE_SETTING'; value = 'fixture-after-secret'
+                        }) } } }
+                }
             }
             @{ status = 'Succeeded'; changes = $changes
                 diagnostics = $(if ($f.scenario -eq 'incomplete') { @(@{ code = 'Unsupported' }) } else { @() }) }
@@ -285,6 +301,55 @@ try {
     $preview = Invoke-Translation
     if ($preview.Plan.ProvisionStagingAccount) { throw 'A partial apply must rediscover owned staging, not create a duplicate.' }
     $null = Apply-Translation
+    foreach ($case in @(
+        @{ Scenario = 'escaped-create'; Type = 'Create'; Message = 'escaped exact isolated' }
+        @{ Scenario = 'owned-modify'; Type = 'Modify'; Message = 'never modify/delete' }
+    )) {
+        New-Fixture; $global:TranslationFixture.scenario = $case.Scenario
+        $failed = $false
+        try { Invoke-Translation | Out-Null } catch {
+            $failed = $true
+            $message = $_.Exception.Message
+            if ($message -notlike "*$($case.Message)*") { throw }
+            if ($message -match 'fixture-before-secret|fixture-after-secret|PRIVATE_SETTING|properties|before|after') {
+                throw 'Scope rejection must not expose raw ARM/environment payloads.'
+            }
+            $start = $message.IndexOf('{', [StringComparison]::Ordinal)
+            if ($start -lt 0) { throw 'Scope rejection must identify the rejected resourceId and changeType.' }
+            $context = $message.Substring($start) | ConvertFrom-Json
+            if (@($context.PSObject.Properties).Count -ne 2 -or
+                $context.resourceId -cne $global:TranslationFixture.rejectedId -or
+                $context.changeType -cne $case.Type) {
+                throw 'Rejected-change context must contain only the exact resourceId/changeType.'
+            }
+        }
+        if (-not $failed -or $global:TranslationFixture.writes.Count) {
+            throw 'Unexpected Create/owned Modify must remain rejected without mutations.'
+        }
+    }
+    New-Fixture
+    $initial = Invoke-Translation @{ ReplaceExistingEndpoint = $true }
+    $f = $global:TranslationFixture
+    $p = $f.parameters
+    $f.translator = New-Translator (($initial.Plan.Resource -split '/')[-1])
+    $f.stage = New-Stage (($initial.Plan.StagingResource -split '/')[-1]) $f.translator.id
+    $f.stagePolicy = @{ policy = @{ rules = @((Get-DocIntelTranslationLifecycleRule)) } }
+    $f.containers = @('translation-source', 'translation-target')
+    foreach ($spec in @(Fixture-Specs $p) | Select-Object -First 3) {
+        $principal = if ($spec.Principal) { $spec.Principal } else { $f.translator.identity.principalId }
+        $f.roles += @{ scope = $spec.Scope; principalId = $principal
+            roleDefinitionId = "/subscriptions/$($f.sub)/providers/Microsoft.Authorization/roleDefinitions/$($spec.Role)" }
+    }
+    $recovery = Invoke-Translation @{ ReplaceExistingEndpoint = $true }
+    $missing = @($recovery.Plan.Permissions | Where-Object Assign)
+    if ($recovery.Plan.ProvisionAccount -or $recovery.Plan.ProvisionStagingAccount -or
+        $recovery.Plan.Lifecycle.Status -cne 'Ready' -or $missing.Count -ne 2 -or
+        @($missing | Where-Object {
+            $_.Principal -ine $f.identity.principalId -or $_.Role -cne 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' -or
+                $_.Scope -notin @($recovery.Plan.Source.Scope, $recovery.Plan.Target.Scope)
+        }).Count -or $f.writes.Count) {
+        throw 'Read-only partial recovery must show only the two missing runtime-container grants, not retry them.'
+    }
     foreach ($case in @(
         @{ Scenario = 'incomplete'; Message = 'preview is incomplete' }
         @{ Scenario = 'foreign-change'; Message = 'never modify/delete' }

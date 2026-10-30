@@ -133,6 +133,11 @@ missing/unreadable/changed expiry blocks adoption rather than silently replacing
 reports `StagingResource`, `StagingBlobEndpoint`, `StagingOwnership` and `Lifecycle` metadata, and the
 full existing staging-policy snapshot participates in the approval hash without exporting its raw rules.
 
+If ARM returns a change outside the exact approved creation scope, rejection reports only that
+change's `resourceId` and `changeType`, never its before/after payload or application settings.
+A partial-deployment Preview remains read-only. Missing grants or ABAC authorization failures
+require an authorized administrator; Preview does not retry grants, change identities or bypass conditions.
+
 Existing installations must approve this bounded connection before releasing an image that requires
 PDF batch support. In **Set up DocIntel Azure**, keep **Translation only** selected and directory
 configuration off. Run **Preview** first. If replacing the saved endpoint, explicitly select
