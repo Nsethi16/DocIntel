@@ -9,6 +9,8 @@ using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 
+using UglyToad.PdfPig.Core;
+
 namespace DocIntel.Core.Features.DocumentTranslation;
 
 public sealed record DocumentSliceTranslationResult(
@@ -162,13 +164,15 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
         }
         catch (Exception exception) when (exception is RequestFailedException or HttpRequestException or
             AuthenticationFailedException or JsonException or InvalidDataException or IOException or FormatException or
+            PdfDocumentFormatException or
             TimeoutException or OperationCanceledException)
         {
             var status = exception is RequestFailedException azureFailure ? azureFailure.Status :
                 exception is HttpRequestException httpFailure && httpFailure.StatusCode is { } code ? (int?)code : null;
             var error = status is 401 or 403 ? "TranslationAccessDenied" :
                 exception is TimeoutException or OperationCanceledException ? "TranslationTimedOut" :
-                exception is JsonException or InvalidDataException or FormatException ? "TranslationInvalidResponse" : "TranslationProviderFailed";
+                exception is JsonException or InvalidDataException or FormatException or PdfDocumentFormatException
+                    ? "TranslationInvalidResponse" : "TranslationProviderFailed";
             throw new DocumentTranslationFailureException(error,
                 "Translation could not complete; original source was retained and independent features can continue.",
                 sourceLanguage, status, exception);

@@ -566,8 +566,9 @@ public sealed class AskAiAgentTests
         Assert.False(result.RootElement.GetProperty("wasTranslated").GetBoolean());
         Assert.Equal(translationFailed ? "fr" : "en",
             result.RootElement.GetProperty("detectedLanguage").GetString());
-        Assert.Equal(translationFailed ? "TranslationProviderFailed" : null,
-            result.RootElement.GetProperty("translationErrorCode").GetString());
+        var hasTranslationError = result.RootElement.TryGetProperty("translationErrorCode", out var translationError);
+        Assert.Equal(translationFailed, hasTranslationError && translationError.ValueKind != JsonValueKind.Null);
+        if (translationFailed) Assert.Equal("TranslationProviderFailed", translationError.GetString());
         Assert.Equal(job.Segments[0].BodyText, result.RootElement.GetProperty("sourceText").GetString());
         Assert.DoesNotContain(job.PacketSummary!, Assert.Single(run.Citations).Excerpt);
     }

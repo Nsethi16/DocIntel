@@ -95,6 +95,29 @@ public sealed class TranslationReliabilityTests
     }
 
     [Fact]
+    public async Task An_Unreadable_Provider_Pdf_Is_A_Translation_Warning_Not_A_Source_Failure()
+    {
+        // Arrange
+        var original = PdfPigLayoutExtractor.CreateSamplePdf([("Accepted source evidence", "Fixture")]);
+        var batch = new Mock<IPdfBatchTranslationClient>();
+        batch.Setup(client => client.TranslateAsync(
+                It.IsAny<byte[]>(), "fr", "en", It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync("%PDF-1.7\nmalformed provider output"u8.ToArray());
+        var service = new AzureDocumentTranslationService(Detector("fr").Object, batch.Object);
+
+        // Act
+        var failure = await Assert.ThrowsAsync<DocumentTranslationFailureException>(() =>
+            service.TranslatePdfSliceAsync(original, "source.pdf", "Accepted source evidence", [],
+                "en", "https://translator.example/", []));
+
+        // Assert
+        Assert.Equal("TranslationInvalidResponse", failure.Code);
+        Assert.Equal("fr", failure.Language);
+        Assert.DoesNotContain("malformed", failure.Message);
+        Assert.Equal(1, (await new PdfPigLayoutExtractor().ExtractPagesAsync(original, new())).Count);
+    }
+
+    [Fact]
     public async Task Translation_Failure_Is_Explicit_And_Does_Not_Destroy_Original_Source()
     {
         // Arrange
