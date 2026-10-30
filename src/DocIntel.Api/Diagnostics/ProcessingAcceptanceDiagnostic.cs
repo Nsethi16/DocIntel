@@ -209,6 +209,11 @@ public static class ProcessingAcceptanceDiagnostic
             var state = await new DocumentSplittingWorkflow(extractor, extractor, models,
                 new InjectedTranslationFailure(), NullLogger<DocumentSplittingWorkflow>.Instance)
                 .ExecuteAsync(new() { Tenant = tenant, FileName = "synthetic.pdf", SourcePdfBytes = source }, cancellationToken: deadline.Token);
+            if (state.HasDevelopmentResults)
+            {
+                await DocumentJobDiagnostic.WriteAsync(output, "ProcessingSynthetic", "Failed", "SimulationNotPermitted");
+                return 1;
+            }
             var job = new DocumentJob
             {
                 JobId = Guid.NewGuid().ToString("N"), TenantId = tenantId, TenantDisplayName = "Synthetic",

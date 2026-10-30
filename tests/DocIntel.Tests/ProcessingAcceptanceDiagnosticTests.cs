@@ -51,6 +51,25 @@ public sealed class ProcessingAcceptanceDiagnosticTests
         language.VerifyNoOtherCalls();
     }
 
+    [Fact]
+    public async Task Simulated_Model_Results_Cannot_Pass_A_Live_Processing_Acceptance_Check()
+    {
+        // Arrange
+        var harnesses = new Mock<IHarnessStore>();
+        harnesses.Setup(store => store.GetTenantAsync("workspace", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TenantHarness { TenantId = "workspace", DisplayName = "Synthetic workspace" });
+        var models = new ModelCatalog(allowDevelopmentSimulation: true);
+        using var output = new StringWriter();
+
+        // Act
+        var result = await ProcessingAcceptanceDiagnostic.PartialAsync(
+            "workspace", true, harnesses.Object, models, output);
+
+        // Assert
+        Assert.Equal(1, result);
+        Assert.Contains("SimulationNotPermitted", output.ToString());
+    }
+
     [Theory]
     [InlineData(0)]
     [InlineData(1)]
