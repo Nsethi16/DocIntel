@@ -114,7 +114,7 @@ public sealed class TranslationReliabilityTests
         Assert.Equal("TranslationInvalidResponse", failure.Code);
         Assert.Equal("fr", failure.Language);
         Assert.DoesNotContain("malformed", failure.Message);
-        Assert.Equal(1, (await new PdfPigLayoutExtractor().ExtractPagesAsync(original, new())).Count);
+        Assert.Single(await new PdfPigLayoutExtractor().ExtractPagesAsync(original, new()));
     }
 
     [Fact]

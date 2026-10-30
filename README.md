@@ -95,8 +95,9 @@ Admins can manage isolated **Workspaces** and configure each workspace's **Agent
      source-text chunks are checked in bounded requests; incomplete or uncertain detection is an explicit
      warning, not an English default. Mixed-language sources use batch auto-detection.
      Actual PDFs use the [PDF-capable asynchronous batch API](https://learn.microsoft.com/en-us/azure/ai-services/translator/document-translation/overview#supported-document-and-glossary-formats),
-     never the unsupported synchronous PDF path. Managed identity accesses private source/target staging
-     containers; optional TSV glossaries preserve `DoNotTranslateTerms`. Deployment requires the dedicated
+     never the unsupported synchronous PDF path. Managed identity accesses private source/target containers
+     in a dedicated temporary-staging account, never the original-artifact account; optional TSV glossaries
+     preserve `DoNotTranslateTerms`. Deployment requires the dedicated
      Translator/private-staging setup described in [customer deployment](docs/customer-deployment.md).
   4. **Document Insights**: Generates one integrated insight for the complete file, or one per complete
      identified logical document when splitting and identification are enabled and all documents are
@@ -1037,6 +1038,9 @@ not an English assumption. Detection covers distinct 1,500-character source chun
 45,000 characters, with a 45-second deadline and a one-million-character whole-source guard. Exceeding these
 bounds produces a translation warning, not a sampled same-language skip.
 PDF batch polling is bounded by `DocumentTranslation:TimeoutSeconds` (default 180, maximum 600).
+`DocumentTranslation:StagingBlobEndpoint` selects a dedicated temporary Blob account. It is not inferred
+from `AzureAI:BlobEndpoint`, and the two accounts cannot be the same. This avoids changing existing original-data
+retention to support temporary translation cleanup.
 Private staging uses random `docintel-translation-v1/` request prefixes without customer filenames; cleanup
 attempts every owned blob and, on cancellation, waits for terminal provider state within a separate deadline.
 Deployment-owned prefix lifecycle expiry bounds late provider writes when cancellation cannot be confirmed.

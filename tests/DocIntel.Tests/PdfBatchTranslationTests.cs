@@ -2,8 +2,11 @@ using Azure;
 using Azure.AI.Translation.Document;
 using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
+using DocIntel.Core;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Features.DocumentTranslation;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using Xunit;
@@ -12,6 +15,67 @@ namespace DocIntel.Tests;
 
 public sealed class PdfBatchTranslationTests
 {
+    [Fact]
+    public void Missing_Staging_Endpoint_Never_Reuses_The_Configured_Original_Artifact_Account()
+    {
+        // Arrange
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["AzureAI:TranslatorEndpoint"] = "https://translator.example/",
+            ["AzureAI:BlobEndpoint"] = "https://originals.blob.core.windows.net/",
+            ["AzureAI:CosmosEndpoint"] = "https://metadata.documents.azure.com/"
+        }).Build();
+        using var services = new ServiceCollection().AddLogging().AddDocIntelCore(configuration).BuildServiceProvider();
+
+        // Act
+        var batch = services.GetRequiredService<IPdfBatchTranslationClient>();
+
+        // Assert
+        Assert.IsNotType<AzurePdfBatchTranslationClient>(batch);
+        Assert.Equal("UnconfiguredPdfBatchTranslationClient", batch.GetType().Name);
+    }
+
+    [Fact]
+    public void A_Dedicated_Staging_Endpoint_Uses_The_Real_Batch_Client_Without_Shared_Original_Storage()
+    {
+        // Arrange
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["AzureAI:TranslatorEndpoint"] = "https://translator.example/",
+            ["DocumentTranslation:StagingBlobEndpoint"] = "https://staging.blob.core.windows.net/"
+        }).Build();
+        using var services = new ServiceCollection().AddLogging().AddDocIntelCore(configuration).BuildServiceProvider();
+
+        // Act
+        var batch = services.GetRequiredService<IPdfBatchTranslationClient>();
+
+        // Assert
+        Assert.IsType<AzurePdfBatchTranslationClient>(batch);
+    }
+
+    [Theory]
+    [InlineData("http://staging.blob.core.windows.net/")]
+    [InlineData("https://user:credential@staging.blob.core.windows.net/")]
+    [InlineData("https://staging.blob.core.windows.net/container")]
+    [InlineData("https://staging.blob.core.windows.net/?sig=not-allowed")]
+    [InlineData("https://originals.blob.core.windows.net/")]
+    public void Unsafe_Or_Shared_Staging_Endpoints_Are_Configuration_Errors(string staging)
+    {
+        // Arrange
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["AzureAI:BlobEndpoint"] = "https://originals.blob.core.windows.net/",
+            ["DocumentTranslation:StagingBlobEndpoint"] = staging
+        }).Build();
+
+        // Act
+        var failure = Assert.Throws<InvalidOperationException>(() =>
+            new ServiceCollection().AddLogging().AddDocIntelCore(configuration));
+
+        // Assert
+        Assert.DoesNotContain(staging, failure.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
     [Theory]
     [InlineData("fr", "fr")]
     [InlineData("mul", null)]

@@ -156,6 +156,11 @@ public static class ServiceCollectionExtensions
         var cosmosUri = Endpoint(azureOptions.CosmosEndpoint);
         var blobUri = Endpoint(azureOptions.BlobEndpoint);
         var queueUri = Endpoint(azureOptions.QueueEndpoint);
+        var translationStagingUri = Endpoint(translationOptions.StagingBlobEndpoint);
+        if (translationStagingUri is not null &&
+            (translationStagingUri.AbsolutePath != "/" || translationStagingUri.Equals(blobUri)))
+            throw new InvalidOperationException(
+                "Translation staging requires a dedicated Blob service root separate from original-artifact storage.");
         if (new[] { askAiOptions.DispatchQueueName, askAiOptions.PoisonQueueName,
             documentOptions.QueueName, documentOptions.PoisonQueueName }.Distinct(StringComparer.Ordinal).Count() != 4)
             throw new InvalidOperationException("Ask AI and document dispatch/poison queues must have distinct names.");
@@ -292,9 +297,10 @@ public static class ServiceCollectionExtensions
                 sp.GetService<DocumentLanguageHttpClientFactory>()?.Invoke() ??
                     new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
                         { Timeout = TimeSpan.FromSeconds(45) }, credential, translatorUri));
-        services.TryAddSingleton<IPdfBatchTranslationClient>(sp => translatorUri is null || sharedBlobs is null
+        services.TryAddSingleton<IPdfBatchTranslationClient>(sp => translatorUri is null || translationStagingUri is null
             ? new UnconfiguredPdfBatchTranslationClient()
-            : new AzurePdfBatchTranslationClient(sharedBlobs, new DocumentTranslationClient(translatorUri, credential),
+            : new AzurePdfBatchTranslationClient(new BlobServiceClient(translationStagingUri, credential),
+                new DocumentTranslationClient(translatorUri, credential),
                 translationOptions, sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<AzurePdfBatchTranslationClient>>()));
         services.TryAddSingleton<IDocumentTranslationService>(sp => new AzureDocumentTranslationService(
             sp.GetRequiredService<IDocumentLanguageDetector>(), sp.GetRequiredService<IPdfBatchTranslationClient>(),

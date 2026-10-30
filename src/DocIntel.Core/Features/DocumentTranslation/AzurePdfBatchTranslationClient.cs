@@ -11,6 +11,8 @@ namespace DocIntel.Core.Features.DocumentTranslation;
 public sealed class PdfBatchTranslationOptions
 {
     public const string SectionName = "DocumentTranslation";
+    /// <summary>Trusted endpoint of the dedicated temporary-translation storage account, never the originals account.</summary>
+    public string? StagingBlobEndpoint { get; set; }
     public string SourceContainerName { get; set; } = "translation-source";
     public string TargetContainerName { get; set; } = "translation-target";
     public int TimeoutSeconds { get; set; } = 180;
