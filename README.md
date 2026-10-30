@@ -84,15 +84,20 @@ Admins can manage isolated **Workspaces** and configure each workspace's **Agent
   - **Decision Model** (`Microsoft Decision 1` / `decision-1`) for fast, closed-set document classification and routing.
   - **Language Model** (`Microsoft Phi-4`, `Microsoft MAI-Reasoning`, `Meta Llama 3.3 70B`, `DeepSeek R1`, `Mistral Large`, `GPT-5 Mini`, `GPT-4o`) via `Azure.AI.Inference` and `Azure.AI.OpenAI`.
 - **6 Toggleable & Configurable Capabilities**:
-  1. **File Splitting & Grouping**: Deterministic `PdfPig` layout, coordinate, pagination (`Page X of Y`), orientation-shift, and Levenshtein footer clustering that slices multi-document PDFs into standalone PDFs.
+  1. **File Splitting & Grouping**: Conservative `PdfPig` layout grouping uses explicit form/record IDs,
+     pagination resets and configured document headings to split multi-document PDFs. Changed bottom-of-page
+     prose or a page number alone is not a document boundary. Continuous pagination suppresses weak footer
+     differences, but does not override distinct explicit form IDs. Separate instances of the same form remain separate.
   2. **Identify Documents**: Scores extracted slice text against admin-defined `(DocumentName, IdentificationPrompt)`
      criteria plus `"Undefined"` using the configured **Microsoft-Decision-1** deployment and its native decision API.
-  3. **Document Translation**: Uses the configured Azure Document Translation endpoint and `DoNotTranslateTerms`.
-     **Known PDF limitation:** the current path submits PDF slices through `SingleDocumentTranslationClient`.
-     Azure's [supported-format list](https://learn.microsoft.com/en-us/azure/ai-services/translator/document-translation/overview#supported-document-and-glossary-formats)
-     supports PDF in asynchronous batch translation, not the synchronous API used here. Translation-enabled
-     PDF jobs can therefore fail with HTTP 400 `InvalidRequest` after identification succeeds. This needs a
-     PDF-capable batch translation integration; the current synchronous PDF path is not a working substitute.
+  3. **Document Translation**: Real Translator language detection precedes translation. A confidently
+     same-language document retains its original PDF without a PDF translation request. All distinct
+     source-text chunks are checked in bounded requests; incomplete or uncertain detection is an explicit
+     warning, not an English default. Mixed-language sources use batch auto-detection.
+     Actual PDFs use the [PDF-capable asynchronous batch API](https://learn.microsoft.com/en-us/azure/ai-services/translator/document-translation/overview#supported-document-and-glossary-formats),
+     never the unsupported synchronous PDF path. Managed identity accesses private source/target staging
+     containers; optional TSV glossaries preserve `DoNotTranslateTerms`. Deployment requires the dedicated
+     Translator/private-staging setup described in [customer deployment](docs/customer-deployment.md).
   4. **Document Insights**: Generates one integrated insight for the complete file, or one per complete
      identified logical document when splitting and identification are enabled and all documents are
      identified. Disabled, absent or incomplete identification falls back to one file insight covering
@@ -102,16 +107,27 @@ Admins can manage isolated **Workspaces** and configure each workspace's **Agent
   5. **Entity Extraction**: Extracts structured entities guided by a custom **Entity extraction prompt**.
   6. **Data Extraction**: Extracts per-document structured **Key-Value Pairs** and **Tables (with Columns + Instructions)** mapped to each defined document type.
 
+Translation is an independent optional feature. A translation-only failure retains original evidence and
+allows Insights, Entities, Structured Data and custom results to run. The job completes with `hasWarnings=true`,
+an explicitly failed translation trace and per-slice `translationErrorCode`/`translationErrorMessage`.
+Available tabs and the original PDF remain accessible; a missing translation is never represented as success.
+Other stage failures, source-integrity checks, authorization revocation, lease loss and an unacknowledged
+processing-result archive still prevent successful completion.
+
 ### Native Microsoft Decision form identification
 
 The `decision-1` catalog entry is a **native Microsoft-Decision-1 scorer**, not an alias for
 GPT-5 Mini and not a generative chat client. Identification uses the tenant's configured
-`DecisionModelId`, sends extracted title/top-line/footer text as `state`, and supplies the
+`DecisionModelId`, sends representative page-located headings/footer evidence as `state`, and supplies the
 active form rules plus an explicit Undefined option as closed `choice` criteria.
 The native route is `<resource-root>/providers/microsoft/v1/systemone`; it is not chat
 completions or the unrelated OpenAI Decisions API. No PDF/image bytes or generated rationale
 are requested. The chosen class probability is retained, and results publish only after every
 slice has a valid classification. Provider failures or unknown choices never trigger a GPT fallback.
+Evidence includes up to six representative pages (leading, middle, thirds and final), bounded to 7,000 UTF-8
+bytes. The complete serialized request, including every active rule and instructions, must fit a conservative
+24 KiB byte guard before authentication. This is context headroom, not an exact tokenizer or an assertion that
+the whole document body was read. Oversized rule catalogs fail explicitly rather than silently dropping choices.
 
 | Runtime setting | Purpose |
 |---|---|
@@ -504,6 +520,15 @@ and first untranslated active-attempt source slice for one in-memory provider re
 safe HTTP/error-code metadata, and never saves a translation, modifies the job or reprocesses the file.
 Its explicit `WithoutGlossary` diagnostic comparison discards the result and leaves protected-term
 settings unchanged; it is not a production fallback.
+`DocumentReprocess` is a separate mutating operation: it requires an exact failed-document ID and confirmation
+`REPROCESS`, current submitter access, a valid accepted harness, verified original hash and remaining retry budget.
+It queues the same accepted source through the normal fenced worker, never replaces the source or edits results
+directly, and reports only metadata/counts. A polling deadline reports verification pending without cancelling
+the worker or marking its job failed. `TranslationSynthetic` uses an authored French PDF to verify genuine
+English output, preserved pages and protected terms through the configured providers. `ProcessingSynthetic`
+injects a translation-only failure into an in-memory synthetic workflow and verifies real model-produced
+Insights, Entities, Structured Data and custom results remain available. Neither synthetic check reads customer
+documents, persists jobs/answers or delivers messages; both require the live-probing opt-in.
 `Synthetic` exercises the real configured model and complete analytical agent over nine authored,
 in-memory fake records: six distinct USD quotes, one repeated copy, one EUR quote and one USD record
 with a missing amount. It is limited to 24 model requests and 300 seconds, requires the same live
@@ -1007,8 +1032,15 @@ fingerprint, and a failed reevaluation does not publish partial slice results.
 
 Live translation requires a server-configured HTTPS endpoint and actual source PDF bytes. Tenant
 settings cannot redirect credential-bearing translation calls to another endpoint. The provider
-auto-detects source language; `und` records that a separate detected-language value is unavailable,
-not that the source is English. Missing translated artifacts return 404 instead of the original
+detects source language before deciding whether translation is needed; `und` is explicit uncertainty,
+not an English assumption. Detection covers distinct 1,500-character source chunks in requests of at most
+45,000 characters, with a 45-second deadline and a one-million-character whole-source guard. Exceeding these
+bounds produces a translation warning, not a sampled same-language skip.
+PDF batch polling is bounded by `DocumentTranslation:TimeoutSeconds` (default 180, maximum 600).
+Private staging uses random `docintel-translation-v1/` request prefixes without customer filenames; cleanup
+attempts every owned blob and, on cancellation, waits for terminal provider state within a separate deadline.
+Deployment-owned prefix lifecycle expiry bounds late provider writes when cancellation cannot be confirmed.
+Missing translated artifacts return 404 instead of the original
 PDF or a newly generated text document. Confidence values are model signals, not calibrated
 probabilities; missing/zero confidence is not inflated to 95-98 percent.
 

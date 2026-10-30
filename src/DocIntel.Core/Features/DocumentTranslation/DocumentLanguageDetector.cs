@@ -32,6 +32,7 @@ public sealed class AzureDocumentLanguageDetector(
     HttpClient httpClient, TokenCredential credential, Uri endpoint) : IDocumentLanguageDetector, IDisposable
 {
     private const int MaximumResponseBytes = 65_536;
+    private const int MaximumSourceCharacters = 1_000_000;
     private readonly Uri _uri = DetectionUri(endpoint);
 
     public async Task<DocumentLanguageResult> DetectAsync(string text, CancellationToken cancellationToken = default)
@@ -40,6 +41,14 @@ public sealed class AzureDocumentLanguageDetector(
         if (samples.Count == 0) throw UnknownLanguage();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(45));
+        var languages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var batch in samples.Chunk(30))
+            languages.UnionWith(await DetectBatchAsync(batch, deadline.Token));
+        return new(languages.Count == 1 ? languages.Single() : "mul");
+    }
+
+    private async Task<HashSet<string>> DetectBatchAsync(IReadOnlyList<string> samples, CancellationToken cancellationToken)
+    {
         using var request = new HttpRequestMessage(HttpMethod.Post, _uri)
         {
             Content = new ByteArrayContent(JsonSerializer.SerializeToUtf8Bytes(
@@ -47,21 +56,21 @@ public sealed class AzureDocumentLanguageDetector(
         };
         request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
         var token = await credential.GetTokenAsync(new TokenRequestContext(
-            ["https://cognitiveservices.azure.com/.default"]), deadline.Token);
+            ["https://cognitiveservices.azure.com/.default"]), cancellationToken);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token.Token);
         using var response = await httpClient.SendAsync(
-            request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+            request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
             throw new HttpRequestException("Document language detection was rejected.", null, response.StatusCode);
-        await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token);
+        await using var stream = await response.Content.ReadAsStreamAsync(cancellationToken);
         using var body = new MemoryStream();
         var buffer = new byte[4096];
         int read;
-        while ((read = await stream.ReadAsync(buffer, deadline.Token)) > 0)
+        while ((read = await stream.ReadAsync(buffer, cancellationToken)) > 0)
         {
             if (body.Length + read > MaximumResponseBytes)
                 throw new InvalidDataException("Language detection response exceeds its supported size.");
-            await body.WriteAsync(buffer.AsMemory(0, read), deadline.Token);
+            await body.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
         }
         using var document = JsonDocument.Parse(body.GetBuffer().AsMemory(0, checked((int)body.Length)));
         if (document.RootElement.ValueKind != JsonValueKind.Array ||
@@ -83,7 +92,7 @@ public sealed class AzureDocumentLanguageDetector(
                 throw UnknownLanguage();
             languages.Add(language);
         }
-        return new(languages.Count == 1 ? languages.Single() : "mul");
+        return languages;
     }
 
     public void Dispose() => httpClient.Dispose();
@@ -91,17 +100,28 @@ public sealed class AzureDocumentLanguageDetector(
     internal static IReadOnlyList<string> Samples(string text)
     {
         const int length = 1500;
+        if (text.Length > MaximumSourceCharacters) throw UnknownLanguage();
         var result = new List<string>();
-        foreach (var start in new[] { 0, Math.Max(0, text.Length / 2 - length / 2),
-                     Math.Max(0, text.Length - length) }.Distinct())
+        var distinct = new HashSet<string>(StringComparer.Ordinal);
+        for (var offset = 0; offset < text.Length;)
         {
-            var offset = start;
-            if (offset > 0 && Char.IsLowSurrogate(text[offset])) offset--;
-            var count = Math.Min(length, text.Length - offset);
+            var remaining = text.Length - offset;
+            var count = remaining > length && remaining < length + 300
+                ? remaining / 2 : Math.Min(length, remaining);
             if (count > 0 && offset + count < text.Length && Char.IsHighSurrogate(text[offset + count - 1])) count--;
+            if (count < remaining)
+            {
+                for (var end = offset + count; end > offset + count - 128 && end > offset; end--)
+                {
+                    if (!Char.IsWhiteSpace(text[end - 1])) continue;
+                    count = end - offset;
+                    break;
+                }
+            }
             var sample = text.Substring(offset, count);
-            if (sample.Count(Char.IsLetter) >= 20 && !result.Contains(sample, StringComparer.Ordinal))
+            if (sample.Any(Char.IsLetter) && distinct.Add(sample))
                 result.Add(sample);
+            offset += count;
         }
         return result;
     }
@@ -118,7 +138,8 @@ public sealed class AzureDocumentLanguageDetector(
     }
 
     private static DocumentTranslationFailureException UnknownLanguage() => new(
-        "LanguageUndetermined", "Source language could not be established reliably; translation was not attempted.", "und");
+        "LanguageUndetermined",
+        "Source language could not be established reliably across the source text; translation was not attempted.", "und");
 }
 
 internal sealed class UnconfiguredDocumentLanguageDetector : IDocumentLanguageDetector

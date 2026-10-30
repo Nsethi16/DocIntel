@@ -26,6 +26,7 @@
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\AskAiRunDiagnostic.cs" Link="Diagnostics\AskAiRunDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\AskAiDataDiagnostic.cs" Link="Diagnostics\AskAiDataDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\DocumentJobDiagnostic.cs" Link="Diagnostics\DocumentJobDiagnostic.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Diagnostics\ProcessingAcceptanceDiagnostic.cs" Link="Diagnostics\ProcessingAcceptanceDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\AskAiContractDiagnostic.cs" Link="Diagnostics\AskAiContractDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\AskAiSyntheticDiagnostic.cs" Link="Diagnostics\AskAiSyntheticDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\DirectoryConnectionDiagnostic.cs" Link="Diagnostics\DirectoryConnectionDiagnostic.cs" />

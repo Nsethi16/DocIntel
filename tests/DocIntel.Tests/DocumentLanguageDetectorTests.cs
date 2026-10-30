@@ -32,7 +32,7 @@ public sealed class DocumentLanguageDetectorTests
         Assert.Equal("Bearer", handler.Authorization!.Scheme);
         Assert.Equal("private-test-token", handler.Authorization.Parameter);
         using var body = JsonDocument.Parse(handler.Body!);
-        Assert.InRange(body.RootElement.GetArrayLength(), 1, 3);
+        Assert.InRange(body.RootElement.GetArrayLength(), 1, 30);
         Assert.All(body.RootElement.EnumerateArray(), item =>
             Assert.InRange(item.GetProperty("Text").GetString()!.Length, 1, 1500));
         Assert.Equal(1, handler.Calls);
@@ -53,6 +53,98 @@ public sealed class DocumentLanguageDetectorTests
 
         // Assert
         Assert.Equal("mul", result.Language);
+    }
+
+    [Fact]
+    public async Task Foreign_Sections_Outside_Leading_Middle_And_Trailing_Windows_Are_Not_Skipped()
+    {
+        // Arrange
+        var handler = new DetectorHandler((_, body) =>
+        {
+            using var request = JsonDocument.Parse(body);
+            return request.RootElement.EnumerateArray().Select(item => new
+            {
+                language = item.GetProperty("Text").GetString()!.Contains('b') ? "es" : "en",
+                score = 1.0, isTranslationSupported = true
+            }).ToArray();
+        });
+        using var detector = new AzureDocumentLanguageDetector(
+            new HttpClient(handler), Credential().Object, new Uri("https://translator.example/"));
+        var text = new string('a', 3000) + new string('b', 3000) + new string('a', 12000);
+
+        // Act
+        var result = await detector.DetectAsync(text);
+
+        // Assert
+        Assert.Equal("mul", result.Language);
+    }
+
+    [Fact]
+    public async Task Large_Source_Is_Fully_Covered_By_Multiple_Bounded_Detect_Requests()
+    {
+        // Arrange
+        var handler = new DetectorHandler((count, _) => Enumerable.Range(0, count)
+            .Select(_ => new { language = "en", score = 1.0, isTranslationSupported = true }).ToArray());
+        using var detector = new AzureDocumentLanguageDetector(
+            new HttpClient(handler), Credential().Object, new Uri("https://translator.example/"));
+        var source = String.Concat(Enumerable.Range(0, 1000)
+            .Select(index => $"English source paragraph {index:D4}, with distinct evidence and complete language coverage.\n"));
+
+        // Act
+        var result = await detector.DetectAsync(source);
+
+        // Assert
+        Assert.Equal("en", result.Language);
+        Assert.True(handler.Calls > 1);
+        var sent = new List<string>();
+        foreach (var body in handler.Bodies)
+        {
+            using var document = JsonDocument.Parse(body);
+            var texts = document.RootElement.EnumerateArray().Select(item => item.GetProperty("Text").GetString()!).ToArray();
+            Assert.InRange(texts.Length, 1, 30);
+            Assert.InRange(texts.Sum(text => text.Length), 1, 45_000);
+            sent.AddRange(texts);
+        }
+        Assert.Equal(source, String.Concat(sent));
+    }
+
+    [Fact]
+    public async Task Source_Beyond_Whole_Text_Detection_Budget_Is_Unknown_Not_A_Sampled_English_Skip()
+    {
+        // Arrange
+        var credential = Credential();
+        var handler = new DetectorHandler((_, _) => throw new InvalidOperationException("No provider request expected."));
+        using var detector = new AzureDocumentLanguageDetector(
+            new HttpClient(handler), credential.Object, new Uri("https://translator.example/"));
+
+        // Act
+        var failure = await Assert.ThrowsAsync<DocumentTranslationFailureException>(() =>
+            detector.DetectAsync(new string('a', 1_000_001)));
+
+        // Assert
+        Assert.Equal("LanguageUndetermined", failure.Code);
+        Assert.Equal(0, handler.Calls);
+        credential.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(1501)]
+    [InlineData(3001)]
+    public async Task Chunking_Does_Not_Classify_A_Tiny_Trailing_Word_Fragment_As_A_Separate_Language(int length)
+    {
+        // Arrange
+        var handler = new DetectorHandler((count, _) => Enumerable.Range(0, count)
+            .Select(_ => new { language = "en", score = 1.0, isTranslationSupported = true }).ToArray());
+        using var detector = new AzureDocumentLanguageDetector(
+            new HttpClient(handler), Credential().Object, new Uri("https://translator.example/"));
+
+        // Act
+        await detector.DetectAsync(new string('a', length));
+
+        // Assert
+        using var body = JsonDocument.Parse(handler.Body!);
+        Assert.All(body.RootElement.EnumerateArray(), item =>
+            Assert.InRange(item.GetProperty("Text").GetString()!.Length, 300, 1500));
     }
 
     [Fact]
@@ -103,6 +195,7 @@ public sealed class DocumentLanguageDetectorTests
         public Uri? Uri { get; private set; }
         public System.Net.Http.Headers.AuthenticationHeaderValue? Authorization { get; private set; }
         public string? Body { get; private set; }
+        public List<string> Bodies { get; } = [];
 
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
@@ -111,6 +204,7 @@ public sealed class DocumentLanguageDetectorTests
             Authorization = request.Headers.Authorization;
             Assert.Equal(HttpMethod.Post, request.Method);
             Body = await request.Content!.ReadAsStringAsync(token);
+            Bodies.Add(Body);
             using var document = JsonDocument.Parse(Body);
             return new(HttpStatusCode.OK)
             {

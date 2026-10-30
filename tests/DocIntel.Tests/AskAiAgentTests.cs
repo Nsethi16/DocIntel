@@ -508,16 +508,22 @@ public sealed class AskAiAgentTests
     }
 
     [Theory]
-    [InlineData(64, false)]
-    [InlineData(5_000, true)]
+    [InlineData(64, false, false)]
+    [InlineData(64, false, true)]
+    [InlineData(5_000, true, false)]
     public async Task File_Insights_Are_Explicitly_Scoped_Context_And_Not_Source_Citation_Text(
-        int summaryLength, bool truncated)
+        int summaryLength, bool truncated, bool translationFailed)
     {
         // Arrange
         var store = await CreateDocumentStoreAsync();
         var job = (await store.GetJobAsync("source", tenantId: "tenant-one"))!;
         job.PacketSummary = new string('x', summaryLength);
         job.Segments[0].InsightSummary = null;
+        job.Segments[0].DetectedLanguage = translationFailed ? "fr" : "en";
+        job.Segments[0].TargetLanguage = "en";
+        job.Segments[0].TranslationErrorCode = translationFailed ? "TranslationProviderFailed" : null;
+        if (translationFailed)
+            job.ExecutionTrace = [new("TranslateDocumentsExecutor", true, false, null, 1, "Unavailable")];
         await store.UpsertJobAsync(job);
         var tenant = new TenantHarness { TenantId = "tenant-one", DisplayName = "Test" };
         var harness = new Mock<IHarnessStore>();
@@ -556,6 +562,13 @@ public sealed class AskAiAgentTests
         Assert.Equal(job.PacketSummary[..Math.Min(4_000, summaryLength)],
             result.RootElement.GetProperty("fileInsight").GetProperty("summary").GetString());
         Assert.Equal(truncated, result.RootElement.GetProperty("fileInsight").GetProperty("summaryTruncated").GetBoolean());
+        Assert.Equal(translationFailed, result.RootElement.GetProperty("hasProcessingWarnings").GetBoolean());
+        Assert.False(result.RootElement.GetProperty("wasTranslated").GetBoolean());
+        Assert.Equal(translationFailed ? "fr" : "en",
+            result.RootElement.GetProperty("detectedLanguage").GetString());
+        Assert.Equal(translationFailed ? "TranslationProviderFailed" : null,
+            result.RootElement.GetProperty("translationErrorCode").GetString());
+        Assert.Equal(job.Segments[0].BodyText, result.RootElement.GetProperty("sourceText").GetString());
         Assert.DoesNotContain(job.PacketSummary!, Assert.Single(run.Citations).Excerpt);
     }
 

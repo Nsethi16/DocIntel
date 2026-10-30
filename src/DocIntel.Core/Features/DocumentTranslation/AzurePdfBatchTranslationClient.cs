@@ -51,9 +51,9 @@ public sealed class AzurePdfBatchTranslationClient(
         var sourceContainer = storage.GetBlobContainerClient(options.SourceContainerName);
         var targetContainer = storage.GetBlobContainerClient(options.TargetContainerName);
         var id = Guid.NewGuid().ToString("N");
-        var source = sourceContainer.GetBlobClient(id + "/source.pdf");
-        var target = targetContainer.GetBlobClient(id + "/translated.pdf");
-        var glossary = sourceContainer.GetBlobClient(id + "/protected.tsv");
+        var source = sourceContainer.GetBlobClient("docintel-translation-v1/" + id + "/source.pdf");
+        var target = targetContainer.GetBlobClient("docintel-translation-v1/" + id + "/translated.pdf");
+        var glossary = sourceContainer.GetBlobClient("docintel-translation-v1/" + id + "/protected.tsv");
         DocumentTranslationOperation? operation = null;
         Exception? pending = null;
         var owned = new List<BlobClient>();
@@ -129,7 +129,6 @@ public sealed class AzurePdfBatchTranslationClient(
         }
         finally
         {
-            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             Exception? cleanupFailure = null;
             async Task AttemptAsync(Func<Task> work)
             {
@@ -142,7 +141,16 @@ public sealed class AzurePdfBatchTranslationClient(
                 }
             }
             if (pending is not null && operation is not null && !operation.HasCompleted)
-                await AttemptAsync(() => operation.CancelAsync(cleanup.Token));
+            {
+                using var stop = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                await AttemptAsync(() => operation.CancelAsync(stop.Token));
+                await AttemptAsync(async () =>
+                    { await operation.WaitForCompletionAsync(TimeSpan.FromSeconds(1), stop.Token); });
+                if (!operation.HasCompleted)
+                    logger.LogWarning(
+                        "Batch cancellation is not terminal; late staging output remains subject to deferred prefix expiry.");
+            }
+            using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(15));
             foreach (var blob in owned)
                 await AttemptAsync(async () => { await blob.DeleteIfExistsAsync(cancellationToken: cleanup.Token); });
             if (pending is null && cleanupFailure is not null)

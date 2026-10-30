@@ -37,7 +37,7 @@ test('recent failure references can only be inspected and cannot authorize a rep
 });
 
 test('contract probing is a distinct document-free mode and does not weaken saved-question replay approval', () => {
-  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe\]/);
+  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic\]/);
   assert.match(workflow, /Contract checks do not accept saved run identifiers/);
   assert.match(workflow, /"--diagnose-ask-contract", "true"/);
   assert.match(workflow, /"--diagnose-ask-synthetic", "true"/);
@@ -52,6 +52,7 @@ test('contract probing is a distinct document-free mode and does not weaken save
 test('document lookup uses opaque references and translation probing needs its own explicit confirmation', () => {
   assert.match(workflow, /SHA-256 of its exact UTF-8 filename/);
   assert.match(workflow, /TranslationProbe requires the exact confirmation PROBE/);
+  assert.match(workflow, /DocumentReprocess requires the exact confirmation REPROCESS/);
   assert.match(workflow, /A glossary comparison requires an explicit TranslationProbe/);
   assert.match(workflow, /options: \[Configured, WithoutGlossary\]/);
   assert.match(workflow, /"--diagnose-document", os.environ\["DIAGNOSTIC_RUN"\]/);

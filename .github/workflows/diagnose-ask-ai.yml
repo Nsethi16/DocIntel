@@ -4,20 +4,20 @@ on:
   workflow_dispatch:
     inputs:
       tenant_id:
-        description: Application tenant containing the failed run.
+        description: Application workspace for saved diagnostics or synthetic acceptance checks.
         type: string
         default: contoso-legal
       run_id:
-        description: Run ID; Inspect accepts recent. Document accepts a document ID or SHA-256 of its exact UTF-8 filename.
+        description: Run/document ID; Inspect accepts recent and Document also accepts an exact-filename SHA-256. Synthetic modes require empty.
         type: string
         required: false
       mode:
-        description: Inspect reads metadata. Data checks storage with no model calls or question replay. Contract checks API shapes. Synthetic tests fake quotes. Replay uses a saved question.
+        description: Inspect/Data read metadata. Contract/Synthetic test Ask AI. Document inspects uploads; DocumentReprocess explicitly retries one. ProcessingSynthetic/TranslationSynthetic use authored PDFs.
         type: choice
-        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe]
+        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic]
         default: Inspect
       confirmation:
-        description: REPLAY authorizes an in-memory question replay; PROBE authorizes one in-memory translation request. Provider usage can incur charges.
+        description: REPLAY authorizes a question replay; PROBE a translation probe; REPROCESS explicitly retries a failed upload through normal processing. Provider usage can incur charges.
         type: string
         default: ''
       translation_variant:
@@ -65,19 +65,22 @@ jobs:
           if ($env:DIAGNOSTIC_MODE -eq 'TranslationProbe' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'PROBE') {
             throw 'TranslationProbe requires the exact confirmation PROBE.'
           }
+          if ($env:DIAGNOSTIC_MODE -eq 'DocumentReprocess' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'REPROCESS') {
+            throw 'DocumentReprocess requires the exact confirmation REPROCESS.'
+          }
           if ($env:TRANSLATION_VARIANT -and $env:TRANSLATION_VARIANT -notin @('Configured', 'WithoutGlossary') -or
             $env:TRANSLATION_VARIANT -eq 'WithoutGlossary' -and $env:DIAGNOSTIC_MODE -ne 'TranslationProbe') {
             throw 'A glossary comparison requires an explicit TranslationProbe.'
           }
-          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe')) { throw 'Invalid diagnostic mode.' }
+          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe', 'DocumentReprocess', 'ProcessingSynthetic', 'TranslationSynthetic')) { throw 'Invalid diagnostic mode.' }
           if ($env:DIAGNOSTIC_TENANT -notmatch '^[a-z0-9][a-z0-9-]{0,127}$' -or
-            ($env:DIAGNOSTIC_MODE -notin @('Contract', 'Synthetic') -and
+            ($env:DIAGNOSTIC_MODE -notin @('Contract', 'Synthetic', 'ProcessingSynthetic', 'TranslationSynthetic') -and
              $env:DIAGNOSTIC_RUN -notmatch '^[a-fA-F0-9]{32}$' -and
              -not ($env:DIAGNOSTIC_MODE -eq 'Document' -and $env:DIAGNOSTIC_RUN -match '^[a-fA-F0-9]{64}$') -and
              -not ($env:DIAGNOSTIC_MODE -eq 'Inspect' -and $env:DIAGNOSTIC_RUN -ceq 'recent'))) {
             throw 'Invalid tenant/run identifiers.'
           }
-          if ($env:DIAGNOSTIC_MODE -in @('Contract', 'Synthetic') -and $env:DIAGNOSTIC_RUN) {
+          if ($env:DIAGNOSTIC_MODE -in @('Contract', 'Synthetic', 'ProcessingSynthetic', 'TranslationSynthetic') -and $env:DIAGNOSTIC_RUN) {
             throw 'Contract checks do not accept saved run identifiers.'
           }
           $values = @($env:PERSONAL_CLIENT_ID, $env:PERSONAL_TENANT_ID, $env:PERSONAL_SUBSCRIPTION_ID)
@@ -119,7 +122,16 @@ jobs:
           if not replicas:
               raise RuntimeError("The current revision has no active replica.")
           replay = "true" if os.environ["DIAGNOSTIC_MODE"] == "Replay" else "false"
-          if os.environ["DIAGNOSTIC_MODE"] in ("Document", "TranslationProbe"):
+          if os.environ["DIAGNOSTIC_MODE"] == "DocumentReprocess":
+              diagnostic = shlex.join([
+                  "dotnet", "/app/DocIntel.Api.dll", "--reprocess-document", os.environ["DIAGNOSTIC_RUN"],
+                  "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"]])
+          elif os.environ["DIAGNOSTIC_MODE"] in ("ProcessingSynthetic", "TranslationSynthetic"):
+              flag = "--diagnose-processing-synthetic" if os.environ["DIAGNOSTIC_MODE"] == "ProcessingSynthetic" else "--diagnose-translation-synthetic"
+              diagnostic = shlex.join([
+                  "dotnet", "/app/DocIntel.Api.dll", flag, "true",
+                  "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"]])
+          elif os.environ["DIAGNOSTIC_MODE"] in ("Document", "TranslationProbe"):
               diagnostic = shlex.join([
                   "dotnet", "/app/DocIntel.Api.dll", "--diagnose-document", os.environ["DIAGNOSTIC_RUN"],
                   "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"],
@@ -164,15 +176,16 @@ jobs:
                   "variant", "model", "modelProvider", "calls", "analyses", "runId", "createdAtUtc",
                   "completedAtUtc", "lastStep", "analyticalAttempts", "matches", "subStatus",
                   "hasBarChart", "jobId", "pages", "slices", "identifiedSlices", "translatedSlices",
-                  "stage", "sliceIndex", "decisionCompleted") if key in value}
+                  "stage", "sliceIndex", "decisionCompleted", "hasWarnings", "insightCount", "entityCount",
+                  "structuredDocuments", "promptResults", "detectedLanguages", "failedStages") if key in value}
               print(json.dumps(safe))
               records.append(safe)
           if not records:
               raise RuntimeError("The runtime diagnostic returned no verified result. Raw process output was not published.")
-          expected_phase = os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "TranslationProbe") else (
+          expected_phase = os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic") else (
               "Replay" if replay == "true" else "Stored")
           if records[-1].get("phase") != expected_phase:
               raise RuntimeError("The requested diagnostic did not complete.")
-          if records[-1].get("status") in ("Refused", "NotFound") or (
-                  expected_phase in ("Data", "Replay", "Contract", "Synthetic", "TranslationProbe") and records[-1].get("status") == "Failed"):
+          if records[-1].get("status") in ("Refused", "NotFound", "Pending") or (
+                  expected_phase in ("Data", "Replay", "Contract", "Synthetic", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic") and records[-1].get("status") == "Failed"):
               sys.exit(1)

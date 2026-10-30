@@ -64,6 +64,33 @@ public sealed class ConservativeGroupingTests
     }
 
     [Fact]
+    public void Continuous_Packet_Numbering_Does_Not_Override_Distinct_Explicit_Form_Identifiers()
+    {
+        // Arrange
+        var pages = new[]
+        {
+            new PageLayout
+            {
+                PageNumber = 1, SubDocPageNumber = 1, SubDocTotalPages = 2,
+                BodyText = "Formulario de acuerdo", FooterText = "Form-MBSA-v1"
+            },
+            new PageLayout
+            {
+                PageNumber = 2, SubDocPageNumber = 2, SubDocTotalPages = 2,
+                BodyText = "Formulario de inscripcion", FooterText = "Form-EA-v1"
+            }
+        };
+
+        // Act
+        var slices = SliceBoundaryAnalyzer.GroupPagesHeuristically(pages, new SplittingConfig());
+
+        // Assert
+        Assert.Equal(2, slices.Count);
+        Assert.Equal((1, 1), (slices[0].StartPage, slices[0].EndPage));
+        Assert.Equal((2, 2), (slices[1].StartPage, slices[1].EndPage));
+    }
+
+    [Fact]
     public void Different_Real_Form_Numbers_Are_Not_Normalized_As_An_OCR_Typo()
     {
         // Arrange

@@ -254,7 +254,8 @@ public static class SliceBoundaryAnalyzer
             var paginationReset = page.SubDocPageNumber == 1 && previous?.SubDocPageNumber is { } preceding &&
                 (preceding > 1 || previous.SubDocTotalPages == 1);
             var footerChanged = footerKey.Length > 0 && currentFooterKey.Length > 0 &&
-                !continuesPagination && !AreFootersSimilar(footerKey, currentFooterKey, boundarySimilarityThreshold);
+                (!continuesPagination || ExplicitFormKey(footerKey) && ExplicitFormKey(currentFooterKey)) &&
+                !AreFootersSimilar(footerKey, currentFooterKey, boundarySimilarityThreshold);
             var amendmentChanged = page.IsAmendment && !String.IsNullOrWhiteSpace(page.AmendmentId) &&
                                    !string.Equals(page.AmendmentId, currentAmendmentType, StringComparison.OrdinalIgnoreCase);
             var typeChanged = type is not null && currentType is not null &&
@@ -349,6 +350,10 @@ public static class SliceBoundaryAnalyzer
         }
         return String.Join(",", identifiers.Distinct(StringComparer.OrdinalIgnoreCase));
     }
+
+    private static bool ExplicitFormKey(string value) => value.Split(',').Any(part => Regex.IsMatch(part,
+        @"^(?:Form[-_]|Document[A-Z]?\d|MSQuote|ProgramSignForm|VLAmendments|[A-Z]\d{2}[-_]\d{4})",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
 
     private static string? HeaderDocumentType(string text, IReadOnlyList<string> names)
     {

@@ -161,7 +161,7 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
                 failure.Language ?? sourceLanguage, failure.ProviderStatus, failure);
         }
         catch (Exception exception) when (exception is RequestFailedException or HttpRequestException or
-            AuthenticationFailedException or JsonException or InvalidDataException or FormatException or
+            AuthenticationFailedException or JsonException or InvalidDataException or IOException or FormatException or
             TimeoutException or OperationCanceledException)
         {
             var status = exception is RequestFailedException azureFailure ? azureFailure.Status :

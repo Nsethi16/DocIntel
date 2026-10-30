@@ -40,6 +40,7 @@ public sealed class PdfBatchTranslationTests
             It.IsAny<CancellationToken>()), Times.Once));
         Assert.DoesNotContain(fixture.Uploads, upload => upload.Key.Contains("tenant", StringComparison.Ordinal));
         Assert.All(fixture.Uploads, upload => Assert.Equal(ETag.All, upload.Options.Conditions.IfNoneMatch));
+        Assert.All(fixture.Blobs.Keys, key => Assert.Contains("/docintel-translation-v1/", key));
         fixture.Operation.Verify(operation => operation.CancelAsync(It.IsAny<CancellationToken>()), Times.Never);
     }
 
@@ -97,7 +98,7 @@ public sealed class PdfBatchTranslationTests
     }
 
     [Fact]
-    public async Task Cancellation_Stops_The_Server_Operation_And_Does_Not_Produce_A_Translated_Success()
+    public async Task Cancellation_Requests_Server_Stop_And_Does_Not_Produce_A_Translated_Success()
     {
         // Arrange
         var fixture = new Fixture { Completed = false };
@@ -120,6 +121,39 @@ public sealed class PdfBatchTranslationTests
         Assert.Equal(2, fixture.Deleted.Count);
     }
 
+    [Fact]
+    public async Task Cancellation_Waits_For_Terminal_State_Before_The_Final_Staging_Deletion()
+    {
+        // Arrange
+        var fixture = new Fixture { Completed = false };
+        using var cancellation = new CancellationTokenSource();
+        var calls = 0;
+        fixture.Operation.Setup(operation => operation.WaitForCompletionAsync(
+                It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
+            .Returns((TimeSpan _, CancellationToken token) =>
+            {
+                if (++calls == 1)
+                {
+                    cancellation.Cancel();
+                    return ValueTask.FromException<Response<AsyncPageable<DocumentStatusResult>>>(
+                        new OperationCanceledException(cancellation.Token));
+                }
+                Assert.False(token.IsCancellationRequested);
+                fixture.Completed = true;
+                fixture.Events.Add("terminal");
+                return ValueTask.FromResult(Response.FromValue(
+                    AsyncPageable<DocumentStatusResult>.FromPages([]), Mock.Of<Response>()));
+            });
+
+        // Act
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            fixture.Client.TranslateAsync("%PDF-source"u8.ToArray(), "fr", "en", [], cancellation.Token));
+
+        // Assert
+        Assert.Equal(2, calls);
+        Assert.Equal(new[] { "cancel", "terminal", "delete", "delete" }, fixture.Events);
+    }
+
     private sealed class Fixture
     {
         public Mock<BlobServiceClient> Storage { get; } = new();
@@ -128,6 +162,7 @@ public sealed class PdfBatchTranslationTests
         public Dictionary<string, Mock<BlobClient>> Blobs { get; } = new(StringComparer.Ordinal);
         public List<(string Key, BlobUploadOptions Options)> Uploads { get; } = [];
         public List<string> Deleted { get; } = [];
+        public List<string> Events { get; } = [];
         public DocumentTranslationInput? Input { get; private set; }
         public bool WrongTarget { get; set; }
         public bool TargetExists { get; set; }
@@ -148,7 +183,8 @@ public sealed class PdfBatchTranslationTests
                     It.IsAny<TimeSpan>(), It.IsAny<CancellationToken>()))
                 .Returns(() => ValueTask.FromResult(Response.FromValue(Results(), Mock.Of<Response>())));
             Operation.Setup(operation => operation.GetValuesAsync(It.IsAny<CancellationToken>())).Returns(Results);
-            Operation.Setup(operation => operation.CancelAsync(It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
+            Operation.Setup(operation => operation.CancelAsync(It.IsAny<CancellationToken>()))
+                .Callback(() => Events.Add("cancel")).Returns(Task.CompletedTask);
             Client = new(Storage.Object, Provider.Object, new(), NullLogger<AzurePdfBatchTranslationClient>.Instance);
         }
 
@@ -189,7 +225,7 @@ public sealed class PdfBatchTranslationTests
                         BlobsModelFactory.BlobDownloadStreamingResult(new MemoryStream(Output)), Mock.Of<Response>())));
                 blob.Setup(value => value.DeleteIfExistsAsync(It.IsAny<DeleteSnapshotsOption>(),
                         It.IsAny<BlobRequestConditions>(), It.IsAny<CancellationToken>()))
-                    .Callback(() => Deleted.Add(key))
+                    .Callback(() => { Deleted.Add(key); Events.Add("delete"); })
                     .ReturnsAsync(Response.FromValue(true, Mock.Of<Response>()));
                 Blobs[key] = blob;
                 return blob.Object;

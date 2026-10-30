@@ -762,6 +762,13 @@ public sealed class AskAiOrchestrator
                     job.FileName,
                     job.HasDevelopmentResults,
                     job.AppliedHarnessVersion,
+                    hasProcessingWarnings = job.HasWarnings,
+                    failedFeatures = job.ExecutionTrace.Where(step => step.Executed && !step.Succeeded)
+                        .Select(step => step.ExecutorName).Distinct().ToArray(),
+                    detectedLanguage = slice.DetectedLanguage,
+                    targetLanguage = slice.TargetLanguage,
+                    wasTranslated = slice.WasTranslated,
+                    translationErrorCode = slice.TranslationErrorCode,
                     sliceIndex,
                     slice.StartPage,
                     slice.EndPage,
@@ -931,6 +938,9 @@ public sealed class AskAiOrchestrator
                 or evidence limits; never claim a sampled search covered the entire corpus.
                 fileInsight is complete-file derived context, not a quotation from the inspected slice.
                 summaryTruncated=true marks a preview; inspect original sourceText to substantiate each claim.
+                hasProcessingWarnings and translationErrorCode describe failed optional features, not missing source.
+                Use available original evidence; disclose translation limitations when material.
+                Never describe an untranslated original as translated or infer zero values from a feature failure.
                 hasDevelopmentResults=true means derived results include development simulation;
                 null means legacy provenance is unknown. Ground factual claims in original source text,
                 not those unverified derived results.

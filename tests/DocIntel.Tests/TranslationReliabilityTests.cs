@@ -64,6 +64,36 @@ public sealed class TranslationReliabilityTests
         batch.VerifyNoOtherCalls();
     }
 
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task Provider_Response_IO_Failures_Are_Explicit_Translation_Only_Failures(bool detectFailure)
+    {
+        // Arrange
+        var detector = Detector("fr");
+        var batch = new Mock<IPdfBatchTranslationClient>(MockBehavior.Strict);
+        if (detectFailure)
+            detector.Setup(client => client.DetectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new IOException("Interrupted private provider response."));
+        else
+            batch.Setup(client => client.TranslateAsync(
+                    It.IsAny<byte[]>(), "fr", "en", It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+                .ThrowsAsync(new IOException("Interrupted private output stream."));
+        var service = new AzureDocumentTranslationService(detector.Object, batch.Object);
+        var original = "%PDF-source"u8.ToArray();
+
+        // Act
+        var failure = await Assert.ThrowsAsync<DocumentTranslationFailureException>(() =>
+            service.TranslatePdfSliceAsync(original, "source.pdf", "Original source", [],
+                "en", "https://translator.example/", []));
+
+        // Assert
+        Assert.Equal("TranslationProviderFailed", failure.Code);
+        Assert.DoesNotContain("private", failure.Message);
+        Assert.IsType<IOException>(failure.InnerException);
+        Assert.Equal("%PDF-source"u8.ToArray(), original);
+    }
+
     [Fact]
     public async Task Translation_Failure_Is_Explicit_And_Does_Not_Destroy_Original_Source()
     {

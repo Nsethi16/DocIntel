@@ -18,8 +18,12 @@ var askContractMode = args.Contains("--diagnose-ask-contract", StringComparer.Or
 var askSyntheticMode = args.Contains("--diagnose-ask-synthetic", StringComparer.Ordinal);
 var askDataMode = args.Contains("--diagnose-ask-data", StringComparer.Ordinal);
 var documentDiagnosticMode = args.Contains("--diagnose-document", StringComparer.Ordinal);
+var documentReprocessMode = args.Contains("--reprocess-document", StringComparer.Ordinal);
+var processingSyntheticMode = args.Contains("--diagnose-processing-synthetic", StringComparer.Ordinal);
+var translationSyntheticMode = args.Contains("--diagnose-translation-synthetic", StringComparer.Ordinal);
 var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal) ||
-    askContractMode || askSyntheticMode || askDataMode || documentDiagnosticMode;
+    askContractMode || askSyntheticMode || askDataMode || documentDiagnosticMode ||
+    documentReprocessMode || processingSyntheticMode || translationSyntheticMode;
 WebApplicationBuilder builder;
 try
 {
@@ -101,6 +105,37 @@ builder.Services.AddHostedService<AskAiRunWorker>();
 builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);
 
 var app = builder.Build();
+if (documentReprocessMode)
+{
+    Environment.ExitCode = await ProcessingAcceptanceDiagnostic.ReprocessAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty,
+        builder.Configuration["reprocess-document"] ?? String.Empty, startupReadiness.ProbeModelsOnStartup,
+        app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobQueue>(),
+        app.Services.GetRequiredService<DocIntel.Core.Authorization.ITenantAccessResolver>(),
+        app.Services.GetRequiredService<DocIntel.Core.Storage.IArtifactStore>(), Console.Out);
+    await app.DisposeAsync();
+    return;
+}
+if (translationSyntheticMode)
+{
+    Environment.ExitCode = await ProcessingAcceptanceDiagnostic.TranslationAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty, startupReadiness.ProbeModelsOnStartup,
+        app.Services.GetRequiredService<DocIntel.Core.Features.DocumentTranslation.IDocumentTranslationService>(),
+        app.Services.GetRequiredService<DocIntel.Core.Features.DocumentTranslation.IDocumentLanguageDetector>(),
+        app.Services.GetRequiredService<DocIntel.Core.AzureIntegrationOptions>(), Console.Out);
+    await app.DisposeAsync();
+    return;
+}
+if (processingSyntheticMode)
+{
+    Environment.ExitCode = await ProcessingAcceptanceDiagnostic.PartialAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty, startupReadiness.ProbeModelsOnStartup,
+        app.Services.GetRequiredService<DocIntel.Core.Harness.IHarnessStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Models.IModelCatalog>(), Console.Out);
+    await app.DisposeAsync();
+    return;
+}
 if (documentDiagnosticMode)
 {
     Environment.ExitCode = await DocumentJobDiagnostic.ExecuteAsync(

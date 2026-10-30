@@ -159,7 +159,7 @@ public static class DocumentJobDiagnostic
         }
     }
 
-    private static Task WriteAsync(TextWriter output, string phase, string status, string failureCode,
+    internal static Task WriteAsync(TextWriter output, string phase, string status, string failureCode,
         DocumentJob? job = null, string? stage = null, int? sliceIndex = null, int? httpStatus = null,
         string? providerCode = null, IReadOnlyList<string>? providerHints = null, string? variant = null) =>
         output.WriteLineAsync("DOCINTEL_DIAGNOSTIC " + JsonSerializer.Serialize(new
@@ -171,6 +171,17 @@ public static class DocumentJobDiagnostic
             decisionCompleted = job?.ExecutionTrace.Any(step => step.ExecutorName == "IdentifyDocumentsExecutor" &&
                 step.Executed && step.Succeeded && step.ModelIdUsed == "decision-1"),
             identifiedSlices = job?.Segments.Count(slice => !String.IsNullOrWhiteSpace(slice.IdentifiedDocumentName)),
-            translatedSlices = job?.Segments.Count(slice => slice.WasTranslated)
+            translatedSlices = job?.Segments.Count(slice => slice.WasTranslated),
+            hasWarnings = job?.HasWarnings,
+            insightCount = job is null ? 0 : (String.IsNullOrWhiteSpace(job.PacketSummary) ? 0 : 1) +
+                job.Segments.Count(slice => !String.IsNullOrWhiteSpace(slice.InsightSummary)),
+            entityCount = job?.ExtractedEntities.Count,
+            structuredDocuments = job?.DataExtractions.Count,
+            promptResults = job?.PromptColumnResults.Count,
+            detectedLanguages = job?.Segments.Select(slice => slice.DetectedLanguage)
+                .Where(language => language is not null && Regex.IsMatch(language, "^[a-zA-Z]{2,3}(?:-[a-zA-Z]{2,4})?$"))
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+            failedStages = job?.ExecutionTrace.Where(step => step.Executed && !step.Succeeded && Stages.Contains(step.ExecutorName))
+                .Select(step => step.ExecutorName).Distinct().ToArray()
         }));
 }
