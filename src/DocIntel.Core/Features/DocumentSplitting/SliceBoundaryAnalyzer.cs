@@ -34,7 +34,8 @@ public static class SliceBoundaryAnalyzer
 
     public static List<DocumentSlice> GroupPagesHeuristically(
         IReadOnlyList<PageLayout> pages,
-        SplittingConfig config)
+        SplittingConfig config,
+        IReadOnlyList<string>? documentNames = null)
     {
         ArgumentNullException.ThrowIfNull(pages);
         ArgumentNullException.ThrowIfNull(config);
@@ -53,7 +54,8 @@ public static class SliceBoundaryAnalyzer
             NormalizePageFootersBySimilarity(pages, config.FooterNormalizationThreshold);
         }
 
-        return ExtractSlices(pages, config.FooterBoundarySimilarityThreshold);
+        return ExtractSlices(pages, config.FooterBoundarySimilarityThreshold,
+            documentNames ?? config.ExpectedDocumentTypes.Where(entry => entry.IsActive).Select(entry => entry.Name).ToArray());
     }
 
     /// <summary>
@@ -114,7 +116,12 @@ public static class SliceBoundaryAnalyzer
             var compactFooter = page.FooterText.Replace(" ", string.Empty, StringComparison.Ordinal).ToLowerInvariant();
             var isAmendment = amendmentIndicators.Any(ind =>
                 !string.IsNullOrWhiteSpace(ind) &&
-                compactFooter.Contains(ind.Replace(" ", string.Empty, StringComparison.Ordinal).ToLowerInvariant(), StringComparison.Ordinal));
+                (ind.Trim().Length <= 3
+                    ? Regex.IsMatch(page.FooterText,
+                        $@"(?<![\p{{L}}\p{{N}}]){Regex.Escape(ind.Trim())}(?=[-_,;\s]|\p{{L}}?\d|$)",
+                        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant)
+                    : compactFooter.Contains(ind.Replace(" ", string.Empty, StringComparison.Ordinal).ToLowerInvariant(),
+                        StringComparison.Ordinal)));
 
             if (!isAmendment)
             {
@@ -160,7 +167,8 @@ public static class SliceBoundaryAnalyzer
     {
         ArgumentNullException.ThrowIfNull(pages);
 
-        var candidates = pages.Where(p => !p.IsAmendment && !string.IsNullOrWhiteSpace(p.FooterText)).ToList();
+        var candidates = pages.Where(p => !p.IsAmendment && p.FooterText.Length <= 240 &&
+            DocumentFooterKey(p.FooterText).Length > 0).ToList();
         if (candidates.Count <= 1)
         {
             return;
@@ -216,34 +224,45 @@ public static class SliceBoundaryAnalyzer
 
     public static List<DocumentSlice> ExtractSlices(
         IReadOnlyList<PageLayout> pages,
-        double boundarySimilarityThreshold = 0.90)
+        double boundarySimilarityThreshold = 0.90,
+        IReadOnlyList<string>? documentNames = null)
     {
+        ArgumentNullException.ThrowIfNull(pages);
+        if (pages.Count == 0) return [];
         var slices = new List<DocumentSlice>();
         var currentStart = pages[0].PageNumber;
         var currentIsAmendment = pages[0].IsAmendment;
-        var currentFooter = pages.Select(p => p.FooterText).FirstOrDefault(f => !string.IsNullOrEmpty(f)) ?? string.Empty;
+        var currentFooter = pages[0].FooterText;
+        var currentFooterKey = DocumentFooterKey(currentFooter);
         var currentAmendmentType = pages[0].AmendmentId;
-
-        var seenFooters = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-        if (!string.IsNullOrEmpty(currentFooter))
-        {
-            seenFooters[currentFooter] = currentFooter;
-        }
-
+        var currentType = HeaderDocumentType(pages[0].BodyText, documentNames ?? []);
+        var currentRecords = HeaderRecordIds(pages[0].BodyText);
         var bodyBuilder = new StringBuilder();
         var markdownBuilder = new StringBuilder();
         var sliceFooters = new List<string>();
 
-        foreach (var page in pages)
+        for (var index = 0; index < pages.Count; index++)
         {
-            var footerChanged = !string.IsNullOrEmpty(page.FooterText) &&
-                                !AreFootersSimilar(page.FooterText, currentFooter, boundarySimilarityThreshold);
-            var amendmentChanged = !string.IsNullOrEmpty(page.AmendmentId) &&
+            var page = pages[index];
+            var previous = index > 0 ? pages[index - 1] : null;
+            var footerKey = DocumentFooterKey(page.FooterText);
+            var type = HeaderDocumentType(page.BodyText, documentNames ?? []);
+            var records = HeaderRecordIds(page.BodyText);
+            var continuesPagination = previous?.SubDocPageNumber is { } previousNumber &&
+                page.SubDocPageNumber == previousNumber + 1 &&
+                page.SubDocTotalPages is { } total && total == previous.SubDocTotalPages;
+            var paginationReset = page.SubDocPageNumber == 1 && previous?.SubDocPageNumber is { } preceding &&
+                (preceding > 1 || previous.SubDocTotalPages == 1);
+            var footerChanged = footerKey.Length > 0 && currentFooterKey.Length > 0 &&
+                !continuesPagination && !AreFootersSimilar(footerKey, currentFooterKey, boundarySimilarityThreshold);
+            var amendmentChanged = page.IsAmendment && !String.IsNullOrWhiteSpace(page.AmendmentId) &&
                                    !string.Equals(page.AmendmentId, currentAmendmentType, StringComparison.OrdinalIgnoreCase);
-
-            var isNewBoundary = page.IsAmendment
-                ? (amendmentChanged && !string.IsNullOrEmpty(currentFooter))
-                : ((footerChanged || amendmentChanged) && !string.IsNullOrEmpty(currentFooter));
+            var typeChanged = type is not null && currentType is not null &&
+                !String.Equals(type, currentType, StringComparison.OrdinalIgnoreCase);
+            var recordChanged = records.Any(record => currentRecords.TryGetValue(record.Key, out var value) &&
+                !String.Equals(record.Value, value, StringComparison.OrdinalIgnoreCase));
+            var isNewBoundary = index > 0 &&
+                (footerChanged || amendmentChanged || paginationReset || typeChanged || recordChanged);
 
             if (isNewBoundary)
             {
@@ -265,23 +284,20 @@ public static class SliceBoundaryAnalyzer
 
                 currentStart = page.PageNumber;
                 currentIsAmendment = page.IsAmendment;
-
-                if (!string.IsNullOrEmpty(page.FooterText))
-                {
-                    if (seenFooters.TryGetValue(page.FooterText, out var existing))
-                    {
-                        currentFooter = existing;
-                    }
-                    else
-                    {
-                        currentFooter = page.FooterText;
-                        seenFooters[page.FooterText] = page.FooterText;
-                    }
-                }
-
+                currentFooter = page.FooterText;
+                currentFooterKey = footerKey;
                 currentAmendmentType = page.AmendmentId;
+                currentType = type;
+                currentRecords.Clear();
             }
 
+            if (currentFooterKey.Length == 0 && footerKey.Length > 0)
+            {
+                currentFooterKey = footerKey;
+                currentFooter = page.FooterText;
+            }
+            currentType ??= type;
+            foreach (var record in records) currentRecords[record.Key] = record.Value;
             if (!string.IsNullOrEmpty(page.AmendmentId))
             {
                 currentAmendmentType = page.AmendmentId;
@@ -313,6 +329,53 @@ public static class SliceBoundaryAnalyzer
             markdownBuilder.ToString()));
 
         return slices;
+    }
+
+    private static string DocumentFooterKey(string footer)
+    {
+        var identifiers = new List<string>();
+        foreach (var part in footer.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            var value = Regex.Replace(part, @"page\d+(?:of\d+)?", String.Empty, RegexOptions.IgnoreCase).Trim('-', ' ');
+            if (value.Length is < 3 or > 120 || Regex.IsMatch(value, @"^\d+$") ||
+                Regex.IsMatch(value, @"^(?:fig(?:ure)?|table|section|chapter|copyright|https?|www|doi)",
+                    RegexOptions.IgnoreCase)) continue;
+            var structuredId = Regex.IsMatch(value, @"^(?=.*\d)(?=.*[-_])[\p{L}\p{N}()._-]+$") ||
+                Regex.IsMatch(value, @"^[A-Z]{2,12}[-_]?[A-Z0-9()._-]*\d[A-Z0-9()._-]*$");
+            var formCode = Regex.IsMatch(value, @"^(?:Form[-_]|Document[A-Z]?\d|MSQuote|ProgramSignForm|VLAmendments)",
+                RegexOptions.IgnoreCase) || value.Any(Char.IsDigit) &&
+                Regex.IsMatch(value, @"Agreement|Enrollment|SignatureForm|PriceSheet|Addendum", RegexOptions.IgnoreCase);
+            if (structuredId || formCode) identifiers.Add(value);
+        }
+        return String.Join(",", identifiers.Distinct(StringComparer.OrdinalIgnoreCase));
+    }
+
+    private static string? HeaderDocumentType(string text, IReadOnlyList<string> names)
+    {
+        var lines = PageTextLayout.LeadingLines(text, 4)
+            .Select(line => Regex.Replace(line.Trim(), @"\s+", " ")).ToArray();
+        return names.Where(name => !String.IsNullOrWhiteSpace(name)).OrderByDescending(name => name.Length)
+            .FirstOrDefault(name => lines.Any(line => line.Equals(name, StringComparison.OrdinalIgnoreCase) ||
+                line.StartsWith(name + " ", StringComparison.OrdinalIgnoreCase) ||
+                line.StartsWith(name + ":", StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static Dictionary<string, string> HeaderRecordIds(string text)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var line in PageTextLayout.LeadingLines(text, 12))
+        {
+            var match = Regex.Match(line.Trim(),
+                @"^(?:(?<kind>Quote|Invoice|Contract|Agreement|Document)\s*(?:Number|No\.?|ID)|" +
+                @"N[úu]mero\s+de\s+(?<kind>contrato|factura))\b(?:\s*[:#]\s*|\s+)(?<id>[A-Z0-9][A-Z0-9._/-]{0,79})",
+                RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+            if (!match.Success) continue;
+            var kind = match.Groups["kind"].Value;
+            if (kind.Equals("contrato", StringComparison.OrdinalIgnoreCase)) kind = "Contract";
+            if (kind.Equals("factura", StringComparison.OrdinalIgnoreCase)) kind = "Invoice";
+            result[kind] = match.Groups["id"].Value;
+        }
+        return result;
     }
 
     public static void ReconcileWithCatalog(
@@ -392,6 +455,11 @@ public static class SliceBoundaryAnalyzer
     {
         if (string.IsNullOrEmpty(footer1) || string.IsNullOrEmpty(footer2)) return false;
         if (string.Equals(footer1, footer2, StringComparison.OrdinalIgnoreCase)) return true;
+        static string Numbers(string value) => String.Join("|", Regex.Matches(
+            Regex.Replace(value, @"(?<=\d)[Oo](?=\d)", "0"), @"\d+").Select(match => match.Value));
+        var firstNumbers = Numbers(footer1);
+        var secondNumbers = Numbers(footer2);
+        if (firstNumbers.Length > 0 && secondNumbers.Length > 0 && firstNumbers != secondNumbers) return false;
         if (footer1.Contains(footer2, StringComparison.OrdinalIgnoreCase) ||
             footer2.Contains(footer1, StringComparison.OrdinalIgnoreCase)) return true;
 

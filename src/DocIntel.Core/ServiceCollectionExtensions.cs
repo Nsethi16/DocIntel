@@ -1,6 +1,7 @@
 using Azure.Core;
 using Azure.AI.DocumentIntelligence;
 using Azure.AI.ContentUnderstanding;
+using Azure.AI.Translation.Document;
 using Azure.Identity;
 using Azure.Storage.Blobs;
 using Azure.Storage.Queues;
@@ -133,6 +134,10 @@ public static class ServiceCollectionExtensions
         configuration?.GetSection(DocumentProcessingOptions.SectionName).Bind(documentOptions);
         documentOptions.Validate();
         services.TryAddSingleton(documentOptions);
+        var translationOptions = new PdfBatchTranslationOptions();
+        configuration?.GetSection(PdfBatchTranslationOptions.SectionName).Bind(translationOptions);
+        translationOptions.Validate();
+        services.TryAddSingleton(translationOptions);
 
         var managedIdentityClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
         TokenCredential credential = !string.IsNullOrWhiteSpace(managedIdentityClientId)
@@ -280,8 +285,20 @@ public static class ServiceCollectionExtensions
         services.TryAddSingleton<IModelCatalog>(sp => new ModelCatalog(
             descriptors, customModelClients, credential, simulationAllowed,
             sp.GetService<MicrosoftDecisionHttpClientFactory>()));
-        services.TryAddSingleton<IDocumentTranslationService>(_ => new AzureDocumentTranslationService(
-            credential, allowDevelopmentSimulation: simulationAllowed));
+        var translatorUri = Endpoint(azureOptions.ResolveEffectiveTranslatorEndpoint());
+        services.TryAddSingleton<IDocumentLanguageDetector>(sp => translatorUri is null
+            ? new UnconfiguredDocumentLanguageDetector()
+            : new AzureDocumentLanguageDetector(
+                sp.GetService<DocumentLanguageHttpClientFactory>()?.Invoke() ??
+                    new HttpClient(new SocketsHttpHandler { AllowAutoRedirect = false })
+                        { Timeout = TimeSpan.FromSeconds(45) }, credential, translatorUri));
+        services.TryAddSingleton<IPdfBatchTranslationClient>(sp => translatorUri is null || sharedBlobs is null
+            ? new UnconfiguredPdfBatchTranslationClient()
+            : new AzurePdfBatchTranslationClient(sharedBlobs, new DocumentTranslationClient(translatorUri, credential),
+                translationOptions, sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<AzurePdfBatchTranslationClient>>()));
+        services.TryAddSingleton<IDocumentTranslationService>(sp => new AzureDocumentTranslationService(
+            sp.GetRequiredService<IDocumentLanguageDetector>(), sp.GetRequiredService<IPdfBatchTranslationClient>(),
+            allowDevelopmentSimulation: simulationAllowed));
 
         services.TryAddSingleton<PdfPigLayoutExtractor>();
         services.TryAddSingleton<IPageLayoutExtractor>(sp => sp.GetRequiredService<PdfPigLayoutExtractor>());

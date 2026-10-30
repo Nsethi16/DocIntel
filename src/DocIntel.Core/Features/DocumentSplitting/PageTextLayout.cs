@@ -8,6 +8,25 @@ internal sealed record LayoutTextWord(string Text, double Left, double Bottom);
 /// <summary>Applies the same footer, pagination, and body-text rules to native and recognized source words.</summary>
 internal static class PageTextLayout
 {
+    internal static IEnumerable<string> LeadingLines(string text, int count, int maximumCharacters = 512)
+    {
+        var offset = 0;
+        var emitted = 0;
+        while (offset < text.Length && emitted < count)
+        {
+            var end = text.IndexOfAny(['\r', '\n'], offset);
+            if (end < 0) end = text.Length;
+            var length = Math.Min(end - offset, maximumCharacters);
+            if (length > 0 && offset + length < text.Length && Char.IsHighSurrogate(text[offset + length - 1]))
+                length--;
+            var line = text.Substring(offset, length).Trim();
+            offset = end + 1;
+            if (line.Length == 0) continue;
+            emitted++;
+            yield return line;
+        }
+    }
+
     private static readonly Regex InlineFooterCommentRegex = new(
         @"<!--\s*PageFooter[:""\s]\s*([^"">]+?)\s*""?\s*-->", RegexOptions.IgnoreCase | RegexOptions.Compiled);
     private static readonly Regex PageXOfYRegex = new(

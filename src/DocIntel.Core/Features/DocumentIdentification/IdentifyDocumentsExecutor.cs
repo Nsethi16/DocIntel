@@ -119,16 +119,7 @@ public sealed class IdentifyDocumentsExecutor : Executor<SplittingState, Splitti
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            var topLines = slice.BodyText
-                .Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries)
-                .Take(6);
-
-            var slicePrompt = $"""
-                Slice Pages: {slice.StartPage}-{slice.EndPage}
-                Document Footers: {string.Join(", ", slice.Footers)}
-                Document Title / Top Lines:
-                {string.Join(Environment.NewLine, topLines)}
-                """;
+            var slicePrompt = IdentificationEvidenceBuilder.Build(slice, message.Pages);
 
             if (nativeDecision is not null)
             {

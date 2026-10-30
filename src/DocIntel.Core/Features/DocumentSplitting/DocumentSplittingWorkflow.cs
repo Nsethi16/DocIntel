@@ -100,7 +100,7 @@ public sealed class DocumentSplittingWorkflow
         var slicePdfExecutor = Observe(new WritePdfSlicesExecutor(_pdfSlicer, _artifactStore));
         var identifyExecutor = Observe(new IdentifyDocumentsExecutor(_modelCatalog));
         var translateExecutor = Observe(new TranslateDocumentsExecutor(
-            _translationService, _azureOptions.ResolveEffectiveTranslatorEndpoint(), _artifactStore));
+            _translationService, _azureOptions.ResolveEffectiveTranslatorEndpoint(), _artifactStore, _logger));
         var insightExecutor = Observe(new GenerateDocumentInsightsExecutor(_modelCatalog));
         var entityExecutor = Observe(new ExtractEntitiesExecutor(_modelCatalog));
         var dataExtractionExecutor = Observe(new ExtractDocumentDataExecutor(_modelCatalog));
@@ -274,7 +274,11 @@ internal sealed class DetectSliceBoundariesExecutor : Executor<SplittingState, S
         message.StrategyUsed = nameof(SplittingStrategy.HeuristicFooter);
         message.ModelIdUsed = null;
 
-        var slices = SliceBoundaryAnalyzer.GroupPagesHeuristically(message.Pages, config);
+        var names = config.ExpectedDocumentTypes.Where(entry => entry.IsActive).Select(entry => entry.Name)
+            .Concat(message.Tenant.Capabilities.GetValueOrDefault(FeatureHarness.IdentifyDocumentsKey)?
+                .IdentifyDocuments?.Rules.Where(rule => rule.IsActive).Select(rule => rule.DocumentName) ?? [])
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var slices = SliceBoundaryAnalyzer.GroupPagesHeuristically(message.Pages, config, names);
         if (config.ExpectedDocumentTypes.Count > 0)
         {
             SliceBoundaryAnalyzer.ReconcileWithCatalog(slices, config.ExpectedDocumentTypes, config.InferNameWhenNotInCatalog);

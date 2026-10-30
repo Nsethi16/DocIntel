@@ -84,7 +84,8 @@ public sealed class AgentDiagnosticsTests
         var tenant = new TenantHarness { TenantId = "tenant", DisplayName = "Tenant" };
         foreach (var (name, feature) in tenant.Capabilities) feature.Enabled = name == FeatureHarness.SplitAndGroupKey;
         var workflow = new DocumentSplittingWorkflow(extractor, extractor,
-            new ModelCatalog(allowDevelopmentSimulation: true), new AzureDocumentTranslationService(),
+            new ModelCatalog(allowDevelopmentSimulation: true), new AzureDocumentTranslationService(
+                Moq.Mock.Of<IDocumentLanguageDetector>(), Moq.Mock.Of<IPdfBatchTranslationClient>()),
             NullLogger<DocumentSplittingWorkflow>.Instance);
 
         // Act
@@ -150,7 +151,8 @@ public sealed class AgentDiagnosticsTests
         var tenant = new TenantHarness { TenantId = "tenant", DisplayName = "Tenant" };
         foreach (var (name, feature) in tenant.Capabilities) feature.Enabled = name == FeatureHarness.SplitAndGroupKey;
         var workflow = new DocumentSplittingWorkflow(extractor, extractor,
-            new ModelCatalog(allowDevelopmentSimulation: true), new AzureDocumentTranslationService(),
+            new ModelCatalog(allowDevelopmentSimulation: true), new AzureDocumentTranslationService(
+                Moq.Mock.Of<IDocumentLanguageDetector>(), Moq.Mock.Of<IPdfBatchTranslationClient>()),
             NullLogger<DocumentSplittingWorkflow>.Instance);
         var observations = 0;
 

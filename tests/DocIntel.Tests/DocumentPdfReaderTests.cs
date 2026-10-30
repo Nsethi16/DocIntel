@@ -63,6 +63,7 @@ public sealed class DocumentPdfReaderTests
     {
         // Arrange
         var job = Job();
+        job.Segments[0].WasTranslated = translated;
         if (!translated) job.OriginalSha256 = null;
         var artifacts = new Mock<IArtifactStore>(MockBehavior.Strict);
         artifacts.Setup(store => store.GetSlicePdfAsync("workspace", "job-a2", 0,
@@ -77,6 +78,23 @@ public sealed class DocumentPdfReaderTests
         artifacts.VerifyAll();
         artifacts.VerifyNoOtherCalls();
         slicer.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task A_Failed_Translation_Cannot_Expose_A_Previous_Translated_Artifact()
+    {
+        // Arrange
+        var job = Job();
+        job.Segments[0].WasTranslated = true;
+        job.Segments[0].TranslationErrorCode = "TranslationProviderFailed";
+        var artifacts = new Mock<IArtifactStore>(MockBehavior.Strict);
+
+        // Act
+        var actual = await DocumentPdfReader.ReadSliceAsync(job, 0, true, artifacts.Object, Mock.Of<IPdfSlicer>());
+
+        // Assert
+        Assert.Null(actual);
+        artifacts.VerifyNoOtherCalls();
     }
 
     [Fact]

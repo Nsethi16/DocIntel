@@ -473,14 +473,15 @@ let tenants = [];
         const dt = job.createdAtUtc ? new Date(job.createdAtUtc) : new Date();
         const dateStr = dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
         const segs = job.segments || [];
-        const dotCls = job.status === 'Completed' ? '' : (job.status === 'Failed' ? 'failed' : 'running');
+        const status = documentJobStatus(job);
         const snippet = extractContentMatchSnippet(job, rawQuery);
 
         const row = document.createElement('button');
         row.type = 'button';
         row.className = 'doc-row' + (isSelected ? ' selected' : '');
         row.setAttribute('aria-pressed', String(isSelected));
-        row.title = `${job.fileName} (${job.status})`;
+        row.setAttribute('aria-label', `${job.fileName} · ${status.label} · ${job.totalPages || 0} pages`);
+        row.title = `${job.fileName} (${status.label})`;
         row.onclick = () => {
           selectedJobId = job.jobId;
           selectedSliceIndex = -1;
@@ -497,9 +498,10 @@ let tenants = [];
           <span class="doc-row-main">
             <span class="doc-row-name">${escapeHtml(job.fileName)}</span>
             <span class="doc-row-meta">${escapeHtml(dateStr)} · ${job.totalPages || 0} pp${segs.length > 1 ? ` · ${segs.length} slices` : ''}</span>
+            ${status.kind === 'warning' ? '<span class="doc-row-warning">Completed with warnings</span>' : ''}
             ${snippet ? `<span class="doc-row-snippet">${escapeHtml(snippet)}</span>` : ''}
           </span>
-          <span class="status-dot ${dotCls}" title="${escapeHtml(job.status)}"></span>
+          <span class="status-dot ${status.kind}" title="${escapeHtml(status.label)}" aria-hidden="true"></span>
         `;
         container.appendChild(row);
       });
@@ -766,73 +768,6 @@ let tenants = [];
       showToast('Exported JSON');
     }
 
-    function pdfPreviewMarkup(url, title) {
-      return `<div class="pdf-preview" data-pdf-url="${escapeHtml(url)}">
-        <p class="pdf-preview-status" role="status">Loading PDF...</p>
-        <div class="pdf-preview-actions" hidden>
-          <button type="button" class="text-link-btn">Try Again</button>
-          <a class="text-link-btn" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open PDF in New Tab ↗</a>
-        </div>
-        <iframe class="pdf-full-frame" title="${escapeHtml(title)}" hidden></iframe>
-      </div>`;
-    }
-
-    async function loadPdfPreview(preview) {
-      const frame = preview.querySelector('iframe');
-      const status = preview.querySelector('.pdf-preview-status');
-      const actions = preview.querySelector('.pdf-preview-actions');
-      const retry = actions.querySelector('button');
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 15000);
-      retry.onclick = () => loadPdfPreview(preview);
-      actions.hidden = true;
-      frame.hidden = true;
-      status.hidden = false;
-      status.setAttribute('role', 'status');
-      status.textContent = 'Loading PDF...';
-      try {
-        const response = await fetch(preview.dataset.pdfUrl, {
-          headers: { Range: 'bytes=0-4' }, signal: controller.signal
-        });
-        await response.body?.cancel();
-        if (!preview.isConnected) return;
-        if (!response.ok) {
-          status.textContent = response.status === 404
-            ? preview.dataset.pdfUrl.endsWith('?translated=true')
-              ? 'The translated PDF is not available in storage. The original is shown separately if available. ' +
-                'Ask a workspace administrator to restore the translated PDF or process the original file again.'
-              : 'This PDF is not available in storage. Extracted results can remain available without the PDF. ' +
-                'Ask a workspace administrator to restore it or upload the original file again.'
-            : response.status === 401 || response.status === 403
-              ? 'Sign in again or request access to this document to view its PDF.'
-              : `The PDF could not be loaded (HTTP ${response.status}). Try again or open it in a new tab.`;
-          const correlation = response.headers.get('X-DocIntel-Correlation-Id');
-          if (correlation && /^[A-Za-z0-9:._-]{1,160}$/.test(correlation))
-            status.textContent += ` Reference: ${correlation}.`;
-        } else if (!/^application\/pdf(?:;|$)/i.test(response.headers.get('Content-Type') || '')) {
-          status.textContent = 'The server did not return a PDF. Try signing in again or open it in a new tab.';
-        } else {
-          frame.src = preview.dataset.pdfUrl;
-          frame.hidden = false;
-          status.hidden = true;
-          return;
-        }
-      } catch {
-        if (!preview.isConnected) return;
-        status.textContent = controller.signal.aborted
-          ? 'The PDF request timed out. Try again or open it in a new tab.'
-          : 'The PDF request could not be completed. Check your connection and try again.';
-      } finally {
-        clearTimeout(timeout);
-      }
-      status.setAttribute('role', 'alert');
-      actions.hidden = false;
-    }
-
-    function startPdfPreviews(body) {
-      body.querySelectorAll('.pdf-preview').forEach(preview => { void loadPdfPreview(preview); });
-    }
-
     function renderSelectedDocument() {
       stopGraphCanvas();
       const body = document.getElementById('docCenterBody');
@@ -844,6 +779,7 @@ let tenants = [];
       if (headerEl) headerEl.style.display = '';
 
       if (workspaceMode === 'ask') {
+        updateDocumentStatusNotice(null);
         body.dataset.tab = 'ask';
         if (navRow) navRow.style.display = 'none';
         if (exportBtn) exportBtn.style.display = 'none';
@@ -855,6 +791,7 @@ let tenants = [];
       }
 
       if (workspaceMode === 'graph') {
+        updateDocumentStatusNotice(null);
         body.dataset.tab = 'graph';
         if (navRow) navRow.style.display = 'none';
         if (exportBtn) exportBtn.style.display = 'none';
@@ -873,6 +810,7 @@ let tenants = [];
       if (exportBtn) exportBtn.hidden = !job;
 
       if (!job) {
+        updateDocumentStatusNotice(null);
         document.getElementById('selectedDocTitle').textContent = currentTenant ? currentTenant.displayName : 'Document Intelligence';
         document.getElementById('selectedDocMetaText').textContent = currentTenant ? currentTenant.tenantId : 'Idle';
         sliceRow.innerHTML = '';
@@ -891,6 +829,7 @@ let tenants = [];
       }
 
       const segs = job.segments || [];
+      updateDocumentStatusNotice(job);
       const cleanTitle = (job.fileName || 'Document').replace(/\.pdf$/i, '');
       document.getElementById('selectedDocTitle').textContent = cleanTitle;
       document.getElementById('selectedDocTitle').title = job.fileName;
@@ -898,7 +837,8 @@ let tenants = [];
         ? ' · Development/simulated results' : job.hasDevelopmentResults == null ? ' · Legacy results: verify source' : '';
       document.getElementById('selectedDocMetaText').textContent = `${job.totalPages || 0} pp${provenance}`;
 
-      const totalEntitiesCount = segs.reduce((acc, s) => acc + ((s.extractedEntities || []).length), 0);
+      const segmentedEntities = segs.flatMap(s => s.extractedEntities || []);
+      const totalEntitiesCount = (segmentedEntities.length ? segmentedEntities : job.extractedEntities || []).length;
       const totalStructuredCount = segs.reduce((acc, s) => {
         const de = s.dataExtraction;
         if (!de) return acc;
@@ -910,18 +850,20 @@ let tenants = [];
         : segs.filter(s => s.segmentIndex === selectedSliceIndex);
 
       const caps = currentTenant?.capabilities || {};
-      const insightEnabled = caps.DocumentInsight?.enabled !== false;
-      const entityEnabled = caps.EntityExtraction?.enabled !== false;
-      const dataExtEnabled = caps.DataExtraction?.enabled !== false;
-      const promptColsEnabled = caps.PromptColumns?.enabled !== false;
+      const insightEnabled = caps.DocumentInsight?.enabled !== false ||
+        Boolean(cleanInsightText(job.packetSummary)) || segs.some(s => cleanInsightText(s.insightSummary));
+      const entityEnabled = caps.EntityExtraction?.enabled !== false || totalEntitiesCount > 0;
+      const dataExtEnabled = caps.DataExtraction?.enabled !== false || totalStructuredCount > 0;
+      const promptColsEnabled = caps.PromptColumns?.enabled !== false ||
+        (job.promptColumnResults || []).length > 0 || segs.some(s => (s.promptColumnResults || []).length > 0);
 
       // Collect distinct Prompt Columns that matched the entity filter on the active document / slice selection
       const activePromptResults = promptColsEnabled
-        ? activeSegs.flatMap(s =>
+        ? (activeSegs.length ? activeSegs.flatMap(s =>
             (s.promptColumnResults && s.promptColumnResults.length > 0)
               ? s.promptColumnResults
               : (job.promptColumnResults || []).filter(r => r.segmentIndex === s.segmentIndex)
-          )
+          ) : selectedSliceIndex === -1 ? job.promptColumnResults || [] : [])
         : [];
       const matchedPromptColumnsMap = new Map();
       activePromptResults.forEach(r => {
@@ -934,7 +876,7 @@ let tenants = [];
       });
       const matchedPromptColumns = [...matchedPromptColumnsMap.values()];
 
-      // Build visible core tabs governed by Admin Studio feature toggles
+      // Current feature settings must not hide results already stored by an earlier run.
       const coreTabsList = [
         ...(insightEnabled ? [{ id: 'insights', label: 'Insights' }] : []),
         { id: 'document', label: 'View Document' },
@@ -1012,62 +954,42 @@ let tenants = [];
           const openLink = document.createElement('a');
           openLink.href = origPdfUrl;
           openLink.target = '_blank';
+          openLink.rel = 'noopener noreferrer';
           openLink.className = 'ghost-action-btn';
           openLink.textContent = 'Open PDF ↗';
           sliceRow.appendChild(openLink);
         }
       }
 
-      if (job.status === 'Queued' || job.status === 'Running') {
-        body.innerHTML = `
-          <div class="content-column" style="padding:36px 0;color:var(--text-secondary);font-size:14px;">
-            Processing document through Agent Harness (${(job.executionTrace || []).length} steps completed)...
-          </div>
-        `;
-        return;
-      }
-
-      if (job.status === 'Failed') {
-        body.innerHTML = `
-          <div class="content-column" style="padding:24px 0;color:var(--status-err);font-size:14px;">
-            <strong>Processing failed:</strong> ${escapeHtml(job.errorMessage || 'Unknown error')}
-          </div>
-        `;
-        return;
-      }
-
       // 1. View Document Tab — Side-by-Side (Original PDF + Translated PDF) when translated, or single full-bleed PDF
       if (docResultTab === 'document') {
-        if (segs.length === 0) {
-          body.innerHTML = `<div class="content-column">No PDF available.</div>`;
-          return;
-        }
         body.dataset.layout = 'pdf';
         const focusedSeg = (selectedSliceIndex >= 0 ? segs.find(s => s.segmentIndex === selectedSliceIndex) : segs[0]) || segs[0];
-        const origPdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf`;
+        const jobUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}`;
+        const origPdfUrl = focusedSeg ? `${jobUrl}/slices/${focusedSeg.segmentIndex}/pdf` : `${jobUrl}/original`;
         const transPdfUrl = `${origPdfUrl}?translated=true`;
 
-        if (focusedSeg.wasTranslated) {
+        if (focusedSeg?.wasTranslated === true) {
           const splitKey = `${job.jobId}:${focusedSeg.segmentIndex}:side-by-side`;
           const existingSplit = body.querySelector('.pdf-side-by-side');
           if (existingSplit && existingSplit.dataset.splitKey === splitKey) {
             return;
           }
-          const srcLang = (focusedSeg.detectedLanguage || 'es').toUpperCase();
-          const tgtLang = (focusedSeg.targetLanguage || 'en').toUpperCase();
+          const srcLang = (focusedSeg.detectedLanguage || 'Unknown language').toUpperCase();
+          const tgtLang = (focusedSeg.targetLanguage || 'Unknown language').toUpperCase();
           body.innerHTML = `
             <div class="pdf-side-by-side" data-split-key="${escapeHtml(splitKey)}">
               <div class="pdf-pane">
                 <div class="pdf-pane-bar">
                   <span><strong>Original Document (${escapeHtml(srcLang)})</strong> · Pages ${focusedSeg.startPage}–${focusedSeg.endPage}</span>
-                  <a href="${origPdfUrl}" target="_blank" class="text-link-btn">Open ↗</a>
+                  <a href="${origPdfUrl}" target="_blank" rel="noopener noreferrer" class="text-link-btn">Open ↗</a>
                 </div>
                 ${pdfPreviewMarkup(origPdfUrl, 'Original PDF Preview')}
               </div>
               <div class="pdf-pane">
                 <div class="pdf-pane-bar">
                   <span><strong>Translated Document (${escapeHtml(tgtLang)})</strong> · Azure Document Translation</span>
-                  <a href="${transPdfUrl}" target="_blank" class="text-link-btn">Open ↗</a>
+                  <a href="${transPdfUrl}" target="_blank" rel="noopener noreferrer" class="text-link-btn">Open ↗</a>
                 </div>
                 ${pdfPreviewMarkup(transPdfUrl, 'Translated PDF Preview')}
               </div>
@@ -1077,17 +999,24 @@ let tenants = [];
           return;
         }
 
+        const note = translationPreviewNote(job, focusedSeg);
+        const previewKey = JSON.stringify([origPdfUrl, note]);
         const existingPreview = body.querySelector('.pdf-preview');
-        if (existingPreview?.dataset.pdfUrl === origPdfUrl && !body.querySelector('.pdf-side-by-side')) {
+        if (existingPreview?.dataset.previewKey === previewKey && !body.querySelector('.pdf-side-by-side')) {
           return;
         }
-        body.innerHTML = pdfPreviewMarkup(origPdfUrl, 'PDF Preview');
+        body.innerHTML = (note ? `<p class="pdf-translation-note" data-kind="${note.kind}">${escapeHtml(note.text)}</p>` : '') +
+          pdfPreviewMarkup(origPdfUrl, 'Original PDF Preview');
+        const renderedPreview = body.querySelector('.pdf-preview');
+        if (renderedPreview) renderedPreview.dataset.previewKey = previewKey;
         startPdfPreviews(body);
         return;
       }
 
       // 2. Insights Tab — Calm Editorial Prose, Zero Nested Boxes
       if (docResultTab === 'insights') {
+        const missingMessage = unavailableResultMessage(job, 'GenerateDocumentInsightsExecutor', 'Insight generation',
+          'No insight summary is stored for this selection.');
         const documentInsights = segs.filter(s => cleanInsightText(s.insightSummary));
         if (documentInsights.length === 0) {
           sliceRow.innerHTML = '';
@@ -1104,17 +1033,18 @@ let tenants = [];
                 ${prose ? `<a class="text-link-btn" href="${originalUrl}" target="_blank" rel="noopener noreferrer">Open File ↗</a>` : ''}
                 </div>
                 <div class="slice-card-body"><p class="insight-prose" style="margin:0;">${escapeHtml(prose ||
-                  'No insight summary has been generated for this file.')}</p></div>
+                  missingMessage)}</p></div>
               </article>
             </div>`;
           return;
         }
-        const distinctLangs = [...new Set(segs.map(s => (s.detectedLanguage || 'en').toUpperCase()))];
-        const anyTranslated = segs.some(s => s.wasTranslated);
+        const distinctLangs = [...new Set(segs.map(s => s.detectedLanguage).filter(Boolean).map(l => l.toUpperCase()))];
+        const translatedTargets = [...new Set(segs.filter(s => s.wasTranslated === true)
+          .map(s => s.targetLanguage).filter(Boolean).map(l => l.toUpperCase()))];
 
         const summaryLineHtml = `
           <div class="packet-summary-line">
-            <span>${job.totalPages || 0} pages · ${documentInsights.length} document${documentInsights.length === 1 ? '' : 's'} · ${escapeHtml(distinctLangs.join(', '))}${anyTranslated ? ' → EN translated' : ''} · ${totalEntitiesCount} entities extracted</span>
+            <span>${job.totalPages || 0} pages · ${documentInsights.length} document${documentInsights.length === 1 ? '' : 's'}${distinctLangs.length ? ` · ${escapeHtml(distinctLangs.join(', '))}` : ''}${translatedTargets.length ? ` → ${escapeHtml(translatedTargets.join(', '))} translated` : ''} · ${totalEntitiesCount} entities extracted</span>
             <span>Harness v${job.appliedHarnessVersion || 1}</span>
           </div>
         `;
@@ -1123,7 +1053,7 @@ let tenants = [];
           const docName = s.identifiedDocumentName || s.documentTypeName || `Document ${s.segmentIndex + 1}`;
           const prose = cleanInsightText(s.insightSummary);
           const langNote = s.wasTranslated
-            ? ` · Translated ${(s.detectedLanguage || '').toUpperCase()} → ${(s.targetLanguage || 'en').toUpperCase()}`
+            ? ` · Translated ${(s.detectedLanguage || 'Unknown').toUpperCase()} → ${(s.targetLanguage || 'Unknown').toUpperCase()}`
             : '';
           const isExpanded = idx === 0;
 
@@ -1150,16 +1080,22 @@ let tenants = [];
           `;
         }).join('');
 
-        body.innerHTML = `<div class="content-column">${summaryLineHtml}<div class="slices-wide-grid">${sectionsHtml}</div></div>`;
+        const missingSelection = activeSegs.some(s => !cleanInsightText(s.insightSummary));
+        body.innerHTML = `<div class="content-column">${summaryLineHtml}<div class="slices-wide-grid">${sectionsHtml}</div>` +
+          (missingSelection ? `<p>${escapeHtml(missingMessage)}</p>` : '') + '</div>';
         return;
       }
 
       // 3. Entities Tab — Clean Scannable Table + Project Meridian Filter Pills
       if (docResultTab === 'entities') {
-        const allEntities = activeSegs.flatMap(s => s.extractedEntities || []);
+        const selectedEntities = activeSegs.flatMap(s => s.extractedEntities || []);
+        const allEntities = selectedEntities.length ? selectedEntities : (job.extractedEntities || [])
+          .filter(e => selectedSliceIndex === -1 || e.segmentIndex === selectedSliceIndex);
 
         if (allEntities.length === 0) {
-          body.innerHTML = `<div class="content-column" style="color:var(--text-secondary);font-size:14px;">No extracted entities for this selection.</div>`;
+          const message = unavailableResultMessage(job, 'ExtractEntitiesExecutor', 'Entity extraction',
+            'No extracted entities are stored for this selection.');
+          body.innerHTML = `<div class="content-column" style="color:var(--text-secondary);font-size:14px;">${escapeHtml(message)}</div>`;
           return;
         }
 
@@ -1219,9 +1155,11 @@ let tenants = [];
       if (docResultTab === 'structured') {
         const slicesWithData = activeSegs.filter(s => s.dataExtraction && ((s.dataExtraction.fields && s.dataExtraction.fields.length > 0) || (s.dataExtraction.tables && s.dataExtraction.tables.length > 0)));
         if (slicesWithData.length === 0) {
+          const message = unavailableResultMessage(job, 'ExtractDocumentDataExecutor', 'Structured data extraction',
+            'No structured fields or tables are stored for this selection.');
           body.innerHTML = `
             <div class="content-column" style="color:var(--text-secondary);font-size:14px;">
-              No structured key-value fields or tables configured for this document type. Configure schemas in <a href="/admin.html" style="color:var(--text-primary);">Admin Studio ↗</a>.
+              ${escapeHtml(message)}
             </div>
           `;
           return;
@@ -1292,16 +1230,20 @@ let tenants = [];
       // 5. Individual Prompt Column Tab (`prompt:<columnId>`) — Clean Outcome Only
       if (docResultTab.startsWith('prompt:')) {
         const targetColumnId = docResultTab.substring('prompt:'.length);
-        const matchingSliceEntries = activeSegs.map(s => {
-          const sliceResults = (s.promptColumnResults && s.promptColumnResults.length > 0)
-            ? s.promptColumnResults
-            : (job.promptColumnResults || []).filter(r => r.segmentIndex === s.segmentIndex);
-          const colResult = sliceResults.find(r => r.columnId === targetColumnId && r.filterMatched);
-          return colResult ? { slice: s, result: colResult } : null;
-        }).filter(Boolean);
+        const matchingSliceEntries = activePromptResults
+          .filter(r => r.columnId === targetColumnId && r.filterMatched)
+          .map(result => ({
+            slice: activeSegs.find(s => s.segmentIndex === result.segmentIndex ||
+              (s.promptColumnResults || []).includes(result)),
+            result
+          }));
+        const missingMessage = unavailableResultMessage(job, 'EvaluatePromptColumnsExecutor', 'Custom analysis',
+          'No custom result is stored for this selection.');
 
         const sliceCardsHtml = matchingSliceEntries.map(({ slice, result }, idx) => {
-          const docName = slice.identifiedDocumentName || slice.documentTypeName || `Slice ${slice.segmentIndex + 1}`;
+          const docName = slice
+            ? slice.identifiedDocumentName || slice.documentTypeName || `Slice ${slice.segmentIndex + 1}`
+            : job.fileName || 'File Result';
           const cleanedOutcome = String(result.resultText || '')
             .replace(/^Summary\s*\([^)]*\):\s*/i, '')
             .replace(/^(?:Summarize the contents of|Extract the most important[^'\n]*from|Verify contract identifiers[^'\n]*in)\s+/i, '')
@@ -1315,10 +1257,10 @@ let tenants = [];
               <div class="slice-section-head" data-click="toggleSliceCard_self">
                 <div>
                   <h3 class="slice-section-title">${escapeHtml(docName)}</h3>
-                  <div class="slice-section-sub">Pages ${slice.startPage}–${slice.endPage}</div>
+                  <div class="slice-section-sub">${slice ? `Pages ${slice.startPage}–${slice.endPage}` : 'Complete File'}</div>
                 </div>
                 <div style="display:flex;align-items:center;gap:8px;">
-                  <button type="button" class="text-link-btn" data-click="jumpToSlicePdf_arg_event" data-args="[${slice.segmentIndex}]">Pages ${slice.startPage}–${slice.endPage} ↗</button>
+                  ${slice ? `<button type="button" class="text-link-btn" data-click="jumpToSlicePdf_arg_event" data-args="[${slice.segmentIndex}]">Pages ${slice.startPage}–${slice.endPage} ↗</button>` : ''}
                   <button type="button" class="slice-chevron-btn" aria-label="Expand or collapse slice">
                     <svg width="15" height="15" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.8">
                       <path d="M5.5 7.5L10 12l4.5-4.5" stroke-linecap="round" stroke-linejoin="round"/>
@@ -1327,13 +1269,14 @@ let tenants = [];
                 </div>
               </div>
               <div class="slice-card-body">
-                <p class="insight-prose" style="margin:0;">${escapeHtml(cleanedOutcome)}</p>
+                <p class="insight-prose" style="margin:0;">${escapeHtml(cleanedOutcome || missingMessage)}</p>
               </div>
             </article>
           `;
         }).join('');
 
-        body.innerHTML = `<div class="content-column"><div class="slices-wide-grid">${sliceCardsHtml}</div></div>`;
+        body.innerHTML = `<div class="content-column"><div class="slices-wide-grid">${sliceCardsHtml ||
+          `<p>${escapeHtml(missingMessage)}</p>`}</div></div>`;
         return;
       }
 
@@ -1345,6 +1288,7 @@ let tenants = [];
             <dl class="kv-grid" style="padding-bottom:20px;border-bottom:1px solid var(--line);">
               <div class="kv-item"><dt>Job ID</dt><dd style="font-family:monospace;font-size:12.5px;">${escapeHtml(job.jobId)}</dd></div>
               <div class="kv-item"><dt>Workspace</dt><dd>${escapeHtml(job.tenantId)}</dd></div>
+              <div class="kv-item"><dt>Status</dt><dd>${escapeHtml(documentJobStatus(job).label)}</dd></div>
               <div class="kv-item"><dt>Harness Version</dt><dd>v${job.appliedHarnessVersion || 1}</dd></div>
               <div class="kv-item"><dt>Language Model</dt><dd>${escapeHtml(job.modelIdUsed || 'gpt-5-mini')}</dd></div>
             </dl>
@@ -1378,7 +1322,7 @@ let tenants = [];
                   ${trace.map(t => `
                     <tr>
                       <td style="font-weight:500;">${escapeHtml(t.executorName)}</td>
-                      <td>${t.executed ? 'Executed' : 'Skipped'}</td>
+                      <td>${executionTraceStatus(t)}</td>
                       <td style="color:var(--text-secondary);">${escapeHtml(t.modelIdUsed || 'Deterministic')}</td>
                       <td style="font-family:monospace;font-size:12px;">${t.durationMs ? t.durationMs.toFixed(1) + ' ms' : '0 ms'}</td>
                       <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(t.notes || '')}</td>

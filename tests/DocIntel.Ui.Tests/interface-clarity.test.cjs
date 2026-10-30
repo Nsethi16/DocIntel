@@ -66,6 +66,21 @@ function runtime(page) {
   return app;
 }
 
+function documentRuntime(job, page = 'index') {
+  const app = runtime(page);
+  app.context.fixtureJob = job;
+  vm.runInContext(read('evidence.js'), app.context);
+  vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};
+    tenantJobs=[fixtureJob];selectedJobId=fixtureJob.jobId;selectedSliceIndex=-1;`, app.context);
+  return app;
+}
+
+function renderDocumentTab(app, tab) {
+  vm.runInContext(`docResultTab=${JSON.stringify(tab)};`, app.context);
+  app.context.renderSelectedDocument();
+  return app.element('docCenterBody').innerHTML;
+}
+
 test('the familiar three Admin sections and document result views are retained without new navigation', () => {
   const admin = read('admin.html');
   assert.equal([...admin.matchAll(/role="tab"\s/g)].length, 3);
@@ -510,37 +525,47 @@ test('the document-first empty state hides irrelevant result tabs and checks exi
   assert.match(app.element('docCenterBody').innerHTML, /workspace administrator/);
 });
 
-test('processing and failure notices use the same content layout across all document result tabs', () => {
+test('processing and failure notices stay outside the tab content and preserve available results', () => {
   const app = runtime('index');
   vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};
     tenantJobs=[{jobId:'file',tenantId:'one',fileName:'bundle.pdf',status:'Running',totalPages:2,
-      executionTrace:[{},{},{}],segments:[
+      executionTrace:[{executed:true},{executed:true},{executed:false}],segments:[
         {segmentIndex:0,startPage:1,endPage:2,bodyText:'Source document',promptColumnResults:[
           {columnId:'custom',columnName:'Custom Result',filterMatched:true,resultText:'Derived result'}]}]}];
     selectedJobId='file';selectedSliceIndex=-1;`, app.context);
   const body = app.element('docCenterBody');
   for (const status of ['Queued', 'Running', 'Failed']) {
     vm.runInContext(`tenantJobs[0].status='${status}';tenantJobs[0].errorMessage='<provider failure>';`, app.context);
-    let sharedMarkup;
+    let sharedNotice;
     for (const tab of ['insights', 'document', 'entities', 'structured', 'metadata', 'prompt:custom']) {
       vm.runInContext(`docResultTab='${tab}';`, app.context);
       body.dataset.layout = 'pdf';
       app.context.renderSelectedDocument();
+      const notice = app.element('documentStatusNotice');
       assert.equal(body.dataset.tab, tab);
-      assert.equal(body.dataset.layout, '', `${status}: ${tab} must not inherit the full-bleed PDF layout`);
-      sharedMarkup ??= body.innerHTML;
-      assert.equal(body.innerHTML, sharedMarkup, `${status}: ${tab} must use the shared notice`);
-      assert.match(body.innerHTML, status === 'Failed'
-        ? /Processing failed:.*&lt;provider failure&gt;/ : /Agent Harness \(3 steps completed\)/);
-      assert.doesNotMatch(body.innerHTML, /<iframe/);
+      assert.equal(body.dataset.layout, tab === 'document' ? 'pdf' : '');
+      sharedNotice ??= notice.textContent;
+      assert.equal(notice.textContent, sharedNotice, `${status}: ${tab} must use the shared notice`);
+      assert.equal(notice.hidden, false);
+      assert.equal(notice.dataset.kind, status === 'Failed' ? 'failed' : 'running');
+      assert.match(notice.textContent, status === 'Failed'
+        ? /Processing failed:.*<provider failure>/ : /Agent Harness \(2 steps executed\)/);
+      assert.doesNotMatch(body.innerHTML, /Processing failed:|Processing document through|No PDF available/);
+      if (tab === 'document') assert.match(body.innerHTML, /class="pdf-full-frame"/);
+      if (tab === 'metadata') assert.match(body.innerHTML, /Pipeline Execution Trace/);
+      if (tab === 'prompt:custom') assert.match(body.innerHTML, /Derived result/);
     }
   }
+  const html = read('index.html');
+  assert.ok(html.indexOf('id="documentStatusNotice"') < html.indexOf('id="docCenterBody"'));
+  assert.match(html, /id="documentStatusNotice"[^>]+role="status"[^>]+aria-live="polite"/);
   const css = read('index.css');
   assert.match(css, /\.workspace-body\[data-layout="pdf"\]\s*\{[^}]*padding:\s*0;[^}]*overflow:\s*hidden/);
+  assert.match(read(path.join('shared', 'shell.css')), /\.document-status-notice\s*\{[^}]*flex:\s*0 0 auto/);
   assert.doesNotMatch(css, /\.workspace-body\[data-tab="document"\]\s*\{/);
 });
 
-test('only actual completed PDF previews use the full-bleed layout and it resets when leaving the preview', () => {
+test('only actual PDF previews use the full-bleed layout and it resets when leaving the preview', () => {
   const app = runtime('index');
   vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};
     tenantJobs=[{jobId:'file',tenantId:'one',fileName:'bundle.pdf',status:'Completed',totalPages:2,segments:[
@@ -559,8 +584,9 @@ test('only actual completed PDF previews use the full-bleed layout and it resets
   assert.equal(body.dataset.layout, '');
   vm.runInContext("docResultTab='document';tenantJobs[0].segments=[];", app.context);
   app.context.renderSelectedDocument();
-  assert.equal(body.dataset.layout, '');
-  assert.match(body.innerHTML, /No PDF available/);
+  assert.equal(body.dataset.layout, 'pdf');
+  assert.match(body.innerHTML, /data-pdf-url="\/api\/harness\/tenants\/one\/jobs\/file\/original"/);
+  assert.doesNotMatch(body.innerHTML, /No PDF available|\?translated=true/);
   vm.runInContext("tenantJobs=[];", app.context);
   body.dataset.layout = 'pdf';
   app.context.renderSelectedDocument();
@@ -652,5 +678,350 @@ test('an empty insight result shows one file-level notice rather than a notice p
       {segmentIndex:0,startPage:1,endPage:1},{segmentIndex:1,startPage:2,endPage:2}]}];
     selectedJobId='file';selectedSliceIndex=-1;docResultTab='insights';`, app.context);
   app.context.renderSelectedDocument();
-  assert.equal([...app.element('docCenterBody').innerHTML.matchAll(/No insight summary has been generated/g)].length, 1);
+  assert.equal([...app.element('docCenterBody').innerHTML.matchAll(/No insight summary is stored/g)].length, 1);
+});
+
+for (const [page, status] of [
+  ['index', 'Completed'], ['index', 'Failed'], ['admin', 'Completed'], ['admin', 'Failed']
+]) {
+  test(`${page}: ${status} jobs retain independent results when translation fails and show a consistent safe notice`, () => {
+    const app = documentRuntime({
+      jobId: 'file', tenantId: 'one', fileName: 'Somatosensory.pdf', status, totalPages: 4,
+      hasWarnings: status === 'Completed', errorMessage: '<img src=x onerror=evil()>',
+      executionTrace: [
+        { executorName: 'NativeDecision', executed: true, succeeded: true, notes: 'One document' },
+        { executorName: 'TranslateDocumentsExecutor', executed: true, succeeded: false,
+          modelIdUsed: 'Translator', notes: '<unsafe translation note>' },
+        { executorName: 'OptionalStep', executed: false, succeeded: false }
+      ],
+      segments: [{
+        segmentIndex: 0, startPage: 1, endPage: 4, identifiedDocumentName: 'Somatosensory',
+        wasTranslated: false, detectedLanguage: 'en', targetLanguage: 'fr',
+        translationErrorCode: 'translation_failed', translationErrorMessage: 'Translation <unavailable>.',
+        insightSummary: 'Stored insight <prose>', extractedEntities: [
+          { name: 'Topic', value: 'Somatosensory <system>', category: 'Subject', confidence: 0.9 }
+        ],
+        dataExtraction: {
+          documentName: 'Somatosensory', pageRange: '1–4',
+          fields: [{ fieldName: 'Subject', fieldValue: 'Neuroscience <research>', confidenceValue: 95 }], tables: []
+        },
+        promptColumnResults: [{
+          columnId: 'custom', columnName: 'Custom <Result>', filterMatched: true,
+          resultText: 'Stored custom <analysis>'
+        }]
+      }]
+    }, page);
+    const expected = {
+      insights: /Stored insight &lt;prose&gt;/, entities: /Somatosensory &lt;system&gt;/,
+      structured: /Neuroscience &lt;research&gt;/, 'prompt:custom': /Stored custom &lt;analysis&gt;/,
+      document: /Translation unavailable.*Translation &lt;unavailable&gt;/,
+      metadata: /<td>Failed<\/td>/
+    };
+    if (page === 'admin') delete expected['prompt:custom'];
+    let noticeText;
+    for (const [tab, content] of Object.entries(expected)) {
+      const html = renderDocumentTab(app, tab);
+      const notice = app.element('documentStatusNotice');
+      assert.match(html, content, tab);
+      assert.doesNotMatch(html, /<unsafe|<analysis>|<prose>|<system>|<research>|<unavailable>|onerror=/);
+      assert.equal(app.element('docCenterBody').dataset.layout, tab === 'document' ? 'pdf' : '');
+      assert.equal(notice.hidden, false);
+      assert.equal(notice.dataset.kind, status === 'Completed' ? 'warning' : 'failed');
+      noticeText ??= notice.textContent;
+      assert.equal(notice.textContent, noticeText);
+      assert.equal(notice.innerHTML, '', 'Failure details are written as text, never HTML');
+      if (tab === 'document') {
+        assert.match(html, /data-pdf-url="\/api\/harness\/tenants\/one\/jobs\/file\/slices\/0\/pdf"/);
+        assert.doesNotMatch(html, /\?translated=true|pdf-side-by-side|<iframe[^>]+\bsrc=/);
+      }
+      if (tab === 'metadata') {
+        assert.match(html, /<td>Succeeded<\/td>/);
+        assert.match(html, /<td>Skipped<\/td>/);
+        assert.match(html, /&lt;unsafe translation note&gt;/);
+        if (page === 'index')
+          assert.match(html, new RegExp(`<dt>Status</dt><dd>${status === 'Completed' ? 'Completed with warnings' : 'Failed'}`));
+      }
+    }
+    assert.match(noticeText, status === 'Completed' ? /Completed with warnings.*Translation failed/
+      : /Processing failed:.*<img src=x onerror=evil\(\)>/);
+    if (page === 'index') {
+      assert.match(app.element('insightsTabBar').innerHTML, /Custom &lt;Result&gt;/);
+    } else {
+      assert.match(app.element('selectedDocStatusBadge').textContent,
+        status === 'Completed' ? /Completed with warnings/ : /Failed/);
+    }
+  });
+}
+
+test('completed-with-warnings list responses use accessible text and theme tokens instead of an all-success dot', () => {
+  const app = runtime('index');
+  vm.runInContext(`tenantJobs=[
+    {jobId:'warning',fileName:'Warning.pdf',status:'Completed',hasWarnings:true},
+    {jobId:'legacy-warning',fileName:'Legacy.pdf',status:'Completed',
+      executionTrace:[{executorName:'TranslateDocumentsExecutor',executed:true,succeeded:false}]},
+    {jobId:'success',fileName:'Success.pdf',status:'Completed',hasWarnings:false}
+  ];`, app.context);
+  app.context.renderDocumentList();
+  const rows = app.element('docItemsList').children;
+  for (const row of rows.slice(0, 2)) {
+    assert.match(row.innerHTML, /status-dot warning/);
+    assert.match(row.innerHTML, /doc-row-warning">Completed with warnings/);
+    assert.match(row['aria-label'], /Completed with warnings/);
+    assert.match(row.title, /Completed with warnings/);
+  }
+  assert.doesNotMatch(rows[2].innerHTML, /doc-row-warning|status-dot warning/);
+  assert.match(read('index.css'), /\.status-dot\.warning\s*\{\s*background:\s*var\(--warning\)/);
+  assert.match(read(path.join('shared', 'shell.css')),
+    /\.document-status-notice\[data-kind="warning"\][^}]+var\(--warning-bg\)/);
+});
+
+for (const [page, tab, executorName, featureName] of [
+  ['index', 'insights', 'GenerateDocumentInsightsExecutor', 'Insight generation'],
+  ['index', 'entities', 'ExtractEntitiesExecutor', 'Entity extraction'],
+  ['index', 'structured', 'ExtractDocumentDataExecutor', 'Structured data extraction'],
+  ['index', 'prompt:custom', 'EvaluatePromptColumnsExecutor', 'Custom analysis'],
+  ['admin', 'insights', 'GenerateDocumentInsightsExecutor', 'Insight generation'],
+  ['admin', 'entities', 'ExtractEntitiesExecutor', 'Entity extraction'],
+  ['admin', 'structured', 'ExtractDocumentDataExecutor', 'Structured data extraction']
+]) {
+  test(`${page}: ${tab} missing results distinguish failed, skipped, succeeded-empty and unrecorded execution`, () => {
+    const app = documentRuntime({
+      jobId: 'file', tenantId: 'one', fileName: 'File.pdf', status: 'Failed',
+      executionTrace: [], segments: [{
+        segmentIndex: 0, startPage: 1, endPage: 1,
+        promptColumnResults: [{ columnId: 'custom', columnName: 'Custom', filterMatched: true, resultText: '' }]
+      }]
+    }, page);
+    for (const [trace, expected] of [
+      [{ executorName, executed: true, succeeded: false }, `${featureName} failed.`],
+      [{ executorName, executed: false, succeeded: false }, `${featureName} was skipped for this run.`],
+      [{ executorName, executed: true, succeeded: true }, `${featureName} succeeded.`],
+      [null, 'This feature may not have run.']
+    ]) {
+      app.context.fixtureJob.executionTrace = trace ? [trace] : [];
+      const html = renderDocumentTab(app, tab);
+      assert.ok(html.includes(expected), html);
+      assert.match(html, /No .* (?:is|are) stored for this selection\./);
+      assert.doesNotMatch(html, /capability was disabled|No structured key-value fields or tables configured/);
+      assert.equal(app.element('docCenterBody').dataset.layout, '');
+    }
+  });
+}
+
+test('a selected document without insights shows an explicit missing result instead of a blank pane or another document summary', () => {
+  const app = documentRuntime({
+    jobId: 'file', tenantId: 'one', fileName: 'File.pdf', status: 'Failed', segments: [
+      { segmentIndex: 0, startPage: 1, endPage: 2, insightSummary: 'Other document insight' },
+      { segmentIndex: 1, startPage: 3, endPage: 4 }
+    ]
+  });
+  vm.runInContext('selectedSliceIndex=1;', app.context);
+  const html = renderDocumentTab(app, 'insights');
+  assert.match(html, /No insight summary is stored for this selection/);
+  assert.doesNotMatch(html, /Other document insight/);
+});
+
+test('historical failed jobs without segments retain file-level results, Metadata and a preflighted original PDF request', () => {
+  const app = documentRuntime({
+    jobId: 'file', tenantId: 'one', fileName: 'File.pdf', status: 'Failed', segments: [],
+    packetSummary: 'Actual file insight', extractedEntities: [{ name: 'Topic', value: 'Stored entity' }],
+    promptColumnResults: [
+      { columnId: 'custom', columnName: 'Custom', filterMatched: true, resultText: 'Actual file custom result' }
+    ],
+    executionTrace: [{ executorName: 'HistoricalStep', executed: true }]
+  });
+  assert.match(renderDocumentTab(app, 'insights'), /Actual file insight/);
+  assert.match(renderDocumentTab(app, 'entities'), /Stored entity/);
+  assert.match(renderDocumentTab(app, 'prompt:custom'), /Actual file custom result/);
+  assert.match(renderDocumentTab(app, 'metadata'), /Executed \(outcome unknown\)/);
+  const html = renderDocumentTab(app, 'document');
+  assert.match(html, /data-pdf-url="\/api\/harness\/tenants\/one\/jobs\/file\/original"/);
+  assert.doesNotMatch(html, /<iframe[^>]+\bsrc=|No PDF available|\?translated=true/);
+});
+
+test('running and queued jobs with no segments do not claim the source is missing or hide Metadata', () => {
+  const app = documentRuntime({
+    jobId: 'file', tenantId: 'one', fileName: 'File.pdf', status: 'Queued', segments: [],
+    executionTrace: [{ executorName: 'PendingStep', executed: false }]
+  });
+  for (const status of ['Queued', 'Running']) {
+    app.context.fixtureJob.status = status;
+    assert.match(renderDocumentTab(app, 'insights'), /Processing is still in progress/);
+    assert.match(renderDocumentTab(app, 'metadata'), /PendingStep/);
+    assert.match(renderDocumentTab(app, 'document'), /data-pdf-url="[^"]+\/original"/);
+    assert.match(app.element('documentStatusNotice').textContent, /0 steps executed/);
+    assert.doesNotMatch(app.element('docCenterBody').innerHTML, /No PDF available|not available in storage/);
+  }
+});
+
+test('same-language documents show why translation was unnecessary without claiming translated output', () => {
+  const app = documentRuntime({
+    jobId: 'file', tenantId: 'one', fileName: 'English.pdf', status: 'Completed', hasWarnings: false,
+    executionTrace: [{ executorName: 'TranslateDocumentsExecutor', executed: true, succeeded: true }],
+    segments: [{ segmentIndex: 0, startPage: 1, endPage: 4, detectedLanguage: 'en', targetLanguage: 'EN',
+      wasTranslated: false, insightSummary: 'English document insight' }]
+  });
+  const html = renderDocumentTab(app, 'document');
+  assert.match(html, /Translation not needed: the detected and target language are EN/);
+  assert.match(html, /No translated PDF was generated/);
+  assert.doesNotMatch(html, /\?translated=true|pdf-side-by-side|data-kind="warning"/);
+  assert.equal(app.element('documentStatusNotice').hidden, true);
+  assert.doesNotMatch(renderDocumentTab(app, 'insights'), /→ EN translated/);
+});
+
+test('a failed translation on another slice does not label native or genuinely translated slices as failed', () => {
+  const app = documentRuntime({
+    jobId: 'file', tenantId: 'one', fileName: 'Mixed.pdf', status: 'Completed', hasWarnings: true,
+    executionTrace: [{ executorName: 'TranslateDocumentsExecutor', executed: true, succeeded: false }],
+    segments: [
+      { segmentIndex: 0, startPage: 1, endPage: 1, detectedLanguage: 'es', targetLanguage: 'fr',
+        wasTranslated: false, translationErrorCode: 'translation_failed' },
+      { segmentIndex: 1, startPage: 2, endPage: 2, detectedLanguage: 'fr', targetLanguage: 'fr', wasTranslated: false },
+      { segmentIndex: 2, startPage: 3, endPage: 4, detectedLanguage: 'en', targetLanguage: 'fr',
+        wasTranslated: true, insightSummary: 'Real translated document insight' }
+    ]
+  });
+  vm.runInContext('selectedSliceIndex=0;', app.context);
+  assert.match(renderDocumentTab(app, 'document'), /Translation unavailable/);
+  vm.runInContext('selectedSliceIndex=1;', app.context);
+  const native = renderDocumentTab(app, 'document');
+  assert.match(native, /Translation not needed/);
+  assert.doesNotMatch(native, /Translation unavailable|\?translated=true/);
+  vm.runInContext('selectedSliceIndex=2;', app.context);
+  const translated = renderDocumentTab(app, 'document');
+  assert.match(translated, /class="pdf-side-by-side"/);
+  assert.match(translated, /slices\/2\/pdf\?translated=true/);
+  assert.match(translated, /Translated Document \(FR\)/);
+  assert.doesNotMatch(translated, /Translation unavailable/);
+  assert.match(renderDocumentTab(app, 'insights'), /→ FR translated/);
+  assert.equal(app.element('documentStatusNotice').dataset.kind, 'warning');
+});
+
+test('stored results remain accessible after current feature switches are turned off', () => {
+  const app = documentRuntime({
+    jobId: 'file', tenantId: 'one', fileName: 'File.pdf', status: 'Failed',
+    segments: [{
+      segmentIndex: 0, startPage: 1, endPage: 1, insightSummary: 'Historical insight',
+      extractedEntities: [{ name: 'Name', value: 'Historical entity' }],
+      dataExtraction: { fields: [{ fieldName: 'Name', fieldValue: 'Historical field' }] },
+      promptColumnResults: [{
+        columnId: 'custom', columnName: 'Custom', filterMatched: true, resultText: 'Historical custom result'
+      }]
+    }]
+  });
+  vm.runInContext(`currentTenant.capabilities={
+    DocumentInsight:{enabled:false},EntityExtraction:{enabled:false},
+    DataExtraction:{enabled:false},PromptColumns:{enabled:false}};`, app.context);
+  for (const [tab, content] of [
+    ['insights', /Historical insight/], ['entities', /Historical entity/],
+    ['structured', /Historical field/], ['prompt:custom', /Historical custom result/]
+  ]) {
+    assert.match(renderDocumentTab(app, tab), content);
+    assert.equal(app.element('docCenterBody').dataset.tab, tab);
+  }
+});
+
+test('a previous failure notice is cleared on a successful job or when no document is selected', () => {
+  const app = documentRuntime({
+    jobId: 'file', tenantId: 'one', fileName: 'File.pdf', status: 'Failed', segments: []
+  });
+  renderDocumentTab(app, 'insights');
+  assert.equal(app.element('documentStatusNotice').hidden, false);
+  app.context.fixtureJob.status = 'Completed';
+  renderDocumentTab(app, 'insights');
+  assert.equal(app.element('documentStatusNotice').hidden, true);
+  assert.equal(app.element('documentStatusNotice').textContent, '');
+  app.context.fixtureJob.status = 'Failed';
+  renderDocumentTab(app, 'insights');
+  vm.runInContext('selectedJobId=null;', app.context);
+  app.context.renderSelectedDocument();
+  assert.equal(app.element('documentStatusNotice').hidden, true);
+});
+
+test('Admin keeps one accessible status notice outside every preview tab and clears it when selection is removed', () => {
+  const app = documentRuntime({
+    jobId: 'file', tenantId: 'one', fileName: 'File.pdf', status: 'Failed',
+    errorMessage: '<unsafe provider error>', segments: []
+  }, 'admin');
+  const lookup = app.document.getElementById;
+  let notice;
+  let insertions = 0;
+  app.document.getElementById = id => id === 'documentStatusNotice' ? notice || null : lookup(id);
+  app.element('docCenterBody').before = node => { notice = node; insertions++; };
+  for (const status of ['Failed', 'Running', 'Queued']) {
+    app.context.fixtureJob.status = status;
+    let sharedText;
+    for (const tab of ['insights', 'entities', 'structured', 'metadata', 'document']) {
+      const html = renderDocumentTab(app, tab);
+      sharedText ??= notice.textContent;
+      assert.equal(notice.textContent, sharedText);
+      assert.equal(notice.hidden, false);
+      assert.equal(notice.id, 'documentStatusNotice');
+      assert.equal(notice.role, 'status');
+      assert.equal(notice['aria-live'], 'polite');
+      assert.equal(notice.innerHTML, '');
+      assert.equal(app.element('docCenterBody').dataset.layout, tab === 'document' ? 'pdf' : '');
+      assert.doesNotMatch(html, /Processing Failed|<unsafe provider error>|No PDF available/);
+      if (tab === 'document') assert.match(html, /data-pdf-url="[^"]+\/original"/);
+      if (tab === 'metadata') assert.match(html, /Execution Trace/);
+    }
+  }
+  assert.equal(insertions, 1);
+  vm.runInContext('selectedJobId=null;', app.context);
+  app.context.renderSelectedDocument();
+  assert.equal(notice.hidden, true);
+  assert.equal(app.element('selectedDocStatusBadge').className, 'status-pill-mini');
+  assert.equal(app.element('docCenterBody').dataset.layout, '');
+  const css = read('admin.css');
+  assert.match(css, /\.doc-center-body\[data-layout="pdf"\][^}]+overflow:\s*hidden/);
+  assert.doesNotMatch(css, /\.doc-center-body\[data-tab="document"\]/);
+});
+
+test('Admin list and preview badge distinguish warning-only list responses from successful completion', () => {
+  const app = documentRuntime({
+    jobId: 'file', tenantId: 'one', fileName: 'File.pdf', status: 'Completed', hasWarnings: true
+  }, 'admin');
+  app.context.renderDocumentList();
+  const row = app.element('docItemsList').children[0];
+  assert.match(row.innerHTML, /status-pill-mini warning">Completed with warnings/);
+  assert.match(row.title, /Completed with warnings/);
+  renderDocumentTab(app, 'metadata');
+  assert.match(app.element('selectedDocStatusBadge').textContent, /Completed with warnings/);
+  assert.match(app.element('selectedDocStatusBadge').className, /warning/);
+  assert.match(read('admin.css'), /\.status-pill-mini\.warning[^}]+var\(--warning-bg\)/);
+});
+
+test('Admin preview explains same-language skips and only requests translated PDFs for genuine translated output', () => {
+  const app = documentRuntime({
+    jobId: 'file', tenantId: 'one', fileName: 'File.pdf', status: 'Completed',
+    segments: [{ segmentIndex: 0, startPage: 1, endPage: 4, detectedLanguage: 'en',
+      targetLanguage: 'en', wasTranslated: false }]
+  }, 'admin');
+  const source = renderDocumentTab(app, 'document');
+  assert.match(source, /Translation not needed/);
+  assert.match(source, /data-pdf-url="[^"]+\/slices\/0\/pdf"/);
+  assert.doesNotMatch(source, /\?translated=true|<iframe[^>]+\bsrc=/);
+  Object.assign(app.context.fixtureJob.segments[0], {
+    wasTranslated: true, targetLanguage: 'fr', insightSummary: 'Real stored insight'
+  });
+  const translated = renderDocumentTab(app, 'document');
+  assert.match(translated, /class="pdf-side-by-side"/);
+  assert.match(translated, /data-pdf-url="[^"]+\/slices\/0\/pdf\?translated=true"/);
+  assert.doesNotMatch(translated, /<iframe[^>]+\bsrc=/);
+  const insight = renderDocumentTab(app, 'insights');
+  assert.match(insight, /EN → FR/);
+  assert.doesNotMatch(insight, /→ EN/);
+});
+
+test('Admin historical file-level results remain visible without slice records or fabricated slice links', () => {
+  const app = documentRuntime({
+    jobId: 'file', tenantId: 'one', fileName: 'File.pdf', status: 'Failed', segments: [],
+    packetSummary: 'Actual file insight', extractedEntities: [{ name: 'Topic', value: 'Stored file entity' }],
+    executionTrace: [{ executorName: 'HistoricalStep', executed: true }]
+  }, 'admin');
+  assert.match(renderDocumentTab(app, 'insights'), /Actual file insight/);
+  const entities = renderDocumentTab(app, 'entities');
+  assert.match(entities, /Stored file entity/);
+  assert.doesNotMatch(entities, /Slice #NaN|data-args="\[undefined\]"/);
+  assert.match(renderDocumentTab(app, 'metadata'), /Executed \(outcome unknown\)/);
 });

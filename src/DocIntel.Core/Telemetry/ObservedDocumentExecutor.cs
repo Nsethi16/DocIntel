@@ -1,4 +1,5 @@
 using DocIntel.Core.Features.DocumentSplitting;
+using DocIntel.Core.Features.DocumentTranslation;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.Logging;
 
@@ -34,7 +35,14 @@ internal sealed class ObservedDocumentExecutor(
             var result = await inner.HandleAsync(message, context, cancellationToken);
             var trace = result.ExecutionTrace.Skip(previousSteps).LastOrDefault();
             if (trace?.Succeeded == false)
+            {
+                if (inner is TranslateDocumentsExecutor)
+                {
+                    operation.Fail(new InvalidOperationException("The optional translation feature did not complete."));
+                    return result;
+                }
                 throw new InvalidOperationException("The executor reported an unsuccessful processing step.");
+            }
             operation.Complete(skipped: trace?.Executed == false);
             return result;
         }

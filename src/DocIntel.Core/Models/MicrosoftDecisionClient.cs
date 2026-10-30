@@ -57,6 +57,7 @@ public sealed class MicrosoftDecisionClient : IMicrosoftDecisionClient
     private const string TokenScope = "https://cognitiveservices.azure.com/.default";
     private const string QuestionName = "document_type";
     private const int MaximumRequestBytes = 1024 * 1024;
+    private const int MaximumContextRequestBytes = 24 * 1024;
     private const int MaximumResponseBytes = 256 * 1024;
     private const int MaximumCriteriaCount = 255;
     private const double ProbabilitySumTolerance = 0.001;
@@ -278,6 +279,9 @@ public sealed class MicrosoftDecisionClient : IMicrosoftDecisionClient
         {
             throw new ArgumentException("Microsoft Decision request exceeded its size limit.");
         }
+        if (bytes.Length > MaximumContextRequestBytes)
+            throw new ArgumentException("Microsoft Decision exceeded its conservative input-context budget. " +
+                "Shorten identification instructions or criteria; no choices were removed.");
 
         var content = new ByteArrayContent(bytes);
         content.Headers.ContentType = new MediaTypeHeaderValue("application/json");

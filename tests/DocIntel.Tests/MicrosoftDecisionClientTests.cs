@@ -240,6 +240,29 @@ public sealed class MicrosoftDecisionClientTests
     }
 
     [Fact]
+    public async Task Entire_Request_Context_Is_Bounded_Before_Authentication_Without_Removing_Choices()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        var choices = new Dictionary<string, string>
+        {
+            ["Invoice"] = new string('x', 30_000),
+            ["Receipt"] = "A receipt"
+        };
+
+        // Act
+        var exception = await Assert.ThrowsAsync<ArgumentException>(() =>
+            fixture.Client.ChooseAsync("Source", "Instructions", choices));
+
+        // Assert
+        Assert.Contains("input-context budget", exception.Message);
+        Assert.Equal(2, choices.Count);
+        Assert.Equal(0, fixture.Handler.Calls);
+        fixture.Credential.Verify(credential => credential.GetTokenAsync(
+            It.IsAny<TokenRequestContext>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task Treats_Labels_As_Case_Sensitive_Without_Changing_The_Provider_Choice()
     {
         // Arrange

@@ -564,7 +564,8 @@ public sealed class DocumentSplitAndGroupTests : IDisposable
 
         var extractor = new PdfPigLayoutExtractor();
         var catalog = new ModelCatalog(allowDevelopmentSimulation: true);
-        var translator = new AzureDocumentTranslationService(allowDevelopmentSimulation: true);
+        var translator = new AzureDocumentTranslationService(
+            Mock.Of<IDocumentLanguageDetector>(), Mock.Of<IPdfBatchTranslationClient>(), allowDevelopmentSimulation: true);
         var workflow = new DocumentSplittingWorkflow(extractor, extractor, catalog, translator, NullLogger<DocumentSplittingWorkflow>.Instance);
 
         var state = new SplittingState

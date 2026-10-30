@@ -39,6 +39,7 @@ public static class DocumentPdfReader
         cancellationToken.ThrowIfCancellationRequested();
         var slice = job.Segments.FirstOrDefault(item => item.SegmentIndex == sliceIndex);
         if (slice is null) return null;
+        if (translated && (!slice.WasTranslated || slice.TranslationErrorCode is not null)) return null;
 
         var bytes = await artifacts.GetSlicePdfAsync(job.TenantId, job.ArtifactDocumentId ?? job.JobId,
             sliceIndex, cancellationToken, isTranslated: translated);

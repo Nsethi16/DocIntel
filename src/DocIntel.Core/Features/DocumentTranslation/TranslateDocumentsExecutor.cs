@@ -1,12 +1,13 @@
 using System.Diagnostics;
-using System.Text;
-using Azure.AI.Translation.Document;
-using Azure.Core;
+using System.Text.Json;
+using Azure;
 using Azure.Identity;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Storage;
 using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DocIntel.Core.Features.DocumentTranslation;
 
@@ -39,8 +40,7 @@ public interface IDocumentTranslationService
 
 /// <summary>
 /// Translates PDF document slices using Azure AI Document Translation
-/// (<see cref="SingleDocumentTranslationClient"/> for synchronous PDF slice translation and
-/// <see cref="DocumentTranslationClient"/> for batch Blob-to-Blob PDF translation),
+/// using real language detection and the PDF-capable asynchronous Blob-to-Blob translation API,
 /// preserving original PDF layout and formatting while applying custom TSV glossaries for protected terms.
 /// </summary>
 public sealed class AzureDocumentTranslationService : IDocumentTranslationService
@@ -66,21 +66,18 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
         ["recibira una copia de confirmacion"] = "will receive a confirmation copy"
     };
 
-    private readonly TokenCredential _credential;
     private readonly PdfPigLayoutExtractor _pdfExtractor = new();
     private readonly bool _allowDevelopmentSimulation;
-    private readonly SingleDocumentTranslationClient? _client;
+    private readonly IDocumentLanguageDetector _languageDetector;
+    private readonly IPdfBatchTranslationClient _pdfTranslation;
 
     public AzureDocumentTranslationService(
-        TokenCredential? credential = null, bool allowDevelopmentSimulation = false,
-        SingleDocumentTranslationClient? client = null)
+        IDocumentLanguageDetector languageDetector, IPdfBatchTranslationClient pdfTranslation,
+        bool allowDevelopmentSimulation = false)
     {
-        var managedIdentityClientId = Environment.GetEnvironmentVariable("AZURE_CLIENT_ID");
-        _credential = credential ?? (!string.IsNullOrWhiteSpace(managedIdentityClientId)
-            ? new ManagedIdentityCredential(ManagedIdentityId.FromUserAssignedClientId(managedIdentityClientId))
-            : new DefaultAzureCredential());
+        _languageDetector = languageDetector ?? throw new ArgumentNullException(nameof(languageDetector));
+        _pdfTranslation = pdfTranslation ?? throw new ArgumentNullException(nameof(pdfTranslation));
         _allowDevelopmentSimulation = allowDevelopmentSimulation;
-        _client = client;
     }
 
     public async Task<DocumentSliceTranslationResult> TranslatePdfSliceAsync(
@@ -99,7 +96,8 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
         {
             if (!_allowDevelopmentSimulation)
             {
-                throw new InvalidOperationException("Document translation requires a configured HTTPS provider endpoint.");
+                throw new DocumentTranslationFailureException("TranslationNotConfigured",
+                    "Document translation requires a configured provider; original source was retained.");
             }
             var detectedLang = DetectLanguageLocally(fallbackBodyText);
             if (String.Equals(detectedLang, targetLanguage, StringComparison.OrdinalIgnoreCase))
@@ -116,35 +114,65 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
         if (!Uri.TryCreate(azureTranslatorEndpoint, UriKind.Absolute, out var endpointUri) ||
             endpointUri.Scheme != Uri.UriSchemeHttps || !String.IsNullOrEmpty(endpointUri.UserInfo))
         {
-            throw new InvalidOperationException("The document translation provider endpoint must use HTTPS.");
+            throw new DocumentTranslationFailureException("TranslationConfigurationError",
+                "The translation provider endpoint must use HTTPS; no provider was contacted.");
         }
-        if (sourcePdfBytes is not { Length: > 0 })
-        {
-            throw new InvalidOperationException("PDF translation requires the actual source PDF bytes.");
-        }
-        var client = _client ?? new SingleDocumentTranslationClient(endpointUri, _credential);
-        await using var pdfStream = new MemoryStream(sourcePdfBytes);
-        var docFile = new MultipartFormFileData(sliceFileName, pdfStream, "application/pdf");
+        if (sourcePdfBytes is not null &&
+            (sourcePdfBytes.Length is < 5 or > 25 * 1024 * 1024 || !sourcePdfBytes.AsSpan().StartsWith("%PDF-"u8)))
+            throw new InvalidDataException("Translation requires a genuine source PDF of at most 25 MiB.");
+        if (doNotTranslateTerms is null)
+            throw new DocumentTranslationFailureException("TranslationConfigurationError",
+                "Protected translation terms are invalid; original source was retained.");
         var cleanTerms = doNotTranslateTerms.Where(t => !String.IsNullOrWhiteSpace(t)).Select(t => t.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         if (cleanTerms.Any(t => t.IndexOfAny(['\t', '\r', '\n']) >= 0))
         {
-            throw new ArgumentException("Protected translation terms must not contain TSV control characters.");
+            throw new DocumentTranslationFailureException("TranslationConfigurationError",
+                "Protected translation terms must not contain TSV control characters.");
         }
-        await using var glossaryStream = new MemoryStream(Encoding.UTF8.GetBytes(
-            String.Join("\n", cleanTerms.Select(t => $"{t}\t{t}"))));
-        var content = cleanTerms.Count == 0 ? new DocumentTranslateContent(docFile) :
-            new DocumentTranslateContent(docFile,
-                [new MultipartFormFileData("donottranslate.tsv", glossaryStream, "text/tab-separated-values")]);
-        var response = await client.TranslateAsync(
-            targetLanguage, content, sourceLanguage: null, cancellationToken: cancellationToken);
-        var bytes = response.Value.ToArray();
-        if (bytes.Length == 0)
+        var sourceLanguage = "und";
+        try
         {
-            throw new InvalidDataException("The translation provider returned an empty PDF.");
+            var detection = await _languageDetector.DetectAsync(fallbackBodyText, cancellationToken);
+            sourceLanguage = detection.Language;
+            if (String.IsNullOrWhiteSpace(sourceLanguage) ||
+                sourceLanguage.Equals("und", StringComparison.OrdinalIgnoreCase))
+                throw new DocumentTranslationFailureException("LanguageUndetermined",
+                    "Source language is uncertain; translation was not attempted.", "und");
+            if (sourceLanguage.Equals(targetLanguage, StringComparison.OrdinalIgnoreCase))
+                return new(sourceLanguage, false, fallbackBodyText);
+            if (sourcePdfBytes is null)
+                throw new DocumentTranslationFailureException("TranslationSourceUnavailable",
+                    "Translation requires the actual source PDF slice; original text remains available.", sourceLanguage);
+            var bytes = await _pdfTranslation.TranslateAsync(
+                sourcePdfBytes, sourceLanguage, targetLanguage, cleanTerms, cancellationToken);
+            if (bytes.Length < 5 || !bytes.AsSpan().StartsWith("%PDF-"u8))
+                throw new InvalidDataException("The translation provider returned an invalid PDF.");
+            var pages = await _pdfExtractor.ExtractPagesAsync(bytes, new SplittingConfig(), cancellationToken);
+            return new(sourceLanguage, true, String.Join("\n\n", pages.Select(page => page.BodyText)), bytes);
         }
-        var pages = await _pdfExtractor.ExtractPagesAsync(bytes, new SplittingConfig(), cancellationToken);
-        return new DocumentSliceTranslationResult("und", true, String.Join("\n\n", pages.Select(p => p.BodyText)), bytes);
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (DocumentTranslationFailureException failure)
+        {
+            throw new DocumentTranslationFailureException(failure.Code, failure.Message,
+                failure.Language ?? sourceLanguage, failure.ProviderStatus, failure);
+        }
+        catch (Exception exception) when (exception is RequestFailedException or HttpRequestException or
+            AuthenticationFailedException or JsonException or InvalidDataException or FormatException or
+            TimeoutException or OperationCanceledException)
+        {
+            var status = exception is RequestFailedException azureFailure ? azureFailure.Status :
+                exception is HttpRequestException httpFailure && httpFailure.StatusCode is { } code ? (int?)code : null;
+            var error = status is 401 or 403 ? "TranslationAccessDenied" :
+                exception is TimeoutException or OperationCanceledException ? "TranslationTimedOut" :
+                exception is JsonException or InvalidDataException or FormatException ? "TranslationInvalidResponse" : "TranslationProviderFailed";
+            throw new DocumentTranslationFailureException(error,
+                "Translation could not complete; original source was retained and independent features can continue.",
+                sourceLanguage, status, exception);
+        }
     }
 
     public async Task<(string DetectedLanguage, bool WasTranslated, string TranslatedText)> TranslateSliceAsync(
@@ -159,23 +187,14 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
             return (targetLanguage, false, string.Empty);
         }
 
-        byte[]? samplePdfBytes = null;
-        if (!string.IsNullOrWhiteSpace(azureTranslatorEndpoint))
-        {
-            samplePdfBytes = PdfPigLayoutExtractor.CreateSamplePdf([(text, "Slice")]);
-        }
-
-        var result = await TranslatePdfSliceAsync(
-            samplePdfBytes,
-            "slice.pdf",
-            text,
-            [],
-            targetLanguage,
-            azureTranslatorEndpoint,
-            doNotTranslateTerms,
-            cancellationToken).ConfigureAwait(false);
-
-        return (result.DetectedLanguage, result.WasTranslated, result.TranslatedText);
+        if (!String.IsNullOrWhiteSpace(azureTranslatorEndpoint) || !_allowDevelopmentSimulation)
+            throw new NotSupportedException("Production PDF translation requires the actual accepted source PDF.");
+        await Task.CompletedTask;
+        cancellationToken.ThrowIfCancellationRequested();
+        var detected = DetectLanguageLocally(text);
+        var translated = !detected.Equals(targetLanguage, StringComparison.OrdinalIgnoreCase);
+        return (detected, translated, translated
+            ? TranslateBodyTextLocally(text, detected, targetLanguage, doNotTranslateTerms) : text);
     }
 
     private static string TranslateBodyTextLocally(
@@ -206,12 +225,6 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
         return output;
     }
 
-    /// <summary>
-    /// Creates an Azure <see cref="DocumentTranslationClient"/> for batch Blob-to-Blob PDF translation in Azure deployments.
-    /// </summary>
-    public DocumentTranslationClient CreateBatchDocumentClient(Uri endpoint) =>
-        new(endpoint, _credential);
-
     private static string DetectLanguageLocally(string text)
     {
         var spanishMatches = SpanishIndicators.Count(ind => text.Contains(ind, StringComparison.OrdinalIgnoreCase));
@@ -221,7 +234,7 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
 
 /// <summary>
 /// Feature 3 Executor: Translates non-target-language PDF slices into translated PDF documents
-/// using <see cref="IDocumentTranslationService"/> (Azure AI Document Translation <see cref="SingleDocumentTranslationClient"/>).
+/// using <see cref="IDocumentTranslationService"/> with explicit optional-feature failures.
 /// </summary>
 [SendsMessage(typeof(SplittingState))]
 public sealed class TranslateDocumentsExecutor : Executor<SplittingState, SplittingState>
@@ -229,16 +242,18 @@ public sealed class TranslateDocumentsExecutor : Executor<SplittingState, Splitt
     private readonly IDocumentTranslationService _translationService;
     private readonly string? _defaultTranslatorEndpoint;
     private readonly IArtifactStore? _artifactStore;
+    private readonly ILogger _logger;
 
     public TranslateDocumentsExecutor(
         IDocumentTranslationService translationService,
         string? defaultTranslatorEndpoint = null,
-        IArtifactStore? artifactStore = null)
+        IArtifactStore? artifactStore = null, ILogger? logger = null)
         : base(nameof(TranslateDocumentsExecutor))
     {
         _translationService = translationService ?? throw new ArgumentNullException(nameof(translationService));
         _defaultTranslatorEndpoint = defaultTranslatorEndpoint;
         _artifactStore = artifactStore;
+        _logger = logger ?? NullLogger.Instance;
     }
 
     public override async ValueTask<SplittingState> HandleAsync(
@@ -263,75 +278,119 @@ public sealed class TranslateDocumentsExecutor : Executor<SplittingState, Splitt
 
         var sw = Stopwatch.StartNew();
         var config = feature.DocumentTranslation ?? new DocumentTranslationConfig();
+        var targetLang = string.IsNullOrWhiteSpace(config.TargetLanguage) ? "en" : config.TargetLanguage.Trim();
         if (!String.IsNullOrWhiteSpace(config.AzureTranslatorEndpoint) &&
             (!Uri.TryCreate(config.AzureTranslatorEndpoint, UriKind.Absolute, out var configured) ||
              !Uri.TryCreate(_defaultTranslatorEndpoint, UriKind.Absolute, out var trusted) ||
              !String.IsNullOrEmpty(configured.UserInfo) || !configured.Equals(trusted)))
         {
-            throw new InvalidOperationException("Workspace translation endpoints must match the server-configured provider.");
+            foreach (var slice in message.Slices)
+            {
+                slice.TargetLanguage = targetLang;
+                FailSlice(slice, "TranslationConfigurationError",
+                    "The workspace translation endpoint differs from the server-configured provider.", "und");
+            }
+            message.ExecutionTrace.Add(new(nameof(TranslateDocumentsExecutor), true, false, null, sw.Elapsed.TotalMilliseconds,
+                "Translation configuration was rejected. Original source was retained; independent features continue."));
+            _logger.LogWarning("Translation endpoint configuration was rejected without contacting the provider.");
+            return message;
         }
-        var targetLang = string.IsNullOrWhiteSpace(config.TargetLanguage) ? "en" : config.TargetLanguage.Trim();
         var endpoint = !string.IsNullOrWhiteSpace(config.AzureTranslatorEndpoint)
             ? config.AzureTranslatorEndpoint
             : _defaultTranslatorEndpoint;
         var translatedCount = 0;
         var simulationUsed = false;
+        var failures = 0;
 
         foreach (var slice in message.Slices)
         {
             cancellationToken.ThrowIfCancellationRequested();
+            slice.TargetLanguage = targetLang;
 
             var sliceFileName = $"slice-{slice.SegmentIndex + 1}-pages-{slice.StartPage}-{slice.EndPage}.pdf";
-            var docResult = await _translationService.TranslatePdfSliceAsync(
-                slice.SplitPdfBytes,
-                sliceFileName,
-                slice.BodyText,
-                slice.Footers,
-                targetLang,
-                endpoint,
-                config.DoNotTranslateTerms,
-                cancellationToken);
+            DocumentSliceTranslationResult docResult;
+            try
+            {
+                docResult = await _translationService.TranslatePdfSliceAsync(
+                    slice.SplitPdfBytes, sliceFileName, slice.BodyText, slice.Footers, targetLang, endpoint,
+                    config.DoNotTranslateTerms, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+            }
+            catch (DocumentTranslationFailureException failure)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                failures++;
+                FailSlice(slice, failure.Code, failure.Message, failure.Language);
+                _logger.LogWarning("Translation failed for slice {SliceIndex}; code {Code}; HTTP {Status}. Original source retained.",
+                    slice.SegmentIndex, failure.Code, failure.ProviderStatus);
+                continue;
+            }
 
+            string? translatedLocation = null;
+            if (docResult.WasTranslated)
+            {
+                if (docResult.TranslatedPdfBytes is not { Length: > 0 } translated ||
+                    !translated.AsSpan().StartsWith("%PDF-"u8))
+                {
+                    failures++;
+                    FailSlice(slice, "TranslationInvalidResponse",
+                        "A translated PDF was not returned; original source was retained.", docResult.DetectedLanguage);
+                    continue;
+                }
+                try
+                {
+                    if (_artifactStore is not null)
+                        translatedLocation = await _artifactStore.SaveSlicePdfAsync(message.Tenant.TenantId,
+                            message.DocumentId, slice.SegmentIndex, translated, cancellationToken, isTranslated: true);
+                }
+                catch (Exception exception) when (exception is RequestFailedException or IOException)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    failures++;
+                    FailSlice(slice, "TranslationStorageFailed",
+                        "The translated PDF could not be stored; original source was retained.", docResult.DetectedLanguage);
+                    _logger.LogWarning("A translated artifact could not be stored for slice {SliceIndex}; error type {ErrorType}.",
+                        slice.SegmentIndex, exception.GetType().Name);
+                    continue;
+                }
+                translatedCount++;
+            }
+            slice.TranslationErrorCode = null;
+            slice.TranslationErrorMessage = null;
             slice.DetectedLanguage = docResult.DetectedLanguage;
             simulationUsed |= docResult.IsDevelopmentSimulation;
             message.HasDevelopmentResults |= docResult.IsDevelopmentSimulation;
-            slice.TargetLanguage = targetLang;
             slice.WasTranslated = docResult.WasTranslated;
             slice.TranslatedText = docResult.WasTranslated ? docResult.TranslatedText : slice.BodyText;
-
-            if (docResult.WasTranslated && docResult.TranslatedPdfBytes is { Length: > 0 })
-            {
-                slice.TranslatedPdfBytes = docResult.TranslatedPdfBytes;
-                slice.TranslatedPdfSizeBytes = docResult.TranslatedPdfBytes.Length;
-
-                if (_artifactStore is not null)
-                {
-                    slice.TranslatedPdfBlobUri = await _artifactStore.SaveSlicePdfAsync(
-                        message.Tenant.TenantId,
-                        message.DocumentId,
-                        slice.SegmentIndex,
-                        docResult.TranslatedPdfBytes,
-                        cancellationToken,
-                        isTranslated: true);
-                }
-
-                translatedCount++;
-            }
-            else if (docResult.WasTranslated)
-            {
-                translatedCount++;
-            }
+            slice.TranslatedPdfBytes = docResult.WasTranslated ? docResult.TranslatedPdfBytes : null;
+            slice.TranslatedPdfSizeBytes = slice.TranslatedPdfBytes?.Length ?? 0;
+            slice.TranslatedPdfBlobUri = docResult.WasTranslated ? translatedLocation : null;
         }
 
         sw.Stop();
         message.ExecutionTrace.Add(new WorkflowStepTrace(
             nameof(TranslateDocumentsExecutor),
             Executed: true,
-            Succeeded: true,
-            ModelIdUsed: simulationUsed ? "DevelopmentTranslationSimulation" : "AzureDocumentTranslation",
+            Succeeded: failures == 0,
+            ModelIdUsed: simulationUsed ? "DevelopmentTranslationSimulation" :
+                translatedCount > 0 ? "AzureDocumentTranslation" : "AzureTranslatorLanguageDetection",
             DurationMs: sw.Elapsed.TotalMilliseconds,
-            Notes: $"Evaluated {message.Slices.Count} PDF slice(s) for target language '{targetLang}'; translated {translatedCount} PDF document slice(s)."));
+            Notes: failures > 0
+                ? $"Translation failed for {failures} of {message.Slices.Count} document(s). Original source was retained; independent features continue."
+                : $"Detected source languages for {message.Slices.Count} document(s); translated {translatedCount}; same-language sources were retained."));
 
         return message;
+    }
+
+    private static void FailSlice(DocumentSlice slice, string code, string message, string? language)
+    {
+        slice.DetectedLanguage = language ?? "und";
+        slice.WasTranslated = false;
+        slice.TranslatedText = null;
+        slice.TranslatedPdfBytes = null;
+        slice.TranslatedPdfBlobUri = null;
+        slice.TranslatedPdfSizeBytes = 0;
+        slice.TranslationErrorCode = code;
+        slice.TranslationErrorMessage = message;
     }
 }

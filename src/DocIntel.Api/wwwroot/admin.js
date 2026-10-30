@@ -1138,11 +1138,11 @@ let tenants = [];
           ? langs.map(l => l === 'es' ? 'Spanish' : l === 'en' ? 'English' : l.toUpperCase()).join(', ')
           : 'English';
 
-        const statusCls = job.status === 'Completed' ? '' : (job.status === 'Failed' ? 'failed' : 'running');
+        const status = documentJobStatus(job);
 
         const card = document.createElement('div');
         card.className = 'doc-card-item' + (isSelected ? ' selected' : '');
-        card.title = `${job.fileName} (${segs.length} slices · ${job.status})`;
+        card.title = `${job.fileName} (${segs.length} slices · ${status.label})`;
         card.onclick = () => {
           selectedJobId = job.jobId;
           selectedSliceIndex = -1;
@@ -1166,7 +1166,7 @@ let tenants = [];
               ${segs.length > 1 ? `<span>· ${segs.length} slices</span>` : ''}
             </div>
             <div style="margin-top:5px;">
-              <span class="status-pill-mini ${statusCls}">${escapeHtml(job.status)}</span>
+              <span class="status-pill-mini ${status.kind}">${escapeHtml(status.label)}</span>
             </div>
           </div>
         `;
@@ -1232,13 +1232,18 @@ let tenants = [];
 
     function renderSelectedDocument() {
       const body = document.getElementById('docCenterBody');
+      if (!body) return;
+      body.dataset.layout = '';
+      body.dataset.tab = docResultTab;
       const sliceRow = document.getElementById('sliceSelectorRow');
       const job = tenantJobs.find(j => j.jobId === selectedJobId);
+      updateDocumentStatusNotice(job);
 
       if (!job) {
         document.getElementById('selectedDocTitle').textContent = 'No document selected';
         document.getElementById('selectedDocHarnessBadge').textContent = currentTenant ? `Harness v${currentTenant.harnessVersion || 1}` : 'Harness';
         document.getElementById('selectedDocStatusBadge').textContent = 'Idle';
+        document.getElementById('selectedDocStatusBadge').className = 'status-pill-mini';
         sliceRow.innerHTML = '';
         body.innerHTML = `
           <div class="result-card" style="text-align:center;padding:48px 24px;color:var(--text-secondary);">
@@ -1252,11 +1257,13 @@ let tenants = [];
       document.getElementById('selectedDocTitle').textContent = `${job.fileName}`;
       document.getElementById('selectedDocHarnessBadge').textContent = `Harness v${job.appliedHarnessVersion || 1}`;
       const statusBadge = document.getElementById('selectedDocStatusBadge');
-      statusBadge.textContent = `${job.status} · ${job.totalPages || 0} pages`;
-      statusBadge.className = 'status-pill-mini ' + (job.status === 'Completed' ? '' : (job.status === 'Failed' ? 'failed' : 'running'));
+      const status = documentJobStatus(job);
+      statusBadge.textContent = `${status.label} · ${job.totalPages || 0} pages`;
+      statusBadge.className = 'status-pill-mini ' + status.kind;
 
       const segs = job.segments || [];
-      const totalEntitiesCount = segs.reduce((acc, s) => acc + ((s.extractedEntities || []).length), 0);
+      const segmentedEntities = segs.flatMap(s => s.extractedEntities || []);
+      const totalEntitiesCount = (segmentedEntities.length ? segmentedEntities : job.extractedEntities || []).length;
       const totalStructuredCount = segs.reduce((acc, s) => {
         const de = s.dataExtraction;
         if (!de) return acc;
@@ -1339,6 +1346,7 @@ let tenants = [];
           const openLink = document.createElement('a');
           openLink.href = pdfUrl;
           openLink.target = '_blank';
+          openLink.rel = 'noopener noreferrer';
           openLink.className = 'btn-mini';
           openLink.style.cssText = 'text-decoration:none;font-size:12px;padding:6px 10px;border-radius:8px;';
           openLink.textContent = '↗ Open PDF';
@@ -1346,54 +1354,48 @@ let tenants = [];
         }
       }
 
-      if (job.status === 'Queued' || job.status === 'Running') {
-        body.innerHTML = `
-          <div class="result-card">
-            <div class="result-card-header">
-              <h3 class="result-card-title">Processing Document through Agent Harness...</h3>
-              <span class="status-pill-mini running">${escapeHtml(job.status)}</span>
-            </div>
-            <div style="font-size:13px;color:var(--text-secondary);">
-              Completed steps so far: ${(job.executionTrace || []).length}
-            </div>
-          </div>
-        `;
-        return;
-      }
-
-      if (job.status === 'Failed') {
-        body.innerHTML = `
-          <div class="result-card" style="border-color:var(--error);background:var(--error-bg);">
-            <h3 class="result-card-title" style="color:var(--error);margin-bottom:8px;">Processing Failed</h3>
-            <div style="font-size:12.5px;color:var(--error);white-space:pre-wrap;">${escapeHtml(job.errorMessage || 'Unknown error')}</div>
-          </div>
-        `;
-        return;
-      }
-
       const activeSegs = selectedSliceIndex === -1
         ? segs
         : segs.filter(s => s.segmentIndex === selectedSliceIndex);
 
       if (docResultTab === 'document') {
-        if (segs.length === 0) {
-          body.innerHTML = `<div class="result-card">No PDF available.</div>`;
-          return;
-        }
-
+        body.dataset.layout = 'pdf';
         const focusedSeg = (selectedSliceIndex >= 0 ? segs.find(s => s.segmentIndex === selectedSliceIndex) : segs[0]) || segs[0];
-        const pdfUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${focusedSeg.segmentIndex}/pdf`;
+        const jobUrl = `/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}`;
+        const pdfUrl = focusedSeg ? `${jobUrl}/slices/${focusedSeg.segmentIndex}/pdf` : `${jobUrl}/original`;
 
-        body.innerHTML = `
-          <iframe src="${pdfUrl}" style="width:100%;height:calc(100vh - 185px);min-height:580px;border:1px solid var(--card-border);border-radius:14px;background:var(--surface-soft);display:block;box-shadow:0 4px 16px rgba(0,0,0,0.04);" title="PDF Preview"></iframe>
-        `;
+        if (focusedSeg?.wasTranslated === true) {
+          body.innerHTML = `<div class="pdf-side-by-side">
+            <div class="pdf-pane">
+              <div class="pdf-pane-bar"><strong>Original Document (${escapeHtml(focusedSeg.detectedLanguage || 'Unknown')})</strong></div>
+              ${pdfPreviewMarkup(pdfUrl, 'Original PDF Preview')}
+            </div>
+            <div class="pdf-pane">
+              <div class="pdf-pane-bar"><strong>Translated Document (${escapeHtml(focusedSeg.targetLanguage || 'Unknown')})</strong></div>
+              ${pdfPreviewMarkup(`${pdfUrl}?translated=true`, 'Translated PDF Preview')}
+            </div>
+          </div>`;
+        } else {
+          const note = translationPreviewNote(job, focusedSeg);
+          body.innerHTML = (note
+            ? `<p class="pdf-translation-note" data-kind="${note.kind}">${escapeHtml(note.text)}</p>` : '') +
+            pdfPreviewMarkup(pdfUrl, 'Original PDF Preview');
+        }
+        startPdfPreviews(body);
         return;
       }
 
       if (docResultTab === 'insights') {
+        const missingMessage = unavailableResultMessage(job, 'GenerateDocumentInsightsExecutor', 'Insight generation',
+          'No insight summary is stored for this selection.');
         const distinctTypes = [...new Set(segs.map(s => s.identifiedDocumentName || s.documentTypeName || 'Undefined'))];
-        const distinctLangs = [...new Set(segs.map(s => (s.detectedLanguage || 'en').toUpperCase()))];
-        const anyTranslated = segs.some(s => s.wasTranslated);
+        const distinctLangs = [...new Set(segs.map(s => s.detectedLanguage).filter(Boolean).map(l => l.toUpperCase()))];
+        const anyTranslated = segs.some(s => s.wasTranslated === true);
+        const translatedTargets = [...new Set(segs.filter(s => s.wasTranslated === true)
+          .map(s => s.targetLanguage).filter(Boolean).map(l => l.toUpperCase()))];
+        const translationTrace = featureExecutionTrace(job, 'TranslateDocumentsExecutor');
+        const translationFailed = segs.some(s => s.translationErrorCode || s.translationErrorMessage) ||
+          (translationTrace?.executed === true && translationTrace.succeeded === false);
 
         const kpiStripHtml = `
           <div class="packet-kpi-strip">
@@ -1409,8 +1411,9 @@ let tenants = [];
             </div>
             <div class="packet-kpi-card">
               <span class="packet-kpi-label">Language &amp; Translation</span>
-              <span class="packet-kpi-value">${escapeHtml(distinctLangs.join(', '))}${anyTranslated ? ' → EN' : ''}</span>
-              <span class="packet-kpi-sub">${anyTranslated ? 'Translated via Azure AI Translator' : 'Native source language'}</span>
+              <span class="packet-kpi-value">${escapeHtml(distinctLangs.join(', ') || 'Unknown')}${translatedTargets.length ? ` → ${escapeHtml(translatedTargets.join(', '))}` : ''}</span>
+              <span class="packet-kpi-sub">${translationFailed ? 'Translation unavailable for one or more documents'
+                : anyTranslated ? 'Translated via Azure AI Translator' : 'No translated PDF generated'}</span>
             </div>
             <div class="packet-kpi-card">
               <span class="packet-kpi-label">Extracted Intelligence</span>
@@ -1427,7 +1430,7 @@ let tenants = [];
             <div class="result-card"><h3 class="result-card-title">File Insights</h3>
               <p>Complete File · ${escapeHtml(job.fileName)} · ${job.totalPages || 0} pages</p>
               <div class="insight-summary-box">${escapeHtml(summary ||
-                'No insight summary has been generated for this file.')}</div></div>`;
+                missingMessage)}</div></div>`;
           return;
         }
         body.innerHTML = kpiStripHtml + activeSegs.filter(s => String(s.insightSummary || '').trim()).map(s => `
@@ -1438,27 +1441,35 @@ let tenants = [];
                 <h3 class="result-card-title" style="font-size:15px;">${escapeHtml(s.identifiedDocumentName || s.documentTypeName || 'Document')}</h3>
               </div>
               <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                <span class="version-chip">${escapeHtml((s.detectedLanguage || 'en').toUpperCase())}${s.wasTranslated ? ` → ${escapeHtml((s.targetLanguage || 'en').toUpperCase())}` : ''}</span>
+                <span class="version-chip">${escapeHtml((s.detectedLanguage || 'Unknown').toUpperCase())}${s.wasTranslated ? ` → ${escapeHtml((s.targetLanguage || 'Unknown').toUpperCase())}` : ''}</span>
                 <span class="conf-badge">${s.identifiedDocumentName && s.identifiedDocumentName !== 'Undefined' ? 'Matched Rule' : 'Identified'}</span>
                 <button type="button" class="copy-chip-btn" data-click="jumpToSlicePdf_arg" data-args="[${s.segmentIndex}]" title="Open this slice in View Document">📄 View Slice PDF</button>
               </div>
             </div>
             <div class="insight-summary-box">
-              ${escapeHtml(s.insightSummary || 'No insight summary generated (Document Insights capability was disabled for this run).')}
+              ${escapeHtml(s.insightSummary)}
             </div>
             <details>
               <summary style="cursor:pointer;font-size:12px;color:var(--text-secondary);font-weight:600;user-select:none;">View Extracted / Translated Source Text (${(s.translatedText || s.bodyText || '').length.toLocaleString()} chars)</summary>
               <pre style="background:var(--surface-soft);padding:14px;border-radius:10px;border:1px solid var(--border);font-size:12px;line-height:1.55;white-space:pre-wrap;margin-top:8px;max-height:240px;overflow:auto;">${escapeHtml(s.translatedText || s.bodyText)}</pre>
             </details>
           </div>
-        `).join('');
+        `).join('') + (activeSegs.some(s => !String(s.insightSummary || '').trim())
+          ? `<div class="result-card">${escapeHtml(missingMessage)}</div>` : '');
       } else if (docResultTab === 'entities') {
-        const allEntities = activeSegs.flatMap(s => (s.extractedEntities || []).map(e => ({ ...e, sliceIndex: s.segmentIndex, sliceNum: s.segmentIndex + 1, docType: s.identifiedDocumentName || s.documentTypeName })));
+        const selectedEntities = activeSegs.flatMap(s => (s.extractedEntities || []).map(e => ({
+          ...e, sliceIndex: s.segmentIndex, sliceNum: s.segmentIndex + 1
+        })));
+        const allEntities = selectedEntities.length ? selectedEntities : (job.extractedEntities || [])
+          .filter(e => selectedSliceIndex === -1 || e.segmentIndex === selectedSliceIndex)
+          .map(e => ({ ...e, sliceIndex: e.segmentIndex, sliceNum: e.segmentIndex + 1 }));
         if (allEntities.length === 0) {
+          const message = unavailableResultMessage(job, 'ExtractEntitiesExecutor', 'Entity extraction',
+            'No extracted entities are stored for this selection.');
           body.innerHTML = `
             <div class="result-card" style="text-align:center;padding:42px 20px;">
               <div style="font-size:14.5px;font-weight:600;color:var(--text-primary);margin-bottom:4px;">Entity extraction artifact unavailable</div>
-              <div style="font-size:12.5px;color:var(--text-secondary);">This document has no extracted entities or Entity Extraction was disabled.</div>
+              <div style="font-size:12.5px;color:var(--text-secondary);">${escapeHtml(message)}</div>
             </div>
           `;
           return;
@@ -1490,7 +1501,7 @@ let tenants = [];
                 return `
                   <div class="entity-chip-card">
                     <div class="entity-chip-top">
-                      <span>${escapeHtml(e.category || 'Entity')} · <a href="javascript:void(0)" data-click="jumpToSlicePdf_arg" data-args="[${e.sliceIndex}]" style="color:var(--link);text-decoration:none;">Slice #${e.sliceNum} ↗</a></span>
+                      <span>${escapeHtml(e.category || 'Entity')}${Number.isInteger(e.sliceIndex) ? ` · <button type="button" class="text-link-btn" data-click="jumpToSlicePdf_arg" data-args="[${e.sliceIndex}]">Slice #${e.sliceNum} ↗</button>` : ''}</span>
                       <span class="conf-badge">${pct}%</span>
                     </div>
                     <div class="entity-chip-name">${escapeHtml(e.name)}</div>
@@ -1510,10 +1521,12 @@ let tenants = [];
       } else if (docResultTab === 'structured') {
         const slicesWithData = activeSegs.filter(s => s.dataExtraction && ((s.dataExtraction.fields && s.dataExtraction.fields.length > 0) || (s.dataExtraction.tables && s.dataExtraction.tables.length > 0)));
         if (slicesWithData.length === 0) {
+          const message = unavailableResultMessage(job, 'ExtractDocumentDataExecutor', 'Structured data extraction',
+            'No structured fields or tables are stored for this selection.');
           body.innerHTML = `
             <div class="result-card" style="text-align:center;padding:42px 20px;">
               <div style="font-size:14.5px;font-weight:600;color:var(--text-primary);margin-bottom:4px;">Structured data extraction unavailable</div>
-              <div style="font-size:12.5px;color:var(--text-secondary);">Configure key-value pairs and tables for "${escapeHtml((activeSegs[0] && activeSegs[0].identifiedDocumentName) || 'your document type')}" in Agent Harness → Data Extraction.</div>
+              <div style="font-size:12.5px;color:var(--text-secondary);">${escapeHtml(message)}</div>
             </div>
           `;
           return;
@@ -1601,13 +1614,13 @@ let tenants = [];
             </div>
             <table class="data-table">
               <thead>
-                <tr><th>Executor Step</th><th>Executed</th><th>Model / Service</th><th>Duration</th><th>Notes</th></tr>
+                <tr><th>Executor Step</th><th>Status</th><th>Model / Service</th><th>Duration</th><th>Notes</th></tr>
               </thead>
               <tbody>
                 ${trace.map(t => `
                   <tr>
                     <td style="font-weight:600;">${escapeHtml(t.executorName)}</td>
-                    <td>${t.executed ? '✓ Yes' : 'Skipped'}</td>
+                    <td>${executionTraceStatus(t)}</td>
                     <td>${escapeHtml(t.modelIdUsed || 'Deterministic')}</td>
                     <td>${t.durationMs ? t.durationMs.toFixed(1) + ' ms' : '0 ms'}</td>
                     <td style="color:var(--text-secondary);">${escapeHtml(t.notes || '')}</td>

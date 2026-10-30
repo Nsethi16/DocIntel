@@ -1,0 +1,221 @@
+using System.Security.Cryptography;
+using Azure;
+using DocIntel.Core;
+using DocIntel.Core.Features.DocumentSplitting;
+using DocIntel.Core.Features.DocumentTranslation;
+using DocIntel.Core.Harness;
+using DocIntel.Core.Jobs;
+using DocIntel.Core.Models;
+using DocIntel.Core.Storage;
+using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
+using Xunit;
+
+namespace DocIntel.Tests;
+
+public sealed class TranslationReliabilityTests
+{
+    [Theory]
+    [InlineData("en", "en")]
+    [InlineData("EN", "en")]
+    [InlineData("fr", "fr")]
+    public async Task Same_Language_Retains_Original_Source_Without_A_Pdf_Translation_Request(string source, string target)
+    {
+        // Arrange
+        var detector = Detector(source);
+        var batch = new Mock<IPdfBatchTranslationClient>(MockBehavior.Strict);
+        var service = new AzureDocumentTranslationService(detector.Object, batch.Object);
+        var original = "%PDF-original"u8.ToArray();
+        var before = original.ToArray();
+
+        // Act
+        var result = await service.TranslatePdfSliceAsync(original, "source.pdf", "Original source text",
+            [], target, "https://translator.example/", []);
+
+        // Assert
+        Assert.False(result.WasTranslated);
+        Assert.Equal(source, result.DetectedLanguage);
+        Assert.Equal("Original source text", result.TranslatedText);
+        Assert.Null(result.TranslatedPdfBytes);
+        Assert.False(result.IsDevelopmentSimulation);
+        Assert.Equal(before, original);
+        batch.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Unknown_Language_Does_Not_Become_An_English_Skip_Or_A_Blind_Translation()
+    {
+        // Arrange
+        var detector = new Mock<IDocumentLanguageDetector>();
+        detector.Setup(client => client.DetectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DocumentTranslationFailureException("LanguageUndetermined", "Unknown language", "und"));
+        var batch = new Mock<IPdfBatchTranslationClient>(MockBehavior.Strict);
+        var service = new AzureDocumentTranslationService(detector.Object, batch.Object);
+
+        // Act
+        var failure = await Assert.ThrowsAsync<DocumentTranslationFailureException>(() => service.TranslatePdfSliceAsync(
+            "%PDF-source"u8.ToArray(), "source.pdf", "Ambiguous source", [], "en", "https://translator.example/", []));
+
+        // Assert
+        Assert.Equal("LanguageUndetermined", failure.Code);
+        Assert.Equal("und", failure.Language);
+        batch.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Translation_Failure_Is_Explicit_And_Does_Not_Destroy_Original_Source()
+    {
+        // Arrange
+        var source = State();
+        var service = new Mock<IDocumentTranslationService>(MockBehavior.Strict);
+        service.Setup(provider => provider.TranslatePdfSliceAsync(
+                It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+                "en", "https://translator.example/", It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DocumentTranslationFailureException("TranslationProviderFailed", "Provider unavailable", "fr", 503));
+
+        // Act
+        var result = await new TranslateDocumentsExecutor(service.Object, "https://translator.example/")
+            .HandleAsync(source, Mock.Of<IWorkflowContext>());
+
+        // Assert
+        Assert.False(Assert.Single(result.ExecutionTrace).Succeeded);
+        Assert.Equal("Original evidence", result.Slices[0].BodyText);
+        Assert.False(result.Slices[0].WasTranslated);
+        Assert.Null(result.Slices[0].TranslatedPdfBytes);
+        Assert.Equal("fr", result.Slices[0].DetectedLanguage);
+        Assert.Equal("en", result.Slices[0].TargetLanguage);
+        Assert.Equal("TranslationProviderFailed", result.Slices[0].TranslationErrorCode);
+    }
+
+    [Fact]
+    public async Task A_Translated_Pdf_Is_Not_Published_Until_Its_Artifact_Save_Succeeds()
+    {
+        // Arrange
+        var source = State();
+        var service = new Mock<IDocumentTranslationService>();
+        service.Setup(provider => provider.TranslatePdfSliceAsync(
+                It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+                "en", "https://translator.example/", It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DocumentSliceTranslationResult("fr", true, "Translated", "%PDF-translation"u8.ToArray()));
+        var artifacts = new Mock<IArtifactStore>();
+        artifacts.Setup(store => store.SaveSlicePdfAsync("workspace", It.IsAny<string>(), 0,
+            It.IsAny<byte[]>(), It.IsAny<CancellationToken>(), true))
+            .ThrowsAsync(new RequestFailedException(503, "Storage unavailable"));
+
+        // Act
+        var result = await new TranslateDocumentsExecutor(service.Object, "https://translator.example/", artifacts.Object)
+            .HandleAsync(source, Mock.Of<IWorkflowContext>());
+
+        // Assert
+        Assert.False(Assert.Single(result.ExecutionTrace).Succeeded);
+        Assert.Equal("TranslationStorageFailed", result.Slices[0].TranslationErrorCode);
+        Assert.False(result.Slices[0].WasTranslated);
+        Assert.Null(result.Slices[0].TranslatedPdfBytes);
+        Assert.Null(result.Slices[0].TranslatedPdfBlobUri);
+        Assert.Null(result.Slices[0].TranslatedText);
+        Assert.Equal("Original evidence", result.Slices[0].BodyText);
+    }
+
+    [Fact]
+    public async Task Cancellation_Still_Aborts_The_Workflow_Instead_Of_Becoming_An_Optional_Warning()
+    {
+        // Arrange
+        var source = State();
+        using var cancellation = new CancellationTokenSource();
+        var service = new Mock<IDocumentTranslationService>();
+        service.Setup(provider => provider.TranslatePdfSliceAsync(
+                It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+                "en", "https://translator.example/", It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback(() => cancellation.Cancel()).ThrowsAsync(new OperationCanceledException(cancellation.Token));
+
+        // Act
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(() =>
+            new TranslateDocumentsExecutor(service.Object, "https://translator.example/")
+                .HandleAsync(source, Mock.Of<IWorkflowContext>(), cancellation.Token).AsTask());
+
+        // Assert
+        Assert.Empty(source.ExecutionTrace);
+        Assert.Null(source.Slices[0].TranslationErrorCode);
+    }
+
+    [Fact]
+    public async Task Translation_Failure_Still_Publishes_Durable_Insights_And_Entities_With_An_Explicit_Warning()
+    {
+        // Arrange
+        var directory = Path.Combine(Path.GetTempPath(), "DocIntel.PartialProcessing", Guid.NewGuid().ToString("N"));
+        var tenant = new TenantHarness
+        {
+            TenantId = "workspace", DisplayName = "Workspace", DefaultModelId = "phi-4",
+            Capabilities = new(StringComparer.OrdinalIgnoreCase)
+            {
+                [FeatureHarness.SplitAndGroupKey] = new() { Enabled = true, SplitAndGroup = new() },
+                [FeatureHarness.DocumentTranslationKey] = new() { Enabled = true, DocumentTranslation = new() },
+                [FeatureHarness.DocumentInsightKey] = new() { Enabled = true, ModelIdOverride = "phi-4", DocumentInsight = new() },
+                [FeatureHarness.EntityExtractionKey] = new() { Enabled = true, ModelIdOverride = "phi-4", EntityExtraction = new() }
+            }
+        };
+        var source = PdfPigLayoutExtractor.CreateSamplePdf(
+            [("Invoice\nCustomer Name: Northwind Example\nQuote Number: SYN-001\nTotal deal value: 100 USD", "Form-Invoice-v1")]);
+        var harness = new Mock<IHarnessStore>();
+        harness.Setup(store => store.GetTenantAsync("workspace", It.IsAny<CancellationToken>())).ReturnsAsync(tenant);
+        var translation = new Mock<IDocumentTranslationService>();
+        translation.Setup(provider => provider.TranslatePdfSliceAsync(
+                It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
+                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DocumentTranslationFailureException("TranslationProviderFailed", "Provider unavailable", "fr", 503));
+        var services = new ServiceCollection().AddLogging();
+        services.AddSingleton(harness.Object).AddSingleton(translation.Object);
+        services.AddDocIntelCore(harnessFilePath: Path.Combine(directory, "harness.json"), allowDevelopmentSimulation: true);
+        try
+        {
+            using var provider = services.BuildServiceProvider();
+            var jobs = provider.GetRequiredService<IJobStore>();
+            var artifacts = provider.GetRequiredService<IArtifactStore>();
+            await artifacts.SaveOriginalPdfAsync("workspace", "job", source);
+            await jobs.UpsertJobAsync(new DocumentJob
+            {
+                JobId = "job", TenantId = "workspace", TenantDisplayName = "Workspace", FileName = "invoice.pdf",
+                AppliedHarnessVersion = tenant.HarnessVersion, ProcessingHarness = tenant,
+                OriginalSha256 = Convert.ToHexString(SHA256.HashData(source))
+            });
+
+            // Act
+            await provider.GetRequiredService<DocumentJobProcessor>().ProcessAsync(new("job", "workspace"));
+            var completed = (await jobs.GetJobAsync("job", tenantId: "workspace"))!;
+
+            // Assert
+            Assert.Equal(JobStatus.Completed, completed.Status);
+            Assert.True(completed.HasWarnings);
+            Assert.Null(completed.ErrorMessage);
+            Assert.NotNull(completed.ProcessingResultSha256);
+            Assert.NotNull(await artifacts.GetProcessingResultAsync(completed));
+            Assert.False(Assert.Single(completed.ExecutionTrace,
+                step => step.ExecutorName == "TranslateDocumentsExecutor").Succeeded);
+            Assert.Contains(completed.ExecutionTrace, step => step.ExecutorName == "GenerateDocumentInsightsExecutor" && step.Succeeded);
+            Assert.Contains(completed.ExecutionTrace, step => step.ExecutorName == "ExtractEntitiesExecutor" && step.Succeeded);
+            Assert.False(String.IsNullOrWhiteSpace(completed.PacketSummary));
+            Assert.Equal("TranslationProviderFailed", Assert.Single(completed.Segments).TranslationErrorCode);
+            Assert.Equal(source, await artifacts.GetOriginalPdfAsync("workspace", "job"));
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    private static Mock<IDocumentLanguageDetector> Detector(string language)
+    {
+        var detector = new Mock<IDocumentLanguageDetector>(MockBehavior.Strict);
+        detector.Setup(client => client.DetectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DocumentLanguageResult(language));
+        return detector;
+    }
+
+    private static SplittingState State() => new()
+    {
+        Tenant = new() { TenantId = "workspace", DisplayName = "Workspace" }, FileName = "source.pdf",
+        Slices = [new() { SegmentIndex = 0, StartPage = 1, EndPage = 1, BodyText = "Original evidence", SplitPdfBytes = "%PDF-source"u8.ToArray() }]
+    };
+}

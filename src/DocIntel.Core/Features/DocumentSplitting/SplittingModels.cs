@@ -157,6 +157,12 @@ public sealed class DocumentSlice
     [JsonPropertyName("wasTranslated")]
     public bool WasTranslated { get; set; }
 
+    [JsonPropertyName("translationErrorCode")]
+    public string? TranslationErrorCode { get; set; }
+
+    [JsonPropertyName("translationErrorMessage")]
+    public string? TranslationErrorMessage { get; set; }
+
     [JsonPropertyName("translatedText")]
     public string? TranslatedText { get; set; }
 

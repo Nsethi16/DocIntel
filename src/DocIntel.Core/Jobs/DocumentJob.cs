@@ -52,6 +52,11 @@ public sealed class DocumentJob
 
     public string? ErrorMessage { get; set; }
 
+    /// <summary>A completed source-usable run can still contain explicitly failed optional features.</summary>
+    [JsonIgnore]
+    public bool HasWarnings => Status == JobStatus.Completed &&
+        ExecutionTrace.Any(step => step.Executed && !step.Succeeded);
+
     public string? OriginalPdfLocation { get; set; }
 
     public string? OriginalSha256 { get; set; }

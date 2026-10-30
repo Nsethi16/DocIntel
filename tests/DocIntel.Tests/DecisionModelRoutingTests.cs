@@ -106,6 +106,39 @@ public sealed class DecisionModelRoutingTests
     }
 
     [Fact]
+    public async Task Long_Documents_Use_Bounded_MultiPage_Evidence_Without_Dropping_Identification_Choices()
+    {
+        // Arrange
+        var state = State();
+        state.Slices[0].EndPage = 100;
+        state.Slices[0].BodyText = new string('x', 100_000);
+        state.Pages = Enumerable.Range(1, 100).Select(number => new PageLayout
+        {
+            PageNumber = number, BodyText = $"Source Form\nOriginal page {number}\n" + new string('語', 20_000),
+            FooterText = new string('界', 10_000)
+        }).ToList();
+        var native = new Mock<IMicrosoftDecisionClient>(MockBehavior.Strict);
+        native.Setup(client => client.ChooseAsync(
+            It.Is<string>(text => System.Text.Encoding.UTF8.GetByteCount(text) < 8192 &&
+                text.Contains("Source page 100:", StringComparison.Ordinal) &&
+                text.Contains("sampled", StringComparison.OrdinalIgnoreCase)),
+            It.IsAny<string>(), It.Is<IReadOnlyDictionary<string, string>>(choices => choices.Count == 2),
+            It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MicrosoftDecisionResult("undefined", 1, "Decision-1"));
+        native.Setup(client => client.Dispose());
+
+        // Act
+        await new IdentifyDocumentsExecutor(Catalog(native.Object).Object)
+            .HandleAsync(state, Mock.Of<IWorkflowContext>());
+
+        // Assert
+        Assert.Equal("Undefined", state.Slices[0].IdentifiedDocumentName);
+        Assert.Equal(100_000, state.Slices[0].BodyText.Length);
+        native.Verify(client => client.ChooseAsync(It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task A_Later_Native_Failure_Does_Not_Publish_Partial_Identification()
     {
         // Arrange

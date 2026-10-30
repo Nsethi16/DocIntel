@@ -1390,11 +1390,16 @@
       padding: 24px 32px 36px 32px;
     }
 
-    .doc-center-body[data-tab="document"] {
+    .doc-center-body[data-layout="pdf"] {
       padding: 0;
       overflow: hidden;
       display: flex;
       flex-direction: column;
+    }
+
+    .status-pill-mini.warning {
+      color: var(--warning);
+      background: var(--warning-bg);
     }
 
     .document-summary-bar {

@@ -3,9 +3,13 @@ const test = require('node:test');
 const vm = require('node:vm');
 const { loadApplication } = require('./helpers/application.cjs');
 
-function runtime(fetch, timers = {}) {
-  const context = vm.createContext({ fetch, AbortController, setTimeout, clearTimeout, ...timers });
-  vm.runInContext(loadApplication('index'), context);
+function runtime(fetch, timers = {}, page = 'index') {
+  const context = vm.createContext({
+    fetch, AbortController, setTimeout, clearTimeout,
+    document: { getElementById: () => ({ addEventListener() {} }) },
+    ...timers
+  });
+  vm.runInContext(loadApplication(page), context);
   return context;
 }
 
@@ -131,4 +135,48 @@ test('preview markup uses safe links and leaves the iframe source unset until va
   assert.match(html, /rel="noopener noreferrer"/);
   assert.match(html, /role="status"/);
   assert.doesNotMatch(html, /<iframe[^>]+\bsrc=/);
+});
+
+test('a source-file fallback still requires PDF preflight and never treats a failed job as permission to embed it', async () => {
+  const original = preview('/api/harness/tenants/one/jobs/failed/original');
+  let allowed = false;
+  const app = runtime(async (url, options) => {
+    assert.equal(url, original.dataset.pdfUrl);
+    assert.equal(options.headers.Range, 'bytes=0-4');
+    return allowed
+      ? new Response('%PDF-', { headers: { 'Content-Type': 'application/pdf' } })
+      : new Response('PRIVATE_ACCESS_DETAIL', { status: 403 });
+  });
+  await app.loadPdfPreview(original);
+  assert.equal(original.frame.src, undefined);
+  assert.equal(original.frame.hidden, true);
+  assert.match(original.status.textContent, /request access/);
+  assert.doesNotMatch(original.status.textContent, /PRIVATE_ACCESS_DETAIL/);
+  allowed = true;
+  await original.button.onclick();
+  assert.equal(original.frame.src, original.dataset.pdfUrl);
+  assert.equal(original.frame.hidden, false);
+});
+
+test('Admin previews use the shared authenticated PDF preflight and keep original access independent of translated failure', async () => {
+  const original = preview();
+  const translated = preview(original.dataset.pdfUrl + '?translated=true');
+  let accessAllowed = false;
+  const app = runtime(async (url, options) => {
+    assert.equal(options.headers.Range, 'bytes=0-4');
+    return url.includes('?translated=true') ? new Response('PRIVATE_TRANSLATION_ERROR', { status: 404 })
+      : accessAllowed ? new Response('%PDF-', { headers: { 'Content-Type': 'application/pdf' } })
+      : new Response('PRIVATE_ACCESS_ERROR', { status: 403 });
+  }, {}, 'admin');
+  await app.loadPdfPreview(original);
+  assert.equal(original.frame.src, undefined);
+  assert.match(original.status.textContent, /request access/);
+  accessAllowed = true;
+  await Promise.all([original.button.onclick(), app.loadPdfPreview(translated)]);
+  assert.equal(original.frame.src, original.dataset.pdfUrl);
+  assert.equal(original.frame.hidden, false);
+  assert.equal(translated.frame.src, undefined);
+  assert.equal(translated.frame.hidden, true);
+  assert.match(translated.status.textContent, /translated PDF is not available/);
+  assert.doesNotMatch(translated.status.textContent, /PRIVATE_TRANSLATION_ERROR|PRIVATE_ACCESS_ERROR/);
 });

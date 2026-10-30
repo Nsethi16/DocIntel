@@ -83,6 +83,10 @@ builder.Services.AddHttpClient(MicrosoftDecisionClient.HttpClientName, client =>
     .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
 builder.Services.AddSingleton<MicrosoftDecisionHttpClientFactory>(services =>
     () => services.GetRequiredService<IHttpClientFactory>().CreateClient(MicrosoftDecisionClient.HttpClientName));
+builder.Services.AddHttpClient("DocumentLanguage", client => client.Timeout = TimeSpan.FromSeconds(45))
+    .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
+builder.Services.AddSingleton<DocIntel.Core.Features.DocumentTranslation.DocumentLanguageHttpClientFactory>(services =>
+    () => services.GetRequiredService<IHttpClientFactory>().CreateClient("DocumentLanguage"));
 builder.Services.AddDocIntelCore(configuration: builder.Configuration, harnessFilePath: harnessFilePath);
 var startupReadiness = new StartupReadinessOptions();
 builder.Configuration.GetSection("Readiness").Bind(startupReadiness);

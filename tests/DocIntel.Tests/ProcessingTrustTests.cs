@@ -1,5 +1,4 @@
 using Azure;
-using Azure.AI.Translation.Document;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Features.EntityExtraction;
@@ -203,10 +202,11 @@ public sealed class ProcessingTrustTests
     public async Task Missing_Translation_Configuration_Does_Not_Create_A_Fake_Translated_Pdf()
     {
         // Arrange
-        var service = new AzureDocumentTranslationService();
+        var service = new AzureDocumentTranslationService(
+            Mock.Of<IDocumentLanguageDetector>(), Mock.Of<IPdfBatchTranslationClient>());
 
         // Act / Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TranslatePdfSliceAsync(
+        await Assert.ThrowsAsync<DocumentTranslationFailureException>(() => service.TranslatePdfSliceAsync(
             [1], "source.pdf", "Formulario Firma Programa", [], "en", null, []));
     }
 
@@ -214,54 +214,66 @@ public sealed class ProcessingTrustTests
     public async Task Translation_Provider_Errors_Propagate_Instead_Of_Using_Local_Phrase_Replacements()
     {
         // Arrange
-        var client = new Mock<SingleDocumentTranslationClient>();
-        client.Setup(c => c.TranslateAsync(It.IsAny<string>(), It.IsAny<DocumentTranslateContent>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
+        var detector = new Mock<IDocumentLanguageDetector>();
+        detector.Setup(client => client.DetectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DocumentLanguageResult("es"));
+        var client = new Mock<IPdfBatchTranslationClient>();
+        client.Setup(c => c.TranslateAsync(It.IsAny<byte[]>(), "es", "en",
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
             .ThrowsAsync(new RequestFailedException(503, "Translation unavailable."));
-        var service = new AzureDocumentTranslationService(allowDevelopmentSimulation: true, client: client.Object);
+        var service = new AzureDocumentTranslationService(detector.Object, client.Object, allowDevelopmentSimulation: true);
 
         // Act / Assert
-        await Assert.ThrowsAsync<RequestFailedException>(() => service.TranslatePdfSliceAsync(
-            [1], "source.pdf", "Formulario Firma Programa", [], "en", "https://translator.example.invalid", []));
+        var failure = await Assert.ThrowsAsync<DocumentTranslationFailureException>(() => service.TranslatePdfSliceAsync(
+            "%PDF-source"u8.ToArray(), "source.pdf", "Formulario Firma Programa", [], "en", "https://translator.example.invalid", []));
+        Assert.Equal("TranslationProviderFailed", failure.Code);
     }
 
     [Fact]
     public async Task Translation_Uses_Provider_Detection_Instead_Of_Claiming_All_NonSpanish_Text_Is_English()
     {
         // Arrange
-        var client = new Mock<SingleDocumentTranslationClient>();
+        var detector = new Mock<IDocumentLanguageDetector>();
+        detector.Setup(client => client.DetectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DocumentLanguageResult("fr"));
+        var client = new Mock<IPdfBatchTranslationClient>();
         var translated = PdfPigLayoutExtractor.CreateSamplePdf([("Translated provider output.", "Footer")]);
-        client.Setup(c => c.TranslateAsync(It.IsAny<string>(), It.IsAny<DocumentTranslateContent>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
-            .ReturnsAsync(Response.FromValue(BinaryData.FromBytes(translated), new Mock<Response>().Object));
-        var service = new AzureDocumentTranslationService(client: client.Object);
+        client.Setup(c => c.TranslateAsync(It.IsAny<byte[]>(), "fr", "en",
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(translated);
+        var service = new AzureDocumentTranslationService(detector.Object, client.Object);
 
         // Act
-        var result = await service.TranslatePdfSliceAsync([1], "source.pdf", "Bonjour le monde",
+        var result = await service.TranslatePdfSliceAsync("%PDF-source"u8.ToArray(), "source.pdf", "Bonjour le monde",
             [], "en", "https://translator.example.invalid", []);
 
         // Assert
         Assert.True(result.WasTranslated);
-        Assert.Equal("und", result.DetectedLanguage);
+        Assert.Equal("fr", result.DetectedLanguage);
         Assert.False(result.IsDevelopmentSimulation);
         Assert.Contains("Translated provider output", result.TranslatedText);
-        client.Verify(c => c.TranslateAsync("en", It.IsAny<DocumentTranslateContent>(),
-            null, It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()), Times.Once);
+        client.Verify(c => c.TranslateAsync(It.IsAny<byte[]>(), "fr", "en",
+            It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]
     public async Task Translation_Cancellation_Is_Not_Converted_To_A_Translated_Success()
     {
         // Arrange
-        var client = new Mock<SingleDocumentTranslationClient>();
-        client.Setup(c => c.TranslateAsync(It.IsAny<string>(), It.IsAny<DocumentTranslateContent>(),
-                It.IsAny<string>(), It.IsAny<string>(), It.IsAny<bool?>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new OperationCanceledException());
-        var service = new AzureDocumentTranslationService(allowDevelopmentSimulation: true, client: client.Object);
+        using var cancellation = new CancellationTokenSource();
+        var detector = new Mock<IDocumentLanguageDetector>();
+        detector.Setup(client => client.DetectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DocumentLanguageResult("fr"));
+        var client = new Mock<IPdfBatchTranslationClient>();
+        client.Setup(c => c.TranslateAsync(It.IsAny<byte[]>(), "fr", "en",
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .Callback(() => cancellation.Cancel()).ThrowsAsync(new OperationCanceledException(cancellation.Token));
+        var service = new AzureDocumentTranslationService(detector.Object, client.Object, allowDevelopmentSimulation: true);
 
         // Act / Assert
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => service.TranslatePdfSliceAsync(
-            [1], "source.pdf", "Formulario Firma Programa", [], "en", "https://translator.example.invalid", []));
+            "%PDF-source"u8.ToArray(), "source.pdf", "Texte en français", [], "en",
+            "https://translator.example.invalid", [], cancellation.Token));
     }
 
     [Fact]
@@ -274,9 +286,12 @@ public sealed class ProcessingTrustTests
         var service = new Mock<IDocumentTranslationService>(MockBehavior.Strict);
         var executor = new TranslateDocumentsExecutor(service.Object, "https://trusted.example.invalid");
 
-        // Act / Assert
-        await Assert.ThrowsAsync<InvalidOperationException>(async () => await executor.HandleAsync(
-            new SplittingState { Tenant = tenant, FileName = "source.pdf" }, new Mock<IWorkflowContext>().Object));
+        // Act
+        var state = await executor.HandleAsync(
+            new SplittingState { Tenant = tenant, FileName = "source.pdf" }, new Mock<IWorkflowContext>().Object);
+
+        // Assert
+        Assert.False(Assert.Single(state.ExecutionTrace).Succeeded);
         service.VerifyNoOtherCalls();
     }
 

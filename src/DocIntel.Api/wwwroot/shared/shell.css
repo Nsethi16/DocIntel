@@ -124,4 +124,95 @@ outline-offset: 3px;
 .appearance-options svg { width:17px; height:17px; }
 .shell-standalone-preferences { max-width:800px; margin:16px auto 0; }
 .shell-notice { position:fixed; bottom:16px; left:16px; right:16px; z-index:2000; padding:12px; border:1px solid var(--warning); border-radius:8px; background:var(--warning-bg); color:var(--warning); }
+.document-status-notice {
+  flex: 0 0 auto;
+  max-height: 25vh;
+  overflow: auto;
+  padding: 12px 36px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-secondary);
+  background: var(--header-surface);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.document-status-notice[hidden] { display: none; }
+.document-status-notice[data-kind="warning"] { color: var(--warning); background: var(--warning-bg); }
+.document-status-notice[data-kind="failed"] { color: var(--error); background: var(--error-bg); }
+.pdf-translation-note {
+  flex: 0 0 auto;
+  max-height: 25vh;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 36px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text-secondary);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.pdf-translation-note[data-kind="warning"] { color: var(--warning); background: var(--warning-bg); }
+.pdf-preview {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: auto;
+}
+.pdf-preview > [hidden] { display: none !important; }
+.pdf-preview-status {
+  margin: 28px 36px 16px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.pdf-preview-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 20px;
+  margin: 0 36px 28px;
+}
+.pdf-full-frame {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: var(--surface-soft);
+  display: block;
+}
+.pdf-side-by-side {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--line);
+  gap: 1px;
+}
+.pdf-pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  background: var(--bg);
+}
+.pdf-pane-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 14px;
+  background: var(--header-surface);
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+}
+.pdf-pane-bar strong { color: var(--text-primary); font-weight: 600; }
 @media (max-width:700px) { .sidebar-resizer { display:none; } }
