@@ -589,6 +589,44 @@ test('complete-file insights display once even when processing produced page fra
   assert.equal(app.element('sliceSelectorRow').children.length, 0);
 });
 
+test('insight prose uses the available width rather than a character-limited reading column', () => {
+  const css = read('index.css');
+  assert.match(css, /\.content-column\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*100%/);
+  assert.match(css, /\.insight-prose\s*\{[^}]*max-width:\s*100%/);
+  assert.doesNotMatch(css, /\.workspace-body\[data-tab="insights"\]\s+\.insight-prose\s*\{[^}]*max-width:\s*\d+ch/);
+});
+
+test('entities omit the Source column while preserving values, scores, copying and category/slice filters', () => {
+  const app = runtime('index');
+  vm.runInContext(read('evidence.js'), app.context);
+  vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};
+    tenantJobs=[{jobId:'file',tenantId:'one',fileName:'invoice.pdf',status:'Completed',totalPages:2,segments:[
+      {segmentIndex:0,startPage:1,endPage:1,extractedEntities:[
+        {name:'Customer Name',value:'Northwind <Example>',category:'Party',confidence:0.94}]},
+      {segmentIndex:1,startPage:2,endPage:2,extractedEntities:[
+        {name:'Invoice Number',value:'INV-123',category:'Identifier',confidence:0.9}]}]}];
+    selectedJobId='file';selectedSliceIndex=-1;docResultTab='entities';`, app.context);
+  app.context.renderSelectedDocument();
+  const html = app.element('docCenterBody').innerHTML;
+  assert.deepEqual([...html.matchAll(/<th>(.*?)<\/th>/g)].map(match => match[1]),
+    ['Entity', 'Value', 'Category', 'Model score', '']);
+  const rows = [...html.match(/<tbody>([\s\S]*?)<\/tbody>/)[1].matchAll(/<tr>([\s\S]*?)<\/tr>/g)];
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every(row => [...row[1].matchAll(/<td\b/g)].length === 5));
+  assert.match(html, /Northwind &lt;Example&gt;/);
+  assert.match(html, /94%/);
+  assert.equal([...html.matchAll(/data-click="copyTextValue_arg"/g)].length, 2);
+  assert.doesNotMatch(html, /<th>Source<\/th>|data-click="jumpToSlicePdf_arg"/);
+
+  app.context.setEntityCategoryFilter('PARTY');
+  assert.match(app.element('docCenterBody').innerHTML, /Customer Name/);
+  assert.doesNotMatch(app.element('docCenterBody').innerHTML, /Invoice Number/);
+  vm.runInContext('selectedSliceIndex=1;', app.context);
+  app.context.renderSelectedDocument();
+  assert.match(app.element('docCenterBody').innerHTML, /Invoice Number/);
+  assert.doesNotMatch(app.element('docCenterBody').innerHTML, /Customer Name/);
+});
+
 test('identified document insights retain their complete ranges instead of generating page cards', () => {
   const app = runtime('index');
   vm.runInContext(`currentTenant={tenantId:'one',capabilities:{}};

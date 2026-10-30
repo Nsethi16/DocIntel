@@ -1156,13 +1156,7 @@ let tenants = [];
 
       // 3. Entities Tab — Clean Scannable Table + Project Meridian Filter Pills
       if (docResultTab === 'entities') {
-        const allEntities = activeSegs.flatMap(s => (s.extractedEntities || []).map(e => ({
-          ...e,
-          sliceIndex: s.segmentIndex,
-          sliceNum: s.segmentIndex + 1,
-          pageRange: `${s.startPage}–${s.endPage}`,
-          docType: s.identifiedDocumentName || s.documentTypeName
-        })));
+        const allEntities = activeSegs.flatMap(s => s.extractedEntities || []);
 
         if (allEntities.length === 0) {
           body.innerHTML = `<div class="content-column" style="color:var(--text-secondary);font-size:14px;">No extracted entities for this selection.</div>`;
@@ -1191,7 +1185,6 @@ let tenants = [];
                   <th>Entity</th>
                   <th>Value</th>
                   <th>Category</th>
-                  <th>Source</th>
                   <th>Model score</th>
                   <th></th>
                 </tr>
@@ -1204,7 +1197,6 @@ let tenants = [];
                       <td style="color:var(--text-secondary);">${escapeHtml(e.name)}</td>
                       <td style="font-weight:600;color:var(--text-primary);">${escapeHtml(e.value)}</td>
                       <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(e.category || 'Entity')}</td>
-                      <td><button type="button" class="text-link-btn" data-click="jumpToSlicePdf_arg" data-args="[${e.sliceIndex}]">Slice ${e.sliceNum} (p.${escapeHtml(e.pageRange)}) ↗</button>${renderValueProvenance(e, job, 1)}</td>
                       <td title="${escapeHtml(info.tooltip)}" style="color:var(--text-secondary);font-size:12.5px;">${info.modelPercent === null ? 'Unknown' : info.modelPercent + '%'}</td>
                       <td style="text-align:right;"><button type="button" class="text-link-btn" data-click="copyTextValue_arg" data-args="[${escapeJsArg(e.value)}]">Copy</button></td>
                     </tr>

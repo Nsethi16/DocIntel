@@ -26,7 +26,6 @@
     .workspace-start small { display: block; color: var(--text-secondary); font-size: 12px; margin-top: 12px; }
     .workspace-start-upload:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
     .workspace-body[data-tab="insights"] .slice-section { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; box-shadow: none; }
-    .workspace-body[data-tab="insights"] .insight-prose { max-width: 76ch; }
 
     /* =========================================================================
        Single Collapsible Left Document Drawer (280px <-> 0px)
