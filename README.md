@@ -93,6 +93,7 @@ Admins can manage isolated **Workspaces** and configure each workspace's **Agent
      identified. Disabled, absent or incomplete identification falls back to one file insight covering
      every page; it never falls back to page-by-page summaries. Separate documents of the same type
      remain separate. Existing results require reprocessing or explicit reevaluation to use this policy.
+     Both file and logical-document insights use the full available result-panel width.
   5. **Entity Extraction**: Extracts structured entities guided by a custom **Entity extraction prompt**.
   6. **Data Extraction**: Extracts per-document structured **Key-Value Pairs** and **Tables (with Columns + Instructions)** mapped to each defined document type.
 
@@ -674,6 +675,8 @@ text from ambiguous/unavailable evidence. Exact matches link to the original PDF
 translated page with unrelated coordinates. Text occurrence alone is not proof that the field
 label or meaning is correct, and it is not human approval. Model and grounding signals are
 separate; they are not averaged into a misleading probability.
+The Entities table omits the Source column while retaining model scores, category filters and copying.
+Source provenance remains in the stored results; structured fields and table cells retain their source links.
 
 Ask AI receives lightweight source-occurrence status without heavy polygon arrays; original
 bounded text remains its citation evidence. Prompt-cache fingerprints track actual entity inputs,
