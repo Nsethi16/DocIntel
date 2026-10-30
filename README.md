@@ -491,6 +491,12 @@ exception types/codes/sites, never raw log messages; missing logs or lookup fail
 read-only search shapes and at most one continuation per shape. It makes no model calls, never replays
 the question, writes no results and prints only counts plus numeric database HTTP/substatus on failure.
 Database rejection, access, throttling and availability errors are distinct from AI-provider errors.
+`Document` inspects an opaque document ID, or the SHA-256 of an exact UTF-8 filename, and reports
+only stored status, stage names, counts and dates. It never prints filenames, source text or identities.
+`TranslationProbe` additionally requires an exact failed-document ID, confirmation `PROBE`, the existing
+live-probing opt-in and the submitter's current processing permission. It reuses the accepted harness
+and first untranslated active-attempt source slice for one in-memory provider request, reports only
+safe HTTP/error-code metadata, and never saves a translation, modifies the job or reprocesses the file.
 `Synthetic` exercises the real configured model and complete analytical agent over nine authored,
 in-memory fake records: six distinct USD quotes, one repeated copy, one EUR quote and one USD record
 with a missing amount. It is limited to 24 model requests and 300 seconds, requires the same live

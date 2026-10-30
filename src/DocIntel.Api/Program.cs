@@ -17,8 +17,9 @@ var isolatedDiagnosticMode = directoryDiagnosticMode || nativeDecisionDiagnostic
 var askContractMode = args.Contains("--diagnose-ask-contract", StringComparer.Ordinal);
 var askSyntheticMode = args.Contains("--diagnose-ask-synthetic", StringComparer.Ordinal);
 var askDataMode = args.Contains("--diagnose-ask-data", StringComparer.Ordinal);
+var documentDiagnosticMode = args.Contains("--diagnose-document", StringComparer.Ordinal);
 var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal) ||
-    askContractMode || askSyntheticMode || askDataMode;
+    askContractMode || askSyntheticMode || askDataMode || documentDiagnosticMode;
 WebApplicationBuilder builder;
 try
 {
@@ -96,6 +97,22 @@ builder.Services.AddHostedService<AskAiRunWorker>();
 builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);
 
 var app = builder.Build();
+if (documentDiagnosticMode)
+{
+    Environment.ExitCode = await DocumentJobDiagnostic.ExecuteAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty,
+        builder.Configuration["diagnose-document"] ?? String.Empty,
+        String.Equals(builder.Configuration["diagnose-translation-probe"], "true", StringComparison.Ordinal),
+        startupReadiness.ProbeModelsOnStartup,
+        app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Authorization.ITenantAccessResolver>(),
+        app.Services.GetRequiredService<DocIntel.Core.Storage.IArtifactStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Features.DocumentSplitting.IPdfSlicer>(),
+        app.Services.GetRequiredService<DocIntel.Core.Features.DocumentTranslation.IDocumentTranslationService>(),
+        app.Services.GetRequiredService<DocIntel.Core.AzureIntegrationOptions>(), Console.Out);
+    await app.DisposeAsync();
+    return;
+}
 if (askDataMode)
 {
     Environment.ExitCode = await AskAiDataDiagnostic.ExecuteAsync(

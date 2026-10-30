@@ -13,7 +13,7 @@ test('saved-run diagnostics are manual, main-only and inspect-only by default', 
   assert.match(workflow, /if: github.ref == 'refs\/heads\/main'/);
   assert.match(workflow, /environment: docintel-dev/);
   assert.match(workflow, /requires the exact confirmation REPLAY/);
-  assert.match(workflow, /Model usage can incur charges/);
+  assert.match(workflow, /Provider usage can incur charges/);
 });
 
 test('runtime execution uses the selected revision and built-in command without publishing raw output', () => {
@@ -37,7 +37,7 @@ test('recent failure references can only be inspected and cannot authorize a rep
 });
 
 test('contract probing is a distinct document-free mode and does not weaken saved-question replay approval', () => {
-  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic\]/);
+  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe\]/);
   assert.match(workflow, /Contract checks do not accept saved run identifiers/);
   assert.match(workflow, /"--diagnose-ask-contract", "true"/);
   assert.match(workflow, /"--diagnose-ask-synthetic", "true"/);
@@ -47,6 +47,14 @@ test('contract probing is a distinct document-free mode and does not weaken save
   assert.match(program, /startupReadiness\.ProbeModelsOnStartup/);
   const contract = program.indexOf('if (askContractMode)', program.indexOf('var app = builder.Build()'));
   assert.ok(contract > 0 && contract < program.indexOf('app.UseDocIntelResponseHeaders()'));
+});
+
+test('document lookup uses opaque references and translation probing needs its own explicit confirmation', () => {
+  assert.match(workflow, /SHA-256 of its exact UTF-8 filename/);
+  assert.match(workflow, /TranslationProbe requires the exact confirmation PROBE/);
+  assert.match(workflow, /"--diagnose-document", os.environ\["DIAGNOSTIC_RUN"\]/);
+  assert.match(workflow, /"--diagnose-translation-probe", "true" if os.environ\["DIAGNOSTIC_MODE"\] == "TranslationProbe" else "false"/);
+  assert.doesNotMatch(workflow, /"fileName",|"bodyText",|"translatedText",/);
 });
 
 test('the diagnostic CLI exits before web hosting and background workers start', () => {

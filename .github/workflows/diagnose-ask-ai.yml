@@ -8,16 +8,16 @@ on:
         type: string
         default: contoso-legal
       run_id:
-        description: Existing run ID, or recent for read-only inspection of up to ten failures from the past seven days.
+        description: Run ID; Inspect accepts recent. Document accepts a document ID or SHA-256 of its exact UTF-8 filename.
         type: string
         required: false
       mode:
         description: Inspect reads metadata. Data checks storage with no model calls or question replay. Contract checks API shapes. Synthetic tests fake quotes. Replay uses a saved question.
         type: choice
-        options: [Inspect, Data, Replay, Contract, Synthetic]
+        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe]
         default: Inspect
       confirmation:
-        description: Type REPLAY to authorize a bounded, in-memory replay. Model usage can incur charges.
+        description: REPLAY authorizes an in-memory question replay; PROBE authorizes one in-memory translation request. Provider usage can incur charges.
         type: string
         default: ''
 
@@ -56,10 +56,14 @@ jobs:
           if ($env:DIAGNOSTIC_MODE -eq 'Replay' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'REPLAY') {
             throw 'Replay requires the exact confirmation REPLAY.'
           }
-          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic')) { throw 'Invalid diagnostic mode.' }
+          if ($env:DIAGNOSTIC_MODE -eq 'TranslationProbe' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'PROBE') {
+            throw 'TranslationProbe requires the exact confirmation PROBE.'
+          }
+          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe')) { throw 'Invalid diagnostic mode.' }
           if ($env:DIAGNOSTIC_TENANT -notmatch '^[a-z0-9][a-z0-9-]{0,127}$' -or
             ($env:DIAGNOSTIC_MODE -notin @('Contract', 'Synthetic') -and
              $env:DIAGNOSTIC_RUN -notmatch '^[a-fA-F0-9]{32}$' -and
+             -not ($env:DIAGNOSTIC_MODE -eq 'Document' -and $env:DIAGNOSTIC_RUN -match '^[a-fA-F0-9]{64}$') -and
              -not ($env:DIAGNOSTIC_MODE -eq 'Inspect' -and $env:DIAGNOSTIC_RUN -ceq 'recent'))) {
             throw 'Invalid tenant/run identifiers.'
           }
@@ -105,7 +109,12 @@ jobs:
           if not replicas:
               raise RuntimeError("The current revision has no active replica.")
           replay = "true" if os.environ["DIAGNOSTIC_MODE"] == "Replay" else "false"
-          if os.environ["DIAGNOSTIC_MODE"] == "Data":
+          if os.environ["DIAGNOSTIC_MODE"] in ("Document", "TranslationProbe"):
+              diagnostic = shlex.join([
+                  "dotnet", "/app/DocIntel.Api.dll", "--diagnose-document", os.environ["DIAGNOSTIC_RUN"],
+                  "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"],
+                  "--diagnose-translation-probe", "true" if os.environ["DIAGNOSTIC_MODE"] == "TranslationProbe" else "false"])
+          elif os.environ["DIAGNOSTIC_MODE"] == "Data":
               diagnostic = shlex.join([
                   "dotnet", "/app/DocIntel.Api.dll", "--diagnose-ask-data", os.environ["DIAGNOSTIC_RUN"],
                   "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"]])
@@ -143,15 +152,16 @@ jobs:
                   "providerParameter", "schemaKeyword", "providerHints",
                   "variant", "model", "modelProvider", "calls", "analyses", "runId", "createdAtUtc",
                   "completedAtUtc", "lastStep", "analyticalAttempts", "matches", "subStatus",
-                  "hasBarChart") if key in value}
+                  "hasBarChart", "jobId", "pages", "slices", "identifiedSlices", "translatedSlices",
+                  "stage", "sliceIndex", "decisionCompleted") if key in value}
               print(json.dumps(safe))
               records.append(safe)
           if not records:
               raise RuntimeError("The runtime diagnostic returned no verified result. Raw process output was not published.")
-          expected_phase = os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic") else (
+          expected_phase = os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "TranslationProbe") else (
               "Replay" if replay == "true" else "Stored")
           if records[-1].get("phase") != expected_phase:
               raise RuntimeError("The requested diagnostic did not complete.")
           if records[-1].get("status") in ("Refused", "NotFound") or (
-                  expected_phase in ("Data", "Replay", "Contract", "Synthetic") and records[-1].get("status") == "Failed"):
+                  expected_phase in ("Data", "Replay", "Contract", "Synthetic", "TranslationProbe") and records[-1].get("status") == "Failed"):
               sys.exit(1)
