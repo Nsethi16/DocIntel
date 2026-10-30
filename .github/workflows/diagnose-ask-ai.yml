@@ -8,7 +8,7 @@ on:
         type: string
         default: contoso-legal
       run_id:
-        description: Run/document ID; Inspect accepts recent and Document also accepts an exact-filename SHA-256. Synthetic modes require empty.
+        description: Run/document ID; Inspect accepts recent. Document accepts a document ID or SHA-256 of its exact UTF-8 filename. Synthetic modes require empty.
         type: string
         required: false
       mode:
