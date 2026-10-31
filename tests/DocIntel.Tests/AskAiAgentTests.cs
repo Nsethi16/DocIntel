@@ -657,8 +657,8 @@ public sealed class AskAiAgentTests
                     Assert.InRange(bytes.Length, 1, 32_000);
                     using var document = JsonDocument.Parse(bytes);
                     inspected.Add(document.RootElement.Clone());
-                    var next = document.RootElement.GetProperty("nextTextOffset");
-                    if (next.ValueKind == JsonValueKind.Null) break;
+                    if (!document.RootElement.TryGetProperty("nextTextOffset", out var next) ||
+                        next.ValueKind == JsonValueKind.Null) break;
                     offset = next.GetInt32();
                 }
                 return Final("DocumentAnswer", "Both original source windows remain available [1] [2].", "e1", "e2");
