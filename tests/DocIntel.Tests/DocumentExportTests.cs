@@ -73,7 +73,8 @@ public sealed class DocumentExportTests
             using var stream = new MemoryStream(bytes);
             using var workbook = SpreadsheetDocument.Open(stream, false);
             Assert.Empty(new OpenXmlValidator().Validate(workbook));
-            Assert.Equal(2011, Assert.Single(workbook.WorkbookPart!.WorksheetParts).Worksheet.Descendants<Row>().Count());
+            var worksheet = Assert.IsType<Worksheet>(Assert.Single(workbook.WorkbookPart!.WorksheetParts).Worksheet);
+            Assert.Equal(2011, worksheet.Descendants<Row>().Count());
         }
     }
 
