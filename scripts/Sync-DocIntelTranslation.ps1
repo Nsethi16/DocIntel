@@ -292,6 +292,13 @@ foreach ($spec in $roleSpecs) {
     else { @(Read-TranslationRoles $spec.Scope $spec.Principal) }
     $spec.Assign = -not (Test-TranslationGrant $roles $spec.Principal $spec.Role $spec.Scope)
 }
+if ($Mode -ceq 'Preview') {
+    $access = @($roleSpecs | ForEach-Object {
+        [ordered]@{ key = $_.Key; principal = $(if ($_.Principal) { $_.Principal } else { 'SystemIdentity' })
+            role = $_.Role; scope = $_.Scope; existingAccess = -not $_.Assign }
+    })
+    Write-Host ('DOCINTEL_TRANSLATION_ACCESS ' + (ConvertTo-Json -InputObject $access -Depth 4 -Compress))
+}
 $values = @{
     accountName = $accountName; location = $region; stagingAccountName = $stagingName; applicationResourceId = $app.id
     runtimePrincipalId = $identity.principalId; runtimeIdentityResourceId = $identity.id
@@ -365,6 +372,27 @@ try {
                     (Test-SpecPrincipal $_ ([string]$change.after.properties.principalId))
             })
             if ($roleMatches.Count -eq 1 -and $seenRoles.Add($roleMatches[0].Key)) { continue }
+            if ($Mode -ceq 'Preview') {
+                $actualPrincipal = [string]$change.after.properties.principalId
+                $principalGuid = [guid]::Empty
+                $principalKind = if ([guid]::TryParse($actualPrincipal, [ref]$principalGuid)) { 'Guid' }
+                    elseif ($actualPrincipal.StartsWith('[reference(', [StringComparison]::OrdinalIgnoreCase)) { 'Reference' }
+                    else { 'Other' }
+                $checks = @($roleSpecs | ForEach-Object {
+                    [ordered]@{
+                        key = $_.Key; needed = [bool]$_.Assign; expectedAssignmentId = $_.AssignmentId
+                        assignmentMatches = $change.resourceId -ieq $_.AssignmentId
+                        principalMatches = Test-SpecPrincipal $_ $actualPrincipal
+                        definitionMatches = $change.after.properties.roleDefinitionId -ieq
+                            "/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/$($_.Role)" -or
+                            $change.after.properties.roleDefinitionId -ieq
+                            "/providers/Microsoft.Authorization/roleDefinitions/$($_.Role)"
+                    }
+                })
+                $evidence = [ordered]@{ actualPrincipalKind = $principalKind; checks = $checks }
+                Write-Host ('DOCINTEL_TRANSLATION_ROLE_MATCH ' +
+                    (ConvertTo-Json -InputObject $evidence -Depth 5 -Compress))
+            }
             throw ('Translation preview escaped exact isolated staging/Translator/container-role scope. ' +
                 (Get-TranslationChangeSummary $change))
         }

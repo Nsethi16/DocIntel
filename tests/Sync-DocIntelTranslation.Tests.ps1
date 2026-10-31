@@ -326,6 +326,12 @@ function az {
                         "[reference('$($f.prefix)/Microsoft.CognitiveServices/accounts/other', '2024-10-01', 'full').identity.principalId]"
                 }
                 'observed-modify' { $changes[0].changeType = 'Modify' }
+                'observed-private-fields' {
+                    $changes[0].after.properties.principalId = 'fixture-secret-principal'
+                    $changes[0].after.properties.roleDefinitionId = 'fixture-secret-role'
+                    $changes[0].after.private = 'fixture-secret-payload'
+                    $changes[0].before = @{ env = 'fixture-secret-environment' }
+                }
             }
             @{ status = 'Succeeded'; changes = $changes
                 diagnostics = $(if ($f.scenario -eq 'incomplete') { @(@{ code = 'Unsupported' }) } else { @() }) }
@@ -641,6 +647,32 @@ try {
             $failed = $true
         }
         if (-not $failed) { throw 'Concurrent changes/setting loss must not be reported as a successful connection.' }
+    }
+    New-ObservedRecoveryFixture
+    $f = $global:TranslationFixture
+    $f.scenario = 'observed-private-fields'
+    $diagnostics = @()
+    $rejected = $false
+    try {
+        & $file -ResourceGroup 'Docintel' -ContainerAppName 'ca-docintel-dev' -OutputDirectory $output `
+            -ReplaceExistingEndpoint -InformationVariable diagnostics | Out-Null
+    } catch {
+        if ($_.Exception.Message -notlike '*escaped exact isolated*') { throw }
+        $rejected = $true
+    }
+    $messages = @($diagnostics | ForEach-Object { [string]$_.MessageData })
+    $accessRecords = @($messages | Where-Object { $_.StartsWith('DOCINTEL_TRANSLATION_ACCESS ') })
+    $matchRecords = @($messages | Where-Object { $_.StartsWith('DOCINTEL_TRANSLATION_ROLE_MATCH ') })
+    if (-not $rejected -or $f.writes.Count -or $accessRecords.Count -ne 1 -or $matchRecords.Count -ne 1 -or
+        ($messages -join "`n") -match 'fixture-secret-') {
+        throw 'Read-only permission/match diagnostics must remain available before rejection without private payloads or writes.'
+    }
+    $access = $accessRecords[0].Substring('DOCINTEL_TRANSLATION_ACCESS '.Length) | ConvertFrom-Json
+    $matching = $matchRecords[0].Substring('DOCINTEL_TRANSLATION_ROLE_MATCH '.Length) | ConvertFrom-Json
+    if ($access.Count -ne 5 -or @($access | Where-Object existingAccess).Count -ne 3 -or
+        $matching.actualPrincipalKind -cne 'Other' -or $matching.checks.Count -ne 5 -or
+        @($matching.checks | Where-Object principalMatches).Count) {
+        throw 'Partial-role evidence must distinguish the three verified grants from the two missing Translator grants.'
     }
     Write-Output 'Isolated staging creation/reuse, ownership/collision fencing, five narrow grants, one-day expiry, no original-policy access, redacted previews and app preservation passed offline.'
 }
