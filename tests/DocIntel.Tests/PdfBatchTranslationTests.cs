@@ -127,7 +127,7 @@ public sealed class PdfBatchTranslationTests
 
     [Theory]
     [InlineData(PublicAccessType.Blob)]
-    [InlineData(PublicAccessType.Container)]
+    [InlineData(PublicAccessType.BlobContainer)]
     public async Task Public_Staging_Is_Rejected_Before_Any_Source_Document_Is_Uploaded(PublicAccessType access)
     {
         // Arrange
