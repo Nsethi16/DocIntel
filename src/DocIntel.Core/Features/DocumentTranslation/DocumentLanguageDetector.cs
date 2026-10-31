@@ -64,7 +64,8 @@ public sealed class AzureDocumentLanguageDetector(
         var checks = new List<DocumentLanguageSample>();
         foreach (var batch in samples.Chunk(30))
             checks.AddRange(await DetectBatchAsync(batch, checks.Count, deadline.Token));
-        var languages = checks.Where(sample => sample.IsUsable).Select(sample => sample.Language)
+        var languages = checks.Where(sample => sample.Score >= DocumentLanguageResult.MinimumUsableScore &&
+                !sample.Language.Equals("und", StringComparison.OrdinalIgnoreCase)).Select(sample => sample.Language)
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
         var detection = new DocumentLanguageResult(languages.Length switch
         {
@@ -176,7 +177,7 @@ public sealed class AzureDocumentLanguageDetector(
 
     private static DocumentTranslationFailureException UnknownLanguage(DocumentLanguageResult? detection = null) => new(
         "LanguageUndetermined",
-        "No supported source-language chunk met the minimum detection score of 0.5, or source text was unavailable " +
+        "No source-language chunk met the minimum detection score of 0.5, or source text was unavailable " +
         "within the detection limit; translation was not attempted.", "und", languageDetection: detection);
 }
 

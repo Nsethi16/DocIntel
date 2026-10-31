@@ -118,6 +118,8 @@ Admins can manage isolated **Workspaces** and configure each workspace's **Agent
      not a partially translated PDF. Translation is skipped only when every checked chunk agrees with the target
      language and scores at least **0.8**. No usable chunks, malformed responses and provider failures remain
      explicit warnings, never English defaults. Per-document chunk languages, scores and routing appear in Metadata.
+     A reliably identified language that Azure cannot translate is reported as `TranslationLanguageUnsupported`
+     with its actual language code, not as an undetermined or low-confidence language.
      Actual PDFs use the [PDF-capable asynchronous batch API](https://learn.microsoft.com/en-us/azure/ai-services/translator/document-translation/overview#supported-document-and-glossary-formats),
      never the unsupported synchronous PDF path. Managed identity accesses private source/target containers
      in a dedicated temporary-staging account, never the original-artifact account; optional TSV glossaries

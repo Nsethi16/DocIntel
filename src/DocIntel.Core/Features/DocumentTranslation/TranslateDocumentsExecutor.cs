@@ -144,6 +144,11 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
                 sourceLanguage.Equals("und", StringComparison.OrdinalIgnoreCase))
                 throw new DocumentTranslationFailureException("LanguageUndetermined",
                     "Source language is uncertain; translation was not attempted.", "und");
+            if (detection.Samples.Count > 0 && detection.UsableSampleCount == 0)
+                throw new DocumentTranslationFailureException("TranslationLanguageUnsupported",
+                    $"The detected source language ({sourceLanguage}) is not supported by the configured " +
+                    "translation provider; original source was retained.", sourceLanguage,
+                    languageDetection: detection);
             if (!detection.UseAutomaticSourceLanguage &&
                 sourceLanguage.Equals(targetLanguage, StringComparison.OrdinalIgnoreCase))
                 return new(sourceLanguage, false, fallbackBodyText) { LanguageDetection = detection };

@@ -18,6 +18,34 @@ namespace DocIntel.Tests;
 
 public sealed class TranslationReliabilityTests
 {
+    [Fact]
+    public async Task Unsupported_Latin_Is_Reported_Explicitly_Without_Attempting_A_Pdf_Translation()
+    {
+        // Arrange
+        var detection = new DocumentLanguageResult("la")
+        {
+            UseAutomaticSourceLanguage = true,
+            Samples = [new(0, 100, "la", 0.99, false)]
+        };
+        var detector = Detector("la");
+        detector.Setup(provider => provider.DetectAsync(It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(detection);
+        var batch = new Mock<IPdfBatchTranslationClient>(MockBehavior.Strict);
+        var service = new AzureDocumentTranslationService(detector.Object, batch.Object);
+
+        // Act
+        var failure = await Assert.ThrowsAsync<DocumentTranslationFailureException>(() =>
+            service.TranslatePdfSliceAsync("%PDF-original"u8.ToArray(), "source.pdf",
+                "Lorem ipsum dolor sit amet.", [], "en", "https://translator.example/", []));
+
+        // Assert
+        Assert.Equal("TranslationLanguageUnsupported", failure.Code);
+        Assert.Equal("la", failure.Language);
+        Assert.Same(detection, failure.LanguageDetection);
+        Assert.Contains("not supported", failure.Message);
+        batch.VerifyNoOtherCalls();
+    }
+
     [Theory]
     [InlineData("fr")]
     [InlineData("en")]

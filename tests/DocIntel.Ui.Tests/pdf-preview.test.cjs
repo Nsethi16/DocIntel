@@ -54,6 +54,22 @@ test('historical language metadata does not fabricate chunk scores', () => {
   assert.doesNotMatch(html, /0\.8|0\.5|chunks usable/);
 });
 
+test('a high-score unsupported language is not called undetermined or scheduled for automatic translation', () => {
+  const app = runtime(() => {});
+  const html = app.languageDetectionMarkup({
+    detectedLanguage: 'la',
+    languageDetection: {
+      useAutomaticSourceLanguage: true,
+      samples: [{ sampleIndex: 0, language: 'la', score: 0.99, isTranslationSupported: false }]
+    }
+  });
+  assert.match(html, />LA<\/div>/);
+  assert.match(html, /Unsupported/);
+  assert.match(html, /0\.99/);
+  assert.match(html, /PDF translation was not attempted/);
+  assert.doesNotMatch(html, /candidate|Automatic source-language detection for the complete PDF/);
+});
+
 test('large language metadata is bounded and untrusted values remain escaped', () => {
   const app = runtime(() => {});
   const html = app.languageDetectionMarkup({

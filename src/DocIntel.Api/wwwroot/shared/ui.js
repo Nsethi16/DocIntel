@@ -182,9 +182,10 @@ function languageDetectionMarkup(slice) {
     <td>${Number.isFinite(sample.score) && sample.score >= 0 && sample.score <= 1 ? sample.score.toFixed(2) : 'Unknown'}</td>
     <td>${usable(sample) ? 'Usable' : sample.isTranslationSupported === false ? 'Unsupported' : 'Uncertain'}</td>
   </tr>`).join('');
-  return `<div>${escapeHtml(language)}${automatic && language !== 'MUL' && language !== 'UND' ? ' (candidate)' : ''}</div>
+  return `<div>${escapeHtml(language)}${automatic && usableCount > 0 && language !== 'MUL' && language !== 'UND' ? ' (candidate)' : ''}</div>
     <details><summary>${usableCount} of ${samples.length} chunks usable</summary>
-      <p>${automatic ? 'Automatic source-language detection for the complete PDF.'
+      <p>${usableCount === 0 ? 'No usable supported chunks. PDF translation was not attempted.'
+        : automatic ? 'Automatic source-language detection for the complete PDF.'
         : 'Consistent source language; a target-language match can skip translation.'}
         Usable scores are at least 0.5; skipping requires every chunk to score at least 0.8.
         These are detection scores, not calibrated probabilities.</p>

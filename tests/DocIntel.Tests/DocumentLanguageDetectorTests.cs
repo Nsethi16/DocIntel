@@ -57,7 +57,7 @@ public sealed class DocumentLanguageDetectorTests
         var result = await detector.DetectAsync(new string('a', 1500) + new string('b', 1500));
 
         // Assert
-        Assert.Equal("en", result.Language);
+        Assert.Equal(!supported ? "mul" : "en", result.Language);
         Assert.True(result.UseAutomaticSourceLanguage);
         Assert.Equal(1, result.UsableSampleCount);
         Assert.Equal(2, result.Samples.Count);
@@ -80,6 +80,25 @@ public sealed class DocumentLanguageDetectorTests
 
         // Act / Assert
         await Assert.ThrowsAsync<InvalidDataException>(() => detector.DetectAsync("Actual source text."));
+    }
+
+    [Fact]
+    public async Task A_Reliably_Identified_Unsupported_Language_Is_Not_Mislabeled_As_Undetermined()
+    {
+        // Arrange
+        var handler = new DetectorHandler((count, _) => Enumerable.Range(0, count)
+            .Select(_ => new { language = "la", score = 0.99, isTranslationSupported = false }).ToArray());
+        using var detector = new AzureDocumentLanguageDetector(
+            new HttpClient(handler), Credential().Object, new Uri("https://translator.example/"));
+
+        // Act
+        var result = await detector.DetectAsync("Lorem ipsum dolor sit amet, consectetur adipiscing elit.");
+
+        // Assert
+        Assert.Equal("la", result.Language);
+        Assert.Equal(0, result.UsableSampleCount);
+        Assert.False(Assert.Single(result.Samples).IsTranslationSupported);
+        Assert.Equal(0.99, result.Samples[0].Score);
     }
 
     [Fact]

@@ -1002,8 +1002,10 @@ public sealed class AskAiOrchestrator
                 Use nextTextOffset to inspect further original source before supporting an answer or calculation.
                 hasProcessingWarnings and translationErrorCode describe failed optional features, not missing source.
                 Use available original evidence; disclose translation limitations when material.
-                languageDetection.useAutomaticSourceLanguage means mixed or uncertain source-language evidence;
+                With usableSampleCount above zero, languageDetection.useAutomaticSourceLanguage means
+                mixed or uncertain source-language evidence;
                 a single detected language can be only a candidate, not a verified whole-document language.
+                No usable samples means translation is unavailable; an unsupported language is not undetermined.
                 Never describe an untranslated original as translated or infer zero values from a feature failure.
                 hasDevelopmentResults=true means derived results include development simulation;
                 null means legacy provenance is unknown. Ground factual claims in original source text,
