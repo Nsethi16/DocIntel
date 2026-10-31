@@ -1590,7 +1590,7 @@ let tenants = [];
             </div>
             <table class="data-table">
               <thead>
-                <tr><th>Slice</th><th>Pages</th><th>Identified Document</th><th>Matched Rule</th><th>Footers</th><th>Blob Artifact</th></tr>
+                <tr><th>Slice</th><th>Pages</th><th>Identified Document</th><th>Language</th><th>Matched Rule</th><th>Footers</th><th>Blob Artifact</th></tr>
               </thead>
               <tbody>
                 ${activeSegs.map(s => `
@@ -1598,6 +1598,7 @@ let tenants = [];
                     <td>#${s.segmentIndex + 1}</td>
                     <td>${s.startPage}–${s.endPage}</td>
                     <td><strong>${escapeHtml(s.identifiedDocumentName || s.documentTypeName || 'Undefined')}</strong></td>
+                    <td>${languageDetectionMarkup(s)}</td>
                     <td style="font-size:11.5px;color:var(--text-secondary);">${escapeHtml(s.matchedIdentificationRule || '—')}</td>
                     <td style="font-size:11.5px;font-family:monospace;">${escapeHtml((s.footers || []).join(', ') || '—')}</td>
                     <td style="font-size:11.5px;">${s.splitPdfBlobUri ? `<a href="/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${s.segmentIndex}/pdf" target="_blank" style="color:var(--link);font-weight:600;">Open PDF</a>` : '—'}</td>

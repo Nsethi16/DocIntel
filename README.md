@@ -112,10 +112,12 @@ Admins can manage isolated **Workspaces** and configure each workspace's **Agent
      differences, but does not override distinct explicit form IDs. Separate instances of the same form remain separate.
   2. **Identify Documents**: Scores extracted slice text against admin-defined `(DocumentName, IdentificationPrompt)`
      criteria plus `"Undefined"` using the configured **Microsoft-Decision-1** deployment and its native decision API.
-  3. **Document Translation**: Real Translator language detection precedes translation. A confidently
-     same-language document retains its original PDF without a PDF translation request. All distinct
-     source-text chunks are checked in bounded requests; incomplete or uncertain detection is an explicit
-     warning, not an English default. Mixed-language sources use batch auto-detection.
+  3. **Document Translation**: Real Translator language detection runs independently for each logical document.
+     Supported chunks with detection scores of at least **0.5** are usable; uncertain chunks do not veto usable
+     ones. Mixed, lower-score or partly uncertain evidence uses batch auto-detection for the complete document,
+     not a partially translated PDF. Translation is skipped only when every checked chunk agrees with the target
+     language and scores at least **0.8**. No usable chunks, malformed responses and provider failures remain
+     explicit warnings, never English defaults. Per-document chunk languages, scores and routing appear in Metadata.
      Actual PDFs use the [PDF-capable asynchronous batch API](https://learn.microsoft.com/en-us/azure/ai-services/translator/document-translation/overview#supported-document-and-glossary-formats),
      never the unsupported synchronous PDF path. Managed identity accesses private source/target containers
      in a dedicated temporary-staging account, never the original-artifact account; optional TSV glossaries
@@ -1063,6 +1065,12 @@ detects source language before deciding whether translation is needed; `und` is 
 not an English assumption. Detection covers distinct 1,500-character source chunks in requests of at most
 45,000 characters, with a 45-second deadline and a one-million-character whole-source guard. Exceeding these
 bounds produces a translation warning, not a sampled same-language skip.
+The usable-score threshold is 0.5; the 0.8 all-chunks threshold applies only to a reliable same-language skip.
+Uncertain or unsupported chunks are retained in detection diagnostics, not silently omitted. With usable evidence,
+mixed or partly uncertain documents use explicit automatic source-language selection in the full-PDF batch API.
+No source chunk text is included in those diagnostics. Existing saved results keep their original processing
+outcome until explicit reprocessing; read-only translation probes may inspect a completed language-warning
+document without overwriting its stored results.
 PDF batch polling is bounded by `DocumentTranslation:TimeoutSeconds` (default 180, maximum 600).
 `DocumentTranslation:StagingBlobEndpoint` selects a dedicated temporary Blob account. It is not inferred
 from `AzureAI:BlobEndpoint`, and the two accounts cannot be the same. This avoids changing existing original-data

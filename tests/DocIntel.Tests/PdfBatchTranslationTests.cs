@@ -101,8 +101,9 @@ public sealed class PdfBatchTranslationTests
     [Theory]
     [InlineData("fr", "fr")]
     [InlineData("mul", null)]
+    [InlineData(null, null)]
     public async Task Pdf_Uses_Private_Per_Request_File_Batch_With_No_Sas_And_Only_Owned_Blob_Cleanup(
-        string sourceLanguage, string? providerLanguage)
+        string? sourceLanguage, string? providerLanguage)
     {
         // Arrange
         var fixture = new Fixture();

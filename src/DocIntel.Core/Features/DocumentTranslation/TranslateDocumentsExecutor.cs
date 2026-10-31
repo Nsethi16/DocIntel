@@ -19,7 +19,10 @@ public sealed record DocumentSliceTranslationResult(
     bool WasTranslated,
     string TranslatedText,
     byte[]? TranslatedPdfBytes = null,
-    bool IsDevelopmentSimulation = false);
+    bool IsDevelopmentSimulation = false)
+{
+    public DocumentLanguageResult? LanguageDetection { get; init; }
+}
 
 public interface IDocumentTranslationService
 {
@@ -132,25 +135,29 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
         var cleanTerms = doNotTranslateTerms.Where(t => !String.IsNullOrWhiteSpace(t)).Select(t => t.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         var sourceLanguage = "und";
+        DocumentLanguageResult? detection = null;
         try
         {
-            var detection = await _languageDetector.DetectAsync(fallbackBodyText, cancellationToken);
+            detection = await _languageDetector.DetectAsync(fallbackBodyText, cancellationToken);
             sourceLanguage = detection.Language;
             if (String.IsNullOrWhiteSpace(sourceLanguage) ||
                 sourceLanguage.Equals("und", StringComparison.OrdinalIgnoreCase))
                 throw new DocumentTranslationFailureException("LanguageUndetermined",
                     "Source language is uncertain; translation was not attempted.", "und");
-            if (sourceLanguage.Equals(targetLanguage, StringComparison.OrdinalIgnoreCase))
-                return new(sourceLanguage, false, fallbackBodyText);
+            if (!detection.UseAutomaticSourceLanguage &&
+                sourceLanguage.Equals(targetLanguage, StringComparison.OrdinalIgnoreCase))
+                return new(sourceLanguage, false, fallbackBodyText) { LanguageDetection = detection };
             if (sourcePdfBytes is null)
                 throw new DocumentTranslationFailureException("TranslationSourceUnavailable",
                     "Translation requires the actual source PDF slice; original text remains available.", sourceLanguage);
             var bytes = await _pdfTranslation.TranslateAsync(
-                sourcePdfBytes, sourceLanguage, targetLanguage, cleanTerms, cancellationToken);
+                sourcePdfBytes, detection.UseAutomaticSourceLanguage ? null : sourceLanguage,
+                targetLanguage, cleanTerms, cancellationToken);
             if (bytes.Length < 5 || !bytes.AsSpan().StartsWith("%PDF-"u8))
                 throw new InvalidDataException("The translation provider returned an invalid PDF.");
             var pages = await _pdfExtractor.ExtractPagesAsync(bytes, new SplittingConfig(), cancellationToken);
-            return new(sourceLanguage, true, String.Join("\n\n", pages.Select(page => page.BodyText)), bytes);
+            return new(sourceLanguage, true, String.Join("\n\n", pages.Select(page => page.BodyText)), bytes)
+                { LanguageDetection = detection };
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -159,7 +166,8 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
         catch (DocumentTranslationFailureException failure)
         {
             throw new DocumentTranslationFailureException(failure.Code, failure.Message,
-                failure.Language ?? sourceLanguage, failure.ProviderStatus, failure);
+                failure.Language ?? sourceLanguage, failure.ProviderStatus, failure,
+                failure.LanguageDetection ?? detection);
         }
         catch (Exception exception) when (exception is RequestFailedException or HttpRequestException or
             AuthenticationFailedException or JsonException or InvalidDataException or IOException or FormatException or
@@ -174,7 +182,7 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
                     ? "TranslationInvalidResponse" : "TranslationProviderFailed";
             throw new DocumentTranslationFailureException(error,
                 "Translation could not complete; original source was retained and independent features can continue.",
-                sourceLanguage, status, exception);
+                sourceLanguage, status, exception, detection);
         }
     }
 
@@ -309,6 +317,7 @@ public sealed class TranslateDocumentsExecutor : Executor<SplittingState, Splitt
         {
             cancellationToken.ThrowIfCancellationRequested();
             slice.TargetLanguage = targetLang;
+            slice.LanguageDetection = null;
 
             var sliceFileName = $"slice-{slice.SegmentIndex + 1}-pages-{slice.StartPage}-{slice.EndPage}.pdf";
             DocumentSliceTranslationResult docResult;
@@ -324,7 +333,7 @@ public sealed class TranslateDocumentsExecutor : Executor<SplittingState, Splitt
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 failures++;
-                FailSlice(slice, failure.Code, failure.Message, failure.Language);
+                FailSlice(slice, failure.Code, failure.Message, failure.Language, failure.LanguageDetection);
                 _logger.LogWarning("Translation failed for slice {SliceIndex}; code {Code}; HTTP {Status}. Original source retained.",
                     slice.SegmentIndex, failure.Code, failure.ProviderStatus);
                 continue;
@@ -338,7 +347,8 @@ public sealed class TranslateDocumentsExecutor : Executor<SplittingState, Splitt
                 {
                     failures++;
                     FailSlice(slice, "TranslationInvalidResponse",
-                        "A translated PDF was not returned; original source was retained.", docResult.DetectedLanguage);
+                        "A translated PDF was not returned; original source was retained.",
+                        docResult.DetectedLanguage, docResult.LanguageDetection);
                     continue;
                 }
                 try
@@ -352,7 +362,8 @@ public sealed class TranslateDocumentsExecutor : Executor<SplittingState, Splitt
                     cancellationToken.ThrowIfCancellationRequested();
                     failures++;
                     FailSlice(slice, "TranslationStorageFailed",
-                        "The translated PDF could not be stored; original source was retained.", docResult.DetectedLanguage);
+                        "The translated PDF could not be stored; original source was retained.",
+                        docResult.DetectedLanguage, docResult.LanguageDetection);
                     _logger.LogWarning("A translated artifact could not be stored for slice {SliceIndex}; error type {ErrorType}.",
                         slice.SegmentIndex, exception.GetType().Name);
                     continue;
@@ -362,6 +373,7 @@ public sealed class TranslateDocumentsExecutor : Executor<SplittingState, Splitt
             slice.TranslationErrorCode = null;
             slice.TranslationErrorMessage = null;
             slice.DetectedLanguage = docResult.DetectedLanguage;
+            slice.LanguageDetection = docResult.LanguageDetection;
             simulationUsed |= docResult.IsDevelopmentSimulation;
             message.HasDevelopmentResults |= docResult.IsDevelopmentSimulation;
             slice.WasTranslated = docResult.WasTranslated;
@@ -381,14 +393,17 @@ public sealed class TranslateDocumentsExecutor : Executor<SplittingState, Splitt
             DurationMs: sw.Elapsed.TotalMilliseconds,
             Notes: failures > 0
                 ? $"Translation failed for {failures} of {message.Slices.Count} document(s). Original source was retained; independent features continue."
-                : $"Detected source languages for {message.Slices.Count} document(s); translated {translatedCount}; same-language sources were retained."));
+                : $"Detected source languages independently for {message.Slices.Count} document(s); " +
+                    $"translated {translatedCount}; reliable same-language sources were retained."));
 
         return message;
     }
 
-    private static void FailSlice(DocumentSlice slice, string code, string message, string? language)
+    private static void FailSlice(DocumentSlice slice, string code, string message, string? language,
+        DocumentLanguageResult? detection = null)
     {
         slice.DetectedLanguage = language ?? "und";
+        slice.LanguageDetection = detection;
         slice.WasTranslated = false;
         slice.TranslatedText = null;
         slice.TranslatedPdfBytes = null;

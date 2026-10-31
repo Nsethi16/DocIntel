@@ -23,6 +23,63 @@ function preview(url = '/api/harness/tenants/one/jobs/source/slices/0/pdf') {
     frame, status, actions, button };
 }
 
+for (const page of ['index', 'admin']) {
+  test(`${page} shows independent document-language checks without hiding uncertain samples`, () => {
+    const app = runtime(() => { throw new Error('No provider call expected.'); }, {}, page);
+    const html = app.languageDetectionMarkup({
+      detectedLanguage: 'fr',
+      languageDetection: {
+        useAutomaticSourceLanguage: true,
+        samples: [
+          { sampleIndex: 0, language: 'fr', score: 0.6, isTranslationSupported: true },
+          { sampleIndex: 1, language: 'und', score: 0.3, isTranslationSupported: true }
+        ]
+      }
+    });
+    assert.match(html, /FR \(candidate\)/);
+    assert.match(html, /1 of 2 chunks usable/);
+    assert.match(html, /Automatic source-language detection for the complete PDF/);
+    assert.match(html, /0\.60/);
+    assert.match(html, /0\.30/);
+    assert.match(html, /Uncertain/);
+    assert.match(html, /not calibrated probabilities/);
+  });
+}
+
+test('historical language metadata does not fabricate chunk scores', () => {
+  const app = runtime(() => {});
+  const html = app.languageDetectionMarkup({ detectedLanguage: 'en' });
+  assert.match(html, /EN/);
+  assert.match(html, /not recorded/);
+  assert.doesNotMatch(html, /0\.8|0\.5|chunks usable/);
+});
+
+test('large language metadata is bounded and untrusted values remain escaped', () => {
+  const app = runtime(() => {});
+  const html = app.languageDetectionMarkup({
+    detectedLanguage: '<script>untrusted</script>',
+    languageDetection: {
+      useAutomaticSourceLanguage: true,
+      samples: Array.from({ length: 100 }, (_, sampleIndex) =>
+        ({ sampleIndex, language: '</td><script>untrusted</script>', score: 0.6, isTranslationSupported: true }))
+    }
+  });
+  assert.match(html, /Showing 30 of 100 checks/);
+  assert.equal((html.match(/<tr>/g) || []).length, 31);
+  assert.doesNotMatch(html, /<script>/i);
+  assert.match(html, /&lt;SCRIPT&gt;/);
+});
+
+test('a partly uncertain target-language candidate is not mislabeled as a same-language skip', () => {
+  const app = runtime(() => {});
+  const note = app.translationPreviewNote({ status: 'Running' }, {
+    detectedLanguage: 'en', targetLanguage: 'en',
+    languageDetection: { useAutomaticSourceLanguage: true }
+  });
+  assert.doesNotMatch(note.text, /Translation not needed/);
+  assert.match(note.text, /Processing is still in progress/);
+});
+
 test('only a successful PDF response starts the native viewer, using a bounded authenticated range request', async () => {
   const item = preview();
   let request;

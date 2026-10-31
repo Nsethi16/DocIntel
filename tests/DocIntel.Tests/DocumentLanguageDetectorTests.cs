@@ -10,6 +10,91 @@ namespace DocIntel.Tests;
 
 public sealed class DocumentLanguageDetectorTests
 {
+    [Theory]
+    [InlineData(0.5, true)]
+    [InlineData(0.79, true)]
+    [InlineData(0.8, false)]
+    [InlineData(1.0, false)]
+    public async Task Lower_Supported_Scores_Are_Usable_But_Only_Reliable_Scores_Allow_A_Skip(
+        double score, bool automatic)
+    {
+        // Arrange
+        var handler = new DetectorHandler((count, _) => Enumerable.Range(0, count)
+            .Select(_ => new { language = "fr", score, isTranslationSupported = true }).ToArray());
+        using var detector = new AzureDocumentLanguageDetector(
+            new HttpClient(handler), Credential().Object, new Uri("https://translator.example/"));
+
+        // Act
+        var result = await detector.DetectAsync("Le document source contient les conditions de livraison.");
+
+        // Assert
+        Assert.Equal("fr", result.Language);
+        Assert.Equal(automatic, result.UseAutomaticSourceLanguage);
+        Assert.Equal(1, result.UsableSampleCount);
+        Assert.Equal(score, Assert.Single(result.Samples).Score);
+        Assert.True(result.Samples[0].IsUsable);
+    }
+
+    [Theory]
+    [InlineData("en", 0.3, true, 0.65)]
+    [InlineData("en", 0.3, true, 0.99)]
+    [InlineData("und", 0.9, true, 0.65)]
+    [InlineData("xx", 1.0, false, 0.65)]
+    public async Task An_Uncertain_Or_Unsupported_Chunk_Does_Not_Veto_Another_Usable_Chunk(
+        string otherLanguage, double otherScore, bool supported, double goodScore)
+    {
+        // Arrange
+        var handler = new DetectorHandler((count, _) => Enumerable.Range(0, count).Select(index => new
+        {
+            language = index == 0 ? "en" : otherLanguage,
+            score = index == 0 ? goodScore : otherScore,
+            isTranslationSupported = index == 0 || supported
+        }).ToArray());
+        using var detector = new AzureDocumentLanguageDetector(
+            new HttpClient(handler), Credential().Object, new Uri("https://translator.example/"));
+
+        // Act
+        var result = await detector.DetectAsync(new string('a', 1500) + new string('b', 1500));
+
+        // Assert
+        Assert.Equal("en", result.Language);
+        Assert.True(result.UseAutomaticSourceLanguage);
+        Assert.Equal(1, result.UsableSampleCount);
+        Assert.Equal(2, result.Samples.Count);
+        Assert.Equal(new[] { 0, 1 }, result.Samples.Select(sample => sample.SampleIndex));
+        Assert.Equal(1500, result.Samples[0].CharacterCount);
+        Assert.False(result.Samples[1].IsUsable);
+        Assert.DoesNotContain(new string('a', 100), JsonSerializer.Serialize(result));
+    }
+
+    [Theory]
+    [InlineData(-0.1)]
+    [InlineData(1.1)]
+    public async Task Invalid_Provider_Scores_Are_Not_Treated_As_Low_Confidence_Evidence(double score)
+    {
+        // Arrange
+        var handler = new DetectorHandler((count, _) => Enumerable.Range(0, count)
+            .Select(_ => new { language = "en", score, isTranslationSupported = true }).ToArray());
+        using var detector = new AzureDocumentLanguageDetector(
+            new HttpClient(handler), Credential().Object, new Uri("https://translator.example/"));
+
+        // Act / Assert
+        await Assert.ThrowsAsync<InvalidDataException>(() => detector.DetectAsync("Actual source text."));
+    }
+
+    [Fact]
+    public async Task Missing_Provider_Result_Fields_Fail_Explicitly_Not_As_An_Uncertain_Chunk()
+    {
+        // Arrange
+        var handler = new DetectorHandler((count, _) => Enumerable.Range(0, count)
+            .Select(_ => new { language = "en", score = 0.65 }).ToArray());
+        using var detector = new AzureDocumentLanguageDetector(
+            new HttpClient(handler), Credential().Object, new Uri("https://translator.example/"));
+
+        // Act / Assert
+        await Assert.ThrowsAsync<InvalidDataException>(() => detector.DetectAsync("Actual source text."));
+    }
+
     [Fact]
     public async Task Real_Detect_Protocol_Is_Bounded_And_Does_Not_Translate_Or_Guess_English()
     {
@@ -53,6 +138,8 @@ public sealed class DocumentLanguageDetectorTests
 
         // Assert
         Assert.Equal("mul", result.Language);
+        Assert.True(result.UseAutomaticSourceLanguage);
+        Assert.Equal(result.Samples.Count, result.UsableSampleCount);
     }
 
     [Fact]
@@ -106,6 +193,7 @@ public sealed class DocumentLanguageDetectorTests
             sent.AddRange(texts);
         }
         Assert.Equal(source, String.Concat(sent));
+        Assert.Equal(Enumerable.Range(0, sent.Count), result.Samples.Select(sample => sample.SampleIndex));
     }
 
     [Fact]
@@ -123,6 +211,7 @@ public sealed class DocumentLanguageDetectorTests
 
         // Assert
         Assert.Equal("LanguageUndetermined", failure.Code);
+        Assert.Null(failure.LanguageDetection);
         Assert.Equal(0, handler.Calls);
         credential.VerifyNoOtherCalls();
     }
@@ -162,6 +251,9 @@ public sealed class DocumentLanguageDetectorTests
 
         // Assert
         Assert.Equal("LanguageUndetermined", failure.Code);
+        Assert.NotNull(failure.LanguageDetection);
+        Assert.Equal(0, failure.LanguageDetection.UsableSampleCount);
+        Assert.Equal(0.3, Assert.Single(failure.LanguageDetection.Samples).Score);
     }
 
     [Fact]

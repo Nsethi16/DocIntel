@@ -1169,6 +1169,7 @@ public static class HarnessEndpoints
         s.AmendmentId,
         s.SchemaId,
         s.DetectedLanguage,
+        s.LanguageDetection,
         s.TargetLanguage,
         s.WasTranslated,
         s.TranslationErrorCode,

@@ -1293,7 +1293,7 @@ let tenants = [];
             <h3 class="slice-section-title" style="margin:24px 0 12px 0;">Document Slices</h3>
             <table class="clean-table" style="margin-bottom:28px;">
               <thead>
-                <tr><th>Slice</th><th>Pages</th><th>Identified Document</th><th>Matched Rule</th><th>Footer Signature</th><th>PDF</th></tr>
+                <tr><th>Slice</th><th>Pages</th><th>Identified Document</th><th>Language</th><th>Matched Rule</th><th>Footer Signature</th><th>PDF</th></tr>
               </thead>
               <tbody>
                 ${activeSegs.map(s => `
@@ -1301,6 +1301,7 @@ let tenants = [];
                     <td>#${s.segmentIndex + 1}</td>
                     <td>${s.startPage}–${s.endPage}</td>
                     <td style="font-weight:600;">${escapeHtml(s.identifiedDocumentName || s.documentTypeName || 'Undefined')}</td>
+                    <td>${languageDetectionMarkup(s)}</td>
                     <td style="color:var(--text-secondary);font-size:12.5px;">${escapeHtml(s.matchedIdentificationRule || '—')}</td>
                     <td style="font-family:monospace;font-size:12px;color:var(--text-secondary);">${escapeHtml((s.footers || []).join(', ') || '—')}</td>
                     <td><a href="/api/harness/tenants/${encodeURIComponent(job.tenantId)}/jobs/${encodeURIComponent(job.jobId)}/slices/${s.segmentIndex}/pdf" target="_blank" class="text-link-btn">Open ↗</a></td>

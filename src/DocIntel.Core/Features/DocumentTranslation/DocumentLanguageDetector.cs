@@ -8,8 +8,27 @@ namespace DocIntel.Core.Features.DocumentTranslation;
 /// <summary>Creates the named, redirect-disabled HTTP client used by the language detection API.</summary>
 public delegate HttpClient DocumentLanguageHttpClientFactory();
 
-/// <summary>A reliable source language, or an explicitly mixed-language source.</summary>
-public sealed record DocumentLanguageResult(string Language);
+/// <summary>A bounded language check without retaining the checked source text.</summary>
+public sealed record DocumentLanguageSample(
+    int SampleIndex, int CharacterCount, string Language, double Score, bool IsTranslationSupported)
+{
+    public bool IsUsable => IsTranslationSupported &&
+        !Language.Equals("und", StringComparison.OrdinalIgnoreCase) &&
+        Score >= DocumentLanguageResult.MinimumUsableScore;
+}
+
+/// <summary>Source-language evidence for one logical document, including uncertainty and batch routing.</summary>
+public sealed record DocumentLanguageResult(string Language)
+{
+    public const double MinimumUsableScore = 0.5;
+    public const double SameLanguageSkipScore = 0.8;
+
+    /// <summary>Mixed or partly uncertain evidence cannot safely select one source language or skip translation.</summary>
+    public bool UseAutomaticSourceLanguage { get; init; }
+
+    public IReadOnlyList<DocumentLanguageSample> Samples { get; init; } = [];
+    public int UsableSampleCount => Samples.Count(sample => sample.IsUsable);
+}
 
 /// <summary>Detects language without translating document text or generating a PDF.</summary>
 public interface IDocumentLanguageDetector
@@ -20,11 +39,12 @@ public interface IDocumentLanguageDetector
 /// <summary>A safe optional-feature failure; raw provider messages are not exposed to users.</summary>
 public sealed class DocumentTranslationFailureException(
     string code, string message, string? language = null, int? providerStatus = null,
-    Exception? innerException = null) : Exception(message, innerException)
+    Exception? innerException = null, DocumentLanguageResult? languageDetection = null) : Exception(message, innerException)
 {
     public string Code { get; } = code;
     public string? Language { get; } = language;
     public int? ProviderStatus { get; } = providerStatus;
+    public DocumentLanguageResult? LanguageDetection { get; } = languageDetection;
 }
 
 /// <summary>Uses the real Translator Detect API; the pinned text SDK does not expose this operation.</summary>
@@ -41,13 +61,29 @@ public sealed class AzureDocumentLanguageDetector(
         if (samples.Count == 0) throw UnknownLanguage();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(45));
-        var languages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var checks = new List<DocumentLanguageSample>();
         foreach (var batch in samples.Chunk(30))
-            languages.UnionWith(await DetectBatchAsync(batch, deadline.Token));
-        return new(languages.Count == 1 ? languages.Single() : "mul");
+            checks.AddRange(await DetectBatchAsync(batch, checks.Count, deadline.Token));
+        var languages = checks.Where(sample => sample.IsUsable).Select(sample => sample.Language)
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var detection = new DocumentLanguageResult(languages.Length switch
+        {
+            0 => "und",
+            1 => languages[0],
+            _ => "mul"
+        })
+        {
+            Samples = checks,
+            UseAutomaticSourceLanguage = languages.Length != 1 ||
+                languages.Any(language => language.Equals("mul", StringComparison.OrdinalIgnoreCase)) ||
+                checks.Any(sample => !sample.IsUsable || sample.Score < DocumentLanguageResult.SameLanguageSkipScore)
+        };
+        if (languages.Length == 0) throw UnknownLanguage(detection);
+        return detection;
     }
 
-    private async Task<HashSet<string>> DetectBatchAsync(IReadOnlyList<string> samples, CancellationToken cancellationToken)
+    private async Task<IReadOnlyList<DocumentLanguageSample>> DetectBatchAsync(
+        IReadOnlyList<string> samples, int firstSampleIndex, CancellationToken cancellationToken)
     {
         using var request = new HttpRequestMessage(HttpMethod.Post, _uri)
         {
@@ -76,29 +112,30 @@ public sealed class AzureDocumentLanguageDetector(
         if (document.RootElement.ValueKind != JsonValueKind.Array ||
             document.RootElement.GetArrayLength() != samples.Count)
             throw new InvalidDataException("Language detection returned an invalid result count.");
-        var languages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var checks = new List<DocumentLanguageSample>();
         foreach (var item in document.RootElement.EnumerateArray())
         {
             if (item.ValueKind != JsonValueKind.Object ||
                 !item.TryGetProperty("language", out var value) || value.ValueKind != JsonValueKind.String ||
                 value.GetString() is not { } language ||
                 !Regex.IsMatch(language, "^[a-zA-Z]{2,3}(?:-[a-zA-Z]{2,4})?$") ||
-                language.Equals("und", StringComparison.OrdinalIgnoreCase) ||
                 !item.TryGetProperty("score", out var score) || score.ValueKind != JsonValueKind.Number ||
                 !score.TryGetDouble(out var confidence) ||
-                !Double.IsFinite(confidence) || confidence is < 0.8 or > 1 ||
+                !Double.IsFinite(confidence) || confidence is < 0 or > 1 ||
                 !item.TryGetProperty("isTranslationSupported", out var supported) ||
-                supported.ValueKind != JsonValueKind.True)
-                throw UnknownLanguage();
-            languages.Add(language);
+                supported.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
+                throw new InvalidDataException("Language detection returned an invalid sample result.");
+            checks.Add(new(firstSampleIndex + checks.Count, samples[checks.Count].Length,
+                language, confidence, supported.GetBoolean()));
         }
-        return languages;
+        return checks;
     }
 
     public void Dispose() => httpClient.Dispose();
 
     internal static IReadOnlyList<string> Samples(string text)
     {
+        ArgumentNullException.ThrowIfNull(text);
         const int length = 1500;
         if (text.Length > MaximumSourceCharacters) throw UnknownLanguage();
         var result = new List<string>();
@@ -137,9 +174,10 @@ public sealed class AzureDocumentLanguageDetector(
         return new(endpoint, "translator/text/v3.0/detect?api-version=3.0");
     }
 
-    private static DocumentTranslationFailureException UnknownLanguage() => new(
+    private static DocumentTranslationFailureException UnknownLanguage(DocumentLanguageResult? detection = null) => new(
         "LanguageUndetermined",
-        "Source language could not be established reliably across the source text; translation was not attempted.", "und");
+        "No supported source-language chunk met the minimum detection score of 0.5, or source text was unavailable " +
+        "within the detection limit; translation was not attempted.", "und", languageDetection: detection);
 }
 
 internal sealed class UnconfiguredDocumentLanguageDetector : IDocumentLanguageDetector

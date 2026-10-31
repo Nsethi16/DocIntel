@@ -9,11 +9,12 @@ using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
+using DocIntel.Core.Models;
 using DocIntel.Core.Storage;
 
 namespace DocIntel.Api.Diagnostics;
 
-/// <summary>Inspects opaque document references or explicitly probes one failed translation without saving results.</summary>
+/// <summary>Inspects opaque documents or probes a failed translation/language warning without saving results.</summary>
 public static class DocumentJobDiagnostic
 {
     private static readonly HashSet<string> Stages =
@@ -80,7 +81,12 @@ public static class DocumentJobDiagnostic
             if (!scope.CanProcess || !scope.CanReadDocument(selected.JobId))
                 throw new UnauthorizedAccessException();
             var harness = selected.ProcessingHarness;
-            if (selected.Status != JobStatus.Failed || harness is null || harness.TenantId != tenantId ||
+            var completedLanguageFailure = selected.Status == JobStatus.Completed &&
+                selected.Segments.Any(slice => slice.TranslationErrorCode == "LanguageUndetermined") &&
+                selected.ExecutionTrace.Any(step => step.ExecutorName == "TranslateDocumentsExecutor" &&
+                    step.Executed && !step.Succeeded);
+            if (selected.Status != JobStatus.Failed && !completedLanguageFailure ||
+                harness is null || harness.TenantId != tenantId ||
                 harness.HarnessVersion != selected.AppliedHarnessVersion ||
                 !selected.ExecutionTrace.Any(step => step.ExecutorName == "IdentifyDocumentsExecutor" && step.Succeeded) ||
                 selected.ExecutionTrace.Any(step => step.ExecutorName == "TranslateDocumentsExecutor" && step.Succeeded) ||
@@ -97,6 +103,7 @@ public static class DocumentJobDiagnostic
                 throw new InvalidOperationException("The accepted translation endpoint differs from the configured provider.");
             foreach (var slice in selected.Segments.OrderBy(slice => slice.SegmentIndex).Take(48))
             {
+                if (completedLanguageFailure && slice.TranslationErrorCode != "LanguageUndetermined") continue;
                 sliceIndex = slice.SegmentIndex;
                 stage = "ReadSource";
                 if (await artifacts.GetSlicePdfAsync(tenantId, selected.ArtifactDocumentId ?? selected.JobId,
@@ -107,11 +114,15 @@ public static class DocumentJobDiagnostic
                 stage = "Translate";
                 var result = await translation.TranslatePdfSliceAsync(bytes,
                     $"slice-{slice.SegmentIndex + 1}-pages-{slice.StartPage}-{slice.EndPage}.pdf",
-                    slice.BodyText, slice.Footers, String.IsNullOrWhiteSpace(config.TargetLanguage) ? "en" : config.TargetLanguage.Trim(),
+                    DocumentPromptBoundary.OriginalSourceText(slice), slice.Footers,
+                    String.IsNullOrWhiteSpace(config.TargetLanguage) ? "en" : config.TargetLanguage.Trim(),
                     endpoint, variant == "WithoutGlossary" ? [] : config.DoNotTranslateTerms, deadline.Token);
                 if (result.IsDevelopmentSimulation)
                     throw new InvalidOperationException("A simulated translation cannot verify the production provider.");
-                await WriteAsync(output, phase, "Completed", "None", selected, stage, sliceIndex, variant: variant);
+                scope = await access.ResolveAsync(actor, tenantId, deadline.Token);
+                if (!scope.CanProcess || !scope.CanReadDocument(selected.JobId)) throw new UnauthorizedAccessException();
+                await WriteAsync(output, phase, "Completed", "None", selected, stage, sliceIndex, variant: variant,
+                    languageDetection: result.LanguageDetection, probeTranslated: result.WasTranslated);
                 return 0;
             }
             await WriteAsync(output, phase, "Refused", "NoUntranslatedSliceWithinProbeLimit", selected, stage);
@@ -135,7 +146,7 @@ public static class DocumentJobDiagnostic
                 "TranslationCleanupFailed" or "TranslationAccessDenied" or "TranslationInvalidResponse" or
                 "TranslationProviderFailed" ? failure.Code : "TranslationFailed";
             await WriteAsync(output, phase, "Failed", code, selected, stage, sliceIndex,
-                httpStatus: failure.ProviderStatus, variant: variant);
+                httpStatus: failure.ProviderStatus, variant: variant, languageDetection: failure.LanguageDetection);
             return 1;
         }
         catch (Exception exception)
@@ -172,10 +183,16 @@ public static class DocumentJobDiagnostic
 
     internal static Task WriteAsync(TextWriter output, string phase, string status, string failureCode,
         DocumentJob? job = null, string? stage = null, int? sliceIndex = null, int? httpStatus = null,
-        string? providerCode = null, IReadOnlyList<string>? providerHints = null, string? variant = null) =>
+        string? providerCode = null, IReadOnlyList<string>? providerHints = null, string? variant = null,
+        DocumentLanguageResult? languageDetection = null, bool? probeTranslated = null) =>
         output.WriteLineAsync("DOCINTEL_DIAGNOSTIC " + JsonSerializer.Serialize(new
         {
             phase, status, failureCode, stage, sliceIndex, httpStatus, providerCode, providerHints, variant,
+            probeTranslated,
+            languageChecks = languageDetection is not null
+                ? new[] { LanguageCheck(sliceIndex ?? 0, languageDetection) }
+                : job?.Segments.Where(slice => slice.LanguageDetection is not null)
+                    .Take(48).Select(slice => LanguageCheck(slice.SegmentIndex, slice.LanguageDetection!)).ToArray(),
             jobId = job?.JobId, createdAtUtc = job?.CreatedAtUtc, completedAtUtc = job?.CompletedAtUtc,
             pages = job?.TotalPages, slices = job?.Segments.Count,
             lastStep = job?.ExecutionTrace.LastOrDefault()?.ExecutorName is { } name && Stages.Contains(name) ? name : null,
@@ -195,4 +212,19 @@ public static class DocumentJobDiagnostic
             failedStages = job?.ExecutionTrace.Where(step => step.Executed && !step.Succeeded && Stages.Contains(step.ExecutorName))
                 .Select(step => step.ExecutorName).Distinct().ToArray()
         }));
+
+    private static object LanguageCheck(int sliceIndex, DocumentLanguageResult detection) => new
+    {
+        sliceIndex, language = detection.Language, useAutomaticSourceLanguage = detection.UseAutomaticSourceLanguage,
+        usableSampleCount = detection.UsableSampleCount,
+        sampleCount = detection.Samples.Count,
+        samples = detection.Samples.OrderBy(sample => sample.IsUsable).ThenBy(sample => sample.Score).Take(30)
+            .Select(sample => new
+            {
+                sampleIndex = sample.SampleIndex, characterCount = sample.CharacterCount,
+                language = sample.Language, score = sample.Score,
+                isTranslationSupported = sample.IsTranslationSupported, isUsable = sample.IsUsable
+            }),
+        samplesLimited = detection.Samples.Count > 30
+    };
 }

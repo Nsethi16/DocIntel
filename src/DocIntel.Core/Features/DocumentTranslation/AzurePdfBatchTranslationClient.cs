@@ -33,7 +33,7 @@ public sealed class PdfBatchTranslationOptions
 /// <summary>Translates genuine PDF bytes; the implementation must not generate a source or output PDF from text.</summary>
 public interface IPdfBatchTranslationClient
 {
-    Task<byte[]> TranslateAsync(byte[] sourcePdf, string sourceLanguage, string targetLanguage,
+    Task<byte[]> TranslateAsync(byte[] sourcePdf, string? sourceLanguage, string targetLanguage,
         IReadOnlyList<string> protectedTerms, CancellationToken cancellationToken = default);
 }
 
@@ -44,7 +44,7 @@ public sealed class AzurePdfBatchTranslationClient(
 {
     private const int MaximumOutputBytes = 50 * 1024 * 1024;
 
-    public async Task<byte[]> TranslateAsync(byte[] sourcePdf, string sourceLanguage, string targetLanguage,
+    public async Task<byte[]> TranslateAsync(byte[] sourcePdf, string? sourceLanguage, string targetLanguage,
         IReadOnlyList<string> protectedTerms, CancellationToken cancellationToken = default)
     {
         options.Validate();
@@ -179,7 +179,7 @@ public sealed class AzurePdfBatchTranslationClient(
 
 internal sealed class UnconfiguredPdfBatchTranslationClient : IPdfBatchTranslationClient
 {
-    public Task<byte[]> TranslateAsync(byte[] sourcePdf, string sourceLanguage, string targetLanguage,
+    public Task<byte[]> TranslateAsync(byte[] sourcePdf, string? sourceLanguage, string targetLanguage,
         IReadOnlyList<string> protectedTerms, CancellationToken cancellationToken = default) =>
         throw new DocumentTranslationFailureException("TranslationNotConfigured",
             "PDF batch translation and its private staging storage are not configured; original source was retained.",

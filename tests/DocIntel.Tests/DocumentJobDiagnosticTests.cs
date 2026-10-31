@@ -18,6 +18,77 @@ namespace DocIntel.Tests;
 public sealed class DocumentJobDiagnosticTests
 {
     [Fact]
+    public async Task A_Completed_Language_Warning_Can_Be_Probed_Without_Reprocessing_Or_Changing_Stored_Output()
+    {
+        // Arrange
+        var source = Source();
+        source.Status = JobStatus.Completed;
+        source.Segments[0].Markdown = "private-complete-source";
+        source.Segments[0].TranslationErrorCode = "LanguageUndetermined";
+        source.ExecutionTrace.Add(new("TranslateDocumentsExecutor", true, false, null, 1, "private-note"));
+        var before = JsonSerializer.Serialize(source);
+        var fixture = new Fixture();
+        fixture.Jobs.Setup(store => store.GetJobAsync(source.JobId, It.IsAny<CancellationToken>(), "workspace"))
+            .ReturnsAsync(source);
+        fixture.Access.Setup(access => access.ResolveAsync(source.SubmittedBy, "workspace", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DocumentAccessScope.Unrestricted);
+        fixture.Artifacts.Setup(store => store.GetSlicePdfAsync("workspace", source.ArtifactDocumentId!, 0,
+            It.IsAny<CancellationToken>(), true)).ReturnsAsync((byte[]?)null);
+        fixture.Artifacts.Setup(store => store.GetSlicePdfAsync("workspace", source.ArtifactDocumentId!, 0,
+            It.IsAny<CancellationToken>(), false)).ReturnsAsync("%PDF-synthetic"u8.ToArray());
+        fixture.Translation.Setup(service => service.TranslatePdfSliceAsync(
+                It.IsAny<byte[]>(), "slice-1-pages-1-1.pdf", "private-complete-source",
+                It.IsAny<IReadOnlyList<string>>(), "en", "https://configured.example/",
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DocumentSliceTranslationResult("fr", true, "private-translated", "%PDF-translation"u8.ToArray())
+            {
+                LanguageDetection = new("fr")
+                    { UseAutomaticSourceLanguage = true, Samples = [new(0, 200, "fr", 0.6, true)] }
+            });
+        using var output = new StringWriter();
+
+        // Act
+        var result = await fixture.Run(source.JobId, true, true, output);
+
+        // Assert
+        Assert.Equal(0, result);
+        Assert.Contains("\"probeTranslated\":true", output.ToString());
+        Assert.Contains("\"languageChecks\"", output.ToString());
+        Assert.Contains("0.6", output.ToString());
+        Assert.DoesNotContain("private", output.ToString());
+        Assert.Equal(before, JsonSerializer.Serialize(source));
+        fixture.Jobs.Verify(store => store.UpsertJobAsync(
+            It.IsAny<DocumentJob>(), It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Artifacts.Verify(store => store.SaveSlicePdfAsync(
+            It.IsAny<string>(), It.IsAny<string>(), It.IsAny<int>(), It.IsAny<byte[]>(),
+            It.IsAny<CancellationToken>(), It.IsAny<bool>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task A_Successful_Completed_Translation_Is_Not_Eligible_For_A_Probe()
+    {
+        // Arrange
+        var source = Source();
+        source.Status = JobStatus.Completed;
+        source.ExecutionTrace.Add(new("TranslateDocumentsExecutor", true, true, null, 1, "private-note"));
+        var fixture = new Fixture();
+        fixture.Jobs.Setup(store => store.GetJobAsync(source.JobId, It.IsAny<CancellationToken>(), "workspace"))
+            .ReturnsAsync(source);
+        fixture.Access.Setup(access => access.ResolveAsync(source.SubmittedBy, "workspace", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DocumentAccessScope.Unrestricted);
+        using var output = new StringWriter();
+
+        // Act
+        var result = await fixture.Run(source.JobId, true, true, output);
+
+        // Assert
+        Assert.Equal(2, result);
+        Assert.Contains("TranslationStageNotEligible", output.ToString());
+        fixture.Artifacts.VerifyNoOtherCalls();
+        fixture.Translation.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task Filename_Hash_Lookup_Prints_Only_Metadata_Without_A_Provider_Call_Or_Stored_Changes()
     {
         // Arrange

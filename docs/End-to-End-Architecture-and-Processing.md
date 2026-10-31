@@ -68,6 +68,15 @@ source text/PDF, entity context, model, and input-mode fingerprint. Slice result
 until evaluation succeeds. Live translation uses provider-side source-language detection without
 claiming every non-Spanish input is English; no local phrase substitution follows a provider error.
 Tenant translation URLs must match the server-configured provider before credentials can be used.
+Language checks run separately on each logical document's complete original Markdown/body source.
+Supported chunks scoring at least 0.5 provide usable hints even when other chunks are uncertain.
+Only unanimous target-language evidence at scores of at least 0.8 permits a translation skip;
+mixed, lower-score and partly uncertain sources use automatic source selection in the complete-PDF batch.
+No usable evidence or invalid provider responses remain explicit optional-feature failures.
+Each slice retains text-free chunk languages/scores, usable counts and automatic-routing metadata,
+including on translation/storage failures. Historical slices without this metadata keep their original
+serialization and source fingerprints. A read-only probe of an existing language-warning document never
+reprocesses the job or overwrites archived output.
 
 All `/api/harness` operations now require authenticated, server-authorized access. Entra browser
 sessions and API bearer tokens are validated with the standard ASP.NET Core authentication

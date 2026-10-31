@@ -780,6 +780,12 @@ public sealed class AskAiOrchestrator
                     failedFeatures = job.ExecutionTrace.Where(step => step.Executed && !step.Succeeded)
                         .Select(step => step.ExecutorName).Distinct().ToArray(),
                     detectedLanguage = slice.DetectedLanguage,
+                    languageDetection = slice.LanguageDetection is not { } detection ? null : new
+                    {
+                        detection.UseAutomaticSourceLanguage,
+                        detection.UsableSampleCount,
+                        sampleCount = detection.Samples.Count
+                    },
                     targetLanguage = slice.TargetLanguage,
                     wasTranslated = slice.WasTranslated,
                     translationErrorCode = slice.TranslationErrorCode,
@@ -996,6 +1002,8 @@ public sealed class AskAiOrchestrator
                 Use nextTextOffset to inspect further original source before supporting an answer or calculation.
                 hasProcessingWarnings and translationErrorCode describe failed optional features, not missing source.
                 Use available original evidence; disclose translation limitations when material.
+                languageDetection.useAutomaticSourceLanguage means mixed or uncertain source-language evidence;
+                a single detected language can be only a candidate, not a verified whole-document language.
                 Never describe an untranslated original as translated or infer zero values from a feature failure.
                 hasDevelopmentResults=true means derived results include development simulation;
                 null means legacy provenance is unknown. Ground factual claims in original source text,

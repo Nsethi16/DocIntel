@@ -164,6 +164,37 @@ function unavailableResultMessage(job, executorName, featureName, missingMessage
     'No execution outcome was recorded for this feature; see Metadata for details.';
 }
 
+function languageDetectionMarkup(slice) {
+  const language = String(slice.detectedLanguage || 'Unknown').toUpperCase();
+  const detection = slice.languageDetection;
+  if (!detection || !Array.isArray(detection.samples) || !detection.samples.length)
+    return `${escapeHtml(language)}<div>Chunk-level detection was not recorded for this run.</div>`;
+  const samples = detection.samples;
+  const usable = sample => sample.isTranslationSupported === true &&
+    /^[a-z]{2,3}(?:-[a-z]{2,4})?$/i.test(String(sample.language || '')) &&
+    String(sample.language || '').toLowerCase() !== 'und' &&
+    Number.isFinite(sample.score) && sample.score >= 0.5 && sample.score <= 1;
+  const usableCount = samples.filter(usable).length;
+  const automatic = detection.useAutomaticSourceLanguage === true;
+  const rows = samples.slice(0, 30).map(sample => `<tr>
+    <td>${Number.isInteger(sample.sampleIndex) && sample.sampleIndex >= 0 ? sample.sampleIndex + 1 : 'Unknown'}</td>
+    <td>${escapeHtml(String(sample.language || 'Unknown').toUpperCase())}</td>
+    <td>${Number.isFinite(sample.score) && sample.score >= 0 && sample.score <= 1 ? sample.score.toFixed(2) : 'Unknown'}</td>
+    <td>${usable(sample) ? 'Usable' : sample.isTranslationSupported === false ? 'Unsupported' : 'Uncertain'}</td>
+  </tr>`).join('');
+  return `<div>${escapeHtml(language)}${automatic && language !== 'MUL' && language !== 'UND' ? ' (candidate)' : ''}</div>
+    <details><summary>${usableCount} of ${samples.length} chunks usable</summary>
+      <p>${automatic ? 'Automatic source-language detection for the complete PDF.'
+        : 'Consistent source language; a target-language match can skip translation.'}
+        Usable scores are at least 0.5; skipping requires every chunk to score at least 0.8.
+        These are detection scores, not calibrated probabilities.</p>
+      ${samples.length > 30 ? `<p>Showing 30 of ${samples.length} checks. Complete checks are retained in the document metadata.</p>` : ''}
+      <table class="clean-table data-table"><thead>
+        <tr><th>Chunk</th><th>Language</th><th>Score</th><th>Outcome</th></tr>
+      </thead><tbody>${rows}</tbody></table>
+    </details>`;
+}
+
 function translationPreviewNote(job, slice) {
   if (!slice || slice.wasTranslated === true) return null;
   const trace = featureExecutionTrace(job, 'TranslateDocumentsExecutor');
@@ -174,7 +205,8 @@ function translationPreviewNote(job, slice) {
   }
   const source = String(slice.detectedLanguage || '').trim();
   const target = String(slice.targetLanguage || '').trim();
-  if (source && target && source.toLowerCase() === target.toLowerCase()) {
+  if (source && target && slice.languageDetection?.useAutomaticSourceLanguage !== true &&
+    source.toLowerCase() === target.toLowerCase()) {
     return { kind: '', text: `Translation not needed: the detected and target language are ${source.toUpperCase()}. ` +
       'No translated PDF was generated. The preview below requests the original PDF.' };
   }

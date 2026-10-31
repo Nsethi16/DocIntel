@@ -1,6 +1,7 @@
 using System.Text.Json.Serialization;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Evidence;
+using DocIntel.Core.Features.DocumentTranslation;
 
 namespace DocIntel.Core.Features.DocumentSplitting;
 
@@ -150,6 +151,11 @@ public sealed class DocumentSlice
 
     [JsonPropertyName("detectedLanguage")]
     public string? DetectedLanguage { get; set; }
+
+    /// <summary>Per-logical-document checks and uncertainty; historical snapshots keep their original serialization.</summary>
+    [JsonPropertyName("languageDetection")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public DocumentLanguageResult? LanguageDetection { get; set; }
 
     [JsonPropertyName("targetLanguage")]
     public string? TargetLanguage { get; set; }

@@ -177,7 +177,8 @@ jobs:
                   "completedAtUtc", "lastStep", "analyticalAttempts", "matches", "subStatus",
                   "hasBarChart", "jobId", "pages", "slices", "identifiedSlices", "translatedSlices",
                   "stage", "sliceIndex", "decisionCompleted", "hasWarnings", "insightCount", "entityCount",
-                  "structuredDocuments", "promptResults", "detectedLanguages", "failedStages") if key in value}
+                  "structuredDocuments", "promptResults", "detectedLanguages", "failedStages",
+                  "languageChecks", "probeTranslated") if key in value}
               print(json.dumps(safe))
               records.append(safe)
           if not records:

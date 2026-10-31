@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text.Json;
 using Azure;
 using DocIntel.Core;
 using DocIntel.Core.Features.DocumentSplitting;
@@ -17,6 +18,114 @@ namespace DocIntel.Tests;
 
 public sealed class TranslationReliabilityTests
 {
+    [Theory]
+    [InlineData("fr")]
+    [InlineData("en")]
+    [InlineData("mul")]
+    public async Task Usable_Partial_Or_Lower_Score_Detection_Translates_The_Whole_Pdf_With_Automatic_Source(
+        string language)
+    {
+        // Arrange
+        var original = PdfPigLayoutExtractor.CreateSamplePdf([("Original accepted source", "Original")]);
+        var translated = PdfPigLayoutExtractor.CreateSamplePdf([("Translated complete document", "Translated")]);
+        var detection = new DocumentLanguageResult(language)
+        {
+            UseAutomaticSourceLanguage = true,
+            Samples = [new(0, 100, language == "mul" ? "fr" : language, 0.65, true)]
+        };
+        var detector = Detector(language);
+        detector.Setup(provider => provider.DetectAsync("Original accepted source", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(detection);
+        var batch = new Mock<IPdfBatchTranslationClient>(MockBehavior.Strict);
+        batch.Setup(provider => provider.TranslateAsync(
+                original, null, "en", It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(translated);
+        var service = new AzureDocumentTranslationService(detector.Object, batch.Object);
+
+        // Act
+        var result = await service.TranslatePdfSliceAsync(original, "source.pdf", "Original accepted source",
+            [], "en", "https://translator.example/", []);
+
+        // Assert
+        Assert.True(result.WasTranslated);
+        Assert.Equal(language, result.DetectedLanguage);
+        Assert.Same(detection, result.LanguageDetection);
+        Assert.Equal(translated, result.TranslatedPdfBytes);
+        Assert.Contains("Translated complete document", result.TranslatedText);
+        batch.Verify(provider => provider.TranslateAsync(original, null, "en",
+            It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Logical_Documents_Have_Independent_Language_Checks_Translation_And_Failures()
+    {
+        // Arrange
+        var source = State();
+        source.Slices =
+        [
+            new() { SegmentIndex = 0, StartPage = 1, EndPage = 1, Markdown = "English document source",
+                BodyText = "Original English body", SplitPdfBytes = "%PDF-English"u8.ToArray() },
+            new() { SegmentIndex = 1, StartPage = 2, EndPage = 3, Markdown = "French document source",
+                BodyText = "Original French body", SplitPdfBytes = "%PDF-French"u8.ToArray() },
+            new() { SegmentIndex = 2, StartPage = 4, EndPage = 4, Markdown = "Uncertain document source",
+                BodyText = "Original uncertain body", SplitPdfBytes = "%PDF-Uncertain"u8.ToArray() }
+        ];
+        var english = new DocumentLanguageResult("en") { Samples = [new(0, 100, "en", 0.99, true)] };
+        var french = new DocumentLanguageResult("fr")
+            { UseAutomaticSourceLanguage = true, Samples = [new(0, 100, "fr", 0.6, true)] };
+        var uncertain = new DocumentLanguageResult("und")
+            { UseAutomaticSourceLanguage = true, Samples = [new(0, 100, "en", 0.2, true)] };
+        var detector = new Mock<IDocumentLanguageDetector>(MockBehavior.Strict);
+        detector.Setup(provider => provider.DetectAsync("English document source", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(english);
+        detector.Setup(provider => provider.DetectAsync("French document source", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(french);
+        detector.Setup(provider => provider.DetectAsync("Uncertain document source", It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new DocumentTranslationFailureException("LanguageUndetermined", "No usable chunks.", "und",
+                languageDetection: uncertain));
+        var batch = new Mock<IPdfBatchTranslationClient>(MockBehavior.Strict);
+        var translated = PdfPigLayoutExtractor.CreateSamplePdf(
+            [("Translated first French page", "First"), ("Translated final French page", "Second")]);
+        batch.Setup(provider => provider.TranslateAsync(source.Slices[1].SplitPdfBytes!, null, "en",
+                It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(translated);
+        var service = new AzureDocumentTranslationService(detector.Object, batch.Object);
+
+        // Act
+        var result = await new TranslateDocumentsExecutor(service, "https://translator.example/")
+            .HandleAsync(source, Mock.Of<IWorkflowContext>());
+        var saved = JsonSerializer.Deserialize<SplittingState>(
+            JsonSerializer.Serialize(result, new JsonSerializerOptions(JsonSerializerDefaults.Web)),
+            new JsonSerializerOptions(JsonSerializerDefaults.Web))!;
+
+        // Assert
+        Assert.False(result.Slices[0].WasTranslated);
+        Assert.Null(result.Slices[0].TranslatedText);
+        Assert.True(result.Slices[1].WasTranslated);
+        Assert.Equal(translated, result.Slices[1].TranslatedPdfBytes);
+        Assert.Contains("Translated final French page", result.Slices[1].TranslatedText!);
+        Assert.Equal("LanguageUndetermined", result.Slices[2].TranslationErrorCode);
+        Assert.False(Assert.Single(result.ExecutionTrace).Succeeded);
+        Assert.Equal(new[] { "en", "fr", "und" }, saved.Slices.Select(slice => slice.DetectedLanguage));
+        Assert.Equal(0.6, Assert.Single(saved.Slices[1].LanguageDetection!.Samples).Score);
+        Assert.Equal(0.2, Assert.Single(saved.Slices[2].LanguageDetection!.Samples).Score);
+        Assert.Equal("Original uncertain body", saved.Slices[2].BodyText);
+        detector.Verify(provider => provider.DetectAsync(It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(3));
+        batch.Verify(provider => provider.TranslateAsync(It.IsAny<byte[]>(), It.IsAny<string?>(), "en",
+            It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public void Historical_Slices_Without_Detection_Diagnostics_Keep_Their_Original_Serialization()
+    {
+        // Arrange / Act
+        var original = JsonSerializer.Serialize(new DocumentSlice { BodyText = "Historical source" });
+
+        // Assert
+        Assert.DoesNotContain("languageDetection", original);
+    }
+
     [Fact]
     public async Task Same_Language_Skip_Preserves_Complete_Content_Understanding_Source_For_Downstream_Features()
     {
@@ -243,7 +352,9 @@ public sealed class TranslationReliabilityTests
         translation.Setup(provider => provider.TranslatePdfSliceAsync(
                 It.IsAny<byte[]>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(),
                 It.IsAny<string>(), It.IsAny<string>(), It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new DocumentTranslationFailureException("TranslationProviderFailed", "Provider unavailable", "fr", 503));
+            .ThrowsAsync(new DocumentTranslationFailureException("TranslationProviderFailed", "Provider unavailable", "fr", 503,
+                languageDetection: new DocumentLanguageResult("fr")
+                    { UseAutomaticSourceLanguage = true, Samples = [new(0, 100, "fr", 0.6, true)] }));
         var services = new ServiceCollection().AddLogging();
         services.AddSingleton(harness.Object).AddSingleton(translation.Object);
         services.AddDocIntelCore(harnessFilePath: Path.Combine(directory, "harness.json"), allowDevelopmentSimulation: true);
@@ -270,6 +381,10 @@ public sealed class TranslationReliabilityTests
             Assert.Null(completed.ErrorMessage);
             Assert.NotNull(completed.ProcessingResultSha256);
             Assert.NotNull(await artifacts.GetProcessingResultAsync(completed));
+            Assert.Equal(0.6, Assert.Single(completed.Segments[0].LanguageDetection!.Samples).Score);
+            using var archive = JsonDocument.Parse((await artifacts.GetProcessingResultAsync(completed))!);
+            Assert.Equal(0.6, archive.RootElement.GetProperty("segments")[0]
+                .GetProperty("languageDetection").GetProperty("samples")[0].GetProperty("score").GetDouble());
             Assert.False(Assert.Single(completed.ExecutionTrace,
                 step => step.ExecutorName == "TranslateDocumentsExecutor").Succeeded);
             Assert.Contains(completed.ExecutionTrace, step => step.ExecutorName == "GenerateDocumentInsightsExecutor" && step.Succeeded);
