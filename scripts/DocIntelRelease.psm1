@@ -120,7 +120,27 @@ function Get-DocIntelTranslationLifecycleState {
         $owned = @($rules | Where-Object name -IEQ $rule.name)
         if ($owned.Count -eq 1) {
             $actual = $owned[0] | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable -Depth 100
+            # Azure may return omitted optional fields as null; those fields have no lifecycle effect.
+            $pending = [Collections.Generic.Queue[object]]::new()
+            $pending.Enqueue($actual)
+            while ($pending.Count) {
+                $item = $pending.Dequeue()
+                if ($item -is [Collections.IDictionary]) {
+                    foreach ($key in @($item.Keys)) {
+                        if ($null -eq $item[$key]) { $item.Remove($key) }
+                        else { $pending.Enqueue($item[$key]) }
+                    }
+                } elseif ($item -is [Collections.IEnumerable] -and $item -isnot [string]) {
+                    foreach ($entry in $item) {
+                        if ($null -ne $entry) { $pending.Enqueue($entry) }
+                    }
+                }
+            }
             $definition = $actual['definition']
+            $filters = if ($definition -is [Collections.IDictionary]) { $definition['filters'] } else { $null }
+            if ($filters -is [Collections.IDictionary] -and $filters['prefixMatch'] -is [array]) {
+                $filters['prefixMatch'] = @($filters['prefixMatch'] | Sort-Object -CaseSensitive)
+            }
             $actions = if ($definition -is [Collections.IDictionary]) { $definition['actions'] } else { $null }
             foreach ($kind in 'baseBlob', 'snapshot', 'version') {
                 $field = if ($kind -eq 'baseBlob') {
@@ -135,7 +155,9 @@ function Get-DocIntelTranslationLifecycleState {
                     }
                 }
             }
-            $ready = (Get-DocIntelObjectHash $actual) -ceq (Get-DocIntelObjectHash $rule)
+            $expected = $rule | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable -Depth 100
+            $expected.definition.filters.prefixMatch = @($expected.definition.filters.prefixMatch | Sort-Object -CaseSensitive)
+            $ready = (Get-DocIntelObjectHash $actual) -ceq (Get-DocIntelObjectHash $expected)
         }
         $reason = if ($owned.Count) {
             'The owned lifecycle rule differs, is disabled, or is duplicated. Operator review is required.'

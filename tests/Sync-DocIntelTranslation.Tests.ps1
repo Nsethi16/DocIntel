@@ -11,6 +11,21 @@ $template = ($compiled -join "`n") | ConvertFrom-Json -Depth 100
 $storage = @($template.resources | Where-Object type -CEQ 'Microsoft.Storage/storageAccounts')
 $policy = @($template.resources | Where-Object type -CEQ 'Microsoft.Storage/storageAccounts/managementPolicies')
 $roles = @($template.resources | Where-Object type -CEQ 'Microsoft.Authorization/roleAssignments')
+$serviceRule = Get-DocIntelTranslationLifecycleRule | ConvertTo-Json -Depth 30 | ConvertFrom-Json -AsHashtable
+$serviceRule.definition.filters.prefixMatch = @($serviceRule.definition.filters.prefixMatch | Sort-Object -Descending)
+$serviceRule.definition.actions.baseBlob.tierToCool = $null
+$serviceRule.definition.actions.baseBlob.delete.daysAfterLastAccessTimeGreaterThan = $null
+$serviceRule.definition.actions.snapshot.delete.daysAfterCreationGreaterThan = 1.0
+$servicePolicy = @{ policy = @{ rules = @($serviceRule) } }
+$beforeServicePolicy = Get-DocIntelObjectHash $servicePolicy
+$serviceState = Get-DocIntelTranslationLifecycleState -StorageResourceId '/fixture/staging' -Policy $servicePolicy
+if ($serviceState.Status -cne 'Ready' -or (Get-DocIntelObjectHash $servicePolicy) -cne $beforeServicePolicy) {
+    throw 'Azure null optional fields and prefix ordering must not alter lifecycle meaning or mutate the original policy.'
+}
+$serviceRule.definition.actions.baseBlob.tierToCool = @{ daysAfterModificationGreaterThan = 1 }
+if ((Get-DocIntelTranslationLifecycleState -StorageResourceId '/fixture/staging' -Policy $servicePolicy).Status -cne 'ActionRequired') {
+    throw 'Additional non-null lifecycle actions must still require owner review.'
+}
 $observedGroup = '/subscriptions/fc395540-6344-43ae-9d54-38e07f707557/resourceGroups/Docintel/providers'
 $observedStage = "$observedGroup/Microsoft.Storage/storageAccounts/stditr6c6d4e093ef70cc1"
 $observedTranslator = "$observedGroup/Microsoft.CognitiveServices/accounts/tr-docintel-6c6d4e093ef70cc1"
