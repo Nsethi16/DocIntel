@@ -128,6 +128,10 @@ public sealed class ChannelDeliveryProcessor(
         {
             target.ErrorCode = "DeliveryEvidenceChanged";
         }
+        catch (AskAiSourceUnavailableException)
+        {
+            target.ErrorCode = "DeliveryEvidenceChanged";
+        }
         target.Status = ChannelDeliveryStatus.Failed;
         await lease.SaveAsync(cancellationToken);
         return false;

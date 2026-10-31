@@ -24,6 +24,7 @@ and rechecks availability before final answers, polling and channel delivery. Sa
 answers also require current source fingerprints, including original slice text; polling
 returns a safe `409 SourceChanged` instead of stale output. Legacy cited/analytical runs
 without source versions require a fresh question; source-free clarifications remain readable.
+Unavailable/deleted documents and revoked access return `404`, without exposing saved answer content.
 Previously downloaded files, external messages and offline browser copies cannot be recalled.
 
 Tenant `retention` metadata supports optional `documentDays`, `conversationDays`, `auditDays`

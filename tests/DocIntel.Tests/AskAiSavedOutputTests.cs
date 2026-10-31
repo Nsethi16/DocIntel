@@ -17,6 +17,34 @@ public sealed class AskAiSavedOutputTests
 {
     [Theory]
     [InlineData(JobStatus.Queued)]
+    [InlineData(JobStatus.Running)]
+    [InlineData(JobStatus.Failed)]
+    [InlineData(JobStatus.Deleted)]
+    public async Task Unavailable_Sources_Return_Not_Found_And_Block_Delivery_Without_Replaying(JobStatus sourceStatus)
+    {
+        // Arrange
+        using var fixture = new Fixture(sqlite: false);
+        await fixture.InitializeAsync();
+        var source = (await fixture.Jobs.GetJobAsync("source", tenantId: "tenant"))!;
+        source.Status = sourceStatus;
+        await fixture.Jobs.UpsertJobAsync(source);
+        var completed = (await fixture.Runs.GetRunAsync("tenant", "answer"))!;
+        await using var owner = await fixture.Runs.TryAcquireAsync("tenant", "answer");
+
+        // Act
+        var status = await AskAiSavedOutputAuthorization.GetStatusAsync(
+            completed, fixture.Jobs, DocumentAccessScope.Unrestricted);
+        await fixture.Delivery.ProcessAsync(owner!);
+
+        // Assert
+        Assert.Equal(StatusCodes.Status404NotFound, status);
+        Assert.Equal(ChannelDeliveryStatus.Failed, owner!.Run.ChannelDelivery!.Status);
+        Assert.Equal("DeliveryEvidenceChanged", owner.Run.ChannelDelivery.ErrorCode);
+        fixture.VerifyNoSend();
+    }
+
+    [Theory]
+    [InlineData(JobStatus.Queued)]
     [InlineData(JobStatus.Completed)]
     public async Task Revoked_Workspace_Access_Denies_Source_Free_Run_Output(JobStatus runStatus)
     {

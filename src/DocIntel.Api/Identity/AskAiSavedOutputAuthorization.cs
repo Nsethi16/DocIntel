@@ -26,6 +26,10 @@ internal static class AskAiSavedOutputAuthorization
         {
             return StatusCodes.Status404NotFound;
         }
+        catch (AskAiSourceUnavailableException)
+        {
+            return StatusCodes.Status404NotFound;
+        }
         catch (AskAiSourceChangedException)
         {
             return StatusCodes.Status409Conflict;

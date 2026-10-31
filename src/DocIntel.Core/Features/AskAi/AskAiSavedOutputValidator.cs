@@ -26,7 +26,7 @@ public static class AskAiSavedOutputValidator
                 throw new InvalidOperationException("Saved Ask AI output requires document availability checks.");
             var job = await jobs.GetJobAsync(id, cancellationToken, run.TenantId);
             if (job is not { Status: JobStatus.Completed } || job.TenantId != run.TenantId)
-                throw new AskAiSourceChangedException();
+                throw new AskAiSourceUnavailableException();
             if (run.SourceVersions.TryGetValue(id, out var version) &&
                 AskAiConversationContext.Fingerprint(job) != version)
                 throw new AskAiSourceChangedException();
@@ -37,3 +37,7 @@ public static class AskAiSavedOutputValidator
             throw new AskAiSourceChangedException();
     }
 }
+
+/// <summary>A saved answer references a document that is no longer available for reading.</summary>
+public sealed class AskAiSourceUnavailableException() : InvalidOperationException(
+    "A document used by this saved answer is no longer available.");

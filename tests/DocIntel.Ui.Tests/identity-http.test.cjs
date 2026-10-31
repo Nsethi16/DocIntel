@@ -408,8 +408,9 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         const entered = new Promise(resolve => { started = resolve; });
         const released = new Promise(resolve => { release = resolve; });
         blockedEvaluation = { started, released, output: { result: 'Must never be published after revocation.' } };
+        let pending;
         try {
-          const pending = request(`${tenantPath}/jobs/${allowedDocumentId}/evaluate-prompts`, processor, 'POST', {});
+          pending = request(`${tenantPath}/jobs/${allowedDocumentId}/evaluate-prompts`, processor, 'POST', {});
           await Promise.race([entered, new Promise((_, reject) =>
             setTimeout(() => reject(new Error('Reevaluation never reached the model.')), 10000))]);
           if (revokeKind === 'processing permission') {
@@ -419,31 +420,38 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
             const active = await (await request(tenantPath, administrator)).json();
             assert.equal((await request(tenantPath, administrator, 'PUT', { ...active, isActive: false })).status, 200);
           }
+          const expectedDenial = revokeKind === 'processing permission' ? 403 : 404;
           let revoked = false;
           for (let i = 0; i < 60; i++) {
-            if ((await request(tenantPath + '/run-split', processor, 'POST', {})).status === 403) {
+            if ((await request(tenantPath + '/run-split', processor, 'POST', {})).status === expectedDenial) {
               revoked = true;
               break;
             }
             await new Promise(resolve => setTimeout(resolve, 100));
           }
-          assert.equal(revoked, true, 'Expected membership reload before releasing inference');
+          assert.equal(revoked, true, 'Expected current permission or workspace denial before releasing inference');
           release();
           assert.equal((await pending).status, 403);
           const after = await (await request(`${tenantPath}/jobs/${allowedDocumentId}`, administrator)).json();
           assert.deepEqual(after.promptColumnResults, originalJob.promptColumnResults);
         } finally {
           release();
+          if (pending) await pending;
           blockedEvaluation = null;
           memberships[1].role = 'Processor';
           await saveMemberships();
           const current = await (await request(tenantPath, administrator)).json();
           assert.equal((await request(tenantPath, administrator, 'PUT',
             { ...originalTenant, harnessVersion: current.harnessVersion })).status, 200);
+          let restored = false;
           for (let i = 0; i < 60; i++) {
-            if ((await request(tenantPath + '/run-split', processor, 'POST', {})).status !== 403) break;
+            if ((await request(tenantPath + '/run-split', processor, 'POST', {})).status === 400) {
+              restored = true;
+              break;
+            }
             await new Promise(resolve => setTimeout(resolve, 100));
           }
+          assert.equal(restored, true, 'Expected restored processing access to reach multipart validation');
         }
       });
       }
@@ -785,7 +793,9 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         await writeRun(directory, 'referenced-before-delete', administratorId, [], [target.jobId]);
         await writeRun(directory, 'cited-before-delete', administratorId, [{ jobId: target.jobId }]);
         assert.equal((await request(tenantPath + '/ask/runs/referenced-before-delete', administrator)).status, 200);
-        assert.equal((await request(tenantPath + '/ask/runs/cited-before-delete', administrator)).status, 200);
+        const legacy = await request(tenantPath + '/ask/runs/cited-before-delete', administrator);
+        assert.equal(legacy.status, 409);
+        assert.equal((await legacy.json()).errorCode, 'SourceChanged');
         const deleted = await remove(url, administrator, target.jobId);
         assert.equal(deleted.status, 200);
         const receipt = await deleted.json();
