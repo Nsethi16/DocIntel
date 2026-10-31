@@ -733,7 +733,10 @@ public sealed class AskAiOrchestrator
                 var slice = job.Segments.FirstOrDefault(s => s.SegmentIndex == sliceIndex)
                     ?? throw new ArgumentException("The requested document slice does not exist.");
                 if (slice.StartPage < 1 || slice.EndPage < slice.StartPage ||
-                    textOffset < 0 || textOffset > slice.BodyText.Length)
+                    textOffset < 0 || textOffset > slice.BodyText.Length ||
+                    textOffset > 0 && textOffset < slice.BodyText.Length &&
+                    Char.IsLowSurrogate(slice.BodyText[textOffset]) &&
+                    Char.IsHighSurrogate(slice.BodyText[textOffset - 1]))
                 {
                     throw new ArgumentException("Invalid source page range or text offset.");
                 }
@@ -743,8 +746,12 @@ public sealed class AskAiOrchestrator
                     throw new InvalidOperationException("The evidence limit was reached. Narrow the question.");
                 }
 
-                var sourceText = slice.BodyText.Substring(
-                    textOffset, Math.Min(3_000, slice.BodyText.Length - textOffset));
+                var sourceLength = Math.Min(3_000, slice.BodyText.Length - textOffset);
+                if (sourceLength > 0 && textOffset + sourceLength < slice.BodyText.Length &&
+                    Char.IsHighSurrogate(slice.BodyText[textOffset + sourceLength - 1]) &&
+                    Char.IsLowSurrogate(slice.BodyText[textOffset + sourceLength]))
+                    sourceLength--;
+                var sourceText = slice.BodyText.Substring(textOffset, sourceLength);
                 var evidenceId = $"e{evidence.Count + 1}";
                 string Entity(string name) => slice.ExtractedEntities.FirstOrDefault(e =>
                     String.Equals(e.Name, name, StringComparison.OrdinalIgnoreCase))?.Value ?? String.Empty;

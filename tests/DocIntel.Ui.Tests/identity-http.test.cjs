@@ -390,6 +390,8 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
       const jobs = await (await request(tenantPath + '/jobs', processor)).json();
       assert.ok(jobs.length >= 2);
       assert.ok(jobs.every(job => job.hasDevelopmentResults === true));
+      assert.ok(jobs.every(job => Object.hasOwn(job, 'errorCode') && job.errorCode === null));
+      assert.ok(jobs.every(job => job.searchTextIsPartial === false && job.searchMetadataUnavailable === false));
       allowedDocumentId = jobs[0].jobId;
       const forbiddenDocumentId = jobs[1].jobId;
       for (const revokeKind of ['processing permission', 'workspace activity']) {
@@ -432,8 +434,8 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
           assert.equal(revoked, true, 'Expected current permission or workspace denial before releasing inference');
           release();
           assert.equal((await pending).status, 403);
-          const after = await (await request(`${tenantPath}/jobs/${allowedDocumentId}`, administrator)).json();
-          assert.deepEqual(after.promptColumnResults, originalJob.promptColumnResults);
+          if (revokeKind === 'workspace activity')
+            assert.equal((await request(`${tenantPath}/jobs/${allowedDocumentId}`, administrator)).status, 404);
         } finally {
           release();
           if (pending) await pending;
@@ -453,6 +455,10 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
           }
           assert.equal(restored, true, 'Expected restored processing access to reach multipart validation');
         }
+        const afterResponse = await request(`${tenantPath}/jobs/${allowedDocumentId}`, administrator);
+        assert.equal(afterResponse.status, 200);
+        const after = await afterResponse.json();
+        assert.deepEqual(after.promptColumnResults, originalJob.promptColumnResults);
       });
       }
       await t.test('synchronous processing cannot return document results after workspace deactivation', async () => {

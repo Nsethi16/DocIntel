@@ -621,7 +621,9 @@ public sealed class AskAiAgentTests
         // Arrange
         var store = await CreateDocumentStoreAsync();
         var job = (await store.GetJobAsync("source", tenantId: "tenant-one"))!;
-        job.Segments[0].BodyText = new string('x', 3000) + new string('y', 3000);
+        job.Segments[0].BodyText = wideUnicodeValues
+            ? new string('x', 2999) + "\U0001F600" + new string('y', 3000)
+            : new string('x', 3000) + new string('y', 3000);
         var value = wideUnicodeValues ? new string('\u6587', 2000) : "Short table value";
         job.Segments[0].DataExtraction = new DocumentDataExtractionResult("Table", String.Empty, "2-3", [],
             [new ExtractedTableValue("Rows", Enumerable.Range(0, 200).Select(index =>
@@ -642,7 +644,12 @@ public sealed class AskAiAgentTests
                     { ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery()) }, token);
                 var inspect = Assert.IsAssignableFrom<AIFunction>(
                     Assert.Single(options.Tools!, candidate => candidate.Name == "inspect_document_slice"));
-                foreach (var offset in new[] { 0, 3000 })
+                if (wideUnicodeValues)
+                    await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
+                        await inspect.InvokeAsync(new AIFunctionArguments
+                            { ["jobId"] = "source", ["sliceIndex"] = 0, ["textOffset"] = 3000 }, token));
+                var offset = 0;
+                while (true)
                 {
                     var response = await inspect.InvokeAsync(new AIFunctionArguments
                         { ["jobId"] = "source", ["sliceIndex"] = 0, ["textOffset"] = offset }, token);
@@ -650,6 +657,9 @@ public sealed class AskAiAgentTests
                     Assert.InRange(bytes.Length, 1, 32_000);
                     using var document = JsonDocument.Parse(bytes);
                     inspected.Add(document.RootElement.Clone());
+                    var next = document.RootElement.GetProperty("nextTextOffset");
+                    if (next.ValueKind == JsonValueKind.Null) break;
+                    offset = next.GetInt32();
                 }
                 return Final("DocumentAnswer", "Both original source windows remain available [1] [2].", "e1", "e2");
             });
@@ -664,8 +674,11 @@ public sealed class AskAiAgentTests
         // Assert
         Assert.Equal(JobStatus.Completed, run.Status);
         Assert.Equal(2, run.Citations.Count);
-        Assert.Equal(new string('x', 3000), inspected[0].GetProperty("sourceText").GetString());
-        Assert.Equal(new string('y', 3000), inspected[1].GetProperty("sourceText").GetString());
+        Assert.Equal(wideUnicodeValues ? 3 : 2, inspected.Count);
+        Assert.Equal(new string('x', wideUnicodeValues ? 2999 : 3000),
+            inspected[0].GetProperty("sourceText").GetString());
+        Assert.Equal(job.Segments[0].BodyText,
+            String.Concat(inspected.Select(result => result.GetProperty("sourceText").GetString())));
         Assert.All(inspected, result =>
         {
             Assert.Equal(200, result.GetProperty("inspectionCoverage").GetProperty("tableRowCount").GetInt32());

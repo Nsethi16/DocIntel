@@ -18,7 +18,7 @@ This plan verifies supported behavior and explicit limits; it does not promise t
 | Access during inference | Recheck current document-processing permission and active workspace state after inference, before publication, and before releasing document-bearing responses. |
 | Large documents | Preserve complete source content in source-bound artifacts. Keep Cosmos metadata below its item limit; deterministic payload rejection must not become lease loss and repeated execution. |
 | Ask AI numbers | Require complete quoted numeric tokens, including credit signs and accounting parentheses. Keep physical units case-sensitive for aggregates and outlier populations. |
-| Ask AI inspection | Original-source windows must remain available even when derived tables are large. Return bounded derived previews with counts, shortening/omission flags, and original-source continuation. |
+| Ask AI inspection | Original-source windows must remain available even when derived tables are large. Preserve supplementary Unicode characters across window boundaries and reject offsets inside a surrogate pair. Return bounded derived previews with counts, shortening/omission flags, and original-source continuation. |
 | Saved answers | Recheck recorded source versions before polling or external delivery. Suppress stale output without silently replaying or sending it. |
 | Inline webhooks | Persist once, then process or wait for the existing owner. Recovery must not cause a second-save overwrite race or duplicate model execution. |
 | Exports | Machine export flattening must not inherit the retired 2,000-field human-review limit. Preserve values or return an explicit export-limit response. |
