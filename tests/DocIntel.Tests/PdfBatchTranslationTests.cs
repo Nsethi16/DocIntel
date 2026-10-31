@@ -276,7 +276,7 @@ public sealed class PdfBatchTranslationTests
             container.Setup(value => value.GetPropertiesAsync(
                     It.IsAny<BlobRequestConditions>(), It.IsAny<CancellationToken>()))
                 .ReturnsAsync(Response.FromValue(BlobsModelFactory.BlobContainerProperties(
-                    publicAccess: access), Mock.Of<Response>()));
+                    DateTimeOffset.UtcNow, new ETag("fixture"), publicAccess: access), Mock.Of<Response>()));
             container.Setup(value => value.GetBlobClient(It.IsAny<string>())).Returns((string blobName) =>
             {
                 var key = name + "/" + blobName;
