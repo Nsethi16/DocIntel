@@ -287,7 +287,7 @@ public sealed class AskAiSavedOutputTests
             run, fixture.Jobs, DocumentAccessScope.Unrestricted);
 
         // Assert
-        Assert.Equal(StatusCodes.Status409Conflict, status);
+        Assert.Equal(StatusCodes.Status404NotFound, status);
     }
 
     private sealed class SourceChangingLease(
