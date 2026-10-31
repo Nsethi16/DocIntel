@@ -18,6 +18,9 @@ $global:DocIntelReadinessFixture = @{
     appId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/fixture/providers/Microsoft.App/containerApps/fixture'
     runtimeId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/fixture/providers/Microsoft.ManagedIdentity/userAssignedIdentities/runtime'
     translatorId = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/fixture/providers/Microsoft.CognitiveServices/accounts/translator'
+    runtimePrincipal = '33333333-3333-3333-3333-333333333333'
+    translatorPrincipal = '22222222-2222-2222-2222-222222222222'
+    roleMode = 'container'
 }
 function az {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Arguments)
@@ -33,7 +36,36 @@ function az {
         $global:LASTEXITCODE = 0
         @(@{ id = $global:DocIntelReadinessFixture.translatorId
             kind = 'TextTranslation'; sku = @{ name = 'S1' }; location = 'westus'
+            identity = @{ principalId = $global:DocIntelReadinessFixture.translatorPrincipal }
             properties = @{ customSubDomainName = 'translator' } }) | ConvertTo-Json -Depth 20 -Compress
+        return
+    }
+    if (($Arguments | Select-Object -First 3) -join ' ' -ceq 'role assignment list') {
+        if ($Arguments -notcontains '--include-inherited' -or $Arguments -notcontains '--fill-principal-name') {
+            throw 'Readiness must inspect inherited grants without Graph lookups.'
+        }
+        $global:LASTEXITCODE = 0
+        $f = $global:DocIntelReadinessFixture
+        $scope = $Arguments[[Array]::IndexOf($Arguments, '--scope') + 1]
+        $principal = $Arguments[[Array]::IndexOf($Arguments, '--assignee-object-id') + 1]
+        $role = if ($scope -ieq $f.translatorId) { 'a97b65f3-24c7-4388-baec-2e87135dc908' }
+            elseif ($principal -ieq $f.translatorPrincipal -and $scope.EndsWith('/translation-source')) {
+                '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
+            } else { 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' }
+        $entry = @{ scope = $scope; principalId = $principal; roleDefinitionId = $role }
+        if ($scope -ine $f.translatorId -and $f.roleMode -ne 'container') {
+            $entry.scope = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/fixture/providers/Microsoft.Storage/storageAccounts/stagingaccount'
+            $entry.roleDefinitionId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+            switch ($f.roleMode) {
+                'account-reader' { $entry.roleDefinitionId = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1' }
+                'account-owner' { $entry.roleDefinitionId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b' }
+                'management-contributor' { $entry.roleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c' }
+                'wrong-principal' { $entry.principalId = [guid]::NewGuid().ToString() }
+                'wrong-account' { $entry.scope = $entry.scope.Replace('/stagingaccount', '/primaryaccount') }
+                'conditional' { $entry.condition = 'fixture-private-condition'; $entry.conditionVersion = '2.0' }
+            }
+        }
+        @($entry) | ConvertTo-Json -Depth 20 -Compress
         return
     }
     if (($Arguments | Select-Object -First 3) -join ' ' -ceq 'storage account show') {
@@ -55,7 +87,8 @@ function az {
     @{
         id = '/subscriptions/11111111-1111-1111-1111-111111111111/resourceGroups/fixture/providers/Microsoft.App/containerApps/fixture'
         identity = @{ userAssignedIdentities = @{
-            $global:DocIntelReadinessFixture.runtimeId = @{ clientId = 'runtime-client' }
+            $global:DocIntelReadinessFixture.runtimeId = @{ clientId = 'runtime-client'
+                principalId = $global:DocIntelReadinessFixture.runtimePrincipal }
         } }
         properties = @{
             latestRevisionName = $global:DocIntelReadinessFixture.revision
@@ -144,6 +177,22 @@ try {
     }
     if (-not $failed) { throw 'Readiness must require the exact deferred-cleanup policy.' }
     $global:DocIntelReadinessFixture.policyReady = $true
+    foreach ($mode in 'account-contributor', 'account-owner') {
+        $global:DocIntelReadinessFixture.roleMode = $mode
+        & $file -ConfigurationOnly -ResourceGroup fixture -ContainerAppName fixture | Out-Null
+    }
+    foreach ($mode in 'account-reader', 'management-contributor', 'wrong-principal', 'wrong-account', 'conditional') {
+        $global:DocIntelReadinessFixture.roleMode = $mode
+        $failed = $false
+        try { & $file -ConfigurationOnly -ResourceGroup fixture -ContainerAppName fixture | Out-Null }
+        catch {
+            if ($_.Exception.Message -notmatch 'permission readiness is incomplete|conditional') { throw }
+            if ($_.Exception.Message -like '*fixture-private-condition*') { throw 'Conditional payloads must not be logged.' }
+            $failed = $true
+        }
+        if (-not $failed) { throw "Readiness must reject insufficient or unverified data access: $mode." }
+    }
+    $global:DocIntelReadinessFixture.roleMode = 'container'
     $completeEnvironment = $global:DocIntelReadinessFixture.environment
     foreach ($case in 'missing-staging', 'originals-fallback') {
         $global:DocIntelReadinessFixture.environment = @($completeEnvironment |

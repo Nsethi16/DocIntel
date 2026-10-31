@@ -137,6 +137,19 @@ If ARM returns a change outside the exact approved creation scope, rejection rep
 change's `resourceId` and `changeType`, never its before/after payload or application settings.
 A partial-deployment Preview remains read-only. Missing grants or ABAC authorization failures
 require an authorized administrator; Preview does not retry grants, change identities or bypass conditions.
+An existing **unconditioned** Storage Blob Data Contributor or Storage Blob Data Owner grant for
+the exact app-runtime or Translator principal at the **dedicated staging account** also covers
+that principal's child-container requirements (including Reader). Blob Data Reader does not cover
+target writes. Such verified inheritance suppresses redundant container-role writes; deployment
+and readiness use the same permission check. Management-plane Contributor/Owner, grants on original
+or other accounts, other principals, and unverified conditional assignments do not count.
+When a conditional grant is the only relevant access, automation stops rather than planning an
+unconditioned grant that could bypass it. No existing grant is expanded or revoked.
+Role IDs are matched to the exact Bicep `guid(scope, identity-resource-id, role-id)` seeds; ARM ID
+comparisons ignore provider casing, but GUID seed strings retain their original casing. On verified
+owned staging only, read-only Preview can resolve the selected Translator's exact symbolic
+principal reference from its already-validated identity. It cannot resolve another resource or
+substitute the app-runtime principal. This recovery normalization never authorizes an Apply/grant retry.
 
 Existing installations must approve this bounded connection before releasing an image that requires
 PDF batch support. In **Set up DocIntel Azure**, keep **Translation only** selected and directory

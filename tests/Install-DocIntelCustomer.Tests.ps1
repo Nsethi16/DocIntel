@@ -323,7 +323,18 @@ function az {
         'cognitiveservices account list' {
             @(@{ id = "$($f.groupId)/providers/Microsoft.CognitiveServices/accounts/translator"
                 kind = 'TextTranslation'; sku = @{ name = 'S1' }; location = 'westus'
+                identity = @{ principalId = '22222222-2222-2222-2222-222222222222' }
                 properties = @{ customSubDomainName = 'translator' } }); break
+        }
+        'role assignment list' {
+            $scope = $Arguments[[Array]::IndexOf($Arguments, '--scope') + 1]
+            $principal = $Arguments[[Array]::IndexOf($Arguments, '--assignee-object-id') + 1]
+            $role = if ($scope -like '*/Microsoft.CognitiveServices/accounts/translator') {
+                'a97b65f3-24c7-4388-baec-2e87135dc908'
+            } elseif ($principal -ceq '22222222-2222-2222-2222-222222222222' -and
+                $scope.EndsWith('/translation-source')) { '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1' }
+            else { 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' }
+            @(@{ scope = $scope; principalId = $principal; roleDefinitionId = $role }); break
         }
         'storage account show' {
             @{ name = 'stagingaccount'; id = "$($f.groupId)/providers/Microsoft.Storage/storageAccounts/stagingaccount"

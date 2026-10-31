@@ -103,6 +103,32 @@ for ($attempt = 0; $attempt -lt $Attempts; $attempt++) {
         if ($expiry.Status -cne 'Ready') {
             throw "Translation staging lifecycle expiry is not verified. $($expiry.Blocker)"
         }
+        $runtimePrincipal = [string]$runtime[0].Value.principalId
+        $translatorPrincipal = [string]$accounts[0].identity.principalId
+        if ($runtimePrincipal -notmatch '^[a-fA-F0-9-]{36}$' -or
+            $translatorPrincipal -notmatch '^[a-fA-F0-9-]{36}$') {
+            throw 'Translation permission readiness requires verified runtime and Translator principals.'
+        }
+        $sourceScope = "$storageId/blobServices/default/containers/translation-source"
+        $targetScope = "$storageId/blobServices/default/containers/translation-target"
+        foreach ($permission in @(
+            @{ Principal = $runtimePrincipal; Scope = $accounts[0].id; Role = 'a97b65f3-24c7-4388-baec-2e87135dc908' }
+            @{ Principal = $translatorPrincipal; Scope = $sourceScope; Role = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1' }
+            @{ Principal = $translatorPrincipal; Scope = $targetScope; Role = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' }
+            @{ Principal = $runtimePrincipal; Scope = $sourceScope; Role = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' }
+            @{ Principal = $runtimePrincipal; Scope = $targetScope; Role = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' }
+        )) {
+            $rolesJson = & az role assignment list --subscription $storageSubscription `
+                --scope $permission.Scope --assignee-object-id $permission.Principal `
+                --include-inherited --fill-principal-name false --output json --only-show-errors
+            if ($LASTEXITCODE -ne 0) { throw 'Translation permission readiness could not read scoped assignments.' }
+            $assignments = @(($rolesJson -join "`n") | ConvertFrom-Json -Depth 100)
+            if (-not (Test-DocIntelTranslationPermission -Assignments $assignments `
+                -PrincipalId $permission.Principal -RequiredRoleId $permission.Role `
+                -RequiredScope $permission.Scope -StagingAccountScope $storageId)) {
+                throw 'Translation data/inference permission readiness is incomplete; no grant is attempted.'
+            }
+        }
         Write-Output 'Production runtime settings are present. Their live provider access is verified after rollout.'
         return
     }

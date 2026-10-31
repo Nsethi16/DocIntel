@@ -204,6 +204,81 @@ function Assert-DocIntelTranslationStagingAccount {
     return "https://$($value['name']).blob.core.windows.net/"
 }
 
-Export-ModuleMember -Function Read-DocIntelRelease, Get-DocIntelObjectHash,
+function Get-DocIntelArmGuid {
+    param([Parameter(Mandatory)][string[]]$Values)
+    # ARM guid() uses RFC 4122 UUIDv5, this fixed namespace and case-sensitive, hyphen-joined seeds.
+    $namespace = ([guid]'11fb06fb-712d-4ddd-98c7-e71bbd588830').ToByteArray()
+    foreach ($part in @(@(0, 4), @(4, 2), @(6, 2))) { [Array]::Reverse($namespace, $part[0], $part[1]) }
+    $name = [Text.Encoding]::UTF8.GetBytes(($Values -join '-'))
+    $hash = [Security.Cryptography.SHA1]::HashData([byte[]]($namespace + $name))
+    [byte[]]$bytes = $hash[0..15]
+    $bytes[6] = ($bytes[6] -band 15) -bor 80
+    $bytes[8] = ($bytes[8] -band 63) -bor 128
+    foreach ($part in @(@(0, 4), @(4, 2), @(6, 2))) { [Array]::Reverse($bytes, $part[0], $part[1]) }
+    return ([guid]::new($bytes)).ToString()
+}
+
+function Test-DocIntelTranslationPermission {
+    [CmdletBinding()]
+    param(
+        [object[]]$Assignments,
+        [Parameter(Mandatory)][string]$PrincipalId,
+        [Parameter(Mandatory)][string]$RequiredRoleId,
+        [Parameter(Mandatory)][string]$RequiredScope,
+        [Parameter(Mandatory)][string]$StagingAccountScope
+    )
+    $reader = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
+    $contributor = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+    $dataOwner = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+    $cognitive = 'a97b65f3-24c7-4388-baec-2e87135dc908'
+    $required = $RequiredScope.TrimEnd('/')
+    $account = $StagingAccountScope.TrimEnd('/')
+    $dataRequirement = $RequiredRoleId -in @($reader, $contributor)
+    if ($dataRequirement -and $required -notin @(
+        "$account/blobServices/default/containers/translation-source",
+        "$account/blobServices/default/containers/translation-target")) {
+        throw 'Translation data access can only be verified for the dedicated staging containers.'
+    }
+    if (-not $dataRequirement -and $RequiredRoleId -ine $cognitive) {
+        throw 'Unsupported translation permission requirement.'
+    }
+    $conditioned = $false
+    foreach ($assignment in @($Assignments | Where-Object { $null -ne $_ })) {
+        $entry = $assignment | ConvertTo-Json -Depth 100 | ConvertFrom-Json -AsHashtable -Depth 100
+        if ($entry['principalId'] -ine $PrincipalId -or -not $entry['scope'] -or -not $entry['roleDefinitionId']) {
+            continue
+        }
+        $scope = ([string]$entry['scope']).TrimEnd('/')
+        $role = ([string]$entry['roleDefinitionId'] -split '/')[-1]
+        if ($dataRequirement) {
+            if ($scope -in @($required, $account) -and $role -in @($reader, $contributor, $dataOwner)) {
+                $sufficient = $role -in $(if ($RequiredRoleId -ieq $reader) {
+                    @($reader, $contributor, $dataOwner)
+                } else { @($contributor, $dataOwner) })
+            } else { continue }
+        } else {
+            if ($role -ine $cognitive -or
+                ($scope -ine $required -and
+                    -not $required.StartsWith($scope + '/', [StringComparison]::OrdinalIgnoreCase))) {
+                continue
+            }
+            $sufficient = $true
+        }
+        $hasCondition = -not [String]::IsNullOrEmpty([string]$entry['condition']) -or
+            -not [String]::IsNullOrEmpty([string]$entry['conditionVersion'])
+        if ($hasCondition) {
+            $conditioned = $true
+        } elseif ($sufficient) {
+            return $true
+        }
+    }
+    if ($conditioned) {
+        throw 'A relevant data/inference grant is conditional and no sufficient unconditioned access was verified; no bypass or redundant grant is planned.'
+    }
+    return $false
+}
+
+Export-ModuleMember -Function Read-DocIntelRelease, Get-DocIntelObjectHash, Get-DocIntelArmGuid,
+    Test-DocIntelTranslationPermission,
     Get-DocIntelTranslationLifecycleRule, Get-DocIntelTranslationLifecycleState,
     Get-DocIntelTranslationStagingTags, Assert-DocIntelTranslationStagingAccount

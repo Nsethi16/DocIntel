@@ -82,14 +82,10 @@ function Read-TranslationRoles([string]$Scope, [string]$Principal) {
     @(Invoke-TranslationAzure @('role', 'assignment', 'list', '--subscription', $SubscriptionId,
         '--scope', $Scope, '--assignee-object-id', $Principal, '--include-inherited', '--fill-principal-name', 'false'))
 }
-function Test-TranslationGrant([object[]]$Roles, [string]$Principal, [string]$Role) {
-    $matches = @($Roles | Where-Object {
-        $_.principalId -ieq $Principal -and ($_.roleDefinitionId -split '/')[-1] -ieq $Role
-    })
-    if (@($matches | Where-Object { $_.condition }).Count) {
-        throw 'A required grant is conditional; setup will not bypass its restriction.'
-    }
-    return $matches.Count -gt 0
+function Test-TranslationGrant([object[]]$Roles, [string]$Principal, [string]$Role, [string]$Scope) {
+    if ([String]::IsNullOrWhiteSpace($Principal)) { return $false }
+    Test-DocIntelTranslationPermission -Assignments $Roles -PrincipalId $Principal -RequiredRoleId $Role `
+        -RequiredScope $Scope -StagingAccountScope $stagingId
 }
 function Read-StagingInventory {
     @(Invoke-TranslationAzure @('storage', 'account', 'list', '--subscription', $SubscriptionId,
@@ -132,10 +128,11 @@ function Assert-NarrowTranslatorRoles([string]$Principal) {
     $all += @(Read-TranslationRoles $stagingId $Principal)
     $roles = @($all | Where-Object principalId -IEQ $Principal)
     foreach ($role in $roles) {
-        $allowed = ($role.scope -ieq $sourceScope -and ($role.roleDefinitionId -split '/')[-1] -ieq $readerRole) -or
-            ($role.scope -ieq $targetScope -and ($role.roleDefinitionId -split '/')[-1] -ieq $contributorRole)
-        if (-not $allowed -or $role.condition) {
-            throw 'Translator has an unexpected broad, unrelated or conditional role; no removal or bypass is automatic.'
+        $allowed = $role.scope.TrimEnd('/') -in @($stagingId, $sourceScope, $targetScope) -and
+            ($role.roleDefinitionId -split '/')[-1] -in @(
+                $readerRole, $contributorRole, 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')
+        if (-not $allowed) {
+            throw 'Translator has an unrelated scope or non-Blob-data role; no removal, expansion or bypass is automatic.'
         }
     }
 }
@@ -145,7 +142,20 @@ function Get-TranslationChangeSummary([object]$Change) {
     return [ordered]@{ resourceId = $resourceId; changeType = $changeType } | ConvertTo-Json -Compress
 }
 function Test-SpecPrincipal([object]$Spec, [string]$Actual) {
-    if ($Spec.Principal) { return $Actual -ieq $Spec.Principal }
+    if ($Spec.Principal) {
+        if ($Actual -ieq $Spec.Principal) { return $true }
+        if ($Mode -cne 'Preview' -or $provisionAccount -or $provisionStaging -or
+            $lifecycle.Status -cne 'Ready' -or $Spec.Key -cnotin @('translator-source', 'translator-target')) {
+            return $false
+        }
+        $normalized = [regex]::Replace($Actual, '\s+', '')
+        $references = @(
+            "[reference(resourceId('Microsoft.CognitiveServices/accounts',parameters('accountName')),'2024-10-01','full').identity.principalId]"
+            "[reference(resourceId('Microsoft.CognitiveServices/accounts','$accountName'),'2024-10-01','full').identity.principalId]"
+            "[reference('$armTranslatorId','2024-10-01','full').identity.principalId]"
+        )
+        return @($references | Where-Object { $_ -ieq $normalized }).Count -eq 1
+    }
     return $provisionAccount -and (-not $Actual -or
         ($Actual.StartsWith('[reference(', [StringComparison]::Ordinal) -and
             ($Actual.Contains("parameters('accountName')", [StringComparison]::Ordinal) -or
@@ -267,11 +277,20 @@ $roleSpecs = @(
     @{ Key = 'runtime-source'; Scope = $sourceScope; Role = $contributorRole; Principal = $identity.principalId }
     @{ Key = 'runtime-target'; Scope = $targetScope; Role = $contributorRole; Principal = $identity.principalId }
 )
+$armGroupScope = "/subscriptions/$(([guid]$SubscriptionId).ToString())/resourceGroups/$(($app.id -split '/')[4])"
+$armTranslatorId = "$armGroupScope/providers/Microsoft.CognitiveServices/accounts/$accountName"
+$armStagingId = "$armGroupScope/providers/Microsoft.Storage/storageAccounts/$stagingName"
 foreach ($spec in $roleSpecs) {
+    $armScope = if ($spec.Key -ceq 'runtime-cognitive') { $armTranslatorId } else {
+        "$armStagingId/blobServices/default/containers/$(($spec.Scope -split '/')[-1])"
+    }
+    $seedIdentity = if ($spec.Key -like 'translator-*') { $armTranslatorId } else { $identity.id }
+    $assignmentGuid = Get-DocIntelArmGuid @($armScope, $seedIdentity, $spec.Role)
+    $spec.AssignmentId = "$armScope/providers/Microsoft.Authorization/roleAssignments/$assignmentGuid"
     $roles = if (($spec.Scope -ieq $translatorId -and $provisionAccount) -or
         ($spec.Scope -ine $translatorId -and $provisionStaging) -or -not $spec.Principal) { @() }
     else { @(Read-TranslationRoles $spec.Scope $spec.Principal) }
-    $spec.Assign = -not (Test-TranslationGrant $roles $spec.Principal $spec.Role)
+    $spec.Assign = -not (Test-TranslationGrant $roles $spec.Principal $spec.Role $spec.Scope)
 }
 $values = @{
     accountName = $accountName; location = $region; stagingAccountName = $stagingName; applicationResourceId = $app.id
@@ -319,7 +338,7 @@ try {
                 $change.resourceId -notmatch '/providers/Microsoft.Resources/deployments/' -and
                 -not $expected.ContainsKey($change.resourceId) -and
                 -not @($roleSpecs | Where-Object {
-                    $_.Assign -and $change.resourceId -like "$($_.Scope)/providers/Microsoft.Authorization/roleAssignments/*"
+                    $_.Assign -and $change.resourceId -ieq $_.AssignmentId
                 }).Count) { continue }
             if ($change.changeType -cne 'Create' -or -not $seen.Add($change.resourceId)) {
                 throw ('Translation preview must only create exact missing resources, never modify/delete existing resources. ' +
@@ -339,12 +358,13 @@ try {
             if ($kind -ceq 'Policy' -and @($change.after.properties.policy.rules).Count -eq 1 -and
                 (Get-DocIntelObjectHash $change.after.properties.policy.rules[0]) -ceq
                     (Get-DocIntelObjectHash (Get-DocIntelTranslationLifecycleRule))) { continue }
-            $matches = @($roleSpecs | Where-Object {
-                $_.Assign -and $change.resourceId -match "^$([regex]::Escape($_.Scope))/providers/Microsoft.Authorization/roleAssignments/[a-fA-F0-9-]{36}$" -and
-                    $change.after.properties.roleDefinitionId -ieq "/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/$($_.Role)" -and
+            $roleMatches = @($roleSpecs | Where-Object {
+                $_.Assign -and $change.resourceId -ieq $_.AssignmentId -and
+                    ($change.after.properties.roleDefinitionId -ieq "/subscriptions/$SubscriptionId/providers/Microsoft.Authorization/roleDefinitions/$($_.Role)" -or
+                        $change.after.properties.roleDefinitionId -ieq "/providers/Microsoft.Authorization/roleDefinitions/$($_.Role)") -and
                     (Test-SpecPrincipal $_ ([string]$change.after.properties.principalId))
             })
-            if ($matches.Count -eq 1 -and $seenRoles.Add($matches[0].Key)) { continue }
+            if ($roleMatches.Count -eq 1 -and $seenRoles.Add($roleMatches[0].Key)) { continue }
             throw ('Translation preview escaped exact isolated staging/Translator/container-role scope. ' +
                 (Get-TranslationChangeSummary $change))
         }
@@ -371,7 +391,7 @@ try {
         Source = @{ Scope = $sourceScope; Role = $readerRole; Private = $true }
         Target = @{ Scope = $targetScope; Role = $contributorRole; Private = $true }
         Permissions = @($roleSpecs | ForEach-Object {
-            @{ Scope = $_.Scope; Role = $_.Role; Assign = $_.Assign
+            @{ Scope = $_.Scope; Role = $_.Role; Assign = $_.Assign; AssignmentId = $_.AssignmentId
                 Principal = $(if ($_.Principal) { $_.Principal } else { "SystemIdentity:$translatorId" }) }
         })
         CodeHashes = $codeHashes; WhatIfSnapshotHash = Get-DocIntelObjectHash @($changes | Sort-Object resourceId)
@@ -428,7 +448,7 @@ try {
     Assert-NarrowTranslatorRoles $liveTranslator.identity.principalId
     foreach ($spec in $roleSpecs) {
         $principal = if ($spec.Key -like 'translator-*') { $liveTranslator.identity.principalId } else { $identity.principalId }
-        if (-not (Test-TranslationGrant @(Read-TranslationRoles $spec.Scope $principal) $principal $spec.Role)) {
+        if (-not (Test-TranslationGrant @(Read-TranslationRoles $spec.Scope $principal) $principal $spec.Role $spec.Scope)) {
             throw 'A scoped translation grant is not visible yet. Wait for propagation and preview again; the app was not repointed.'
         }
     }

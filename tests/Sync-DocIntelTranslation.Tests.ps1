@@ -11,6 +11,82 @@ $template = ($compiled -join "`n") | ConvertFrom-Json -Depth 100
 $storage = @($template.resources | Where-Object type -CEQ 'Microsoft.Storage/storageAccounts')
 $policy = @($template.resources | Where-Object type -CEQ 'Microsoft.Storage/storageAccounts/managementPolicies')
 $roles = @($template.resources | Where-Object type -CEQ 'Microsoft.Authorization/roleAssignments')
+$observedGroup = '/subscriptions/fc395540-6344-43ae-9d54-38e07f707557/resourceGroups/Docintel/providers'
+$observedStage = "$observedGroup/Microsoft.Storage/storageAccounts/stditr6c6d4e093ef70cc1"
+$observedTranslator = "$observedGroup/Microsoft.CognitiveServices/accounts/tr-docintel-6c6d4e093ef70cc1"
+$observedRuntime = '/subscriptions/fc395540-6344-43ae-9d54-38e07f707557/resourcegroups/Docintel/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uami-docintel-dev'
+foreach ($vector in @(
+    @{ Scope = "$observedStage/blobServices/default/containers/translation-source"; Seed = $observedTranslator
+        Role = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'; Guid = 'af5d1e71-9e40-52bf-b31c-cf8f4b250b7b' }
+    @{ Scope = "$observedStage/blobServices/default/containers/translation-target"; Seed = $observedTranslator
+        Role = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'; Guid = '84df146d-6c88-55cf-99db-449feebbb5e9' }
+    @{ Scope = "$observedStage/blobServices/default/containers/translation-source"; Seed = $observedRuntime
+        Role = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'; Guid = 'aae0fe7e-67ef-518f-87a4-03f4d874c4df' }
+    @{ Scope = "$observedStage/blobServices/default/containers/translation-target"; Seed = $observedRuntime
+        Role = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'; Guid = '6f6ccc3a-26db-51db-885e-6b51969bc85c' }
+)) {
+    if ((Get-DocIntelArmGuid @($vector.Scope, $vector.Seed, $vector.Role)) -cne $vector.Guid) {
+        throw 'Role assignment GUID calculation must preserve the exact reviewed Bicep seeds and their casing.'
+    }
+    $readerRoleId = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'
+    $contributorRoleId = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
+    $ownerRoleId = 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b'
+    foreach ($principal in @('5644975e-f041-4563-b1e8-df6dc4688779', '22222222-2222-2222-2222-222222222222')) {
+        foreach ($requirement in @(
+            @{ Scope = "$observedStage/blobServices/default/containers/translation-source"; Role = $readerRoleId }
+            @{ Scope = "$observedStage/blobServices/default/containers/translation-target"; Role = $contributorRoleId }
+        )) {
+            foreach ($role in @($readerRoleId, $contributorRoleId, $ownerRoleId)) {
+                foreach ($scope in @($observedStage, $requirement.Scope)) {
+                    $assignment = @{ principalId = $principal; scope = $scope.ToUpperInvariant()
+                        roleDefinitionId = "/providers/Microsoft.Authorization/roleDefinitions/$role" }
+                    $actual = Test-DocIntelTranslationPermission -Assignments @($assignment) -PrincipalId $principal `
+                        -RequiredRoleId $requirement.Role -RequiredScope $requirement.Scope -StagingAccountScope $observedStage
+                    $expected = $requirement.Role -eq $readerRoleId -or $role -ne $readerRoleId
+                    if ($actual -ne $expected) { throw 'Reader/writer coverage must distinguish Blob data roles at exact account/container scopes.' }
+                }
+            }
+        }
+        foreach ($invalid in @(
+            @{ principalId = [guid]::NewGuid().ToString(); scope = $observedStage; roleDefinitionId = $contributorRoleId }
+            @{ principalId = $principal; scope = $observedStage.Replace('stditr6c6d4e093ef70cc1', 'primaryaccount')
+                roleDefinitionId = $contributorRoleId }
+            @{ principalId = $principal; scope = "$observedStage/blobServices/default/containers/other"
+                roleDefinitionId = $contributorRoleId }
+            @{ principalId = $principal; scope = '/subscriptions/fc395540-6344-43ae-9d54-38e07f707557/resourceGroups/Docintel'
+                roleDefinitionId = $contributorRoleId }
+            @{ principalId = $principal; scope = $observedStage
+                roleDefinitionId = 'b24988ac-6180-42a0-ab88-20f7382dd24c' }
+            @{ principalId = $principal; scope = $observedStage
+                roleDefinitionId = '8e3af657-a8ff-443c-a75c-2fe8c4bcb635' }
+        )) {
+            if (Test-DocIntelTranslationPermission -Assignments @($invalid) -PrincipalId $principal `
+                -RequiredRoleId $readerRoleId -RequiredScope "$observedStage/blobServices/default/containers/translation-source" `
+                -StagingAccountScope $observedStage) {
+                throw 'Other principals/accounts/scopes and management-plane Contributor/Owner must not provide Blob access.'
+            }
+        }
+        $conditional = @{ principalId = $principal; scope = $observedStage; roleDefinitionId = $readerRoleId
+            condition = 'fixture-private-conditional-clause'; conditionVersion = '2.0' }
+        $failed = $false
+        try {
+            Test-DocIntelTranslationPermission -Assignments @($conditional) -PrincipalId $principal `
+                -RequiredRoleId $contributorRoleId -RequiredScope "$observedStage/blobServices/default/containers/translation-target" `
+                -StagingAccountScope $observedStage | Out-Null
+        } catch {
+            if ($_.Exception.Message -notlike '*conditional*' -or
+                $_.Exception.Message -like '*fixture-private-conditional-clause*') { throw }
+            $failed = $true
+        }
+        if (-not $failed) { throw 'Conditional read access must not cause an unconditional writer grant to be planned.' }
+        $unconditional = @{ principalId = $principal; scope = $observedStage; roleDefinitionId = $contributorRoleId }
+        if (-not (Test-DocIntelTranslationPermission -Assignments @($conditional, $unconditional) -PrincipalId $principal `
+            -RequiredRoleId $contributorRoleId -RequiredScope "$observedStage/blobServices/default/containers/translation-target" `
+            -StagingAccountScope $observedStage)) {
+            throw 'A separately verified unconditioned sufficient grant must not depend on another conditional grant.'
+        }
+    }
+}
 if ($template.resources.Count -ne 10 -or $storage.Count -ne 1 -or $roles.Count -ne 5 -or
     $storage[0].sku.name -cne 'Standard_LRS' -or $storage[0].properties.allowSharedKeyAccess -ne $false -or
     $storage[0].properties.allowBlobPublicAccess -ne $false -or
@@ -90,15 +166,15 @@ function Fixture-Specs([object]$P) {
     $service = if ($P.provisionAccount.value) { '' } else { $f.translator.identity.principalId }
     @(
         @{ Scope = $cog; Role = 'a97b65f3-24c7-4388-baec-2e87135dc908'; Principal = $f.identity.principalId
-            Assign = $P.assignRuntimeRole.value }
+            SeedIdentity = $f.identity.id; Assign = $P.assignRuntimeRole.value }
         @{ Scope = $source; Role = '2a2b9908-6ea1-4ae2-8e65-a410df84e7d1'; Principal = $service
-            Assign = $P.assignSourceRole.value }
+            SeedIdentity = $cog; Assign = $P.assignSourceRole.value }
         @{ Scope = $target; Role = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'; Principal = $service
-            Assign = $P.assignTargetRole.value }
+            SeedIdentity = $cog; Assign = $P.assignTargetRole.value }
         @{ Scope = $source; Role = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'; Principal = $f.identity.principalId
-            Assign = $P.assignRuntimeSourceRole.value }
+            SeedIdentity = $f.identity.id; Assign = $P.assignRuntimeSourceRole.value }
         @{ Scope = $target; Role = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'; Principal = $f.identity.principalId
-            Assign = $P.assignRuntimeTargetRole.value }
+            SeedIdentity = $f.identity.id; Assign = $P.assignRuntimeTargetRole.value }
     )
 }
 function az {
@@ -135,7 +211,11 @@ function az {
             if ($Arguments -contains '--all') { $f.roles }
             else {
                 $scope = $Arguments[[Array]::IndexOf($Arguments, '--scope') + 1]
-                @($f.roles | Where-Object scope -IEQ $scope)
+                @($f.roles | Where-Object {
+                    $_.scope -ieq $scope -or
+                        ($Arguments -contains '--include-inherited' -and
+                            $scope.StartsWith($_.scope.TrimEnd('/') + '/', [StringComparison]::OrdinalIgnoreCase))
+                })
             }
             break
         }
@@ -164,13 +244,16 @@ function az {
                     resourceId = "$stage/blobServices/default/containers/$($part.Name)"
                     changeType = 'Create'; after = @{ properties = @{ publicAccess = 'None' } } } }
             }
-            $i = 0
             foreach ($spec in @(Fixture-Specs $p)) {
-                $i++
+                $guid = Get-DocIntelArmGuid @($spec.Scope, $spec.SeedIdentity, $spec.Role)
+                $principal = $spec.Principal
+                if ($f.scenario -like 'observed-*' -and $spec.SeedIdentity -ceq $cog) {
+                    $principal = "[reference(resourceId('Microsoft.CognitiveServices/accounts', parameters('accountName')), '2024-10-01', 'full').identity.principalId]"
+                }
                 if ($spec.Assign) { $changes += @{
-                    resourceId = "$($spec.Scope)/providers/Microsoft.Authorization/roleAssignments/00000000-0000-0000-0000-$($i.ToString('D12'))"
+                    resourceId = "$($spec.Scope)/providers/Microsoft.Authorization/roleAssignments/$guid"
                     changeType = 'Create'; after = @{ properties = @{
-                        principalId = $spec.Principal
+                        principalId = $principal
                         roleDefinitionId = "/subscriptions/$($f.sub)/providers/Microsoft.Authorization/roleDefinitions/$($spec.Role)"
                     } } } }
             }
@@ -203,6 +286,46 @@ function az {
                             name = 'PRIVATE_SETTING'; value = 'fixture-after-secret'
                         }) } } }
                 }
+                'observed-case' {
+                    foreach ($change in $changes) {
+                        $change.resourceId = $change.resourceId.ToUpperInvariant()
+                        $change.after.properties.roleDefinitionId =
+                            $change.after.properties.roleDefinitionId.ToUpperInvariant()
+                        $change.after.properties.principalId = $change.after.properties.principalId.ToUpperInvariant()
+                    }
+                }
+                'observed-wrong-guid' {
+                    $changes[0].resourceId = $changes[0].resourceId -replace '[^/]+$', [guid]::NewGuid().ToString()
+                }
+                'observed-global-role' {
+                    foreach ($change in $changes) {
+                        $change.after.properties.roleDefinitionId = $change.after.properties.roleDefinitionId -replace
+                            '^/subscriptions/[^/]+', ''
+                    }
+                }
+                'observed-ignore-existing' {
+                    foreach ($spec in @(Fixture-Specs $p) | Where-Object { -not $_.Assign }) {
+                        $guid = Get-DocIntelArmGuid @($spec.Scope, $spec.SeedIdentity, $spec.Role)
+                        $changes += @{
+                            resourceId = "$($spec.Scope)/providers/Microsoft.Authorization/roleAssignments/$guid"
+                            changeType = 'Ignore'; before = @{ env = 'fixture-sensitive-existing-role' }
+                        }
+                    }
+                }
+                'observed-ignore-required' { $changes[0].changeType = 'Ignore' }
+                'observed-wrong-principal' { $changes[0].after.properties.principalId = $f.identity.principalId }
+                'observed-wrong-scope' {
+                    $changes[0].resourceId = $changes[0].resourceId.Replace('/translation-source/', '/other-container/')
+                }
+                'observed-wrong-role' {
+                    $changes[0].after.properties.roleDefinitionId =
+                        "/subscriptions/$($f.sub)/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe"
+                }
+                'observed-wrong-reference' {
+                    $changes[0].after.properties.principalId =
+                        "[reference('$($f.prefix)/Microsoft.CognitiveServices/accounts/other', '2024-10-01', 'full').identity.principalId]"
+                }
+                'observed-modify' { $changes[0].changeType = 'Modify' }
             }
             @{ status = 'Succeeded'; changes = $changes
                 diagnostics = $(if ($f.scenario -eq 'incomplete') { @(@{ code = 'Unsupported' }) } else { @() }) }
@@ -253,7 +376,35 @@ function az {
     ConvertTo-Json -InputObject $result -Depth 100 -Compress
 }
 function Invoke-Translation([hashtable]$Extra = @{}) {
-    & $file -ResourceGroup fixture -ContainerAppName fixture-app -OutputDirectory $output @Extra
+    $targetGroup = if ($global:TranslationFixture.observed) { 'Docintel' } else { 'fixture' }
+    $targetApp = if ($global:TranslationFixture.observed) { 'ca-docintel-dev' } else { 'fixture-app' }
+    & $file -ResourceGroup $targetGroup -ContainerAppName $targetApp -OutputDirectory $output @Extra
+}
+function New-ObservedRecoveryFixture {
+    New-Fixture
+    $f = $global:TranslationFixture
+    $f.observed = $true
+    $f.sub = 'fc395540-6344-43ae-9d54-38e07f707557'
+    $f.prefix = "/subscriptions/$($f.sub)/resourceGroups/Docintel/providers"
+    $f.identity.id = $observedRuntime
+    $f.identity.principalId = '5644975e-f041-4563-b1e8-df6dc4688779'
+    $f.app.id = "$($f.prefix)/Microsoft.App/containerApps/ca-docintel-dev"
+    $f.app.identity.userAssignedIdentities = @{ $f.identity.id = @{
+        clientId = $f.identity.clientId; principalId = $f.identity.principalId } }
+    $f.primary.id = "$($f.prefix)/Microsoft.Storage/storageAccounts/primaryaccount"
+    $f.translator = New-Translator 'tr-docintel-6c6d4e093ef70cc1'
+    $f.stage = New-Stage 'stditr6c6d4e093ef70cc1' $f.translator.id
+    $f.stagePolicy = @{ policy = @{ rules = @((Get-DocIntelTranslationLifecycleRule)) } }
+    $f.containers = @('translation-source', 'translation-target')
+    foreach ($scope in @($f.translator.id,
+        "$($f.stage.id)/blobServices/default/containers/translation-source",
+        "$($f.stage.id)/blobServices/default/containers/translation-target")) {
+        $role = if ($scope -ceq $f.translator.id) {
+            'a97b65f3-24c7-4388-baec-2e87135dc908'
+        } else { 'ba92f5b4-2d11-453d-a403-e96b0029c9fe' }
+        $f.roles += @{ scope = $scope; principalId = $f.identity.principalId
+            roleDefinitionId = "/subscriptions/$($f.sub)/providers/Microsoft.Authorization/roleDefinitions/$role" }
+    }
 }
 function Assert-Failure([string]$Message, [hashtable]$Extra = @{}) {
     try { Invoke-Translation $Extra | Out-Null }
@@ -350,6 +501,83 @@ try {
         }).Count -or $f.writes.Count) {
         throw 'Read-only partial recovery must show only the two missing runtime-container grants, not retry them.'
     }
+    foreach ($scenario in @('', 'observed-reference', 'observed-case', 'observed-global-role',
+        'observed-ignore-existing')) {
+        New-ObservedRecoveryFixture
+        $f = $global:TranslationFixture
+        $f.scenario = $scenario
+        $preview = Invoke-Translation @{ ReplaceExistingEndpoint = $true }
+        $missing = @($preview.Plan.Permissions | Where-Object Assign)
+        $observedIds = @(
+            "$observedStage/blobServices/default/containers/translation-source/providers/Microsoft.Authorization/roleAssignments/af5d1e71-9e40-52bf-b31c-cf8f4b250b7b"
+            "$observedStage/blobServices/default/containers/translation-target/providers/Microsoft.Authorization/roleAssignments/84df146d-6c88-55cf-99db-449feebbb5e9"
+        )
+        if (-not $preview.Plan.RequiresApply -or $preview.Plan.ProvisionAccount -or
+            $preview.Plan.ProvisionStagingAccount -or $missing.Count -ne 2 -or
+            @($missing | Where-Object {
+                $_.AssignmentId -notin $observedIds -or $_.Principal -ine $f.translator.identity.principalId
+            }).Count -or
+            @($preview.Plan.Changes | Where-Object changeType -CEQ 'Create').Count -ne 2 -or $f.writes.Count) {
+            throw 'Observed three-existing/two-missing state must report exact Translator grants read-only, not relabel them runtime.'
+        }
+        if (($preview | ConvertTo-Json -Depth 100) -match 'fixture-sensitive-existing-role') {
+            throw 'Ignored existing-role payloads must remain redacted during partial recovery.'
+        }
+        if ($scenario -eq 'observed-reference') {
+            Assert-Failure 'escaped exact isolated' @{ Mode = 'Apply'; Confirmation = 'TRANSLATE'
+                ExpectedPlanHash = $preview.PlanHash; ReplaceExistingEndpoint = $true }
+        }
+    }
+    foreach ($case in @(
+        @{ Scenario = 'observed-wrong-guid'; Message = 'escaped exact isolated' }
+        @{ Scenario = 'observed-wrong-principal'; Message = 'escaped exact isolated' }
+        @{ Scenario = 'observed-wrong-scope'; Message = 'escaped exact isolated' }
+        @{ Scenario = 'observed-wrong-role'; Message = 'escaped exact isolated' }
+        @{ Scenario = 'observed-wrong-reference'; Message = 'escaped exact isolated' }
+        @{ Scenario = 'observed-modify'; Message = 'never modify/delete' }
+        @{ Scenario = 'observed-ignore-required'; Message = 'never modify/delete' }
+    )) {
+        New-ObservedRecoveryFixture; $global:TranslationFixture.scenario = $case.Scenario
+        Assert-Failure $case.Message @{ ReplaceExistingEndpoint = $true }
+    }
+    foreach ($grantRole in @('ba92f5b4-2d11-453d-a403-e96b0029c9fe', 'b7e6dc6d-f1e8-4753-8033-0f276bb0955b')) {
+        New-ObservedRecoveryFixture
+        $f = $global:TranslationFixture
+        $f.roles += @{ scope = $f.stage.id; principalId = $f.translator.identity.principalId
+            roleDefinitionId = "/subscriptions/$($f.sub)/providers/Microsoft.Authorization/roleDefinitions/$grantRole" }
+        $preview = Invoke-Translation @{ ReplaceExistingEndpoint = $true }
+        if (@($preview.Plan.Permissions | Where-Object Assign).Count -or $f.writes.Count -or
+            @($f.calls | Where-Object { ($_ | Select-Object -First 3) -join ' ' -ceq 'deployment group what-if' }).Count) {
+            throw 'Unconditioned staging-account Contributor/Blob Data Owner must cover both Translator requirements without role writes.'
+        }
+    }
+    New-ObservedRecoveryFixture
+    $f = $global:TranslationFixture
+    $f.roles = @($f.roles | Where-Object scope -IEQ $f.translator.id) + @(
+        @{ scope = $f.stage.id; principalId = $f.identity.principalId
+            roleDefinitionId = "/subscriptions/$($f.sub)/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe" }
+    )
+    $preview = Invoke-Translation @{ ReplaceExistingEndpoint = $true }
+    $missing = @($preview.Plan.Permissions | Where-Object Assign)
+    if ($missing.Count -ne 2 -or @($missing | Where-Object Principal -IEQ $f.identity.principalId).Count -or
+        $f.writes.Count) {
+        throw 'An app-runtime account grant must cover only that principal, not the Translator identity.'
+    }
+    New-ObservedRecoveryFixture
+    $f = $global:TranslationFixture
+    $f.roles += @{ scope = $f.stage.id; principalId = $f.translator.identity.principalId
+        roleDefinitionId = "/subscriptions/$($f.sub)/providers/Microsoft.Authorization/roleDefinitions/2a2b9908-6ea1-4ae2-8e65-a410df84e7d1" }
+    $preview = Invoke-Translation @{ ReplaceExistingEndpoint = $true }
+    $missing = @($preview.Plan.Permissions | Where-Object Assign)
+    if ($missing.Count -ne 1 -or $missing[0].Scope -ine $preview.Plan.Target.Scope -or $f.writes.Count) {
+        throw 'Account-level Blob Data Reader must not be mistaken for target write access.'
+    }
+    New-ObservedRecoveryFixture
+    $f = $global:TranslationFixture
+    $f.roles += @{ scope = $f.stage.id; principalId = $f.translator.identity.principalId
+        condition = 'fixture-private-condition'; conditionVersion = '2.0'
+        roleDefinitionId = "/subscriptions/$($f.sub)/providers/Microsoft.Authorization/roleDefinitions/ba92f5b4-2d11-453d-a403-e96b0029c9fe" }
+    Assert-Failure 'conditional' @{ ReplaceExistingEndpoint = $true }
     foreach ($case in @(
         @{ Scenario = 'incomplete'; Message = 'preview is incomplete' }
         @{ Scenario = 'foreign-change'; Message = 'never modify/delete' }
