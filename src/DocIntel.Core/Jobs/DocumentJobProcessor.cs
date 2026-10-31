@@ -22,7 +22,15 @@ public sealed class DocumentJobProcessor(
 {
     public async Task ProcessAsync(JobQueueTicket ticket, CancellationToken stoppingToken = default)
     {
-        await using var lease = await jobs.TryAcquireJobAsync(ticket.TenantId, ticket.JobId, stoppingToken);
+        IDocumentJobLease? acquired;
+        try { acquired = await jobs.TryAcquireJobAsync(ticket.TenantId, ticket.JobId, stoppingToken); }
+        catch (DocumentStorageLimitException exception) when (exception.IsDurablyPersisted)
+        {
+            logger.LogWarning("Document {JobId} reached a terminal storage limit: {ErrorCode}.",
+                ticket.JobId, exception.Code);
+            return;
+        }
+        await using var lease = acquired;
         if (lease is null) return;
         var job = lease.Job;
         using var operation = AgentDiagnostics.Begin("document.run", logger,
@@ -46,6 +54,7 @@ public sealed class DocumentJobProcessor(
         {
             job.Status = JobStatus.Running;
             job.ErrorMessage = null;
+            job.ErrorCode = null;
             job.CompletedAtUtc = null;
             job.PacketSummary = null;
             job.ExtractedEntities = [];
@@ -55,6 +64,9 @@ public sealed class DocumentJobProcessor(
             job.Segments = [];
             job.LayoutSha256 = null;
             job.ProcessingResultSha256 = null;
+            job.ContentSnapshot = null;
+            job.SearchTextIsPartial = false;
+            job.SearchMetadataUnavailable = false;
             job.ReviewId = null;
             job.ArtifactDocumentId = $"{job.JobId}-a{job.ExecutionAttempts}";
             await lease.SaveAsync(execution.Token);
@@ -117,6 +129,17 @@ public sealed class DocumentJobProcessor(
             job.ErrorMessage = "Document processing exceeded its time limit.";
             job.CompletedAtUtc = DateTimeOffset.UtcNow;
         }
+        catch (DocumentStorageLimitException exception)
+        {
+            operation.Fail(exception);
+            logger.LogWarning("Document {JobId} reached a terminal storage limit: {ErrorCode}.",
+                job.JobId, exception.Code);
+            job.Status = JobStatus.Failed;
+            job.ErrorCode = exception.Code;
+            job.ErrorMessage = exception.Message;
+            job.CompletedAtUtc ??= DateTimeOffset.UtcNow;
+            if (exception.IsDurablyPersisted) return;
+        }
         catch (Exception exception)
         {
             operation.Fail(exception);
@@ -135,7 +158,12 @@ public sealed class DocumentJobProcessor(
         }
         using var persistence = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         job.ProcessingResultSha256 = null;
-        await lease.SaveAsync(persistence.Token);
+        try { await lease.SaveAsync(persistence.Token); }
+        catch (DocumentStorageLimitException exception) when (exception.IsDurablyPersisted)
+        {
+            logger.LogWarning("Document {JobId} reached a terminal storage limit: {ErrorCode}.",
+                job.JobId, exception.Code);
+        }
     }
 
     private static void Update(DocumentJob job, SplittingState state)

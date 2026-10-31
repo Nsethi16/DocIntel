@@ -190,7 +190,7 @@ test('untrusted entity values and document names are escaped in graph filters an
   assert.doesNotMatch(html, /<script>/);
 });
 
-test('canvas uses its actual CSS size, local font and readable separated labels on a narrow view', () => {
+test('canvas uses its actual CSS size and reveals a readable local-font label only on hover', () => {
   const app = runtime([{
     ...job('one', [entity('Customer Name', 'Northwind Example')]),
     fileName: 'Northwind service agreement.pdf'
@@ -201,10 +201,43 @@ test('canvas uses its actual CSS size, local font and readable separated labels 
   assert.equal(canvas.height, 840);
   assert.ok(app.flush() < 200);
   assert.equal(app.frames.size, 0, 'Settled graphs must not animate forever');
-  const labels = app.context2d.labels.slice(-2);
-  assert.ok(labels.every(label => label.font.includes('13px "Segoe UI"')));
-  assert.ok(labels.every(label => label.width <= 112));
-  assert.ok(Math.abs(labels[0].x - labels[1].x) > (labels[0].width + labels[1].width) / 2);
+  assert.equal(app.context2d.labels.length, 0, 'Even a small graph must start without labels');
+  const position = vm.runInContext("graphCustomNodePositions['ent:Customer Name||Northwind Example']", app.context);
+  canvas.onmousemove({ clientX: position.x, clientY: position.y });
+  app.flush();
+  assert.equal(app.context2d.labels.length, 1, 'Hover must not reveal neighboring document labels');
+  const [label] = app.context2d.labels;
+  assert.ok(label.font.includes('13px "Segoe UI"'));
+  assert.ok(label.width <= 112);
+  app.context2d.labels = [];
+  canvas.onmouseleave();
+  app.flush();
+  assert.equal(app.context2d.labels.length, 0);
+  app.context.stopGraphCanvas();
+});
+
+test('shared entity hubs and zoom never enable default labels', () => {
+  const app = runtime(Array.from({ length: 25 }, (_, i) =>
+    job(`document-${i}`, [entity('Customer Name', 'Shared entity')])));
+  app.startCanvas();
+  app.flush();
+  assert.equal(app.context2d.labels.length, 0);
+  vm.runInContext('graphZoom=2.6;graphCanvasRefresh();', app.context);
+  app.flush();
+  assert.equal(app.context2d.labels.length, 0, 'Zoom must not make a dense graph crowded with text');
+  app.context.stopGraphCanvas();
+});
+
+test('explicit entity selection reveals only the selected label, not every connected document', () => {
+  const app = runtime();
+  vm.runInContext("graphSelectedEntityValues.add('Customer Name||Northwind');", app.context);
+  app.startCanvas();
+  app.flush();
+  assert.deepEqual([...new Set(app.context2d.labels.map(label => label.text))], ['Northwind']);
+  app.context2d.labels = [];
+  vm.runInContext("graphSelectedEntityValues.clear();graphFocusedNodeId='doc:first';graphCanvasRefresh();", app.context);
+  app.flush();
+  assert.deepEqual(app.context2d.labels.map(label => label.text), ['Contract first']);
   app.context.stopGraphCanvas();
 });
 
@@ -271,6 +304,8 @@ test('theme changes repaint Graph labels without restarting its layout', () => {
   const app = runtime();
   app.startCanvas();
   app.flush();
+  app.context.focusGraphNode('doc:first');
+  app.flush();
   const positions = vm.runInContext('JSON.stringify(graphCustomNodePositions)', app.context);
   app.colors['--text-heading'] = '#f7f7f7';
   vm.runInContext('graphCanvasRefresh()', app.context);
@@ -278,6 +313,81 @@ test('theme changes repaint Graph labels without restarting its layout', () => {
   assert.equal(app.context2d.labels.at(-1).color, '#f7f7f7');
   assert.equal(vm.runInContext('JSON.stringify(graphCustomNodePositions)', app.context), positions);
   app.context.stopGraphCanvas();
+});
+
+test('large workspaces retain complete counts but bound canvas nodes, edges and inspector links', () => {
+  const jobs = Array.from({ length: 3000 }, (_, index) =>
+    job(`document-${index}`, [entity('Record', `Unique-${index}`)]));
+  const app = runtime(jobs);
+  const data = app.context.computeFilteredGraphData();
+  assert.equal(data.docNodes.length, 3000);
+  assert.equal(data.entityNodes.length, 3000);
+  const window = app.context.buildGraphCanvasWindow(data.docNodes, data.entityNodes, data.edges);
+  assert.equal(window.totalNodes, 6000);
+  assert.equal(window.totalEdges, 3000);
+  assert.ok(window.docNodes.length + window.entityNodes.length <= 500);
+  assert.ok(window.edges.length <= 2000);
+  assert.equal(window.limited, true);
+  app.startCanvas();
+  assert.ok(app.flush() < 200);
+  assert.equal(app.context2d.labels.length, 0);
+  assert.match(app.node('graphWorkbenchContainer').innerHTML, /Canvas shows 500 of 6000 nodes/);
+  app.context.toggleGraphDetails();
+  const inspector = app.node('graphInspectorAside').innerHTML;
+  assert.match(inspector, /Showing 100 of 3000 documents/);
+  assert.equal((inspector.match(/data-click="jumpFromGraphToSlice_arg_arg"/g) || []).length, 100);
+  app.context.focusGraphNode('doc:document-2999');
+  assert.equal(vm.runInContext("graphCanvasNodeIds.has('doc:document-2999')", app.context), true);
+  app.context.stopGraphCanvas();
+});
+
+test('entity-option rendering is bounded while search can reach values beyond the initial window', () => {
+  const app = runtime(Array.from({ length: 3000 }, (_, index) =>
+    job(`document-${index}`, [entity('Record', `Unique-${index}`)])));
+  app.context.renderDocumentGraphTab(app.node('docCenterBody'));
+  const html = app.node('docCenterBody').innerHTML;
+  assert.match(html, /Showing 200 of 3000 values/);
+  assert.equal((html.match(/class="entity-value-option/g) || []).length, 200);
+  app.context.filterEntityPopoverOptions('Unique-2999');
+  assert.match(app.node('entityPopoverList').innerHTML, /Unique-2999/);
+  assert.equal((app.node('entityPopoverList').innerHTML.match(/class="entity-value-option/g) || []).length, 1);
+});
+
+test('graph canvas keyboard focus reveals one label and selection remains keyboard-operable', () => {
+  const app = runtime([job('first', [entity('Customer Name', 'Northwind')])]);
+  app.startCanvas();
+  app.flush();
+  const canvas = app.node('obsidianGraphCanvas');
+  let prevented = 0;
+  canvas.onkeydown({ key: 'ArrowRight', preventDefault() { prevented++; } });
+  app.flush();
+  assert.equal(app.context2d.labels.length, 1);
+  assert.match(canvas['aria-label'], /Northwind/);
+  canvas.onkeydown({ key: 'Enter', preventDefault() { prevented++; } });
+  app.flush();
+  assert.equal(vm.runInContext('graphFocusedNodeId', app.context), 'ent:Customer Name||Northwind');
+  app.context2d.labels = [];
+  canvas.onkeydown({ key: 'Escape', preventDefault() { prevented++; } });
+  app.flush();
+  assert.equal(app.context2d.labels.length, 0);
+  assert.equal(vm.runInContext('graphFocusedNodeId', app.context), null);
+  assert.equal(prevented, 3);
+  app.context.stopGraphCanvas();
+});
+
+test('graph entity keys do not collapse distinct names and values containing the delimiter', () => {
+  const app = runtime([
+    job('first', [entity('A||B', 'C')]),
+    job('second', [entity('A', 'B||C')]),
+    job('third', [entity('A', '%7C')])
+  ]);
+  const data = app.context.computeFilteredGraphData();
+  assert.equal(data.entityNodes.length, 3);
+  const pair = app.context.graphEntityPairKey('A||B', 'C');
+  vm.runInContext(`graphSelectedEntityValues.add(${JSON.stringify(pair)});`, app.context);
+  assert.deepEqual(Array.from(app.context.computeFilteredGraphData().docNodes, node => node.jobId), ['first']);
+  app.context.renderDocumentGraphTab(app.node('docCenterBody'));
+  assert.match(app.node('docCenterBody').innerHTML, /A\|\|B/);
 });
 
 test('filter rerenders keep an existing layout fixed when its geometry is unchanged', () => {

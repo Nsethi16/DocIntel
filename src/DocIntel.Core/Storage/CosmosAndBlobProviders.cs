@@ -9,6 +9,7 @@ using Azure.Storage.Blobs;
 using Azure.Storage.Blobs.Models;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
+using DocIntel.Core.Authorization;
 using DocIntel.Core.Evidence;
 using DocIntel.Core.Ocr;
 using DocIntel.Core.Export;
@@ -24,6 +25,13 @@ namespace DocIntel.Core.Storage;
 /// </summary>
 public interface IArtifactStore
 {
+    /// <summary>Archives complete checkpoint/current outputs, reusing an identical completed result when available.</summary>
+    Task<DocumentContentReference> SaveDocumentContentAsync(
+        DocumentJob job, CancellationToken cancellationToken = default);
+
+    /// <summary>Reads only the job's content-addressed, source/harness/attempt-bound full output.</summary>
+    Task<byte[]?> GetDocumentContentAsync(DocumentJob job, CancellationToken cancellationToken = default);
+
     /// <summary>Archives the completed initial processing result independently of the job database.</summary>
     Task<string> SaveProcessingResultAsync(DocumentJob job, CancellationToken cancellationToken = default);
 
@@ -279,6 +287,10 @@ public sealed class SystemTextJsonCosmosSerializer : CosmosSerializer
         Converters = { new JsonStringEnumConverter() }
     };
 
+    internal static byte[] Serialize<T>(T input) => JsonSerializer.SerializeToUtf8Bytes(input, Options);
+
+    internal static T Deserialize<T>(byte[] bytes) => JsonSerializer.Deserialize<T>(bytes, Options)!;
+
     public override T FromStream<T>(Stream stream)
     {
         using (stream)
@@ -470,22 +482,30 @@ public sealed partial class CosmosJobStore : IJobStore
     private readonly Container _container;
     private readonly TimeProvider _jobClock;
     private readonly ILogger _jobLogger;
+    private readonly IArtifactStore? _jobArtifacts;
+    private readonly ITenantAccessResolver? _jobAccess;
 
     public CosmosJobStore(
         CosmosClient cosmosClient, string databaseName = "DocIntel", string containerName = "jobs",
-        TimeProvider? clock = null, ILogger<CosmosJobStore>? logger = null)
+        TimeProvider? clock = null, ILogger<CosmosJobStore>? logger = null, IArtifactStore? artifacts = null,
+        ITenantAccessResolver? access = null)
     {
         ArgumentNullException.ThrowIfNull(cosmosClient);
         _container = cosmosClient.GetContainer(databaseName, containerName);
         _jobClock = clock ?? TimeProvider.System;
         _jobLogger = logger ?? NullLogger<CosmosJobStore>.Instance;
+        _jobArtifacts = artifacts;
+        _jobAccess = access;
     }
 
-    public CosmosJobStore(Container container, TimeProvider? clock = null, ILogger<CosmosJobStore>? logger = null)
+    public CosmosJobStore(Container container, TimeProvider? clock = null, ILogger<CosmosJobStore>? logger = null,
+        IArtifactStore? artifacts = null, ITenantAccessResolver? access = null)
     {
         _container = container ?? throw new ArgumentNullException(nameof(container));
         _jobClock = clock ?? TimeProvider.System;
         _jobLogger = logger ?? NullLogger<CosmosJobStore>.Instance;
+        _jobArtifacts = artifacts;
+        _jobAccess = access;
     }
 
     /// <summary>Checks that the configured metadata container exists and is accessible to the service identity.</summary>
@@ -499,6 +519,7 @@ public sealed partial class CosmosJobStore : IJobStore
         ArgumentNullException.ThrowIfNull(job);
         ArgumentException.ThrowIfNullOrWhiteSpace(job.TenantId);
         ArgumentException.ThrowIfNullOrWhiteSpace(job.JobId);
+        if (job.ETag is not null) RequireETag(job.ETag);
 
         if (job.ProcessingOwner is not null)
         {
@@ -507,11 +528,10 @@ public sealed partial class CosmosJobStore : IJobStore
             job.ProcessingOwner = null;
             job.ProcessingLeaseUntilUtc = null;
         }
-        var response = job.ETag is null
-            ? await _container.CreateItemAsync(job, new PartitionKey(job.TenantId), cancellationToken: cancellationToken)
-            : await _container.ReplaceItemAsync(job, job.JobId, new PartitionKey(job.TenantId),
-                new ItemRequestOptions { IfMatchEtag = RequireETag(job.ETag) }, cancellationToken);
-        job.ETag = RequireETag(response.ETag);
+        var prepared = await PrepareJobAsync(job, cancellationToken);
+        var response = await WriteJobAsync(prepared, job.ETag, cancellationToken);
+        ApplyStoredState(job, prepared.Job, RequireETag(response.ETag));
+        ThrowIfDocumentLimit(prepared);
     }
 
     public async Task<DocumentJob?> GetJobAsync(string jobId, CancellationToken cancellationToken = default, string? tenantId = null)
@@ -520,21 +540,9 @@ public sealed partial class CosmosJobStore : IJobStore
 
         if (!string.IsNullOrWhiteSpace(tenantId))
         {
-            try
-            {
-                var ptResponse = await _container.ReadItemAsync<DocumentJob>(
-                    jobId,
-                    new PartitionKey(tenantId),
-                    cancellationToken: cancellationToken).ConfigureAwait(false);
-                if (ptResponse.Resource.TenantId != tenantId || ptResponse.Resource.JobId != jobId)
-                    throw new InvalidDataException("Stored document identity does not match its partition key.");
-                ptResponse.Resource.ETag = RequireETag(ptResponse.ETag);
-                return ptResponse.Resource.Status == JobStatus.Deleted ? null : ptResponse.Resource;
-            }
-            catch (CosmosException ex) when (ex.StatusCode == HttpStatusCode.NotFound)
-            {
-                return null;
-            }
+            var stored = await GetStoredJobAsync(jobId, tenantId, cancellationToken);
+            return stored is null || stored.Status == JobStatus.Deleted
+                ? null : await HydrateJobAsync(stored, cancellationToken);
         }
 
         var query = new QueryDefinition("SELECT TOP 2 * FROM c WHERE c.id = @jobId AND c.status != @deleted")
@@ -548,7 +556,11 @@ public sealed partial class CosmosJobStore : IJobStore
             matches.AddRange(page.Take(2 - matches.Count));
         }
         if (matches.Count > 1) throw new InvalidOperationException("A tenant ID is required for this document ID.");
-        return matches.FirstOrDefault(job => job.Status != JobStatus.Deleted);
+        var match = matches.FirstOrDefault(job => job.Status != JobStatus.Deleted);
+        if (match is null) return null;
+        if (match.JobId != jobId || String.IsNullOrWhiteSpace(match.TenantId))
+            throw new InvalidDataException("Stored document identity does not match the requested document.");
+        return await HydrateJobAsync(match, cancellationToken);
     }
 
     private static string RequireETag(string? etag) =>
@@ -570,7 +582,13 @@ public sealed partial class CosmosJobStore : IJobStore
         while (iterator.HasMoreResults)
         {
             var page = await iterator.ReadNextAsync(cancellationToken).ConfigureAwait(false);
-            results.AddRange(page);
+            if (page.Any(job => job.TenantId != tenantId))
+                throw new InvalidDataException("Stored document identity does not match its partition key.");
+            foreach (var job in page)
+            {
+                if (job.Status != JobStatus.Deleted)
+                    results.Add(await HydrateJobAsync(job, cancellationToken));
+            }
         }
 
         return results.OrderByDescending(j => j.CreatedAtUtc).ToList();
@@ -591,7 +609,12 @@ public sealed partial class CosmosJobStore : IJobStore
             definition, query.ContinuationToken,
             new QueryRequestOptions { PartitionKey = new PartitionKey(tenantId), MaxItemCount = query.PageSize });
         var page = await iterator.ReadNextAsync(cancellationToken).ConfigureAwait(false);
-        return new DocumentQueryPage(page.ToList(), page.ContinuationToken);
+        return new DocumentQueryPage(page.ToList(), page.ContinuationToken)
+        {
+            TextSearchNotice = String.IsNullOrWhiteSpace(query.SearchText) ? null :
+                "Text search covers complete inline text and bounded previews of artifact-backed documents. " +
+                "A missing text match does not rule out content in a document; open it to inspect the full evidence."
+        };
     }
 
 }

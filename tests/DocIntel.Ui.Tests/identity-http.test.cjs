@@ -96,6 +96,7 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
     let allowedDocumentId;
     let documentSearches = 0;
     let revokeAfterSearch = false;
+    let blockedEvaluation = null;
     let readerToken;
     const memberships = [
       { directoryTenantId: directoryId, objectId: readerId, applicationTenantId: 'contoso-legal',
@@ -155,6 +156,18 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
             };
           } else if (url.pathname === '/model/v1/chat/completions') {
             const body = JSON.parse(text);
+            if (blockedEvaluation) {
+              const gate = blockedEvaluation;
+              gate.started();
+              await gate.released;
+              response.writeHead(200, { 'Content-Type': 'application/json' });
+              response.end(JSON.stringify({
+                id: 'blocked-evaluation', object: 'chat.completion', created: 1, model: 'phi-4',
+                choices: [{ index: 0, message: { role: 'assistant', content: JSON.stringify(gate.output) },
+                  finish_reason: 'stop' }]
+              }));
+              return;
+            }
             for (const tool of body.tools || []) {
               assert.ok((tool.function?.description || '').length <= 1024,
                 `${tool.function?.name} exceeds the provider tool-description limit`);
@@ -306,6 +319,27 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         assert.equal((await (await request(tenantPath, reader)).json()).agent.displayName, 'Meridian');
         assert.equal((await request('/api/harness/tenants/fabrikam-procurement/agent/channels', reader)).status, 403);
       });
+      await t.test('case and whitespace duplicate document catalogs are rejected without changing the saved harness', async () => {
+        const original = await (await request(tenantPath, administrator)).json();
+        for (const kind of ['identification', 'profiles']) {
+          const draft = structuredClone(original);
+          if (kind === 'identification') {
+            draft.capabilities.IdentifyDocuments.identifyDocuments.rules = [
+              { documentName: 'Invoice', identificationPrompt: 'Invoice header', isActive: true },
+              { documentName: ' invoice ', identificationPrompt: 'Other invoice header', isActive: true }
+            ];
+          } else {
+            draft.capabilities.DataExtraction.dataExtraction.profiles = [
+              { documentName: 'Invoice', fields: [], tables: [] },
+              { documentName: ' invoice ', fields: [], tables: [] }
+            ];
+          }
+          assert.equal((await request(tenantPath, administrator, 'PUT', draft)).status, 400);
+          const current = await (await request(tenantPath, administrator)).json();
+          assert.equal(current.harnessVersion, original.harnessVersion);
+          assert.deepEqual(current.capabilities, original.capabilities);
+        }
+      });
       await t.test('stale harness drafts return a visible conflict without overwriting another administrator', async () => {
         const stale = structuredClone(tenant);
         const edited = { ...tenant, displayName: 'Concurrently saved tenant' };
@@ -358,6 +392,96 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
       assert.ok(jobs.every(job => job.hasDevelopmentResults === true));
       allowedDocumentId = jobs[0].jobId;
       const forbiddenDocumentId = jobs[1].jobId;
+      for (const revokeKind of ['processing permission', 'workspace activity']) {
+      await t.test(`prompt reevaluation cannot publish or return results after ${revokeKind} is revoked`, async () => {
+        const originalTenant = await (await request(tenantPath, administrator)).json();
+        const originalJob = await (await request(`${tenantPath}/jobs/${allowedDocumentId}`, administrator)).json();
+        const configured = structuredClone(originalTenant);
+        configured.capabilities.PromptColumns.modelIdOverride = 'foundry-local-phi4';
+        configured.capabilities.PromptColumns.promptColumns.columns = [{
+          columnId: 'access-check', columnName: 'Access check', isActive: true,
+          promptInstructions: 'Summarize the source.', filterMode: 'All', entityFilters: []
+        }];
+        assert.equal((await request(tenantPath, administrator, 'PUT', configured)).status, 200);
+        let started;
+        let release;
+        const entered = new Promise(resolve => { started = resolve; });
+        const released = new Promise(resolve => { release = resolve; });
+        blockedEvaluation = { started, released, output: { result: 'Must never be published after revocation.' } };
+        try {
+          const pending = request(`${tenantPath}/jobs/${allowedDocumentId}/evaluate-prompts`, processor, 'POST', {});
+          await Promise.race([entered, new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Reevaluation never reached the model.')), 10000))]);
+          if (revokeKind === 'processing permission') {
+            memberships[1].role = 'Reader';
+            await saveMemberships();
+          } else {
+            const active = await (await request(tenantPath, administrator)).json();
+            assert.equal((await request(tenantPath, administrator, 'PUT', { ...active, isActive: false })).status, 200);
+          }
+          let revoked = false;
+          for (let i = 0; i < 60; i++) {
+            if ((await request(tenantPath + '/run-split', processor, 'POST', {})).status === 403) {
+              revoked = true;
+              break;
+            }
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+          assert.equal(revoked, true, 'Expected membership reload before releasing inference');
+          release();
+          assert.equal((await pending).status, 403);
+          const after = await (await request(`${tenantPath}/jobs/${allowedDocumentId}`, administrator)).json();
+          assert.deepEqual(after.promptColumnResults, originalJob.promptColumnResults);
+        } finally {
+          release();
+          blockedEvaluation = null;
+          memberships[1].role = 'Processor';
+          await saveMemberships();
+          const current = await (await request(tenantPath, administrator)).json();
+          assert.equal((await request(tenantPath, administrator, 'PUT',
+            { ...originalTenant, harnessVersion: current.harnessVersion })).status, 200);
+          for (let i = 0; i < 60; i++) {
+            if ((await request(tenantPath + '/run-split', processor, 'POST', {})).status !== 403) break;
+            await new Promise(resolve => setTimeout(resolve, 100));
+          }
+        }
+      });
+      }
+      await t.test('synchronous processing cannot return document results after workspace deactivation', async () => {
+        const originalTenant = await (await request(tenantPath, administrator)).json();
+        const pdf = await (await request(`${tenantPath}/jobs/${allowedDocumentId}/slices/0/pdf`, processor)).arrayBuffer();
+        const configured = structuredClone(originalTenant);
+        for (const [name, capability] of Object.entries(configured.capabilities))
+          capability.enabled = name === 'SplitAndGroup' || name === 'DocumentInsight';
+        configured.capabilities.DocumentInsight.modelIdOverride = 'foundry-local-phi4';
+        assert.equal((await request(tenantPath, administrator, 'PUT', configured)).status, 200);
+        let started;
+        let release;
+        const entered = new Promise(resolve => { started = resolve; });
+        const released = new Promise(resolve => { release = resolve; });
+        blockedEvaluation = { started, released, output: { summary: 'Must not be released from an inactive workspace.' } };
+        try {
+          const form = new FormData();
+          form.set('file', new Blob([pdf], { type: 'application/pdf' }), 'sync-access.pdf');
+          const pending = fetch(api.url + tenantPath + '/run-split', {
+            method: 'POST', headers: { Authorization: `Bearer ${processor}` }, body: form
+          });
+          await Promise.race([entered, new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Synchronous processing never reached inference.')), 10000))]);
+          const active = await (await request(tenantPath, administrator)).json();
+          assert.equal((await request(tenantPath, administrator, 'PUT', { ...active, isActive: false })).status, 200);
+          release();
+          const denied = await pending;
+          assert.equal(denied.status, 403);
+          assert.doesNotMatch(await denied.text(), /packetSummary|extractedEntities|segments|Must not be released/);
+        } finally {
+          release();
+          blockedEvaluation = null;
+          const current = await (await request(tenantPath, administrator)).json();
+          assert.equal((await request(tenantPath, administrator, 'PUT',
+            { ...originalTenant, harnessVersion: current.harnessVersion })).status, 200);
+        }
+      });
       await t.test('field evidence uses actual authorized layout words and does not claim calibrated confidence', async () => {
         const candidates = jobs.flatMap(job => job.segments.flatMap(segment =>
           (segment.extractedEntities || []).map(entity => ({ job, segment, entity }))));

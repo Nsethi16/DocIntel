@@ -20,8 +20,10 @@ Responses explicitly say `dataRetained: true` and `permanentErasure: false`. The
 are **not physical erasure**: originals, archived JSON, OCR cache, review/audit history and
 stored conversations are retained. Deleted documents cannot be read, searched, reviewed,
 exported or downloaded normally. Ask AI tracks all retrieved document IDs, not just citations,
-and rechecks availability before final answers, polling and channel delivery. Legacy
-document-based runs without that complete reference inventory require a fresh question.
+and rechecks availability before final answers, polling and channel delivery. Saved factual
+answers also require current source fingerprints, including original slice text; polling
+returns a safe `409 SourceChanged` instead of stale output. Legacy cited/analytical runs
+without source versions require a fresh question; source-free clarifications remain readable.
 Previously downloaded files, external messages and offline browser copies cannot be recalled.
 
 Tenant `retention` metadata supports optional `documentDays`, `conversationDays`, `auditDays`
@@ -39,6 +41,25 @@ previous drawer without clearing its fields. Saved prompt columns stay visible w
 create/edit form is disclosed on demand. Ask AI temporarily hides the redundant document rail
 and restores its prior state when returning to documents. These presentation changes do not
 alter model routing, permissions, processing, integrations or explicit save behavior.
+
+### Graph and functional boundaries
+
+Graph labels appear only on hover, keyboard focus, or explicit node/entity selection, never
+automatically on zoom. The canvas renders at most 500 nodes and 2,000 connections and discloses
+the full filtered counts. Details show at most 100 links; entity options show 200 matching values.
+Search runs against all available entity options before this display window is applied.
+Arrow keys focus a rendered node, Enter selects it, and Escape clears the selection.
+
+Large Cosmos jobs retain complete source and derived output in hash-verified, source/harness/attempt-bound
+artifacts. Bounded search previews are never used as citation evidence; partial text coverage is disclosed,
+including for zero matches. The complete content archive retains its explicit 16 MiB limit, and deterministic
+storage-size failures are terminal rather than automatically replayed. Ask AI inspection preserves original
+source windows while disclosing bounded derived previews. Machine exports support up to 100,000 fields,
+independently of the retired human-review limit, with explicit text/output-size boundaries.
+
+See the [functional hardening and acceptance plan](docs/functional-hardening.md) for the document-type,
+failure, authorization and large-collection matrix. Supported limits and genuine provider checks are
+reported separately; no universal classification or bug-free guarantee is claimed.
 
 ### Human review is retired
 
@@ -786,10 +807,14 @@ as described below.
 Trusted server adapters have a separate durable delivery state: the answer completes before
 delivery is leased, current tenant activation and the original permission scope are rechecked,
 and reviewed citations must still reference the same review version. The send marker is saved
-before contacting a transport. Interrupted or uncertain sends become `OutcomeUnknown` and are
+before contacting a transport, with source fingerprints rechecked at that final send boundary.
+Changed evidence fails delivery without replaying the model or sending the old answer.
+Interrupted or uncertain sends become `OutcomeUnknown` and are
 never automatically replayed; `Sent` means transport acknowledgement, not proof of user receipt.
 Run polling exposes only delivery status/timestamps/error codes, not trusted routing configuration.
 Conditional run creation prevents duplicate channel activities from replacing an existing answer.
+Synchronous web/email/Teams execution creates its run once and waits on the persisted owner
+when recovery wins the lease; it never overwrites a running or completed snapshot.
 Managed-identity sign-in requires a matching federated credential on the web app registration;
 this code does not create registrations or consent/permission grants.
 

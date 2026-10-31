@@ -52,6 +52,8 @@ public sealed class DocumentJob
 
     public string? ErrorMessage { get; set; }
 
+    public string? ErrorCode { get; set; }
+
     /// <summary>A completed source-usable run can still contain explicitly failed optional features.</summary>
     [JsonIgnore]
     public bool HasWarnings => Status == JobStatus.Completed &&
@@ -66,6 +68,15 @@ public sealed class DocumentJob
     public string? LayoutSha256 { get; set; }
 
     public string? ProcessingResultSha256 { get; set; }
+
+    /// <summary>Verified immutable content backing this version; never an arbitrary storage URL.</summary>
+    public DocumentContentReference? ContentSnapshot { get; set; }
+
+    /// <summary>Cosmos text search uses bounded previews, not the full hydrated citation evidence.</summary>
+    public bool SearchTextIsPartial { get; set; }
+
+    /// <summary>A terminal document-limit failure could not publish the required search metadata.</summary>
+    public bool SearchMetadataUnavailable { get; set; }
 
     public DateTimeOffset? DeletedAtUtc { get; set; }
     public ActorIdentity? DeletedBy { get; set; }
@@ -113,6 +124,9 @@ public sealed class DocumentJob
 }
 
 public sealed record JobQueueTicket(string JobId, string TenantId);
+
+/// <summary>Content-addressed processing output, bound to the accepted harness and the job's source/attempt.</summary>
+public sealed record DocumentContentReference(string Sha256, int SizeBytes, string HarnessSha256, string Kind);
 
 public interface IJobStore
 {

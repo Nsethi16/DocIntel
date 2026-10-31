@@ -27,8 +27,9 @@ internal static class PageTextLayout
         }
     }
 
-    private static readonly Regex InlineFooterCommentRegex = new(
-        @"<!--\s*PageFooter[:""\s]\s*([^"">]+?)\s*""?\s*-->", RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    internal static readonly Regex FooterCommentRegex = new(
+        @"<!--\s*PageFooter(?:\s*[:=]\s*""?|\s+""?|"")\s*([^"">]+?)\s*""?\s*-->",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly Regex PageXOfYRegex = new(
         @"\b(?:Page|Página|Pagina|Seite)\s+(\d+)\s+(?:of|de|von)\s+(\d+)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -61,7 +62,7 @@ internal static class PageTextLayout
         page.FooterText = String.Join(",", footerWords.Where(footer => !String.IsNullOrEmpty(footer)));
         if (String.IsNullOrEmpty(page.FooterText))
         {
-            var inlineFooter = InlineFooterCommentRegex.Match(page.BodyText);
+            var inlineFooter = FooterCommentRegex.Match(page.BodyText);
             if (inlineFooter.Success)
                 page.FooterText = inlineFooter.Groups[1].Value.Trim().Replace(" ", String.Empty, StringComparison.Ordinal);
         }

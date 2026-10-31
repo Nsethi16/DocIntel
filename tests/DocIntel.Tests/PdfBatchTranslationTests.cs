@@ -15,6 +15,28 @@ namespace DocIntel.Tests;
 
 public sealed class PdfBatchTranslationTests
 {
+    [Theory]
+    [InlineData("Brand\tOther")]
+    [InlineData("Brand\nOther")]
+    [InlineData("Brand\rOther")]
+    [InlineData("Brand\0Other")]
+    public async Task Malformed_Glossary_Terms_Are_Rejected_Before_Any_Staging_Or_Provider_Request(string term)
+    {
+        // Arrange
+        var fixture = new Fixture();
+
+        // Act
+        var failure = await Assert.ThrowsAsync<DocumentTranslationFailureException>(() =>
+            fixture.Client.TranslateAsync("%PDF-source"u8.ToArray(), "fr", "en", [term]));
+
+        // Assert
+        Assert.Equal("TranslationConfigurationError", failure.Code);
+        Assert.Empty(fixture.Uploads);
+        Assert.Empty(fixture.Deleted);
+        fixture.Provider.Verify(provider => provider.StartTranslationAsync(
+            It.IsAny<DocumentTranslationInput>(), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
     [Fact]
     public void Missing_Staging_Endpoint_Never_Reuses_The_Configured_Original_Artifact_Account()
     {

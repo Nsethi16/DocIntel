@@ -1,5 +1,4 @@
 using System.Net;
-using System.Text.Json;
 using DocIntel.Core.Jobs;
 using Microsoft.Azure.Cosmos;
 
@@ -12,42 +11,72 @@ public sealed partial class CosmosJobStore
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(tenantId);
         ArgumentException.ThrowIfNullOrWhiteSpace(jobId);
-        var job = await GetJobAsync(jobId, cancellationToken, tenantId);
+        var stored = await GetStoredJobAsync(jobId, tenantId, cancellationToken);
         var now = _jobClock.GetUtcNow();
-        if (job is null || job.Status is JobStatus.Completed or JobStatus.Failed ||
-            (job.ProcessingOwner is not null && job.ProcessingLeaseUntilUtc > now))
+        if (stored is null || stored.Status is not (JobStatus.Queued or JobStatus.Running) ||
+            (stored.ProcessingOwner is not null && stored.ProcessingLeaseUntilUtc > now))
             return null;
+        var job = await HydrateJobAsync(stored, cancellationToken);
         var owner = Guid.NewGuid().ToString("N");
         job.ProcessingOwner = owner;
-        job.ProcessingLeaseUntilUtc = now.AddSeconds(60);
         job.ExecutionAttempts++;
+        job.ArtifactDocumentId = $"{job.JobId}-a{job.ExecutionAttempts}";
+        job.LayoutSha256 = null;
+        job.ProcessingResultSha256 = null;
+        job.ContentSnapshot = null;
+        job.SearchTextIsPartial = false;
+        job.SearchMetadataUnavailable = false;
+        job.PacketSummary = null;
+        job.ExtractedEntities = [];
+        job.DataExtractions = [];
+        job.PromptColumnResults = [];
+        job.ExecutionTrace = [];
+        job.Segments = [];
+        job.ReviewId = null;
+        var claim = await PrepareJobAsync(job, cancellationToken);
         try
         {
-            var response = await _container.ReplaceItemAsync(job, jobId, new PartitionKey(tenantId),
-                new ItemRequestOptions { IfMatchEtag = RequireETag(job.ETag) }, cancellationToken);
-            job.ETag = RequireETag(response.ETag);
+            var response = await WriteJobAsync(claim, RequireETag(job.ETag), cancellationToken, body =>
+            {
+                body.ProcessingOwner = owner;
+                body.ProcessingLeaseUntilUtc = _jobClock.GetUtcNow().AddSeconds(60);
+            });
+            ApplyStoredState(job, claim.Job, RequireETag(response.ETag));
+            claim.Job.ETag = job.ETag;
+            ThrowIfDocumentLimit(claim);
         }
         catch (CosmosException exception) when (exception.StatusCode == HttpStatusCode.PreconditionFailed)
         {
             return null;
         }
-        var saved = JsonSerializer.SerializeToUtf8Bytes(job);
+        var saved = CloneJob(claim.Job);
+
+        bool OwnsJob() => job.ProcessingOwner == owner &&
+            job.ProcessingLeaseUntilUtc is { } until && until > _jobClock.GetUtcNow();
 
         async Task<bool> ReplaceOwnedAsync(bool renewal, CancellationToken ct)
         {
-            if (job.ProcessingOwner != owner || job.ProcessingLeaseUntilUtc <= _jobClock.GetUtcNow())
-                return false;
-            var body = renewal ? JsonSerializer.Deserialize<DocumentJob>(saved)! : job;
-            body.ProcessingOwner = owner;
-            body.ProcessingLeaseUntilUtc = _jobClock.GetUtcNow().AddSeconds(60);
+            if (!OwnsJob()) return false;
+            var prepared = renewal ? new PreparedJob(CloneJob(saved)) : await PrepareJobAsync(job, ct);
+            if (!OwnsJob()) return false;
             try
             {
-                var response = await _container.ReplaceItemAsync(body, jobId, new PartitionKey(tenantId),
-                    new ItemRequestOptions { IfMatchEtag = RequireETag(job.ETag) }, ct);
-                job.ETag = RequireETag(response.ETag);
-                job.ProcessingLeaseUntilUtc = body.ProcessingLeaseUntilUtc;
-                body.ETag = response.ETag;
-                saved = JsonSerializer.SerializeToUtf8Bytes(body);
+                var response = await WriteJobAsync(prepared, RequireETag(job.ETag), ct, body =>
+                {
+                    if (!OwnsJob()) throw new OperationCanceledException("Document ownership expired before publication.");
+                    body.ProcessingOwner = owner;
+                    body.ProcessingLeaseUntilUtc = _jobClock.GetUtcNow().AddSeconds(60);
+                }, authorize: renewal ? null : AuthorizePublicationAsync);
+                var etag = RequireETag(response.ETag);
+                if (renewal && prepared.Failure is null)
+                {
+                    job.ETag = etag;
+                    job.ProcessingLeaseUntilUtc = prepared.Job.ProcessingLeaseUntilUtc;
+                }
+                else ApplyStoredState(job, prepared.Job, etag);
+                prepared.Job.ETag = etag;
+                saved = CloneJob(prepared.Job);
+                ThrowIfDocumentLimit(prepared);
                 return true;
             }
             catch (CosmosException exception) when (exception.StatusCode is
@@ -57,10 +86,17 @@ public sealed partial class CosmosJobStore
             }
         }
 
+        async Task AuthorizePublicationAsync(DocumentJob body, CancellationToken ct)
+        {
+            if (body.Status is JobStatus.Failed or JobStatus.Deleted || _jobAccess is null) return;
+            if (!(await _jobAccess.ResolveAsync(job.SubmittedBy, tenantId, ct)).CanProcess)
+                throw new DocumentPublicationAccessException();
+        }
+
         async Task ReleaseAsync()
         {
             using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            var latest = await GetJobAsync(jobId, deadline.Token, tenantId);
+            var latest = await GetStoredJobAsync(jobId, tenantId, deadline.Token);
             if (latest?.ProcessingOwner != owner) return;
             latest.ProcessingOwner = null;
             latest.ProcessingLeaseUntilUtc = null;

@@ -71,6 +71,46 @@ public sealed class AskAiAgentTests
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() => orchestrator.ExecuteRunAsync(CreateRun()));
     }
 
+    [Fact]
+    public async Task Empty_Browse_Results_Still_Disclose_Partial_Indexed_Text_Coverage()
+    {
+        // Arrange
+        const string notice = "Some source text is outside the bounded search index.";
+        var store = new Mock<IJobStore>(MockBehavior.Strict);
+        store.Setup(value => value.SearchDocumentsAsync("tenant-one",
+                It.IsAny<DocumentQuery>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DocumentQueryPage([], null) { TextSearchNotice = notice });
+        var tenant = new TenantHarness { TenantId = "tenant-one", DisplayName = "Test" };
+        var harness = new Mock<IHarnessStore>();
+        harness.Setup(value => value.GetTenantAsync("tenant-one", It.IsAny<CancellationToken>())).ReturnsAsync(tenant);
+        object? overview = null;
+        var client = new Mock<IChatClient>();
+        client.Setup(value => value.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(async (IEnumerable<ChatMessage> _, ChatOptions options, CancellationToken token) =>
+            {
+                Assert.Contains("TextSearchNotice", options.Instructions);
+                var browse = Assert.IsAssignableFrom<AIFunction>(
+                    Assert.Single(options.Tools!, tool => tool.Name == "browse_documents"));
+                overview = await browse.InvokeAsync(new AIFunctionArguments
+                    { ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery { SearchText = "Unindexed content" }) }, token);
+                return Final("NoEvidence", "No matching indexed evidence was found; full-text coverage is incomplete.");
+            });
+        var catalog = new ModelCatalog(customClients:
+            new Dictionary<string, IChatClient> { [tenant.DefaultModelId] = client.Object });
+        var orchestrator = new AskAiOrchestrator(harness.Object, store.Object, catalog, [],
+            NullLogger<AskAiOrchestrator>.Instance);
+
+        // Act
+        var run = await orchestrator.ExecuteRunAsync(CreateRun());
+
+        // Assert
+        Assert.Equal(JobStatus.Completed, run.Status);
+        using var json = JsonSerializer.SerializeToDocument(overview);
+        Assert.Equal(notice, json.RootElement.GetProperty("textSearchNotice").GetString());
+        Assert.Empty(run.Citations);
+    }
+
     [Theory]
     [InlineData("Missing [1].", "invented-source")]
     [InlineData("Wrong marker [2].", "e1")]
@@ -571,6 +611,68 @@ public sealed class AskAiAgentTests
         if (translationFailed) Assert.Equal("TranslationProviderFailed", translationError.GetString());
         Assert.Equal(job.Segments[0].BodyText, result.RootElement.GetProperty("sourceText").GetString());
         Assert.DoesNotContain(job.PacketSummary!, Assert.Single(run.Citations).Excerpt);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Large_Derived_Tables_Never_Block_Paged_Original_Source_Inspection(bool wideUnicodeValues)
+    {
+        // Arrange
+        var store = await CreateDocumentStoreAsync();
+        var job = (await store.GetJobAsync("source", tenantId: "tenant-one"))!;
+        job.Segments[0].BodyText = new string('x', 3000) + new string('y', 3000);
+        var value = wideUnicodeValues ? new string('\u6587', 2000) : "Short table value";
+        job.Segments[0].DataExtraction = new DocumentDataExtractionResult("Table", String.Empty, "2-3", [],
+            [new ExtractedTableValue("Rows", Enumerable.Range(0, 200).Select(index =>
+                new ExtractedTableRow([new("First", value + index), new("Second", value + index)])).ToArray())]);
+        await store.UpsertJobAsync(job);
+        var tenant = new TenantHarness { TenantId = "tenant-one", DisplayName = "Test" };
+        var harness = new Mock<IHarnessStore>();
+        harness.Setup(item => item.GetTenantAsync("tenant-one", It.IsAny<CancellationToken>())).ReturnsAsync(tenant);
+        var inspected = new List<JsonElement>();
+        var client = new Mock<IChatClient>();
+        client.Setup(chat => chat.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(async (IEnumerable<ChatMessage> _, ChatOptions options, CancellationToken token) =>
+            {
+                var search = Assert.IsAssignableFrom<AIFunction>(
+                    Assert.Single(options.Tools!, candidate => candidate.Name == "search_documents"));
+                await search.InvokeAsync(new AIFunctionArguments
+                    { ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery()) }, token);
+                var inspect = Assert.IsAssignableFrom<AIFunction>(
+                    Assert.Single(options.Tools!, candidate => candidate.Name == "inspect_document_slice"));
+                foreach (var offset in new[] { 0, 3000 })
+                {
+                    var response = await inspect.InvokeAsync(new AIFunctionArguments
+                        { ["jobId"] = "source", ["sliceIndex"] = 0, ["textOffset"] = offset }, token);
+                    var bytes = JsonSerializer.SerializeToUtf8Bytes(response);
+                    Assert.InRange(bytes.Length, 1, 32_000);
+                    using var document = JsonDocument.Parse(bytes);
+                    inspected.Add(document.RootElement.Clone());
+                }
+                return Final("DocumentAnswer", "Both original source windows remain available [1] [2].", "e1", "e2");
+            });
+        var catalog = new ModelCatalog(customClients:
+            new Dictionary<string, IChatClient> { [tenant.DefaultModelId] = client.Object });
+        var orchestrator = new AskAiOrchestrator(harness.Object, store, catalog, [],
+            NullLogger<AskAiOrchestrator>.Instance);
+
+        // Act
+        var run = await orchestrator.ExecuteRunAsync(CreateRun());
+
+        // Assert
+        Assert.Equal(JobStatus.Completed, run.Status);
+        Assert.Equal(2, run.Citations.Count);
+        Assert.Equal(new string('x', 3000), inspected[0].GetProperty("sourceText").GetString());
+        Assert.Equal(new string('y', 3000), inspected[1].GetProperty("sourceText").GetString());
+        Assert.All(inspected, result =>
+        {
+            Assert.Equal(200, result.GetProperty("inspectionCoverage").GetProperty("tableRowCount").GetInt32());
+            var table = result.GetProperty("dataExtraction").GetProperty("tables")[0];
+            Assert.True(table.GetProperty("rowsTruncated").GetBoolean());
+            Assert.InRange(table.GetProperty("rows").GetArrayLength(), 0, 10);
+        });
     }
 
     private static async Task<InMemoryJobStore> CreateDocumentStoreAsync()

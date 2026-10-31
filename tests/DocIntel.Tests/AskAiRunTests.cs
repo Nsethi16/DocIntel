@@ -1,4 +1,6 @@
 using DocIntel.Core.Features.AskAi;
+using DocIntel.Core.Authorization;
+using DocIntel.Core.Channels;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Models;
@@ -282,31 +284,193 @@ public sealed class AskAiRunTests
         Assert.Equal(JobStatus.Running, run.Status);
     }
 
-    [Fact]
-    public async Task Inline_Requests_Wait_When_A_Recovery_Worker_Already_Owns_The_Run()
+    [Theory]
+    [InlineData(false, AskAiChannelType.Email)]
+    [InlineData(false, AskAiChannelType.Teams)]
+    [InlineData(true, AskAiChannelType.Email)]
+    [InlineData(true, AskAiChannelType.Teams)]
+    public async Task Inline_Requests_Wait_When_A_Recovery_Worker_Already_Owns_The_Run(
+        bool file, AskAiChannelType channel)
     {
         // Arrange
-        var store = new Mock<IAskAiRunStore>(MockBehavior.Strict);
-        var run = CreateRun();
-        var running = CreateRun();
-        running.Status = JobStatus.Running;
-        var completed = CreateRun();
-        completed.Status = JobStatus.Completed;
-        completed.Answer = "Finished by the owner.";
-        store.Setup(s => s.UpsertRunAsync(run, It.IsAny<CancellationToken>())).Returns(Task.CompletedTask);
-        store.Setup(s => s.TryAcquireAsync(run.TenantId, run.RunId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync((IAskAiRunLease?)null);
-        store.SetupSequence(s => s.GetRunAsync(run.TenantId, run.RunId, It.IsAny<CancellationToken>()))
-            .ReturnsAsync(running).ReturnsAsync(completed);
+        var directory = Path.Combine("TestOutput", "DocIntel.InlineOwnership.Tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            IAskAiRunStore store = file ? new FileAskAiRunStore(directory) : new InMemoryAskAiRunStore();
+            var run = CreateRun(channel: channel);
+            Assert.True(await store.TryCreateRunAsync(run));
+            await using var owner = await store.TryAcquireAsync(run.TenantId, run.RunId);
+            owner!.Run.Status = JobStatus.Running;
+            owner.Run.ExecutionAttempts = 1;
+            await owner.SaveAsync();
+            await Assert.ThrowsAsync<InvalidOperationException>(() => store.UpsertRunAsync(run));
+            var client = new Mock<IChatClient>(MockBehavior.Strict);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+
+            // Act
+            var inline = CreateProcessor(store, client.Object).ExecuteInlineAsync(run, deadline.Token);
+            Assert.False(inline.IsCompleted);
+            owner.Run.Status = JobStatus.Completed;
+            owner.Run.Answer = "Finished by the owner.";
+            owner.Run.EmailHtmlBody = "<p>Finished by the owner.</p>";
+            owner.Run.TeamsAdaptiveCardJson = """{"text":"Finished by the owner."}""";
+            await owner.SaveAsync();
+            var result = await inline;
+
+            // Assert
+            Assert.Equal(JobStatus.Completed, result.Status);
+            Assert.Equal("Finished by the owner.", result.Answer);
+            Assert.Equal(1, result.ExecutionAttempts);
+            Assert.Equal(owner.Run.EmailHtmlBody, result.EmailHtmlBody);
+            Assert.Equal(owner.Run.TeamsAdaptiveCardJson, result.TeamsAdaptiveCardJson);
+            Assert.Equal(JobStatus.Queued, run.Status);
+            Assert.Equal(channel, result.ReplyChannel.ChannelType);
+            client.VerifyNoOtherCalls();
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Inline_Requests_Cannot_Reset_An_Already_Completed_Stored_Answer(bool file)
+    {
+        // Arrange
+        var directory = Path.Combine("TestOutput", "DocIntel.InlineCompleted.Tests", Guid.NewGuid().ToString("N"));
+        try
+        {
+            IAskAiRunStore store = file ? new FileAskAiRunStore(directory) : new InMemoryAskAiRunStore();
+            var request = CreateRun();
+            Assert.True(await store.TryCreateRunAsync(request));
+            await using (var owner = await store.TryAcquireAsync(request.TenantId, request.RunId))
+            {
+                owner!.Run.Status = JobStatus.Completed;
+                owner.Run.Answer = "Already completed by recovery.";
+                owner.Run.ExecutionAttempts = 1;
+                await owner.SaveAsync();
+            }
+            var client = new Mock<IChatClient>(MockBehavior.Strict);
+
+            // Act
+            var result = await CreateProcessor(store, client.Object).ExecuteInlineAsync(request);
+
+            // Assert
+            Assert.Equal(JobStatus.Completed, result.Status);
+            Assert.Equal("Already completed by recovery.", result.Answer);
+            Assert.Equal(1, result.ExecutionAttempts);
+            Assert.Equal(JobStatus.Queued, request.Status);
+            client.VerifyNoOtherCalls();
+        }
+        finally
+        {
+            if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task An_Inline_Replay_Cannot_Use_Another_Actors_Stored_Run()
+    {
+        // Arrange
+        var store = new InMemoryAskAiRunStore();
+        var request = CreateRun();
+        request.Actor = new ActorIdentity(Guid.NewGuid(), Guid.NewGuid());
+        await store.TryCreateRunAsync(request);
+        var differentActor = CreateRun();
+        differentActor.Actor = new ActorIdentity(request.Actor.DirectoryTenantId, Guid.NewGuid());
         var client = new Mock<IChatClient>(MockBehavior.Strict);
 
+        // Act / Assert
+        await Assert.ThrowsAsync<InvalidDataException>(() =>
+            CreateProcessor(store, client.Object).ExecuteInlineAsync(differentActor));
+        Assert.Equal(request.Actor, (await store.GetRunAsync(request.TenantId, request.RunId))!.Actor);
+        client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Recovery_Completed_Delivery_Is_Not_Reset_Or_Resent_By_Duplicate_Inline_Requests()
+    {
+        // Arrange
+        var store = new InMemoryAskAiRunStore();
+        var request = CreateRun();
+        request.Actor = new ActorIdentity(Guid.NewGuid(), Guid.NewGuid());
+        request.ChannelDelivery = new()
+        {
+            Transport = "Teams", Profile = "configured", DestinationId = "private-chat",
+            AccessFingerprint = ChannelDelivery.GetAccessFingerprint(DocumentAccessScope.Unrestricted)
+        };
+        await store.TryCreateRunAsync(request);
+        await using (var owner = await store.TryAcquireAsync(request.TenantId, request.RunId))
+        {
+            owner!.Run.Status = JobStatus.Completed;
+            owner.Run.Answer = "Hello from the recovery owner.";
+            owner.Run.ExecutionAttempts = 1;
+            await owner.SaveAsync();
+        }
+        var transport = new Mock<IChannelTransport>();
+        transport.SetupGet(channel => channel.Name).Returns("Teams");
+        transport.Setup(channel => channel.SendAsync(
+            It.IsAny<AskAiRun>(), It.IsAny<ChannelDelivery>(), It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var harness = new Mock<IHarnessStore>();
+        harness.Setup(config => config.GetTenantAsync(request.TenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TenantHarness
+            {
+                TenantId = request.TenantId, DisplayName = "Tenant", Agent = new() { TeamsEnabled = true }
+            });
+        var access = new Mock<ITenantAccessResolver>();
+        access.Setup(resolver => resolver.ResolveAsync(request.Actor, request.TenantId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(DocumentAccessScope.Unrestricted);
+        var delivery = new ChannelDeliveryProcessor([transport.Object],
+            NullLogger<ChannelDeliveryProcessor>.Instance, access.Object, harness.Object, new InMemoryJobStore());
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+        var processor = CreateProcessor(store, client.Object, delivery: delivery);
+
         // Act
-        var result = await CreateProcessor(store.Object, client.Object).ExecuteInlineAsync(run);
+        await processor.ExecuteInlineAsync(request);
+        var result = await processor.ExecuteInlineAsync(request);
 
         // Assert
         Assert.Equal(JobStatus.Completed, result.Status);
-        Assert.Equal("Finished by the owner.", result.Answer);
+        Assert.Equal(ChannelDeliveryStatus.Sent, result.ChannelDelivery!.Status);
+        Assert.Equal(1, result.ExecutionAttempts);
+        Assert.Equal(ChannelDeliveryStatus.Pending, request.ChannelDelivery.Status);
+        transport.Verify(channel => channel.SendAsync(
+            It.IsAny<AskAiRun>(), It.IsAny<ChannelDelivery>(), It.IsAny<CancellationToken>()), Times.Once);
         client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Cancelling_An_Inline_Wait_Does_Not_Erase_The_Recovery_Owners_Run()
+    {
+        // Arrange
+        var store = new InMemoryAskAiRunStore();
+        var run = CreateRun();
+        await store.TryCreateRunAsync(run);
+        var owner = (await store.TryAcquireAsync(run.TenantId, run.RunId))!;
+        await using (owner)
+        {
+            owner.Run.Status = JobStatus.Running;
+            owner.Run.ExecutionAttempts = 1;
+            await owner.SaveAsync();
+            using var cancelled = new CancellationTokenSource();
+            var client = new Mock<IChatClient>(MockBehavior.Strict);
+
+            // Act
+            var inline = CreateProcessor(store, client.Object).ExecuteInlineAsync(run, cancelled.Token);
+            cancelled.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => inline);
+
+            // Assert
+            var persisted = (await store.GetRunAsync(run.TenantId, run.RunId))!;
+            Assert.Equal(JobStatus.Running, persisted.Status);
+            Assert.Equal(1, persisted.ExecutionAttempts);
+            client.VerifyNoOtherCalls();
+        }
+        Assert.Equal(new AskAiQueueTicket(run.RunId, run.TenantId),
+            Assert.Single(await store.ListUnfinishedRunsAsync(100)));
     }
 
     [Fact]
@@ -444,11 +608,13 @@ public sealed class AskAiRunTests
         Assert.Contains("8,000", error);
     }
 
-    private static AskAiRun CreateRun(string tenantId = "tenant-one") => new()
+    private static AskAiRun CreateRun(
+        string tenantId = "tenant-one", AskAiChannelType channel = AskAiChannelType.Web) => new()
     {
         TenantId = tenantId,
         RunId = "same-id",
-        Question = "Hi"
+        Question = "Hi",
+        ReplyChannel = new() { ChannelType = channel }
     };
 
     private static ChatResponse Greeting() => new(new ChatMessage(ChatRole.Assistant,
@@ -465,7 +631,7 @@ public sealed class AskAiRunTests
 
     private static AskAiRunProcessor CreateProcessor(
         IAskAiRunStore store, IChatClient client, AskAiExecutionOptions? options = null,
-        IEnumerable<IAskAiToolProvider>? providers = null)
+        IEnumerable<IAskAiToolProvider>? providers = null, ChannelDeliveryProcessor? delivery = null)
     {
         var tenant = new TenantHarness { TenantId = "tenant-one", DisplayName = "Test" };
         var harness = new Mock<IHarnessStore>();
@@ -477,6 +643,7 @@ public sealed class AskAiRunTests
         var orchestrator = new AskAiOrchestrator(
             harness.Object, new InMemoryJobStore(), catalog, providers, NullLogger<AskAiOrchestrator>.Instance);
         return new AskAiRunProcessor(
-            store, orchestrator, options ?? new AskAiExecutionOptions(), NullLogger<AskAiRunProcessor>.Instance);
+            store, orchestrator, options ?? new AskAiExecutionOptions(),
+            NullLogger<AskAiRunProcessor>.Instance, delivery);
     }
 }

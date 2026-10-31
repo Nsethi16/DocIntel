@@ -37,7 +37,7 @@ public static class AskAiConversationContext
                 previous.Status != JobStatus.Completed || String.IsNullOrWhiteSpace(previous.Answer))
                 throw new UnauthorizedAccessException("The prior conversation is unavailable to this actor.");
             if (previous.Citations.Any(citation => !previous.SourceVersions.ContainsKey(citation.JobId)) ||
-                previous.DocumentsEvaluated > 0 && previous.SourceVersions.Count == 0)
+                previous.Analyses.Count > 0 && previous.SourceVersions.Count == 0)
                 throw new AskAiSourceChangedException();
             var documentIds = previous.ReferencedJobIds.Concat(previous.Citations.Select(citation => citation.JobId))
                 .Concat(previous.SourceVersions.Keys).Distinct(StringComparer.Ordinal);

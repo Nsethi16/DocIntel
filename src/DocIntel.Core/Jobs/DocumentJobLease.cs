@@ -11,6 +11,9 @@ public interface IDocumentJobLease : IAsyncDisposable
     Task SaveAsync(CancellationToken cancellationToken = default);
 }
 
+internal sealed class DocumentPublicationAccessException() : UnauthorizedAccessException(
+    "Document processing permission changed before publication.");
+
 internal sealed class DocumentJobLease : IDocumentJobLease
 {
     private readonly Func<CancellationToken, Task<bool>> _save;
@@ -51,6 +54,8 @@ internal sealed class DocumentJobLease : IDocumentJobLease
                 throw new OperationCanceledException("Document ownership was lost.", _lost.Token);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (DocumentStorageLimitException) { throw; }
+            catch (DocumentPublicationAccessException) { throw; }
             catch
             {
                 _lost.Cancel();

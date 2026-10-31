@@ -25,6 +25,12 @@ let tenants = [];
     let graphSimAnimFrame = null;
     let graphCanvasDisposer = null;
     let graphCanvasRefresh = null;
+    let graphCanvasNodeIds = new Set();
+    const maximumGraphCanvasNodes = 500;
+    const maximumGraphCanvasEdges = 2000;
+    const maximumGraphInspectorLinks = 100;
+    const maximumGraphEntityOptions = 200;
+    const graphCanvasDescription = 'Document and entity connections. Use arrow keys to focus a node, Enter to select it, and Escape to clear selection. Documents provides an alternative without the canvas.';
     let graphLayoutSize = null;
     let graphCustomNodePositions = {};
     let askAiQuestionInput = '';
@@ -632,18 +638,8 @@ let tenants = [];
 
     function filterEntityPopoverOptions(query) {
       graphEntityDropdownSearch = query || '';
-      const q = graphEntityDropdownSearch.trim().toLowerCase();
-      document.querySelectorAll('#entityPopoverList .entity-group-col').forEach(col => {
-        const groupName = (col.getAttribute('data-group') || '').toLowerCase();
-        let anyVisible = false;
-        col.querySelectorAll('.entity-value-option').forEach(opt => {
-          const text = (opt.getAttribute('data-search') || '').toLowerCase();
-          const show = !q || groupName.includes(q) || text.includes(q);
-          opt.style.display = show ? 'flex' : 'none';
-          if (show) anyVisible = true;
-        });
-        col.style.display = anyVisible ? 'flex' : 'none';
-      });
+      const list = document.getElementById('entityPopoverList');
+      if (list) list.innerHTML = renderGraphEntityOptions(computeFilteredGraphData().allEntityValuePairs);
     }
 
     function onGraphEntityValueFilterChanged(val) {
@@ -726,6 +722,7 @@ let tenants = [];
       graphCanvasDisposer?.();
       graphCanvasDisposer = null;
       graphCanvasRefresh = null;
+      graphCanvasNodeIds.clear();
       graphHoveredNodeId = null;
     }
 
@@ -1336,6 +1333,11 @@ let tenants = [];
       }
     }
 
+    function graphEntityPairKey(name, value) {
+      const escape = text => text.replaceAll('%', '%25').replaceAll('|', '%7C');
+      return `${escape(name)}||${escape(value)}`;
+    }
+
     function computeFilteredGraphData() {
       const completedJobs = tenantJobs.filter(j => j.status === 'Completed');
 
@@ -1349,7 +1351,7 @@ let tenants = [];
             if (!e || !e.name || !e.value) return;
             const eName = e.name.trim();
             const eVal = e.value.trim();
-            const pairKey = `${eName}||${eVal}`;
+            const pairKey = graphEntityPairKey(eName, eVal);
             if (seenInJob.has(pairKey)) return;
             seenInJob.add(pairKey);
 
@@ -1383,7 +1385,7 @@ let tenants = [];
             if (!e || !e.name || !e.value) return;
             const eName = e.name.trim();
             const eVal = e.value.trim();
-            const pairKey = `${eName}||${eVal}`;
+            const pairKey = graphEntityPairKey(eName, eVal);
             docEntityNamesSet.add(eName);
             docEntityPairsSet.add(pairKey);
             docEntities.push({ eName, eVal, pairKey, category: (e.category || 'Entity').toUpperCase() });
@@ -1397,6 +1399,8 @@ let tenants = [];
         for (const reqPair of graphSelectedEntityValues) {
           if (!docEntityPairsSet.has(reqPair)) return;
         }
+        if (q && !cleanFileName.toLowerCase().includes(q) && !docTypesSummary.toLowerCase().includes(q) &&
+          !docEntities.some(entity => entity.eName.toLowerCase().includes(q) || entity.eVal.toLowerCase().includes(q))) return;
 
         const hasAnyFilter = graphSelectedEntityNames.size > 0 || graphSelectedEntityValues.size > 0;
         const matchingEntitiesForDoc = [];
@@ -1467,16 +1471,42 @@ let tenants = [];
       };
     }
 
-    function renderDocumentGraphTab(body) {
-      const data = computeFilteredGraphData();
-      const totalSelected = graphSelectedEntityNames.size + graphSelectedEntityValues.size;
-
-      // Group all available entity values by Entity Name for the single multi-select picker
+    function renderGraphEntityOptions(pairs) {
+      const query = graphEntityDropdownSearch.trim().toLowerCase();
+      const matches = pairs.filter(pair => !query || pair.name.toLowerCase().includes(query) ||
+        pair.value.toLowerCase().includes(query));
       const groupedByType = new Map();
-      data.allEntityValuePairs.forEach(p => {
+      const countsByType = new Map();
+      matches.forEach(pair => countsByType.set(pair.name, (countsByType.get(pair.name) || 0) + 1));
+      matches.slice(0, maximumGraphEntityOptions).forEach(p => {
         if (!groupedByType.has(p.name)) groupedByType.set(p.name, []);
         groupedByType.get(p.name).push(p);
       });
+      const groups = [...groupedByType.entries()].map(([groupName, items]) => {
+        const isTypeSelected = graphSelectedEntityNames.has(groupName);
+        return `
+          <div class="entity-group-col" data-group="${escapeHtml(groupName)}">
+            <button type="button" class="entity-group-header" aria-pressed="${isTypeSelected}" data-click="toggleGraphEntityNameFilter_arg_event" data-args="[${escapeJsArg(groupName)}]">
+              <span>${isTypeSelected ? '☑' : '☐'} Has ${escapeHtml(groupName)}</span>
+              <span class="entity-option-count">${countsByType.get(groupName)}</span>
+            </button>
+            ${items.map(item => {
+              const checked = graphSelectedEntityValues.has(item.pairKey);
+              return `<button type="button" class="entity-value-option ${checked ? 'checked' : ''}" aria-pressed="${checked}" data-search="${escapeHtml(item.value)}" data-click="toggleGraphEntityValueSelection_arg_event" data-args="[${escapeJsArg(item.pairKey)}]">
+                <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${checked ? '✓ ' : ''}${escapeHtml(item.value)}</span>
+                <span class="entity-option-count">${item.count} doc${item.count === 1 ? '' : 's'}</span>
+              </button>`;
+            }).join('')}
+          </div>`;
+      }).join('');
+      const notice = matches.length > maximumGraphEntityOptions
+        ? `<p class="entity-filter-note" role="status">Showing ${maximumGraphEntityOptions} of ${matches.length} values. Search to find any other entity or value.</p>` : '';
+      return notice + (groups || '<p class="entity-filter-note">No matching extracted entities are available.</p>');
+    }
+
+    function renderDocumentGraphTab(body) {
+      const data = computeFilteredGraphData();
+      const totalSelected = graphSelectedEntityNames.size + graphSelectedEntityValues.size;
 
       const selectedTagsList = [
         ...[...graphSelectedEntityNames].map(name => `
@@ -1486,7 +1516,7 @@ let tenants = [];
           </span>
         `),
         ...[...graphSelectedEntityValues].map(pk => {
-          const [eName, eVal] = pk.split('||');
+          const [eName, eVal] = pk.split('||').map(value => value.replaceAll('%7C', '|').replaceAll('%25', '%'));
           return `
             <span class="entity-selected-tag" data-click="stopPropagation">
               <span><strong>${escapeHtml(eName)}:</strong> ${escapeHtml(eVal)}</span>
@@ -1497,26 +1527,7 @@ let tenants = [];
       ];
       const selectedTagsHtml = selectedTagsList.join('<span class="graph-filter-and">AND</span>');
 
-      const groupsHtml = [...groupedByType.entries()].map(([groupName, items]) => {
-        const isTypeSelected = graphSelectedEntityNames.has(groupName);
-        return `
-          <div class="entity-group-col" data-group="${escapeHtml(groupName)}">
-            <button type="button" class="entity-group-header" aria-pressed="${isTypeSelected}" data-click="toggleGraphEntityNameFilter_arg_event" data-args="[${escapeJsArg(groupName)}]">
-              <span>${isTypeSelected ? '☑' : '☐'} Has ${escapeHtml(groupName)}</span>
-              <span class="entity-option-count">${items.length}</span>
-            </button>
-            ${items.map(item => {
-              const isValChecked = graphSelectedEntityValues.has(item.pairKey);
-              return `
-                <button type="button" class="entity-value-option ${isValChecked ? 'checked' : ''}" aria-pressed="${isValChecked}" data-search="${escapeHtml(item.value)}" data-click="toggleGraphEntityValueSelection_arg_event" data-args="[${escapeJsArg(item.pairKey)}]">
-                  <span style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${isValChecked ? '✓ ' : ''}${escapeHtml(item.value)}</span>
-                  <span class="entity-option-count">${item.count} doc${item.count === 1 ? '' : 's'}</span>
-                </button>
-              `;
-            }).join('')}
-          </div>
-        `;
-      }).join('');
+      const groupsHtml = renderGraphEntityOptions(data.allEntityValuePairs);
 
       body.innerHTML = `
         <div class="graph-shell" data-click="closeGraphDropdown">
@@ -1565,7 +1576,9 @@ let tenants = [];
     }
 
     function renderGraphDocumentLinks(documents) {
-      return documents.map(d => `
+      const notice = documents.length > maximumGraphInspectorLinks
+        ? `<p class="graph-detail-meta">Showing ${maximumGraphInspectorLinks} of ${documents.length} documents. Narrow entity filters or use Documents search to reach every document.</p>` : '';
+      return notice + documents.slice(0, maximumGraphInspectorLinks).map(d => `
         <button type="button" class="graph-inspector-item" data-click="jumpFromGraphToSlice_arg_arg"
           data-args="[${escapeJsArg(d.jobId)},-1]">
           <span class="graph-document-name">${escapeHtml(d.docName)} <span aria-hidden="true">↗</span></span>
@@ -1574,11 +1587,38 @@ let tenants = [];
       `).join('');
     }
 
+    function buildGraphCanvasWindow(docNodes, entityNodes, edges) {
+      const allIds = new Set([...docNodes, ...entityNodes].map(node => node.id));
+      const preferred = new Set([graphFocusedNodeId, selectedJobId ? `doc:${selectedJobId}` : null,
+        ...[...graphSelectedEntityValues].map(pair => `ent:${pair}`)].filter(id => allIds.has(id)));
+      const visible = new Set([...preferred].slice(0, maximumGraphCanvasNodes));
+      const visibleEdges = [];
+      for (const preferredPass of [true, false]) {
+        for (const edge of edges) {
+          if ((preferred.has(edge.source) || preferred.has(edge.target)) !== preferredPass) continue;
+          if (visibleEdges.length >= maximumGraphCanvasEdges) break;
+          const missing = [edge.source, edge.target].filter(id => !visible.has(id));
+          if (visible.size + missing.length > maximumGraphCanvasNodes) continue;
+          missing.forEach(id => visible.add(id));
+          visibleEdges.push(edge);
+        }
+      }
+      return {
+        docNodes: docNodes.filter(node => visible.has(node.id)),
+        entityNodes: entityNodes.filter(node => visible.has(node.id)),
+        edges: visibleEdges,
+        limited: visible.size < allIds.size || visibleEdges.length < edges.length,
+        totalNodes: allIds.size,
+        totalEdges: edges.length
+      };
+    }
+
     function renderDocumentGraphCanvasOnly(keepCanvas = false) {
       const container = document.getElementById('graphWorkbenchContainer');
       if (!container) return;
 
       const reuseCanvas = keepCanvas && graphDepthMode === 'GLOBAL' &&
+        (!graphFocusedNodeId || graphCanvasNodeIds.has(graphFocusedNodeId)) &&
         document.getElementById('obsidianGraphCanvas')?.isConnected && graphCanvasRefresh;
       if (!reuseCanvas) stopGraphCanvas();
 
@@ -1610,8 +1650,11 @@ let tenants = [];
 
       const focusedNode = graphFocusedNodeId ? nodeById.get(graphFocusedNodeId) : null;
       if (!focusedNode) graphFocusedNodeId = null;
+      const canvasWindow = buildGraphCanvasWindow(docNodes, entityNodes, edges);
+      const limitNotice = canvasWindow.limited
+        ? `Canvas shows ${canvasWindow.docNodes.length + canvasWindow.entityNodes.length} of ${canvasWindow.totalNodes} nodes and ${canvasWindow.edges.length} of ${canvasWindow.totalEdges} connections. Narrow entity filters to see a smaller view.` : '';
       const infoStrip = document.getElementById('graphInfoStripContainer');
-      if (infoStrip) infoStrip.textContent = `${edges.length} connection${edges.length === 1 ? '' : 's'}`;
+      if (infoStrip) infoStrip.textContent = `${edges.length} connection${edges.length === 1 ? '' : 's'}${limitNotice ? ' · Limited canvas' : ''}`;
       const detailsToggle = document.getElementById('graphDetailsToggle');
       if (detailsToggle) {
         detailsToggle.textContent = graphDetailsOpen ? 'Hide Details' : `Documents (${docNodes.length})`;
@@ -1637,7 +1680,8 @@ let tenants = [];
           <button type="button" class="ghost-action-btn" data-click="jumpFromGraphToSlice_arg_arg"
             data-args="[${escapeJsArg(focusedNode.jobId)},-1]">Open Document ↗</button>
           <h3 class="graph-detail-subtitle">Entities (${connectedEntities.length})</h3>
-          ${connectedEntities.map(e => `
+          ${connectedEntities.length > maximumGraphInspectorLinks ? `<p class="graph-detail-meta">Showing ${maximumGraphInspectorLinks} of ${connectedEntities.length} entities. Use entity filters to inspect other connections.</p>` : ''}
+          ${connectedEntities.slice(0, maximumGraphInspectorLinks).map(e => `
             <button type="button" class="graph-inspector-item" data-click="focusGraphNode_arg" data-args="[${escapeJsArg(e.id)}]">
               <span class="graph-detail-meta">${escapeHtml(e.entityName)}</span>
               <span>${escapeHtml(e.entityValue)}</span>
@@ -1665,6 +1709,7 @@ let tenants = [];
       const filtered = graphSelectedEntityNames.size > 0 || graphSelectedEntityValues.size > 0;
       container.innerHTML = `
         <div class="graph-canvas-card">
+          ${limitNotice ? `<p class="graph-limit-notice" role="status">${escapeHtml(limitNotice)}</p>` : ''}
           ${docNodes.length === 0 ? `
             <div class="graph-empty">
               <h2>${filtered ? 'No Matching Connections' : 'No Connections Yet'}</h2>
@@ -1673,7 +1718,7 @@ let tenants = [];
               ${filtered ? '<button type="button" class="ghost-action-btn" data-click="resetGraphFilters">Clear Filters</button>' : ''}
             </div>
           ` : `
-            <canvas id="obsidianGraphCanvas" aria-label="Document and entity connections. Use Documents to inspect the connections without the canvas."></canvas>
+            <canvas id="obsidianGraphCanvas" tabindex="0" aria-label="${escapeHtml(graphCanvasDescription)}"></canvas>
           `}
 
           ${docNodes.length ? `
@@ -1697,7 +1742,7 @@ let tenants = [];
       `;
 
       if (docNodes.length > 0) {
-        initObsidianForceCanvas(docNodes, entityNodes, edges);
+        initObsidianForceCanvas(canvasWindow.docNodes, canvasWindow.entityNodes, canvasWindow.edges);
       }
     }
 
@@ -1712,6 +1757,7 @@ let tenants = [];
       canvas.height = Math.round(height * dpr);
       const ctx = canvas.getContext('2d');
       if (!ctx) throw new Error('The graph canvas could not be initialized.');
+      graphCanvasNodeIds = new Set([...docNodes, ...entityNodes].map(node => node.id));
       const fontFamily = getComputedStyle(canvas).fontFamily;
       const readPalette = () => {
         const style = getComputedStyle(canvas);
@@ -1738,6 +1784,8 @@ let tenants = [];
 
       const cx = width / 2;
       const cy = height / 2;
+      const baseNodeRadius = Math.min(10, Math.max(3,
+        Math.sqrt(width * height / Math.max(1, docNodes.length + entityNodes.length)) * 0.2));
 
       const simNodes = [];
       const simNodeMap = new Map();
@@ -1754,7 +1802,7 @@ let tenants = [];
           label: e.entityValue,
           subLabel: e.entityName,
           degree,
-          radius: Math.min(16, 10 + Math.sqrt(degree)),
+          radius: baseNodeRadius * Math.min(1.6, 1 + Math.sqrt(degree) * 0.1),
           x: saved ? saved.x : cx + Math.cos(angle) * ringR + ((i % 3) - 1) * 18,
           y: saved ? saved.y : cy + Math.sin(angle) * ringR + ((i % 2) - 0.5) * 18,
           vx: 0,
@@ -1776,7 +1824,7 @@ let tenants = [];
           label: d.docName,
           subLabel: d.pageRange,
           degree,
-          radius: 10,
+          radius: baseNodeRadius,
           x: saved ? saved.x : cx + Math.cos(angle) * outerR,
           y: saved ? saved.y : cy + Math.sin(angle) * outerR,
           vx: 0,
@@ -1802,6 +1850,7 @@ let tenants = [];
       let startMouseX = 0;
       let startMouseY = 0;
       let pointerMoved = false;
+      let keyboardFocusNodeId = null;
 
       function screenToWorld(sx, sy) {
         return {
@@ -1885,7 +1934,7 @@ let tenants = [];
           n.vy *= 0.78;
           n.x += n.vx;
           n.y += n.vy;
-          const margin = labelWidth / 2 + 12;
+          const margin = Math.max(12, n.radius + 5);
           n.x = Math.min(width - margin, Math.max(margin, n.x));
           n.y = Math.min(height - 56, Math.max(24, n.y));
           graphCustomNodePositions[n.id] = { x: n.x, y: n.y };
@@ -1907,7 +1956,7 @@ let tenants = [];
         ctx.scale(graphZoom, graphZoom);
         ctx.translate(-cx, -cy);
 
-        const activeAnchorId = graphHoveredNodeId || graphFocusedNodeId;
+        const activeAnchorId = graphHoveredNodeId || keyboardFocusNodeId || graphFocusedNodeId;
         const neighborSet = new Set();
         if (activeAnchorId) {
           neighborSet.add(activeAnchorId);
@@ -1933,15 +1982,20 @@ let tenants = [];
             ctx.lineWidth = 0.75 / Math.sqrt(graphZoom);
           } else {
             ctx.strokeStyle = palette.edge;
-            ctx.lineWidth = 1.2 / Math.sqrt(graphZoom);
+            ctx.lineWidth = (simNodes.length > 200 ? 0.55 : 1.2) / Math.sqrt(graphZoom);
           }
+          ctx.globalAlpha = activeAnchorId || simNodes.length <= 200 ? 1 : 0.35;
           ctx.stroke();
         }
+        ctx.globalAlpha = 1;
 
-        // Draw nodes & subtle semantic-zoom labels
+        // Draw nodes and interaction-only labels.
         for (let i = 0; i < simNodes.length; i++) {
           const n = simNodes[i];
-          const isDimmed = activeAnchorId && !neighborSet.has(n.id);
+          const isSelectedEntity = n.type === 'entity' && graphSelectedEntityValues.has(n.id.substring(4));
+          const showLabel = n.id === graphHoveredNodeId || n.id === keyboardFocusNodeId ||
+            n.id === graphFocusedNodeId || isSelectedEntity;
+          const isDimmed = activeAnchorId && !neighborSet.has(n.id) && !showLabel;
           const isFocusedOrHovered = n.id === activeAnchorId;
 
           ctx.save();
@@ -1963,13 +2017,6 @@ let tenants = [];
           ctx.lineWidth = isFocusedOrHovered ? 1.8 : 1.0;
           ctx.strokeStyle = palette.surface;
           ctx.stroke();
-
-          // Keep dense graphs quiet until the user focuses or zooms into a connection.
-          const showLabel = isFocusedOrHovered ||
-            (activeAnchorId && neighborSet.has(n.id)) ||
-            (n.type === 'entity' && n.degree >= 3) ||
-            graphZoom >= 1.25 ||
-            simNodes.length <= 12;
 
           if (showLabel) {
             const fontSize = 13;
@@ -2004,6 +2051,37 @@ let tenants = [];
         if (graphSimAnimFrame === null && canvas.isConnected)
           graphSimAnimFrame = requestAnimationFrame(drawFrame);
       }
+
+      canvas.onkeydown = event => {
+        if (!simNodes.length) return;
+        if (['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp'].includes(event.key)) {
+          event.preventDefault();
+          const current = simNodes.findIndex(node => node.id === keyboardFocusNodeId);
+          const direction = ['ArrowLeft', 'ArrowUp'].includes(event.key) ? -1 : 1;
+          const index = current < 0 ? (direction > 0 ? 0 : simNodes.length - 1)
+            : (current + direction + simNodes.length) % simNodes.length;
+          const node = simNodes[index];
+          keyboardFocusNodeId = node.id;
+          canvas.setAttribute('aria-label', `${node.label} · ${node.subLabel}. Arrow keys change node; Enter selects; Escape clears.`);
+          requestDraw();
+        } else if (event.key === 'Enter' && keyboardFocusNodeId) {
+          event.preventDefault();
+          focusGraphNode(keyboardFocusNodeId);
+        } else if (event.key === 'Escape') {
+          event.preventDefault();
+          keyboardFocusNodeId = null;
+          graphFocusedNodeId = null;
+          graphHoveredNodeId = null;
+          graphDetailsOpen = false;
+          canvas.setAttribute('aria-label', graphCanvasDescription);
+          renderDocumentGraphCanvasOnly(true);
+        }
+      };
+      canvas.onblur = () => {
+        keyboardFocusNodeId = null;
+        canvas.setAttribute('aria-label', graphCanvasDescription);
+        requestDraw();
+      };
 
       canvas.onmousedown = (e) => {
         const b = canvas.getBoundingClientRect();

@@ -79,7 +79,7 @@ public static class AskAiAnalysisEngine
                     continue;
                 }
                 raw = Normalize(raw);
-                if (raw.Length > 500 || !ContainsValue(quote, raw, column.Kind == "number"))
+                if (raw.Length > 500 || !ContainsValue(quote, raw, column.Kind == "number", unit))
                     throw new ArgumentException("Every supplied cell must occur in that record's original-source quote.");
                 cells[column.Key] = column.Kind switch
                 {
@@ -157,7 +157,7 @@ public static class AskAiAnalysisEngine
             if (request.Operation == "outliers")
             {
                 notes.Add("Outliers use Tukey's 1.5xIQR rule within each unit, with at least four source records.");
-                foreach (var group in records.GroupBy(record => record.Unit, StringComparer.OrdinalIgnoreCase))
+                foreach (var group in records.GroupBy(record => record.Unit, StringComparer.Ordinal))
                 {
                     if (group.Count() < 4)
                     {
@@ -264,7 +264,7 @@ public static class AskAiAnalysisEngine
 
     private static string Normalize(string value) => Regex.Replace(value, @"\s+", " ").Trim();
 
-    private static bool ContainsValue(string text, string value, bool numeric)
+    private static bool ContainsValue(string text, string value, bool numeric, string unit)
     {
         var index = -1;
         while ((index = text.IndexOf(value, index + 1, StringComparison.OrdinalIgnoreCase)) >= 0)
@@ -274,6 +274,35 @@ public static class AskAiAnalysisEngine
             var continuesNumber = (before is '.' or ',') && index > 1 && Char.IsDigit(text[index - 2]) ||
                 (after is '.' or ',') && index + value.Length + 1 < text.Length &&
                 Char.IsDigit(text[index + value.Length + 1]);
+            if (numeric)
+            {
+                var left = index - 1;
+                var right = index + value.Length;
+                while (left >= 0 && Char.IsWhiteSpace(text[left])) left--;
+                while (right < text.Length && Char.IsWhiteSpace(text[right])) right++;
+                if (unit.Length > 0 && left + 1 >= unit.Length &&
+                    text.AsSpan(left + 1 - unit.Length, unit.Length).SequenceEqual(unit.AsSpan()))
+                {
+                    left -= unit.Length;
+                    while (left >= 0 && Char.IsWhiteSpace(text[left])) left--;
+                }
+                if (unit.Length > 0 && right + unit.Length <= text.Length &&
+                    text.AsSpan(right, unit.Length).SequenceEqual(unit.AsSpan()))
+                {
+                    right += unit.Length;
+                    while (right < text.Length && Char.IsWhiteSpace(text[right])) right++;
+                }
+                while (left >= 0 && Char.GetUnicodeCategory(text[left]) == UnicodeCategory.CurrencySymbol) left--;
+                while (left >= 0 && Char.IsWhiteSpace(text[left])) left--;
+                while (right < text.Length && Char.GetUnicodeCategory(text[right]) == UnicodeCategory.CurrencySymbol) right++;
+                while (right < text.Length && Char.IsWhiteSpace(text[right])) right++;
+                var omittedMarker = left >= 0 && (text[left] is '+' or '-' or '\u2212' or '(') ||
+                    right < text.Length && (text[right] is '+' or '-' or '\u2212' or ')');
+                var separatedDigits = Char.IsWhiteSpace(before) && left >= 0 && Char.IsDigit(text[left]) &&
+                    Char.IsDigit(value[0]) || Char.IsWhiteSpace(after) && right < text.Length &&
+                    Char.IsDigit(text[right]) && Char.IsDigit(value[^1]);
+                if (omittedMarker || separatedDigits) continue;
+            }
             if ((!Char.IsLetterOrDigit(value[0]) || !Char.IsLetterOrDigit(before)) &&
                 (!Char.IsLetterOrDigit(value[^1]) || !Char.IsLetterOrDigit(after)) &&
                 (!numeric || !continuesNumber))
@@ -284,10 +313,11 @@ public static class AskAiAnalysisEngine
 
     private static decimal ParseNumber(string raw, string unit, string format)
     {
-        var value = unit.Length == 0 ? raw : raw.Replace(unit, String.Empty, StringComparison.OrdinalIgnoreCase);
+        var value = unit.Length == 0 ? raw : raw.Replace(unit, String.Empty, StringComparison.Ordinal);
         value = new string(value.Where(character =>
             Char.GetUnicodeCategory(character) != UnicodeCategory.CurrencySymbol && character != '%').ToArray()).Trim();
-        if (value.StartsWith('(') && value.EndsWith(')')) value = "-" + value[1..^1];
+        if (value.StartsWith('(') && value.EndsWith(')')) value = "-" + value[1..^1].Trim();
+        value = Regex.Replace(value.Replace('\u2212', '-'), @"^([+-])\s+(?=\d)", "$1");
         var pattern = format == "dot-decimal"
             ? @"^[+-]?(?:\d{1,3}(?:[ ,]\d{3})+|\d+)(?:\.\d+)?$"
             : @"^[+-]?(?:\d{1,3}(?:[ .]\d{3})+|\d+)(?:,\d+)?$";

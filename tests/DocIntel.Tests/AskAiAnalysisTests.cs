@@ -6,6 +6,58 @@ namespace DocIntel.Tests;
 public sealed class AskAiAnalysisTests
 {
     [Theory]
+    [InlineData("-100.00")]
+    [InlineData("(100.00)")]
+    [InlineData("- 100.00")]
+    [InlineData("\u2212100.00")]
+    [InlineData("1 100.00")]
+    public void Numeric_Cells_Cannot_Drop_Credit_Markers_Or_Separated_Thousands(string sourceAmount)
+    {
+        // Arrange
+        var fixture = Invoices("sum", "table", "supplier", ("Contoso", sourceAmount, "USD", "2026-01-01"));
+        fixture.Request.Rows[0].Cells["amount"] = "100.00";
+
+        // Act / Assert
+        Assert.Throws<ArgumentException>(() => AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence));
+    }
+
+    [Theory]
+    [InlineData("-100.00")]
+    [InlineData("(100.00)")]
+    [InlineData("- 100.00")]
+    [InlineData("\u2212100.00")]
+    public void Complete_Quoted_Credit_Amounts_Retain_Their_Negative_Value(string sourceAmount)
+    {
+        // Arrange
+        var fixture = Invoices("sum", "table", "supplier", ("Credit", sourceAmount, "USD", "2026-01-01"));
+
+        // Act
+        var result = AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence);
+
+        // Assert
+        Assert.Equal(-100m, Assert.Single(result.Rows).Cells["value"]);
+    }
+
+    [Fact]
+    public void Outlier_Quartiles_Do_Not_Combine_Case_Sensitive_Physical_Units()
+    {
+        // Arrange
+        var fixture = Invoices("outliers", "table", "supplier",
+            ("Reading 1", "1", "mW", "2026-01-01"),
+            ("Reading 2", "1", "mW", "2026-01-02"),
+            ("Reading 3", "1", "mW", "2026-01-03"),
+            ("Reading 4", "1000", "MW", "2026-01-04"));
+
+        // Act
+        var result = AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence);
+
+        // Assert
+        Assert.Empty(result.Rows);
+        Assert.Contains(result.Notes, note => note.Contains("Insufficient records for outlier detection in mW."));
+        Assert.Contains(result.Notes, note => note.Contains("Insufficient records for outlier detection in MW."));
+    }
+
+    [Theory]
     [InlineData("sum", 150)]
     [InlineData("average", 75)]
     [InlineData("min", 50)]

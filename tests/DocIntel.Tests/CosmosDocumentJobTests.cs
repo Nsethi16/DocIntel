@@ -156,13 +156,22 @@ public sealed class CosmosDocumentJobTests
         var fixture = new Fixture();
         await using var lease = await fixture.Store.TryAcquireJobAsync("tenant", "one");
         lease!.Job.PacketSummary = "Not yet published.";
+        lease.Job.Status = JobStatus.Completed;
+        lease.Job.CompletedAtUtc = DateTimeOffset.UtcNow;
+        lease.Job.ProcessingResultSha256 = new string('A', 64);
+        lease.Job.LayoutSha256 = new string('B', 64);
 
         // Act
         await fixture.SecondWrite.Task.WaitAsync(TimeSpan.FromSeconds(30));
 
         // Assert
         Assert.Null(fixture.Persisted.PacketSummary);
+        Assert.Equal(JobStatus.Queued, fixture.Persisted.Status);
+        Assert.Null(fixture.Persisted.ProcessingResultSha256);
         Assert.Equal("Not yet published.", lease.Job.PacketSummary);
+        Assert.Equal(JobStatus.Completed, lease.Job.Status);
+        Assert.Equal(new string('A', 64), lease.Job.ProcessingResultSha256);
+        Assert.Equal(new string('B', 64), lease.Job.LayoutSha256);
         await lease.SaveAsync();
         Assert.Equal("Not yet published.", fixture.Persisted.PacketSummary);
     }

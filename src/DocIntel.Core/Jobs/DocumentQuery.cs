@@ -64,7 +64,11 @@ public sealed record DocumentReference(string JobId, string FileName, int TotalP
 /// <summary>A single search page; a non-null continuation token means more results may exist.</summary>
 public sealed record DocumentQueryPage(
     IReadOnlyList<DocumentReference> Documents,
-    string? ContinuationToken);
+    string? ContinuationToken)
+{
+    /// <summary>Discloses partial indexed-text coverage even when a search has no matching documents.</summary>
+    public string? TextSearchNotice { get; init; }
+}
 
 /// <summary>Server-owned Cosmos query text and bound parameters.</summary>
 public sealed record CompiledDocumentQuery(string Sql, IReadOnlyDictionary<string, object> Parameters);

@@ -247,6 +247,51 @@ polls every five seconds; Bicep sets 30 seconds for shared deployment and scales
 SQLite search applies the same typed predicates and document grants but currently scans one
 tenant's metadata, so it is a local/pilot backend, not a large-dataset query index.
 
+### Large-document persistence and indexed-text coverage
+
+Cosmos job writes measure the actual System.Text.Json payload against the 2 MiB item limit,
+with 16 KiB reserved for system metadata. Oversized output is not truncated to fit the job item.
+The existing immutable processing-snapshot codec archives the complete accepted harness, source
+and derived slice text, Markdown, translations, insights, entities/provenance, structured fields
+and tables, prompt-column outputs, and trace. Checkpoints and subsequent result changes use
+`{jobId}-a{executionAttempt}/content-{sha256}.json`; final publication reuses an identical,
+acknowledged `result.json` rather than writing a second full final snapshot.
+
+`ContentSnapshot` contains a digest, byte count, accepted-harness digest, and a supported snapshot
+kind, never a caller-selected Blob URL. Reads verify the bytes, schema, tenant, job, active attempt
+and counter, original hash, layout hash, and accepted harness. All job point/unique-ID and tenant
+list reads hydrate full output through this reference, so graph, inspection, review, export, and
+Ask AI citations do not consume abbreviated metadata as evidence. Missing or corrupt content
+fails explicitly; there is no fallback to searchable previews. Completed-result retrieval still
+serves the immutable initial result after later extraction or prompt-column reevaluation.
+
+Cosmos retains complete document-type and slice-entity predicates. Its text predicates use
+truthful prefixes of at most 2,048 characters per indexed text field, reduced further when the
+metadata budget requires it. `SearchTextIsPartial` describes indexed coverage, not the hydrated
+content. Text-search pages carry `TextSearchNotice`, including empty pages: absence from preview
+search is not evidence that text is absent from the document. This is not a full-text indexing
+system; callers needing tail content must inspect authorized documents.
+
+Artifact acknowledgement and hash validation precede publication. For lease-owned processing,
+submitter processing permission and unexpired owner/ETag fencing are checked again afterwards.
+Unleased prompt/admin reevaluation keeps the API's current-caller, active-workspace and document-grant
+guards; it is not denied because the original submitter later lost access. Storage checks content
+binding and the document version, not a different actor's authorization for that operation.
+Failed/Deleted terminal persistence remains possible after processing permission is revoked.
+Renewal and release write only the
+last bounded metadata snapshot, not hydrated or in-flight lists. A new attempt clears old active
+output pointers before publishing its own namespace. If complete required search metadata still
+cannot fit, the fenced record becomes `Failed` with `DocumentSearchMetadataLimitExceeded`, while
+retaining its complete content artifact. A provider size rejection uses
+`DocumentMetadataLimitExceeded`, distinct from an ownership conflict. Neither terminal limit is
+recovered or automatically re-executed.
+
+The existing 16 MiB complete-snapshot archive bound remains explicit. Exceeding it is
+`DocumentContentLimitExceeded`, not a successful truncated result or an ownership-loss replay;
+unacknowledged derived output is not advertised as archived. Accepted original and layout artifacts
+remain available under their existing authorized routes. These limits and the mocked Cosmos/Blob
+regressions are not claims of live-service validation.
+
 The document restart regression kills an actual API process during a native model request,
 changes the current tenant configuration, restarts from the same private storage, and verifies
 the original job completes using its accepted configuration and source bytes. It also writes

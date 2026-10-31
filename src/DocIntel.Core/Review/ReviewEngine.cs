@@ -12,31 +12,37 @@ public static class ReviewEngine
 {
     public static IReadOnlyList<ReviewField> Fields(DocumentJob job)
     {
-        var result = new List<ReviewField>();
+        var result = EnumerateFields(job).Take(2_001).ToList();
+        if (result.Count > 2_000 || result.Select(field => field.Id).Distinct(StringComparer.Ordinal).Count() != result.Count)
+            throw new InvalidDataException("The review field count or source field identities exceed the supported limits.");
+        return result;
+    }
+
+    /// <summary>Enumerates complete source fields without imposing the retired human-review field limit.</summary>
+    public static IEnumerable<ReviewField> EnumerateFields(DocumentJob job)
+    {
+        ArgumentNullException.ThrowIfNull(job);
         foreach (var slice in job.Segments)
         {
             for (var index = 0; index < slice.ExtractedEntities.Count; index++)
             {
                 var entity = slice.ExtractedEntities[index];
-                result.Add(new ReviewField($"entity:{slice.SegmentIndex}:{index}", entity.Name,
+                yield return new ReviewField($"entity:{slice.SegmentIndex}:{index}", entity.Name,
                     entity.Value, entity.Value, slice.SegmentIndex, FieldReviewOutcome.Pending,
-                    entity.ConfidenceSignals, entity.Provenance));
+                    entity.ConfidenceSignals, entity.Provenance);
             }
             if (slice.DataExtraction is not { } data) continue;
             ReviewField Field(string id, ExtractedFieldValue field) => new(id, field.FieldName,
                 field.FieldValue, field.FieldValue, slice.SegmentIndex, FieldReviewOutcome.Pending,
                 field.ConfidenceSignals, field.Provenance);
             for (var index = 0; index < data.Fields.Count; index++)
-                result.Add(Field($"field:{slice.SegmentIndex}:{index}", data.Fields[index]));
+                yield return Field($"field:{slice.SegmentIndex}:{index}", data.Fields[index]);
             for (var table = 0; table < data.Tables.Count; table++)
                 for (var row = 0; row < data.Tables[table].Rows.Count; row++)
                     for (var column = 0; column < data.Tables[table].Rows[row].Fields.Count; column++)
-                        result.Add(Field($"cell:{slice.SegmentIndex}:{table}:{row}:{column}",
-                            data.Tables[table].Rows[row].Fields[column]));
+                        yield return Field($"cell:{slice.SegmentIndex}:{table}:{row}:{column}",
+                            data.Tables[table].Rows[row].Fields[column]);
         }
-        if (result.Count > 2_000 || result.Select(field => field.Id).Distinct(StringComparer.Ordinal).Count() != result.Count)
-            throw new InvalidDataException("The review field count or source field identities exceed the supported limits.");
-        return result;
     }
 
     public static string Fingerprint(DocumentJob job) => Convert.ToHexString(SHA256.HashData(

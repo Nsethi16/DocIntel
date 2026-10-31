@@ -4,6 +4,7 @@ using Azure;
 using Azure.Identity;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Harness;
+using DocIntel.Core.Models;
 using DocIntel.Core.Storage;
 using Microsoft.Agents.AI.Workflows;
 using Microsoft.Extensions.Logging;
@@ -125,13 +126,11 @@ public sealed class AzureDocumentTranslationService : IDocumentTranslationServic
         if (doNotTranslateTerms is null)
             throw new DocumentTranslationFailureException("TranslationConfigurationError",
                 "Protected translation terms are invalid; original source was retained.");
+        if (doNotTranslateTerms.Any(term => term is not null && term.Any(Char.IsControl)))
+            throw new DocumentTranslationFailureException("TranslationConfigurationError",
+                "Protected translation terms must not contain control characters.");
         var cleanTerms = doNotTranslateTerms.Where(t => !String.IsNullOrWhiteSpace(t)).Select(t => t.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (cleanTerms.Any(t => t.IndexOfAny(['\t', '\r', '\n']) >= 0))
-        {
-            throw new DocumentTranslationFailureException("TranslationConfigurationError",
-                "Protected translation terms must not contain TSV control characters.");
-        }
         var sourceLanguage = "und";
         try
         {
@@ -316,7 +315,8 @@ public sealed class TranslateDocumentsExecutor : Executor<SplittingState, Splitt
             try
             {
                 docResult = await _translationService.TranslatePdfSliceAsync(
-                    slice.SplitPdfBytes, sliceFileName, slice.BodyText, slice.Footers, targetLang, endpoint,
+                    slice.SplitPdfBytes, sliceFileName, DocumentPromptBoundary.OriginalSourceText(slice),
+                    slice.Footers, targetLang, endpoint,
                     config.DoNotTranslateTerms, cancellationToken);
                 cancellationToken.ThrowIfCancellationRequested();
             }
@@ -365,7 +365,7 @@ public sealed class TranslateDocumentsExecutor : Executor<SplittingState, Splitt
             simulationUsed |= docResult.IsDevelopmentSimulation;
             message.HasDevelopmentResults |= docResult.IsDevelopmentSimulation;
             slice.WasTranslated = docResult.WasTranslated;
-            slice.TranslatedText = docResult.WasTranslated ? docResult.TranslatedText : slice.BodyText;
+            slice.TranslatedText = docResult.WasTranslated ? docResult.TranslatedText : null;
             slice.TranslatedPdfBytes = docResult.WasTranslated ? docResult.TranslatedPdfBytes : null;
             slice.TranslatedPdfSizeBytes = slice.TranslatedPdfBytes?.Length ?? 0;
             slice.TranslatedPdfBlobUri = docResult.WasTranslated ? translatedLocation : null;

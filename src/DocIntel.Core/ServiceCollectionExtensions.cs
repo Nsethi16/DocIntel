@@ -189,7 +189,9 @@ public static class ServiceCollectionExtensions
                 cosmosClient,
                 azureOptions.CosmosDatabaseName,
                 azureOptions.CosmosJobsContainer,
-                logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CosmosJobStore>>()));
+                logger: sp.GetRequiredService<Microsoft.Extensions.Logging.ILogger<CosmosJobStore>>(),
+                artifacts: sp.GetService<IArtifactStore>(),
+                access: sp.GetService<DocIntel.Core.Authorization.ITenantAccessResolver>()));
             services.TryAddSingleton<IOcrUsageStore>(_ => new CosmosOcrUsageStore(
                 cosmosClient.GetContainer(azureOptions.CosmosDatabaseName, "ocr-usage")));
             services.TryAddSingleton<IReviewStore>(_ => new CosmosReviewStore(

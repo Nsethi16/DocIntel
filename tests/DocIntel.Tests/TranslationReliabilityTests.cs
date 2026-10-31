@@ -17,6 +17,32 @@ namespace DocIntel.Tests;
 
 public sealed class TranslationReliabilityTests
 {
+    [Fact]
+    public async Task Same_Language_Skip_Preserves_Complete_Content_Understanding_Source_For_Downstream_Features()
+    {
+        // Arrange
+        var state = State();
+        const string markdown = "# Invoice\n| Item | Amount |\n| Bottom-of-page obligation | USD 1234 |";
+        state.Slices[0].Markdown = markdown;
+        state.Slices[0].BodyText = "Invoice without the bottom-of-page amount";
+        var service = new Mock<IDocumentTranslationService>(MockBehavior.Strict);
+        service.Setup(provider => provider.TranslatePdfSliceAsync(
+                It.IsAny<byte[]>(), It.IsAny<string>(), markdown, It.IsAny<IReadOnlyList<string>>(),
+                "en", "https://translator.example/", It.IsAny<IReadOnlyList<string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new DocumentSliceTranslationResult("en", false, markdown));
+
+        // Act
+        var result = await new TranslateDocumentsExecutor(service.Object, "https://translator.example/")
+            .HandleAsync(state, Mock.Of<IWorkflowContext>());
+
+        // Assert
+        Assert.Null(result.Slices[0].TranslatedText);
+        Assert.False(result.Slices[0].WasTranslated);
+        Assert.Equal(markdown, DocumentPromptBoundary.SourceText(result.Slices[0]));
+        Assert.Contains("USD 1234", DocumentPromptBoundary.SourceText(result.Slices[0]));
+        Assert.True(Assert.Single(result.ExecutionTrace).Succeeded);
+    }
+
     [Theory]
     [InlineData("en", "en")]
     [InlineData("EN", "en")]

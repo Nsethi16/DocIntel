@@ -691,7 +691,8 @@ public sealed class AskAiOrchestrator
                     throw new InvalidOperationException("The Ask AI document scope limit was reached. Narrow the question.");
                 var searchKey = System.Text.Json.JsonSerializer.Serialize(new
                     { query.SearchText, query.DocumentType, query.Entities });
-                incompleteSearches[searchKey] = page.ContinuationToken is not null;
+                incompleteSearches[searchKey] = page.ContinuationToken is not null ||
+                    !String.IsNullOrWhiteSpace(page.TextSearchNotice);
 
                 run.ExecutedCosmosQueries.Add(compiled.Sql);
                 run.DocumentsEvaluated = allowedJobIds.Count;
@@ -756,7 +757,13 @@ public sealed class AskAiOrchestrator
                     $"/api/harness/tenants/{Uri.EscapeDataString(tenant.TenantId)}/jobs/" +
                     $"{Uri.EscapeDataString(job.JobId)}/slices/{slice.SegmentIndex}/pdf"));
 
-                var result = new
+                var includeTableRows = true;
+                var includeStructuredData = true;
+                var includePromptResults = true;
+                var includeEntities = true;
+                var includeInsights = true;
+                var omittedSections = new List<string>();
+                object BuildInspection() => new
                 {
                     evidenceId,
                     job.FileName,
@@ -775,49 +782,85 @@ public sealed class AskAiOrchestrator
                     sourceText,
                     nextTextOffset = textOffset + sourceText.Length < slice.BodyText.Length
                         ? (int?)(textOffset + sourceText.Length) : null,
-                    slice.InsightSummary,
-                    fileInsight = job.Segments.All(segment => String.IsNullOrWhiteSpace(segment.InsightSummary)) &&
+                    InsightSummary = includeInsights ? InspectionPreview(slice.InsightSummary, 4_000) : null,
+                    insightSummaryTruncated = (slice.InsightSummary?.Length ?? 0) > 4_000,
+                    inspectionCoverage = new
+                    {
+                        previewOnly = true,
+                        entityCount = slice.ExtractedEntities.Count,
+                        fieldCount = slice.DataExtraction?.Fields.Count ?? 0,
+                        tableCount = slice.DataExtraction?.Tables.Count ?? 0,
+                        tableRowCount = slice.DataExtraction?.Tables.Sum(table => table.Rows.Count) ?? 0,
+                        promptResultCount = slice.PromptColumnResults.Count(p => p.FilterMatched),
+                        omittedSections = omittedSections.ToArray()
+                    },
+                    fileInsight = includeInsights &&
+                        job.Segments.All(segment => String.IsNullOrWhiteSpace(segment.InsightSummary)) &&
                         !String.IsNullOrWhiteSpace(job.PacketSummary)
                         ? new
                         {
                             scope = "CompleteFile",
-                            summary = job.PacketSummary.Length > 4_000
-                                ? job.PacketSummary[..4_000] : job.PacketSummary,
+                            summary = InspectionPreview(job.PacketSummary, 4_000),
                             summaryTruncated = job.PacketSummary.Length > 4_000
                         } : null,
-                    ExtractedEntities = slice.ExtractedEntities.Select(entity => new
+                    ExtractedEntities = slice.ExtractedEntities.Where(_ => includeEntities).Take(30).Select(entity => new
                     {
-                        name = entity.Name,
-                        value = entity.Value,
-                        category = entity.Category,
+                        name = InspectionPreview(entity.Name, 100),
+                        value = InspectionPreview(entity.Value, 500),
+                        valueTruncated = entity.Value.Length > 500,
+                        category = InspectionPreview(entity.Category, 100),
                         confidence = entity.Confidence,
                         confidenceSignals = entity.ConfidenceSignals,
                         sourceOccurrenceStatus = entity.Provenance?.Status
                     }),
-                    DataExtraction = slice.DataExtraction is not { } data ? null : new
+                    DataExtraction = !includeStructuredData || slice.DataExtraction is not { } data ? null : new
                     {
                         documentName = data.DocumentName,
                         footerId = data.FooterId,
                         pageRange = data.PageRange,
-                        fields = data.Fields.Select(InspectField),
-                        tables = data.Tables.Select(table => new
+                        fields = data.Fields.Take(30).Select(InspectField),
+                        fieldsTruncated = data.Fields.Count > 30,
+                        tables = data.Tables.Take(4).Select(table => new
                         {
                             tableName = table.TableName,
-                            rows = table.Rows.Select(row => new { fields = row.Fields.Select(InspectField) })
-                        })
+                            rows = table.Rows.Where(_ => includeTableRows).Take(10).Select(row => new
+                            {
+                                fields = row.Fields.Take(20).Select(InspectField),
+                                fieldsTruncated = row.Fields.Count > 20
+                            }),
+                            totalRows = table.Rows.Count,
+                            rowsTruncated = !includeTableRows || table.Rows.Count > 10
+                        }),
+                        tablesTruncated = data.Tables.Count > 4
                     },
-                    promptResults = slice.PromptColumnResults.Where(p => p.FilterMatched).Select(p => new
+                    promptResults = slice.PromptColumnResults.Where(p => p.FilterMatched && includePromptResults).Take(4).Select(p => new
                     {
                         p.ColumnId,
-                        p.ColumnName,
-                        p.ResultText,
+                        ColumnName = InspectionPreview(p.ColumnName, 100),
+                        ResultText = InspectionPreview(p.ResultText, 2_000),
+                        resultTruncated = (p.ResultText?.Length ?? 0) > 2_000,
                         p.EvaluatedAtUtc
                     })
                 };
+                var result = BuildInspection();
+                foreach (var section in new[] { "tableRows", "structuredData", "promptResults", "entities", "insights" })
+                {
+                    if (JsonSerializer.SerializeToUtf8Bytes(result).Length <= 32_000) break;
+                    switch (section)
+                    {
+                        case "tableRows": includeTableRows = false; break;
+                        case "structuredData": includeStructuredData = false; break;
+                        case "promptResults": includePromptResults = false; break;
+                        case "entities": includeEntities = false; break;
+                        case "insights": includeInsights = false; break;
+                    }
+                    omittedSections.Add(section);
+                    result = BuildInspection();
+                }
                 sourceVersions.TryAdd(job.JobId, AskAiConversationContext.Fingerprint(job));
                 analysisEvidence.Add(evidenceId, new AskAiAnalysisEvidence(sourceText,
                     $"{job.OriginalSha256 ?? job.JobId}:{slice.StartPage}-{slice.EndPage}"));
-                if (JsonSerializer.Serialize(result).Length > 32_000)
+                if (JsonSerializer.SerializeToUtf8Bytes(result).Length > 32_000)
                 {
                     throw new InvalidOperationException("The slice results exceed the supported evidence size.");
                 }
@@ -867,7 +910,7 @@ public sealed class AskAiOrchestrator
             }
             return new
             {
-                documents = overviews, page.ContinuationToken,
+                documents = overviews, page.ContinuationToken, page.TextSearchNotice,
                 notice = "Overviews support meaning-based discovery, not citations. Inspect original source before using facts."
             };
         }
@@ -936,8 +979,14 @@ public sealed class AskAiOrchestrator
                 unless its result supports the claim. No matches must not be replaced by unrelated documents.
                 Keep currencies separate. Distinguish source text from derived AI results. Disclose pagination
                 or evidence limits; never claim a sampled search covered the entire corpus.
+                TextSearchNotice means indexed text coverage is partial, including for zero matches.
+                Use browsing or narrower exact entity/document filters; do not claim no relevant documents exist
+                or a complete workspace total based only on that partial text search.
                 fileInsight is complete-file derived context, not a quotation from the inspected slice.
                 summaryTruncated=true marks a preview; inspect original sourceText to substantiate each claim.
+                inspectionCoverage reports full derived-result counts and omittedSections; derived fields, tables,
+                entities and prompts are bounded previews. Never treat omitted or truncated previews as missing facts.
+                Use nextTextOffset to inspect further original source before supporting an answer or calculation.
                 hasProcessingWarnings and translationErrorCode describe failed optional features, not missing source.
                 Use available original evidence; disclose translation limitations when material.
                 Never describe an untranslated original as translated or infer zero values from a feature failure.
@@ -1103,12 +1152,21 @@ public sealed class AskAiOrchestrator
 
     private static object InspectField(ExtractedFieldValue field) => new
     {
-        fieldName = field.FieldName,
-        fieldValue = field.FieldValue,
+        fieldName = InspectionPreview(field.FieldName, 100),
+        fieldValue = InspectionPreview(field.FieldValue, 500),
+        valueTruncated = (field.FieldValue?.Length ?? 0) > 500,
         confidenceValue = field.ConfidenceValue,
         confidenceSignals = field.ConfidenceSignals,
         sourceOccurrenceStatus = field.Provenance?.Status
     };
+
+    private static string? InspectionPreview(string? value, int maximumCharacters)
+    {
+        if (value is null || value.Length <= maximumCharacters) return value;
+        var length = maximumCharacters;
+        if (Char.IsHighSurrogate(value[length - 1])) length--;
+        return value[..length];
+    }
 
     private sealed class GuardedFunction(
         AIFunction innerFunction,

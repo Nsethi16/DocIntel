@@ -10,6 +10,31 @@ namespace DocIntel.Tests;
 public sealed class AskAiConversationTests
 {
     [Fact]
+    public async Task Search_Only_Clarification_Can_Continue_With_Fresh_Document_Inspection()
+    {
+        // Arrange
+        var fixture = await FixtureAsync();
+        fixture.Parent.Citations = [];
+        fixture.Parent.SourceVersions.Clear();
+        fixture.Parent.DocumentsEvaluated = 2;
+        fixture.Parent.ReferencedJobIds = ["source", "other"];
+        fixture.Parent.Answer = "Which matching document do you mean?";
+        await fixture.Jobs.UpsertJobAsync(new DocumentJob
+        {
+            JobId = "other", TenantId = "workspace", TenantDisplayName = "Workspace",
+            AppliedHarnessVersion = 1, FileName = "other.pdf", Status = JobStatus.Completed
+        });
+        await fixture.Runs.UpsertRunAsync(fixture.Parent);
+
+        // Act
+        var history = await AskAiConversationContext.ReadHistoryAsync(
+            fixture.FollowUp, fixture.Runs, fixture.Jobs, DocumentAccessScope.Unrestricted);
+
+        // Assert
+        Assert.Equal("prior", Assert.Single(history).RunId);
+    }
+
+    [Fact]
     public async Task Follow_Ups_Use_Verified_Server_History_And_Keep_It_Separate_From_Fresh_Evidence()
     {
         // Arrange

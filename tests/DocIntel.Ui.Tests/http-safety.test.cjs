@@ -62,7 +62,8 @@ test('browser policies cover static pages, API results and missing resources wit
           assert.match(policy, /script-src 'self'; script-src-attr 'none'/);
           assert.doesNotMatch(policy, /script-src[^;]*unsafe-inline/);
           assert.match(policy, /frame-src 'self' blob:/);
-          assert.match(policy, /https:\/\/fonts\.googleapis\.com/);
+          assert.match(policy, /font-src 'self';/);
+          assert.doesNotMatch(policy, /fonts\.googleapis\.com|fonts\.gstatic\.com|fonts\.cdnfonts\.com/);
         } else {
           assert.doesNotMatch(policy, /unsafe-inline|unsafe-eval/);
         }

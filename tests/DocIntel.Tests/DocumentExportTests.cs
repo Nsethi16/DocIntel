@@ -16,6 +16,67 @@ namespace DocIntel.Tests;
 
 public sealed class DocumentExportTests
 {
+    [Fact]
+    public void Machine_Field_Count_Exceeding_Its_Explicit_Limit_Returns_An_Export_Limit_Error()
+    {
+        // Arrange
+        var job = new DocumentJob
+        {
+            JobId = "table", TenantId = "workspace", TenantDisplayName = "Workspace", FileName = "table.pdf",
+            AppliedHarnessVersion = 1, Status = JobStatus.Completed,
+            Segments = [new() { SegmentIndex = 0, StartPage = 1, EndPage = 1,
+                DataExtraction = new("Table", String.Empty, "1-1",
+                    Enumerable.Range(0, 100001).Select(index => new ExtractedFieldValue($"Field-{index}", "Value")).ToArray(), []) }]
+        };
+
+        // Act / Assert
+        Assert.Throws<ExportLimitException>(() => DocumentExporter.MachineSnapshot(job, DateTimeOffset.UtcNow));
+    }
+
+    [Theory]
+    [InlineData("json")]
+    [InlineData("csv")]
+    [InlineData("xlsx")]
+    public void Machine_Exports_Preserve_Table_Fields_Above_The_Retired_Review_Limit(string format)
+    {
+        // Arrange
+        var rows = Enumerable.Range(0, 201).Select(row => new ExtractedTableRow(
+            Enumerable.Range(0, 10).Select(column => new ExtractedFieldValue(
+                $"Column-{column}", $"Value-{row}-{column}")).ToArray())).ToArray();
+        var job = new DocumentJob
+        {
+            JobId = "table", TenantId = "workspace", TenantDisplayName = "Workspace", FileName = "table.pdf",
+            AppliedHarnessVersion = 1, Status = JobStatus.Completed,
+            Segments = [new() { SegmentIndex = 0, StartPage = 1, EndPage = 1,
+                DataExtraction = new("Table", String.Empty, "1-1", [], [new("Rows", rows)]) }]
+        };
+
+        // Act
+        var export = DocumentExporter.MachineSnapshot(job, DateTimeOffset.UtcNow);
+        var bytes = DocumentExporter.Write(export, format);
+
+        // Assert
+        Assert.Equal(2010, export.Fields.Count);
+        Assert.Equal("Value-200-9", export.Fields[^1].EffectiveValue);
+        if (format == "json")
+        {
+            using var document = JsonDocument.Parse(bytes);
+            Assert.Equal(2010, document.RootElement.GetProperty("fields").GetArrayLength());
+        }
+        else if (format == "csv")
+        {
+            Assert.Contains("Value-200-9", Encoding.UTF8.GetString(bytes));
+            Assert.Equal(2011, Encoding.UTF8.GetString(bytes).Split("\r\n", StringSplitOptions.RemoveEmptyEntries).Length);
+        }
+        else
+        {
+            using var stream = new MemoryStream(bytes);
+            using var workbook = SpreadsheetDocument.Open(stream, false);
+            Assert.Empty(new OpenXmlValidator().Validate(workbook));
+            Assert.Equal(2011, Assert.Single(workbook.WorkbookPart!.WorksheetParts).Worksheet.Descendants<Row>().Count());
+        }
+    }
+
     [Theory]
     [InlineData("=SUM(A1:A2)")]
     [InlineData("+1")]

@@ -10,10 +10,6 @@ namespace DocIntel.Core.Features.DocumentSplitting;
 /// </summary>
 public static class SliceBoundaryAnalyzer
 {
-    private static readonly Regex PageFooterCommentRegex = new(
-        @"<!--\s*PageFooter[:""\s]\s*([^"">]+?)\s*""?\s*-->",
-        RegexOptions.IgnoreCase | RegexOptions.Compiled);
-
     private static readonly Regex ValidIdRegex = new(
         @"^(?:P-)?[A-Za-z]+(?:-[A-Za-z]+)*(?:-?[A-Za-z]*\d+[A-Za-z]*)?(?:\([A-Za-z]*\d+\))?$",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
@@ -599,7 +595,7 @@ public static class SliceBoundaryAnalyzer
         if (string.IsNullOrEmpty(markdown)) return [];
         var ids = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        foreach (Match match in PageFooterCommentRegex.Matches(markdown))
+        foreach (Match match in PageTextLayout.FooterCommentRegex.Matches(markdown))
         {
             var content = Regex.Replace(match.Groups[1].Value.Trim(), @"(\w)-\s+(\w)", "$1-$2");
             var candidates = content

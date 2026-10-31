@@ -79,9 +79,16 @@ public sealed class AskAiRunProcessor(
     ILogger<AskAiRunProcessor> logger,
     ChannelDeliveryProcessor? delivery = null)
 {
+    /// <summary>Creates once, then executes or waits on the stored snapshot owned by this run's worker.</summary>
     public async Task<AskAiRun> ExecuteInlineAsync(AskAiRun run, CancellationToken cancellationToken = default)
     {
-        await runStore.UpsertRunAsync(run, cancellationToken);
+        ArgumentNullException.ThrowIfNull(run);
+        if (!await runStore.TryCreateRunAsync(run, cancellationToken))
+        {
+            var existing = await runStore.GetRunAsync(run.TenantId, run.RunId, cancellationToken);
+            if (existing is null || existing.Actor != run.Actor || existing.Question != run.Question)
+                throw new InvalidDataException("The saved Ask AI run does not match this request.");
+        }
         await ProcessAsync(new AskAiQueueTicket(run.RunId, run.TenantId), cancellationToken);
         using var waitToken = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         waitToken.CancelAfter(TimeSpan.FromSeconds(options.MaxRunSeconds + 10));

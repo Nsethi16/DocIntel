@@ -33,6 +33,7 @@
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\NativeDecisionDiagnostic.cs" Link="Diagnostics\NativeDecisionDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Identity\IdentityOptions.cs" Link="Identity\IdentityOptions.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Identity\IdentityAccessService.cs" Link="Identity\IdentityAccessService.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Identity\AskAiSavedOutputAuthorization.cs" Link="Identity\AskAiSavedOutputAuthorization.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Identity\TenantUserService.cs" Link="Identity\TenantUserService.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Identity\GraphEnterpriseDirectory.cs" Link="Identity\GraphEnterpriseDirectory.cs" />
   </ItemGroup>

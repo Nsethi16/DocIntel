@@ -172,7 +172,7 @@ public sealed class ChannelDeliveryTests
     public async Task Duplicate_Run_Creation_Cannot_Reset_Completed_Answers_Or_Delivery(bool file)
     {
         // Arrange
-        var directory = Path.Combine(Path.GetTempPath(), "DocIntel.ChannelRun.Tests", Guid.NewGuid().ToString("N"));
+        var directory = Path.Combine("TestOutput", "DocIntel.ChannelRun.Tests", Guid.NewGuid().ToString("N"));
         try
         {
             IAskAiRunStore store = file ? new FileAskAiRunStore(directory) : new InMemoryAskAiRunStore();

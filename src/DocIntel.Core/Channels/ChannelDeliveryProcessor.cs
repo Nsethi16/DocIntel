@@ -62,26 +62,6 @@ public sealed class ChannelDeliveryProcessor(
             await lease.SaveAsync(cancellationToken);
             return;
         }
-        foreach (var id in run.ReferencedJobIds.Concat(run.Citations.Select(citation => citation.JobId))
-            .Distinct(StringComparer.Ordinal))
-        {
-            if (jobs is null) throw new InvalidOperationException("Answer delivery requires document availability checks.");
-            if (!scope.CanReadDocument(id) ||
-                await jobs.GetJobAsync(id, cancellationToken, run.TenantId) is not { Status: JobStatus.Completed })
-            {
-                target.Status = ChannelDeliveryStatus.Failed;
-                target.ErrorCode = "DeliveryEvidenceChanged";
-                await lease.SaveAsync(cancellationToken);
-                return;
-            }
-        }
-        if (run.DocumentsEvaluated > 0 && run.ReferencedJobIds.Count == 0)
-        {
-            target.Status = ChannelDeliveryStatus.Failed;
-            target.ErrorCode = "LegacyEvidenceRequiresRefresh";
-            await lease.SaveAsync(cancellationToken);
-            return;
-        }
         foreach (var citation in run.Citations.Where(citation => citation.EvidenceKind != "OriginalSourceText"))
         {
             if (jobs is null || reviews is null)
@@ -105,11 +85,14 @@ public sealed class ChannelDeliveryProcessor(
                 return;
             }
         }
+        if (!await ValidateSourcesAsync(lease, target, scope, cancellationToken)) return;
         using var send = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, lease.OwnershipLostToken);
         send.CancelAfter(TimeSpan.FromSeconds(90));
         target.Status = ChannelDeliveryStatus.Sending;
         target.AttemptedAtUtc = DateTimeOffset.UtcNow;
         await lease.SaveAsync(send.Token);
+        // Persisting the send fence can race reprocessing; recheck before external I/O.
+        if (!await ValidateSourcesAsync(lease, target, scope, send.Token)) return;
         try
         {
             await transport.SendAsync(run, target, send.Token);
@@ -127,5 +110,26 @@ public sealed class ChannelDeliveryProcessor(
         if (lease.OwnershipLostToken.IsCancellationRequested) return;
         using var persist = new CancellationTokenSource(TimeSpan.FromSeconds(10));
         await lease.SaveAsync(persist.Token);
+    }
+
+    private async Task<bool> ValidateSourcesAsync(
+        IAskAiRunLease lease, ChannelDelivery target, DocumentAccessScope scope, CancellationToken cancellationToken)
+    {
+        try
+        {
+            await AskAiSavedOutputValidator.ValidateAsync(lease.Run, jobs, scope, cancellationToken);
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            target.ErrorCode = "DeliveryAccessRevoked";
+        }
+        catch (AskAiSourceChangedException)
+        {
+            target.ErrorCode = "DeliveryEvidenceChanged";
+        }
+        target.Status = ChannelDeliveryStatus.Failed;
+        await lease.SaveAsync(cancellationToken);
+        return false;
     }
 }

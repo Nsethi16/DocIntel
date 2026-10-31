@@ -48,6 +48,10 @@ public sealed class AzurePdfBatchTranslationClient(
         IReadOnlyList<string> protectedTerms, CancellationToken cancellationToken = default)
     {
         options.Validate();
+        if (protectedTerms is null || protectedTerms.Any(term =>
+            String.IsNullOrWhiteSpace(term) || term.Any(Char.IsControl)))
+            throw new DocumentTranslationFailureException("TranslationConfigurationError",
+                "Protected glossary terms must be nonempty and contain no control characters.", sourceLanguage);
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(options.TimeoutSeconds));
         var sourceContainer = storage.GetBlobContainerClient(options.SourceContainerName);

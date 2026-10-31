@@ -44,6 +44,7 @@ public static class DocumentExporter
         "HasDevelopmentResults", "HasDevelopmentReview"
     ];
     private const int MaximumBytes = 16 * 1024 * 1024;
+    private const int MaximumMachineFields = 100_000;
 
     public static DocumentExport MachineSnapshot(DocumentJob job, DateTimeOffset now)
     {
@@ -65,7 +66,7 @@ public static class DocumentExporter
             review.TenantId != job.TenantId || review.Id != job.ReviewId ||
             review.SourceFingerprint != ReviewEngine.Fingerprint(job)))
             throw new ReviewConflictException("Complete source-matching human review before exporting effective values.");
-        var fields = original ? ReviewEngine.Fields(job) : review!.Fields;
+        var fields = original ? MachineFields(job) : review!.Fields;
         if (fields.Sum(field => (long)field.OriginalValue.Length + field.CurrentValue.Length + field.Label.Length) > 4_000_000)
             throw new ExportLimitException("The requested export exceeds the supported text size; narrow the document.");
         return new DocumentExport(Guid.NewGuid().ToString("N"), job.TenantId, job.JobId, job.FileName,
@@ -77,6 +78,16 @@ public static class DocumentExporter
                 field.ConfidenceSignals?.ModelScore, field.OriginalProvenance?.Status.ToString() ?? "Unavailable",
                 String.Join(",", field.OriginalProvenance?.Boxes.Select(box => box.Page).Distinct() ?? []),
                 field.CurrentValue == field.OriginalValue)).ToList());
+    }
+
+    private static IReadOnlyList<ReviewField> MachineFields(DocumentJob job)
+    {
+        var fields = ReviewEngine.EnumerateFields(job).Take(MaximumMachineFields + 1).ToList();
+        if (fields.Count > MaximumMachineFields)
+            throw new ExportLimitException("Machine exports support at most 100,000 fields; narrow the document.");
+        if (fields.Select(field => field.Id).Distinct(StringComparer.Ordinal).Count() != fields.Count)
+            throw new ExportLimitException("Machine export source field identities are inconsistent.");
+        return fields;
     }
 
     public static byte[] Write(DocumentExport export, string format)

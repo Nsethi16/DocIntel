@@ -99,24 +99,16 @@ internal sealed class TenantAccessHandler(
                 var run = await runStore.GetRunAsync(tenantId, runId, context.RequestAborted);
                 var pendingEmailConfirmation = run?.Status == JobStatus.AwaitingConfirmation &&
                     pattern.Contains("/ask/email/runs/", StringComparison.Ordinal);
-                if (run is null ||
+                if (run is null || run.TenantId != tenantId ||
                     (!(scope.CanAdmin && scope.AllowedJobIds is null) &&
                      !pendingEmailConfirmation && run.Actor != IdentityAccessService.GetActor(context.User)) ||
                     run.Citations.Any(c => !scope.CanReadDocument(c.JobId)))
                 {
                     return 404;
                 }
-                if (run.Status == JobStatus.Completed || !String.IsNullOrEmpty(run.Answer) || run.Citations.Count > 0)
-                {
-                    var referenced = run.ReferencedJobIds.Concat(run.Citations.Select(citation => citation.JobId))
-                        .Distinct(StringComparer.Ordinal);
-                    foreach (var id in referenced)
-                        if (!scope.CanReadDocument(id) ||
-                            await jobs.GetJobAsync(id, context.RequestAborted, tenantId) is not { Status: JobStatus.Completed })
-                            return 404;
-                    if (run.DocumentsEvaluated > 0 && run.ReferencedJobIds.Count == 0)
-                        return 404;
-                }
+                var outputStatus = await AskAiSavedOutputAuthorization.GetStatusAsync(
+                    run, jobs, scope, context.RequestAborted);
+                if (outputStatus != 0) return outputStatus;
             }
         }
         else if ((!read && !await access.IsPlatformAdministratorAsync(context.User, context.RequestAborted)) ||
@@ -154,11 +146,7 @@ internal sealed class TenantAuthorizationResultHandler : IAuthorizationMiddlewar
     {
         if (result.Forbidden && context.Items[TenantAccessHandler.DeniedStatusKey] is int status)
         {
-            context.Response.StatusCode = status;
-            await context.Response.WriteAsJsonAsync(new
-            {
-                error = status == 404 ? "The requested resource is not available." : "Access to this operation is not permitted."
-            });
+            await AskAiSavedOutputAuthorization.Denied(status).ExecuteAsync(context);
             return;
         }
         await _defaultHandler.HandleAsync(next, context, policy, result);

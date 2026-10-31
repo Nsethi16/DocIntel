@@ -7,6 +7,26 @@ namespace DocIntel.Tests;
 
 public sealed class DocumentAccessTests
 {
+    [Theory]
+    [InlineData(TenantRole.Processor, false, true)]
+    [InlineData(TenantRole.Processor, true, false)]
+    [InlineData(TenantRole.Admin, false, true)]
+    [InlineData(TenantRole.Admin, true, false)]
+    [InlineData(TenantRole.Reader, false, false)]
+    [InlineData(TenantRole.Reviewer, false, false)]
+    public void Processing_Requires_A_Processing_Role_And_Unrestricted_Document_Scope(
+        TenantRole role, bool restricted, bool expected)
+    {
+        // Arrange
+        var scope = new DocumentAccessScope(role, restricted ? new HashSet<string> { "allowed" } : null);
+
+        // Act
+        var canProcess = scope.CanProcess;
+
+        // Assert
+        Assert.Equal(expected, canProcess);
+    }
+
     [Fact]
     public void Scope_Combines_Tenant_Roles_With_Explicit_Document_Grants()
     {

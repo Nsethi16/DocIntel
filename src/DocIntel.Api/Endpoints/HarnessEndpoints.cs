@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using System.Security.Cryptography;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Api.Identity;
@@ -141,6 +142,8 @@ public static class HarnessEndpoints
                 return Results.BadRequest(new { error = "Agent name, purpose, tone or response guidance is invalid." });
             if (updated.Retention?.IsValid != true)
                 return Results.BadRequest(new { error = "Retention days must be unset or 1-36,500; permanent purge is unavailable." });
+            var catalogError = updated.ValidateAndNormalizeDocumentCatalog();
+            if (catalogError is not null) return Results.BadRequest(new { error = catalogError });
             updated.TenantId = tenantId;
             var previous = await store.GetTenantAsync(tenantId, ct);
             updated.DeactivatedAtUtc = previous?.DeactivatedAtUtc;
@@ -277,6 +280,8 @@ public static class HarnessEndpoints
         group.MapPost("/tenants/{tenantId}/jobs/{jobId}/evaluate-prompts", async (
             string tenantId,
             string jobId,
+            HttpContext context,
+            IdentityAccessService access,
             IHarnessStore harnessStore,
             IJobStore jobStore,
             IModelCatalog modelCatalog,
@@ -295,8 +300,24 @@ public static class HarnessEndpoints
                 return Results.NotFound(new { error = $"Job '{jobId}' not found." });
             }
 
+            if (!await CanPublishProcessingResultsAsync(tenantId, jobId, context, access, harnessStore, ct))
+                return Results.Forbid();
+            var working = JsonSerializer.Deserialize<DocumentJob>(JsonSerializer.SerializeToUtf8Bytes(job))
+                ?? throw new InvalidDataException("The document snapshot is unavailable.");
+            working.StoreVersion = job.StoreVersion;
+            foreach (var slice in working.Segments)
+            {
+                var original = job.Segments.First(s => s.SegmentIndex == slice.SegmentIndex);
+                slice.SplitPdfBytes = original.SplitPdfBytes;
+                slice.TranslatedPdfBytes = original.TranslatedPdfBytes;
+            }
+            job = working;
             await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(job, tenant, modelCatalog, artifactStore, ct, forceReevaluateAll: true);
+            if (!await CanPublishProcessingResultsAsync(tenantId, jobId, context, access, harnessStore, ct))
+                return Results.Forbid();
             await jobStore.UpsertJobAsync(job, ct);
+            if (!await CanPublishProcessingResultsAsync(tenantId, jobId, context, access, harnessStore, ct))
+                return Results.Forbid();
 
             return Results.Ok(FormatJobResponse(job));
         });
@@ -458,7 +479,10 @@ public static class HarnessEndpoints
         group.MapGet("/tenants/{tenantId}/ask/runs/{runId}", async (
             string tenantId,
             string runId,
+            HttpContext context,
+            IdentityAccessService access,
             IAskAiRunStore runStore,
+            IJobStore jobStore,
             CancellationToken ct) =>
         {
             var run = await runStore.GetRunAsync(tenantId, runId, ct);
@@ -466,6 +490,10 @@ public static class HarnessEndpoints
             {
                 return Results.NotFound(new { error = $"Ask AI run '{runId}' not found." });
             }
+
+            var scope = await access.GetAccessAsync(context.User, tenantId, ct);
+            var outputStatus = await AskAiSavedOutputAuthorization.GetStatusAsync(run, jobStore, scope, ct);
+            if (outputStatus != 0) return AskAiSavedOutputAuthorization.Denied(outputStatus);
 
             return Results.Ok(new
             {
@@ -542,10 +570,9 @@ public static class HarnessEndpoints
                 }
             };
 
-            await runStore.UpsertRunAsync(run, ct);
-
             if (req?.Async == true)
             {
+                await runStore.UpsertRunAsync(run, ct);
                 await askQueue.TryEnqueueAsync(new AskAiQueueTicket(run.RunId, tenantId), ct);
                 return Results.Accepted($"/api/harness/tenants/{tenantId}/ask/runs/{run.RunId}", new
                 {
@@ -612,10 +639,9 @@ public static class HarnessEndpoints
                 }
             };
 
-            await runStore.UpsertRunAsync(run, ct);
-
             if (req.Async == true)
             {
+                await runStore.UpsertRunAsync(run, ct);
                 await askQueue.TryEnqueueAsync(new AskAiQueueTicket(run.RunId, tenantId), ct);
                 return Results.Accepted($"/api/harness/tenants/{tenantId}/ask/runs/{run.RunId}", new
                 {
@@ -850,6 +876,8 @@ public static class HarnessEndpoints
         group.MapPost("/tenants/{tenantId}/run-split", async (
             string tenantId,
             HttpRequest request,
+            HttpContext context,
+            IdentityAccessService access,
             IHarnessStore harnessStore,
             DocumentSplittingWorkflow workflow,
             CancellationToken ct) =>
@@ -870,6 +898,8 @@ public static class HarnessEndpoints
             };
 
             var completed = await workflow.ExecuteAsync(state, cancellationToken: ct);
+            if (!await CanPublishProcessingResultsAsync(tenantId, null, context, access, harnessStore, ct))
+                return Results.Forbid();
 
             return Results.Ok(new
             {
@@ -894,6 +924,16 @@ public static class HarnessEndpoints
         });
 
         return app;
+    }
+
+    private static async Task<bool> CanPublishProcessingResultsAsync(
+        string tenantId, string? jobId, HttpContext context, IdentityAccessService access,
+        IHarnessStore harnesses, CancellationToken cancellationToken)
+    {
+        var current = await harnesses.GetTenantAsync(tenantId, cancellationToken);
+        if (current?.IsActive != true) return false;
+        var scope = await access.GetAccessAsync(context.User, tenantId, cancellationToken);
+        return scope.CanProcess && (jobId is null || scope.CanReadDocument(jobId));
     }
 
     private static async Task<IReadOnlyList<DocumentJob>> GetVisibleJobsAsync(

@@ -508,6 +508,29 @@ public sealed class TenantHarness
 
     public DateTimeOffset UpdatedAtUtc { get; set; } = DateTimeOffset.UtcNow;
 
+    /// <summary>Validates consumed document keys before accepting a harness and normalizes their outer whitespace.</summary>
+    public string? ValidateAndNormalizeDocumentCatalog()
+    {
+        if (Capabilities is null) return "A capability configuration is required.";
+        var identification = Capabilities.GetValueOrDefault(FeatureHarness.IdentifyDocumentsKey)?.IdentifyDocuments;
+        var extraction = Capabilities.GetValueOrDefault(FeatureHarness.DataExtractionKey)?.DataExtraction;
+        if (identification is not null && (identification.Rules is null ||
+            identification.Rules.Any(rule => rule is null || String.IsNullOrWhiteSpace(rule.DocumentName)) ||
+            identification.Rules.Select(rule => rule.DocumentName.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != identification.Rules.Count))
+            return "Identification rules require nonempty, unique document names (ignoring case and outer whitespace).";
+        if (extraction is not null && (extraction.Profiles is null ||
+            extraction.Profiles.Any(profile => profile is null || String.IsNullOrWhiteSpace(profile.DocumentName)) ||
+            extraction.Profiles.Select(profile => profile.DocumentName.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase).Count() != extraction.Profiles.Count))
+            return "Data extraction profiles require nonempty, unique document names (ignoring case and outer whitespace).";
+        if (identification is not null)
+            foreach (var rule in identification.Rules) rule.DocumentName = rule.DocumentName.Trim();
+        if (extraction is not null)
+            foreach (var profile in extraction.Profiles) profile.DocumentName = profile.DocumentName.Trim();
+        return null;
+    }
+
     public static void EnsureDefaultCapabilities(TenantHarness tenant)
     {
         ArgumentNullException.ThrowIfNull(tenant);

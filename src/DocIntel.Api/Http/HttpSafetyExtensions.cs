@@ -30,11 +30,10 @@ public static class HttpSafetyExtensions
                     var legacy = path == "/" || path == "/index.html" || path == "/admin" || path == "/admin.html";
                     var review = path == "/review" || path == "/review.html";
                     var script = review ? "'self' https://cdnjs.cloudflare.com" : "'self'";
-                    var style = legacy
-                        ? "'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.cdnfonts.com" : "'self'";
+                    var style = legacy ? "'self' 'unsafe-inline'" : "'self'";
                     headers["Content-Security-Policy"] =
                         $"default-src 'self'; script-src {script}; script-src-attr 'none'; style-src {style}; " +
-                        "font-src 'self' https://fonts.gstatic.com https://fonts.cdnfonts.com; " +
+                        "font-src 'self'; " +
                         "img-src 'self' data: blob:; connect-src 'self'; frame-src 'self' blob:; " +
                         (review ? "worker-src 'self' blob: https://cdnjs.cloudflare.com; " : "worker-src 'self'; ") +
                         "frame-ancestors 'none'; base-uri 'self'; object-src 'none'; form-action 'self'";

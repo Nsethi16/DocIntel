@@ -30,7 +30,7 @@ public sealed record DocumentAccessScope(TenantRole? Role, IReadOnlySet<string>?
 
     public bool CanReview => Role is TenantRole.Reviewer or TenantRole.Processor or TenantRole.Admin;
 
-    public bool CanProcess => Role is TenantRole.Processor or TenantRole.Admin && AllowedJobIds is null;
+    public bool CanProcess => (Role is TenantRole.Processor or TenantRole.Admin) && AllowedJobIds is null;
 
     public bool CanReadDocument(string jobId) =>
         CanRead && (AllowedJobIds is null || AllowedJobIds.Contains(jobId));
