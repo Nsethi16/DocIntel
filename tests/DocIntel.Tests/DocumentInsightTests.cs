@@ -97,6 +97,7 @@ public sealed class DocumentInsightTests
         // Arrange
         var slices = Documents();
         slices[0].TranslatedText = "TRANSLATED_FIRST_PAGE_1\nTRANSLATED_FIRST_PAGE_2";
+        slices[0].WasTranslated = true;
         var job = Job(slices);
         var fixture = Model();
 
@@ -109,6 +110,27 @@ public sealed class DocumentInsightTests
         Assert.Equal(slices[1].BodyText, Unwrap(fixture.Inputs[1]));
         Assert.Equal("Summary 1", slices[0].InsightSummary);
         Assert.Equal("Summary 2", slices[1].InsightSummary);
+    }
+
+    [Fact]
+    public async Task Reevaluation_Ignores_A_Legacy_Same_Language_Placeholder_And_Keeps_Complete_Markdown()
+    {
+        // Arrange
+        var slices = Documents();
+        slices[0].Markdown = "# Invoice\n| Item | Amount |\n| Final obligation | USD 1234 |";
+        slices[0].TranslatedText = slices[0].BodyText;
+        slices[0].WasTranslated = false;
+        var job = Job(slices);
+        var fixture = Model();
+
+        // Act
+        await GenerateDocumentInsightsExecutor.EvaluateJobInsightsAsync(job, Tenant(), fixture.Catalog);
+
+        // Assert
+        Assert.Equal(2, fixture.Inputs.Count);
+        Assert.Equal(slices[0].Markdown, Unwrap(fixture.Inputs[0]));
+        Assert.Contains("USD 1234", Unwrap(fixture.Inputs[0]));
+        Assert.Equal(slices[1].BodyText, Unwrap(fixture.Inputs[1]));
     }
 
     [Theory]
