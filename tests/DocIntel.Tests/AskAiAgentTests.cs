@@ -613,6 +613,28 @@ public sealed class AskAiAgentTests
         Assert.DoesNotContain(job.PacketSummary!, Assert.Single(run.Citations).Excerpt);
     }
 
+    [Fact]
+    public async Task A_Source_Offset_Inside_A_Unicode_Pair_Fails_Without_An_Answer()
+    {
+        // Arrange
+        var store = await CreateDocumentStoreAsync();
+        var job = (await store.GetJobAsync("source", tenantId: "tenant-one"))!;
+        job.Segments[0].BodyText = new string('x', 2999) + "\U0001F600" + "Final source";
+        await store.UpsertJobAsync(job);
+        var run = CreateRun();
+        var orchestrator = CreateOrchestrator(store, SearchCall(),
+            ToolCall("inspect_document_slice", new Dictionary<string, object?>
+                { ["jobId"] = "source", ["sliceIndex"] = 0, ["textOffset"] = 3000 }),
+            Final("NoEvidence", "This must not be released after invalid retrieval."));
+
+        // Act
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => orchestrator.ExecuteRunAsync(run));
+
+        // Assert
+        Assert.IsType<ArgumentException>(error.InnerException);
+        Assert.Null(run.Answer);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
@@ -644,10 +666,6 @@ public sealed class AskAiAgentTests
                     { ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery()) }, token);
                 var inspect = Assert.IsAssignableFrom<AIFunction>(
                     Assert.Single(options.Tools!, candidate => candidate.Name == "inspect_document_slice"));
-                if (wideUnicodeValues)
-                    await Assert.ThrowsAnyAsync<ArgumentException>(async () =>
-                        await inspect.InvokeAsync(new AIFunctionArguments
-                            { ["jobId"] = "source", ["sliceIndex"] = 0, ["textOffset"] = 3000 }, token));
                 var offset = 0;
                 while (true)
                 {
