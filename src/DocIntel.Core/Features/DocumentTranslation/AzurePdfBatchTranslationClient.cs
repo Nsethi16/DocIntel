@@ -63,10 +63,10 @@ public sealed class AzurePdfBatchTranslationClient(
         {
             await sourceContainer.CreateIfNotExistsAsync(PublicAccessType.None, cancellationToken: deadline.Token);
             await targetContainer.CreateIfNotExistsAsync(PublicAccessType.None, cancellationToken: deadline.Token);
-            var sourceAccess = await sourceContainer.GetAccessPolicyAsync(cancellationToken: deadline.Token);
-            var targetAccess = await targetContainer.GetAccessPolicyAsync(cancellationToken: deadline.Token);
-            if (sourceAccess.Value.BlobPublicAccess != PublicAccessType.None ||
-                targetAccess.Value.BlobPublicAccess != PublicAccessType.None)
+            var sourceAccess = await sourceContainer.GetPropertiesAsync(cancellationToken: deadline.Token);
+            var targetAccess = await targetContainer.GetPropertiesAsync(cancellationToken: deadline.Token);
+            if (sourceAccess.Value.PublicAccess is not (null or PublicAccessType.None) ||
+                targetAccess.Value.PublicAccess is not (null or PublicAccessType.None))
                 throw new DocumentTranslationFailureException("TranslationStagingNotPrivate",
                     "Translation staging containers must be private; no document was uploaded.", sourceLanguage);
             await source.UploadAsync(BinaryData.FromBytes(sourcePdf), UploadOptions("application/pdf"), deadline.Token);

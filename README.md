@@ -1041,8 +1041,9 @@ PDF batch polling is bounded by `DocumentTranslation:TimeoutSeconds` (default 18
 `DocumentTranslation:StagingBlobEndpoint` selects a dedicated temporary Blob account. It is not inferred
 from `AzureAI:BlobEndpoint`, and the two accounts cannot be the same. This avoids changing existing original-data
 retention to support temporary translation cleanup.
-Private staging uses random `docintel-translation-v1/` request prefixes without customer filenames; cleanup
-attempts every owned blob and, on cancellation, waits for terminal provider state within a separate deadline.
+Private staging uses random `docintel-translation-v1/` request prefixes without customer filenames.
+A read-only container-properties check verifies anonymous access is disabled without the Blob Data Owner-only ACL API.
+Cleanup attempts every owned blob and, on cancellation, waits for terminal provider state within a separate deadline.
 Deployment-owned prefix lifecycle expiry bounds late provider writes when cancellation cannot be confirmed.
 Missing translated artifacts return 404 instead of the original
 PDF or a newly generated text document. Confidence values are model signals, not calibrated

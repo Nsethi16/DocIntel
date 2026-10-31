@@ -125,11 +125,13 @@ public sealed class PdfBatchTranslationTests
             It.IsAny<BlobDownloadOptions>(), It.IsAny<CancellationToken>()), Times.Never));
     }
 
-    [Fact]
-    public async Task Public_Staging_Is_Rejected_Before_Any_Source_Document_Is_Uploaded()
+    [Theory]
+    [InlineData(PublicAccessType.Blob)]
+    [InlineData(PublicAccessType.Container)]
+    public async Task Public_Staging_Is_Rejected_Before_Any_Source_Document_Is_Uploaded(PublicAccessType access)
     {
         // Arrange
-        var fixture = new Fixture(PublicAccessType.Blob);
+        var fixture = new Fixture(access);
 
         // Act
         var failure = await Assert.ThrowsAsync<DocumentTranslationFailureException>(() =>
@@ -270,8 +272,11 @@ public sealed class PdfBatchTranslationTests
                 It.IsAny<CancellationToken>())).ReturnsAsync((Response<BlobContainerInfo>)null!);
             container.Setup(value => value.GetAccessPolicyAsync(
                     It.IsAny<BlobRequestConditions>(), It.IsAny<CancellationToken>()))
-                .ReturnsAsync(Response.FromValue(BlobsModelFactory.BlobContainerAccessPolicy(
-                    access, new ETag("fixture"), DateTimeOffset.UtcNow, []), Mock.Of<Response>()));
+                .ThrowsAsync(new RequestFailedException(403, "ACL inspection requires Blob Data Owner."));
+            container.Setup(value => value.GetPropertiesAsync(
+                    It.IsAny<BlobRequestConditions>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(Response.FromValue(BlobsModelFactory.BlobContainerProperties(
+                    publicAccess: access), Mock.Of<Response>()));
             container.Setup(value => value.GetBlobClient(It.IsAny<string>())).Returns((string blobName) =>
             {
                 var key = name + "/" + blobName;
