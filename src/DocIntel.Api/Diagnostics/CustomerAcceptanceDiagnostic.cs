@@ -22,14 +22,15 @@ using Microsoft.VisualBasic.FileIO;
 namespace DocIntel.Api.Diagnostics;
 
 /// <summary>Operator-only acceptance checks over explicitly uploaded, currently authorized QA documents.</summary>
-public static class CustomerAcceptanceDiagnostic
+public static partial class CustomerAcceptanceDiagnostic
 {
     private const string Workspace = "contoso-legal";
     private const string Customer = "QA Alderwind Services LLC";
     private static readonly string[] Cases =
     [
         "documents", "submit-documents", "ask-termination", "ask-analysis", "ask-followup",
-        "ask-no-evidence", "ask-injection", "ask-long-tail"
+        "ask-no-evidence", "ask-injection", "ask-long-tail",
+        "schema-signature", "schema-price", "schema-long"
     ];
     private sealed record Slice(int Start, int End, string Language, string? Type, string[] Facts);
     private sealed record Scenario(string Id, string FileName, int Pages, Slice[] Slices)
@@ -86,7 +87,8 @@ public static class CustomerAcceptanceDiagnostic
         }
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         deadline.CancelAfter(TimeSpan.FromSeconds(300));
-        string? runId = customerCase is "documents" or "submit-documents" ? null : RunIdFor(basisJobId, customerCase);
+        string? runId = customerCase is "documents" or "submit-documents" ||
+            customerCase.StartsWith("schema-", StringComparison.Ordinal) ? null : RunIdFor(basisJobId, customerCase);
         try
         {
             var basis = await jobs.GetJobAsync(basisJobId, deadline.Token, Workspace);
@@ -99,6 +101,8 @@ public static class CustomerAcceptanceDiagnostic
             await VerifyOriginalAsync(basis, artifacts, deadline.Token);
             if (customerCase == "submit-documents")
                 return await SubmitAsync(basis, actor, guard, jobs, artifacts, queue, output, deadline.Token);
+            if (customerCase.StartsWith("schema-", StringComparison.Ordinal))
+                return await SchemaAsync(customerCase, actor, guard, models, jobs, artifacts, output, deadline.Token);
             Scenario[] required = customerCase switch
             {
                 "documents" or "ask-no-evidence" => Scenarios,
@@ -702,7 +706,7 @@ public static class CustomerAcceptanceDiagnostic
         stored.Actor == expected.Actor && stored.Question == expected.Question &&
         stored.PreviousRunId == expected.PreviousRunId && WebOnly(stored);
 
-    private sealed record Assertion(
+    internal sealed record Assertion(
         [property: JsonPropertyName("id")] string Id, [property: JsonPropertyName("status")] string Status);
     private static Assertion Check(string id, bool passed) => new(id, passed ? "Passed" : "Failed");
     private static Assertion NotApplicable(string id) => new(id, "NotApplicable");
@@ -730,6 +734,7 @@ public static class CustomerAcceptanceDiagnostic
             phase = "CustomerAcceptance", customerCase, scenario, status, failureCode,
             origin = "OperatorCli",
             coverage = customerCase == "submit-documents" ? "BackendSubmission" :
+                customerCase.StartsWith("schema-", StringComparison.Ordinal) ? "LiveModelControlledCatalog" :
                 customerCase == "documents" ? "StoredDocumentAndExportHelpers" : "AskAiProcessor",
             jobId = job?.JobId, runId = run?.RunId ?? runId, reused,
             jobStatus = job?.Status.ToString(),

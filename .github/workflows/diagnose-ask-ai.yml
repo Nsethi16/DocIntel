@@ -19,7 +19,7 @@ on:
       customer_case:
         description: CustomerAcceptance only. One bounded case per dispatch. submit-documents queues fixed embedded B-G PDFs through the backend, not the browser; documents is read-only.
         type: choice
-        options: [documents, submit-documents, ask-termination, ask-analysis, ask-followup, ask-no-evidence, ask-injection, ask-long-tail]
+        options: [documents, submit-documents, ask-termination, ask-analysis, ask-followup, ask-no-evidence, ask-injection, ask-long-tail, schema-signature, schema-price, schema-long]
         default: documents
       confirmation:
         description: TEST authorizes CustomerAcceptance, REPLAY a replay, PROBE a translation probe, REPROCESS one failed upload retry. Provider usage can incur charges.
@@ -77,7 +77,8 @@ jobs:
           if ($env:DIAGNOSTIC_MODE -eq 'CustomerAcceptance' -and
               ($env:DIAGNOSTIC_CONFIRMATION -cne 'TEST' -or $env:DIAGNOSTIC_TENANT -cne 'contoso-legal' -or
                $env:DIAGNOSTIC_CUSTOMER_CASE -cnotin @('documents', 'submit-documents', 'ask-termination',
-                 'ask-analysis', 'ask-followup', 'ask-no-evidence', 'ask-injection', 'ask-long-tail'))) {
+                 'ask-analysis', 'ask-followup', 'ask-no-evidence', 'ask-injection', 'ask-long-tail',
+                 'schema-signature', 'schema-price', 'schema-long'))) {
             throw 'CustomerAcceptance requires TEST, contoso-legal, and one supported customer case.'
           }
           if ($env:TRANSLATION_VARIANT -and $env:TRANSLATION_VARIANT -notin @('Configured', 'WithoutGlossary') -or
@@ -146,7 +147,9 @@ jobs:
                   "SixtyDayTermination", "TerminationSourceCitation", "ServerCalculatedSignedTotals",
                   "MissingIsNotZero", "FourSheetCitations", "VerifiedFollowup", "EurOnlyFollowup",
                   "NoMatchSearch", "NoFabricatedAnswer", "FinalSourceCitation", "AnalysisCitations",
-                  "EmbeddedPdfValidated", "SubmissionIdempotency", "UploadedJobCompleted"
+                  "EmbeddedPdfValidated", "SubmissionIdempotency", "UploadedJobCompleted",
+                  "SchemaClassification", "SchemaFields", "SchemaRows", "SchemaMissingAmount",
+                  "SchemaNativeDecision", "SchemaNoSimulation", "SchemaSourceUnchanged"
               }
               if (not isinstance(value, dict) or set(value) - allowed or
                   value.get("phase") != "CustomerAcceptance" or
@@ -157,7 +160,8 @@ jobs:
                   raise RuntimeError("The customer diagnostic returned an invalid metadata record.")
               if (value.get("origin") not in {None, "OperatorCli"} or
                   value.get("coverage") not in {
-                      None, "BackendSubmission", "StoredDocumentAndExportHelpers", "AskAiProcessor"}):
+                      None, "BackendSubmission", "StoredDocumentAndExportHelpers", "AskAiProcessor",
+                      "LiveModelControlledCatalog"}):
                   raise RuntimeError("The customer diagnostic returned an invalid coverage category.")
               for key in counts:
                   item = value.get(key)

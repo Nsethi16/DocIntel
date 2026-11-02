@@ -32,6 +32,7 @@
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\AskAiContractDiagnostic.cs" Link="Diagnostics\AskAiContractDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\AskAiSyntheticDiagnostic.cs" Link="Diagnostics\AskAiSyntheticDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\CustomerAcceptanceDiagnostic.cs" Link="Diagnostics\CustomerAcceptanceDiagnostic.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Diagnostics\CustomerAcceptanceSchemas.cs" Link="Diagnostics\CustomerAcceptanceSchemas.cs" />
     <EmbeddedResource Include="..\..\src\DocIntel.Api\Diagnostics\Fixtures\QA-20261102-*.pdf"
                       LogicalName="DocIntel.Api.Diagnostics.Fixtures.%(Filename)%(Extension)" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\DirectoryConnectionDiagnostic.cs" Link="Diagnostics\DirectoryConnectionDiagnostic.cs" />

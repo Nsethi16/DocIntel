@@ -1,0 +1,213 @@
+using System.Text.Json;
+using DocIntel.Core.Authorization;
+using DocIntel.Core.Features.AskAi;
+using DocIntel.Core.Features.DataExtraction;
+using DocIntel.Core.Features.DocumentIdentification;
+using DocIntel.Core.Features.DocumentSplitting;
+using DocIntel.Core.Harness;
+using DocIntel.Core.Jobs;
+using DocIntel.Core.Models;
+using DocIntel.Core.Ocr;
+using DocIntel.Core.Storage;
+using Microsoft.Agents.AI.Workflows;
+
+namespace DocIntel.Api.Diagnostics;
+
+public static partial class CustomerAcceptanceDiagnostic
+{
+    private static async Task<int> SchemaAsync(string customerCase, ActorIdentity actor, SourceGuard guard,
+        IModelCatalog models, IJobStore jobs, IArtifactStore artifacts, TextWriter output, CancellationToken token)
+    {
+        var scenarioId = customerCase switch
+        {
+            "schema-signature" => "B", "schema-price" => "G", "schema-long" => "E",
+            _ => throw new ArgumentOutOfRangeException(nameof(customerCase))
+        };
+        var scenario = Scenarios.Single(item => item.Id == scenarioId);
+        var source = await FindAsync(scenario, actor, jobs, guard, token);
+        if (source is null || !Eligible(source, scenario, actor))
+            throw new AcceptanceGuardException("FixtureUnavailable");
+        guard.Track(source, scenario);
+        await guard.CheckAsync(token);
+        await VerifyOriginalAsync(source, artifacts, token);
+        await guard.CheckAsync(token);
+        var sourceStamp = AskAiConversationContext.Fingerprint(source);
+        var current = guard.CurrentHarness;
+        var model = models.ResolveModelId(current);
+        var defaults = new TenantHarness { TenantId = Workspace, DisplayName = "Controlled QA catalogue" };
+        var rules = defaults.Capabilities[FeatureHarness.IdentifyDocumentsKey].IdentifyDocuments!.Rules;
+        var profile = customerCase == "schema-signature"
+            ? new DocumentDataExtractionProfile
+            {
+                DocumentName = "Program Signature Form",
+                Fields =
+                [
+                    new() { FieldName = "CustomerEntityName", Instruction = "Extract the exact customer legal entity name." },
+                    new() { FieldName = "MbaMbsaNumber", Instruction = "Extract the original MBA/MBSA number." },
+                    new() { FieldName = "ContractNumber", Instruction = "Extract the original contract number." }
+                ]
+            }
+            : PriceProfile();
+        var tenant = new TenantHarness
+        {
+            TenantId = Workspace, DisplayName = "Controlled QA catalogue", DefaultModelId = model,
+            DecisionModelId = current.DecisionModelId, AllowedModels = [model, current.DecisionModelId],
+            Ocr = new() { Mode = OcrMode.Never },
+            Capabilities = new(StringComparer.OrdinalIgnoreCase)
+            {
+                [FeatureHarness.IdentifyDocumentsKey] = new()
+                {
+                    Enabled = true, IdentifyDocuments = new() { DecisionModelId = current.DecisionModelId, Rules = rules }
+                },
+                [FeatureHarness.DataExtractionKey] = new()
+                {
+                    Enabled = true, ModelIdOverride = model, DataExtraction = new() { Profiles = [profile] }
+                }
+            }
+        };
+        var state = new SplittingState
+        {
+            Tenant = tenant, DocumentId = source.JobId, FileName = source.FileName,
+            Slices = JsonSerializer.Deserialize<List<DocumentSlice>>(JsonSerializer.SerializeToUtf8Bytes(source.Segments))
+                ?? throw new InvalidDataException("The verified source slices are unavailable.")
+        };
+        foreach (var slice in state.Slices) slice.DataExtraction = null;
+        var identify = new IdentifyDocumentsExecutor(models);
+        var extract = new ExtractDocumentDataExecutor(models);
+        var workflow = new WorkflowBuilder(identify).AddEdge(identify, extract).WithOutputFrom(extract).Build();
+        SplittingState? result = null;
+        await using (var run = await InProcessExecution.RunStreamingAsync(workflow, state, cancellationToken: token))
+        {
+            await foreach (var evt in run.WatchStreamAsync().WithCancellation(token))
+            {
+                if (evt is WorkflowOutputEvent { Data: SplittingState completed }) result = completed;
+                else if (evt is ExecutorFailedEvent { Data: { } failure }) throw failure;
+                else if (evt is WorkflowErrorEvent { Exception: { } workflowFailure }) throw workflowFailure;
+            }
+        }
+        if (result is null) throw new InvalidDataException("The controlled schema check did not complete.");
+        await guard.CheckAsync(token);
+        var checks = SchemaAssertions(customerCase, result.Slices);
+        checks.Add(Check("SchemaNativeDecision", result.ExecutionTrace.Any(step =>
+            step.ExecutorName == nameof(IdentifyDocumentsExecutor) && step.Succeeded &&
+            step.ModelIdUsed == current.DecisionModelId)));
+        checks.Add(Check("SchemaNoSimulation", !result.HasDevelopmentResults));
+        checks.Add(Check("SchemaSourceUnchanged", sourceStamp == AskAiConversationContext.Fingerprint(source)));
+        var passed = checks.All(check => check.Status != "Failed");
+        var report = new DocumentJob
+        {
+            JobId = source.JobId, TenantId = Workspace, TenantDisplayName = "Controlled QA catalogue",
+            AppliedHarnessVersion = source.AppliedHarnessVersion, ProcessingHarness = tenant,
+            FileName = source.FileName, Status = JobStatus.Completed, OriginalSha256 = source.OriginalSha256,
+            TotalPages = source.TotalPages, Segments = result.Slices, DataExtractions = result.DataExtractions
+        };
+        await WriteAsync(output, customerCase, "Summary", passed ? "Completed" : "Failed",
+            passed ? "None" : "AcceptanceMismatch", report, assertions: checks, sources: [source]);
+        return passed ? 0 : 1;
+    }
+
+    private static DocumentDataExtractionProfile PriceProfile() => new()
+    {
+        DocumentName = "Customer Price Sheet",
+        Fields =
+        [
+            new() { FieldName = "CustomerName", Instruction = "Extract the exact customer legal entity name." },
+            new() { FieldName = "QuoteNumber", Instruction = "Extract the original quote number." },
+            new() { FieldName = "BillingCurrency", Instruction = "Extract the three-letter billing currency." },
+            new() { FieldName = "TotalDealValue", Instruction =
+                "Extract the stated quote-level total, preserving a minus sign. Return empty string if not provided. " +
+                "Do not infer a total or sum unit prices." }
+        ],
+        Tables =
+        [
+            new()
+            {
+                TableName = "SubscriptionPricing",
+                Instruction = "Extract every product pricing row across the complete source. Preserve SKU, product " +
+                    "and unit price exactly. Do not truncate, summarize or insert an aggregate row.",
+                Columns =
+                [
+                    new() { ColumnName = "PartNumber", Instruction = "Original SKU / part number." },
+                    new() { ColumnName = "ProductName", Instruction = "Original product or service name." },
+                    new() { ColumnName = "UnitPrice", Instruction = "Original numeric unit price." }
+                ]
+            }
+        ]
+    };
+
+    internal static List<Assertion> SchemaAssertions(string customerCase, IReadOnlyList<DocumentSlice> slices)
+    {
+        var checks = new List<Assertion>();
+        if (customerCase == "schema-signature")
+        {
+            var signature = slices.SingleOrDefault(slice => slice.StartPage == 3 && slice.EndPage == 3);
+            checks.Add(Check("SchemaClassification", slices.Count == 3 &&
+                slices.OrderBy(slice => slice.SegmentIndex).Select(slice => slice.IdentifiedDocumentName)
+                    .SequenceEqual(["Customer Price Sheet", "Program Signature Form", "Enterprise Enrollment"])));
+            checks.Add(Check("SchemaFields", signature?.DataExtraction is { } data &&
+                ExactFields(data.Fields, ["CustomerEntityName", "MbaMbsaNumber", "ContractNumber"]) &&
+                Value(data.Fields, "CustomerEntityName") == Customer &&
+                Value(data.Fields, "MbaMbsaNumber") == "QA-MBSA-62001" &&
+                Value(data.Fields, "ContractNumber") == "QA-AG-62001" && data.Tables.Count == 0));
+            return checks;
+        }
+        var expectedCount = customerCase == "schema-long" ? 1 : 4;
+        checks.Add(Check("SchemaClassification", slices.Count == expectedCount &&
+            slices.All(slice => slice.IdentifiedDocumentName == "Customer Price Sheet")));
+        var fieldsValid = slices.Count == expectedCount;
+        var rowsValid = slices.Count == expectedCount;
+        var missingValid = customerCase != "schema-price";
+        var quoteIds = new[] { "QA-CREDIT-001", "QA-POSITIVE-002", "QA-EURO-003", "QA-MISSING-004" };
+        decimal[] amounts = [-500m, 3_500m, 2_000m];
+        foreach (var slice in slices)
+        {
+            if (slice.DataExtraction is not { } data)
+            {
+                fieldsValid = rowsValid = false;
+                continue;
+            }
+            var index = slice.SegmentIndex;
+            fieldsValid &= ExactFields(data.Fields, ["CustomerName", "QuoteNumber", "BillingCurrency", "TotalDealValue"]) &&
+                Value(data.Fields, "CustomerName") == Customer;
+            if (customerCase == "schema-long")
+                fieldsValid &= Value(data.Fields, "QuoteNumber") == "QA-LONG-001" &&
+                    Value(data.Fields, "BillingCurrency") == "USD" && HasAmount(Value(data.Fields, "TotalDealValue"), 45_000m);
+            else if (index is >= 0 and < 4)
+            {
+                fieldsValid &= Value(data.Fields, "QuoteNumber") == quoteIds[index] &&
+                    Value(data.Fields, "BillingCurrency") == (index == 2 ? "EUR" : "USD") &&
+                    (index == 3 || HasAmount(Value(data.Fields, "TotalDealValue"), amounts[index]));
+                if (index == 3) missingValid = String.IsNullOrWhiteSpace(Value(data.Fields, "TotalDealValue"));
+            }
+            else fieldsValid = false;
+            var table = data.Tables.Count == 1 ? data.Tables[0] : null;
+            var expectedRows = customerCase == "schema-long" ? 300 : 2;
+            rowsValid &= table is { TableName: "SubscriptionPricing" } && table.Rows.Count == expectedRows;
+            if (table is null) continue;
+            var expectedParts = Enumerable.Range(1, expectedRows).Select(number =>
+                customerCase == "schema-long" ? $"QA-SKU-{number:0000}" : $"QA-SKU-{number:000}")
+                .ToHashSet(StringComparer.Ordinal);
+            rowsValid &= table.Rows.Select(row => Value(row.Fields, "PartNumber")).ToHashSet(StringComparer.Ordinal)
+                .SetEquals(expectedParts) &&
+                table.Rows.All(row => ExactFields(row.Fields, ["PartNumber", "ProductName", "UnitPrice"]) &&
+                    String.Equals(Compact(Value(row.Fields, "ProductName")), Compact(customerCase == "schema-long"
+                        ? "Managed service line " + Value(row.Fields, "PartNumber")[7..].TrimStart('0').PadLeft(3, '0')
+                        : Value(row.Fields, "PartNumber") == "QA-SKU-001"
+                            ? "Managed operations subscription" : "Reporting and support service"),
+                        StringComparison.OrdinalIgnoreCase) &&
+                    HasAmount(Value(row.Fields, "UnitPrice"), customerCase == "schema-long" ||
+                        Value(row.Fields, "PartNumber") == "QA-SKU-001" ? 150m : 75m));
+        }
+        checks.Add(Check("SchemaFields", fieldsValid));
+        checks.Add(Check("SchemaRows", rowsValid));
+        if (customerCase == "schema-price") checks.Add(Check("SchemaMissingAmount", missingValid));
+        return checks;
+    }
+
+    private static bool ExactFields(IReadOnlyList<ExtractedFieldValue> fields, string[] names) =>
+        fields.Count == names.Length && fields.Select(field => field.FieldName)
+            .ToHashSet(StringComparer.Ordinal).SetEquals(names);
+
+    private static string Value(IReadOnlyList<ExtractedFieldValue> fields, string name) =>
+        fields.FirstOrDefault(field => field.FieldName == name)?.FieldValue ?? String.Empty;
+}

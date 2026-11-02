@@ -69,6 +69,9 @@ public sealed class CustomerAcceptanceDiagnosticTests
     [InlineData(Workspace, BasisId, "submit-documents", false)]
     [InlineData(Workspace, BasisId, "documents", false)]
     [InlineData(Workspace, BasisId, "ask-termination", false)]
+    [InlineData(Workspace, BasisId, "schema-signature", false)]
+    [InlineData(Workspace, BasisId, "schema-price", false)]
+    [InlineData(Workspace, BasisId, "schema-long", false)]
     public async Task Invalid_Inputs_And_Missing_Live_Opt_In_Use_No_Service(
         string tenant, string basis, string scenario, bool live)
     {

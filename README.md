@@ -614,6 +614,11 @@ test answers with source-isolated access. They never change customer settings, p
 or existing documents and never send email or Teams messages.
 The fixed long-document retest is labeled `E2-Long-Price-Sheet-Retest`; it uses the same authored
 source bytes and preserves the earlier completed E result rather than overwriting its audit history.
+Explicit `schema-signature`, `schema-price` and `schema-long` cases exercise genuine native Decision
+classification and structured extraction over those verified original QA slices with an in-memory
+controlled catalogue. They do not update the customer's catalogue or stored document results.
+Checks include exact field values, signed/missing amounts, every original product row and distinct
+SKU coverage; the long case requires all 300 rows, not just a successful model response.
 Kestrel and multipart parsing have an explicit 26 MiB total request limit (including multipart
 overhead), so oversized bodies are rejected before full application-level buffering. Form values
 are separately bounded. Unexpected errors return sanitized `application/problem+json` with a
