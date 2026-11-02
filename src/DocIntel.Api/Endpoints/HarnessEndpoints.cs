@@ -1,6 +1,7 @@
 using System.Text;
 using System.Text.Json;
 using System.Security.Cryptography;
+using DocIntel.Api.Http;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Api.Identity;
 using DocIntel.Core.Authorization;
@@ -974,10 +975,7 @@ public static class HarnessEndpoints
         using var stream = new MemoryStream();
         await file.CopyToAsync(stream, ct);
         var bytes = stream.ToArray();
-        if (!bytes.AsSpan().StartsWith("%PDF-"u8))
-        {
-            throw new BadHttpRequestException("The uploaded file is not a PDF.", 400);
-        }
+        PdfUploadValidator.Validate(bytes, ct);
         return (file.FileName, bytes);
     }
 

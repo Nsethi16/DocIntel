@@ -523,6 +523,19 @@ test('verified bearer and browser identities enforce tenant, document, run, and 
         assert.equal((await fetch(api.url + tenantPath + '/jobs', {
           method: 'POST', headers: { Authorization: `Bearer ${processor}` }, body: form
         })).status, 400);
+        const malformed = new FormData();
+        malformed.set('file', new Blob(['%PDF-1.7\nThis is not a readable PDF.\n%%EOF\n'],
+          { type: 'application/pdf' }), 'malformed.pdf');
+        assert.equal((await fetch(api.url + tenantPath + '/jobs', {
+          method: 'POST', headers: { Authorization: `Bearer ${processor}` }, body: malformed
+        })).status, 400);
+        const encrypted = new FormData();
+        encrypted.set('file', new Blob([await fs.readFile(path.join(__dirname,
+          '..', 'DocIntel.Tests', 'Fixtures', 'Encrypted-Upload.pdf'))], { type: 'application/pdf' }),
+        'encrypted.pdf');
+        assert.equal((await fetch(api.url + tenantPath + '/jobs', {
+          method: 'POST', headers: { Authorization: `Bearer ${processor}` }, body: encrypted
+        })).status, 400);
         const oversized = new Uint8Array(25 * 1024 * 1024 + 1);
         oversized.set(Buffer.from('%PDF-'));
         const largeForm = new FormData();

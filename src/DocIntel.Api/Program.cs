@@ -21,9 +21,10 @@ var documentDiagnosticMode = args.Contains("--diagnose-document", StringComparer
 var documentReprocessMode = args.Contains("--reprocess-document", StringComparer.Ordinal);
 var processingSyntheticMode = args.Contains("--diagnose-processing-synthetic", StringComparer.Ordinal);
 var translationSyntheticMode = args.Contains("--diagnose-translation-synthetic", StringComparer.Ordinal);
+var customerAcceptanceMode = args.Contains("--diagnose-customer-acceptance", StringComparer.Ordinal);
 var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal) ||
     askContractMode || askSyntheticMode || askDataMode || documentDiagnosticMode ||
-    documentReprocessMode || processingSyntheticMode || translationSyntheticMode;
+    documentReprocessMode || processingSyntheticMode || translationSyntheticMode || customerAcceptanceMode;
 WebApplicationBuilder builder;
 try
 {
@@ -105,6 +106,26 @@ builder.Services.AddHostedService<AskAiRunWorker>();
 builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);
 
 var app = builder.Build();
+if (customerAcceptanceMode)
+{
+    Environment.ExitCode = await CustomerAcceptanceDiagnostic.ExecuteAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty,
+        builder.Configuration["diagnose-customer-acceptance"] ?? String.Empty,
+        builder.Configuration["diagnose-customer-case"] ?? String.Empty,
+        startupReadiness.ProbeModelsOnStartup &&
+            String.Equals(builder.Configuration["diagnose-customer-live"], "true", StringComparison.Ordinal),
+        app.Services.GetRequiredService<DocIntel.Core.Harness.IHarnessStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Models.IModelCatalog>(),
+        app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Authorization.ITenantAccessResolver>(),
+        app.Services.GetRequiredService<DocIntel.Core.Storage.IArtifactStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Features.DocumentSplitting.IPdfSlicer>(),
+        app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.IAskAiRunStore>(), Console.Out,
+        executionOptions: app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.AskAiExecutionOptions>(),
+        queue: app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobQueue>());
+    await app.DisposeAsync();
+    return;
+}
 if (documentReprocessMode)
 {
     Environment.ExitCode = await ProcessingAcceptanceDiagnostic.ReprocessAsync(

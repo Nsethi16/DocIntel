@@ -8,16 +8,21 @@ on:
         type: string
         default: contoso-legal
       run_id:
-        description: Run/document ID; Inspect accepts recent. Document accepts a document ID or SHA-256 of its exact UTF-8 filename. Synthetic modes require empty.
+        description: Run/document ID. CustomerAcceptance requires the exact 32-hex completed A upload ID. Inspect also accepts recent; Document also accepts an exact-filename SHA-256.
         type: string
         required: false
       mode:
-        description: Inspect/Data read metadata. Contract/Synthetic test Ask AI. Document inspects uploads; DocumentReprocess explicitly retries one. ProcessingSynthetic/TranslationSynthetic use authored PDFs.
+        description: Choose saved diagnostics, synthetic checks, or explicit operator-only CustomerAcceptance over uploaded QA documents.
         type: choice
-        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic]
+        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance]
         default: Inspect
+      customer_case:
+        description: CustomerAcceptance only. One bounded case per dispatch. submit-documents queues fixed embedded B-G PDFs through the backend, not the browser; documents is read-only.
+        type: choice
+        options: [documents, submit-documents, ask-termination, ask-analysis, ask-followup, ask-no-evidence, ask-injection, ask-long-tail]
+        default: documents
       confirmation:
-        description: REPLAY authorizes a question replay; PROBE a translation probe; REPROCESS explicitly retries a failed upload through normal processing. Provider usage can incur charges.
+        description: TEST authorizes CustomerAcceptance, REPLAY a replay, PROBE a translation probe, REPROCESS one failed upload retry. Provider usage can incur charges.
         type: string
         default: ''
       translation_variant:
@@ -49,6 +54,7 @@ jobs:
       DIAGNOSTIC_TENANT: ${{ inputs.tenant_id }}
       DIAGNOSTIC_RUN: ${{ inputs.run_id }}
       DIAGNOSTIC_MODE: ${{ inputs.mode }}
+      DIAGNOSTIC_CUSTOMER_CASE: ${{ inputs.customer_case }}
       TRANSLATION_VARIANT: ${{ inputs.translation_variant }}
     steps:
       - name: Validate explicit diagnostic input and Azure identity consistency
@@ -68,11 +74,17 @@ jobs:
           if ($env:DIAGNOSTIC_MODE -eq 'DocumentReprocess' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'REPROCESS') {
             throw 'DocumentReprocess requires the exact confirmation REPROCESS.'
           }
+          if ($env:DIAGNOSTIC_MODE -eq 'CustomerAcceptance' -and
+              ($env:DIAGNOSTIC_CONFIRMATION -cne 'TEST' -or $env:DIAGNOSTIC_TENANT -cne 'contoso-legal' -or
+               $env:DIAGNOSTIC_CUSTOMER_CASE -cnotin @('documents', 'submit-documents', 'ask-termination',
+                 'ask-analysis', 'ask-followup', 'ask-no-evidence', 'ask-injection', 'ask-long-tail'))) {
+            throw 'CustomerAcceptance requires TEST, contoso-legal, and one supported customer case.'
+          }
           if ($env:TRANSLATION_VARIANT -and $env:TRANSLATION_VARIANT -notin @('Configured', 'WithoutGlossary') -or
             $env:TRANSLATION_VARIANT -eq 'WithoutGlossary' -and $env:DIAGNOSTIC_MODE -ne 'TranslationProbe') {
             throw 'A glossary comparison requires an explicit TranslationProbe.'
           }
-          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe', 'DocumentReprocess', 'ProcessingSynthetic', 'TranslationSynthetic')) { throw 'Invalid diagnostic mode.' }
+          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe', 'DocumentReprocess', 'ProcessingSynthetic', 'TranslationSynthetic', 'CustomerAcceptance')) { throw 'Invalid diagnostic mode.' }
           if ($env:DIAGNOSTIC_TENANT -notmatch '^[a-z0-9][a-z0-9-]{0,127}$' -or
             ($env:DIAGNOSTIC_MODE -notin @('Contract', 'Synthetic', 'ProcessingSynthetic', 'TranslationSynthetic') -and
              $env:DIAGNOSTIC_RUN -notmatch '^[a-fA-F0-9]{32}$' -and
@@ -101,6 +113,80 @@ jobs:
           import subprocess
           import sys
 
+          def customer_record(value):
+              counts = {"pages", "slices", "translatedSlices", "sourceCharacters", "structuredDocuments",
+                        "tableRows", "promptResults", "searches", "inspections", "citations", "analyses",
+                        "layoutPages", "layoutWords", "ocrPages", "embeddedTextPages"}
+              allowed = counts | {"phase", "customerCase", "scenario", "status", "failureCode", "jobId",
+                                  "runId", "reused", "jobStatus", "sourceSha256", "layoutSha256",
+                                  "hasWarnings", "assertions", "sources", "origin", "coverage"}
+              codes = {
+                  "None", "InvalidInput", "LiveProbingDisabled", "BasisNotEligible", "FixtureUnavailable",
+                  "FixtureDiscoveryLimit", "OriginalUnavailable", "SourceIntegrityFailed", "WorkspaceUnavailable",
+                  "WorkspaceChanged", "SourceChanged", "PrerequisiteUnavailable", "RunConflict", "ExistingRunPending",
+                  "AcceptanceMismatch", "ArtifactCheckFailed", "DiagnosticFailed", "TimedOut", "AccessRevoked",
+                  "ProcessingNotCompleted",
+                  "SubmissionUnavailable", "EmbeddedFixtureUnavailable", "EmbeddedFixtureInvalid", "SubmissionConflict",
+                  "Interrupted", "InvalidModelAnswer", "UnknownCitation", "MissingEvidence", "CitationMismatch",
+                  "ToolCallLimit", "EvidenceLimit", "InvalidToolArguments", "RetrievalFailed", "ResponseTokenLimit",
+                  "DataQueryRejected", "DataAccessDenied", "DataRateLimited", "DataUnavailable", "DataRequestFailed",
+                  "ProviderContextLimit", "ProviderQuotaExceeded", "ProviderRateLimited", "ProviderSchemaRejected",
+                  "ProviderAccessDenied", "ProviderDeploymentUnavailable", "ProviderTimedOut", "ProviderUnavailable",
+                  "ProviderContentFiltered", "ProviderRequestRejected", "ExecutionFailed"
+              }
+              assertion_ids = {
+                  "UniqueUploadedFixture", "OriginalIntegrity", "PageCount", "SliceBoundaries", "PerSliceLanguage",
+                  "SourceGroundTruth", "PdfArtifactsAndTranslation", "SourceLayoutWords",
+                  "GenuineContentUnderstandingOcr", "FinalPageTermination", "LongSourceTail", "ExpectedWarnings",
+                  "ConfiguredStructuredExtraction", "ConfiguredClassification", "RemainingInsights",
+                  "RemainingPromptOutputs", "MachineExportNoReview", "MachineExportJson", "MachineExportCsv",
+                  "MachineExportXlsx", "RunCompleted", "NoExternalDelivery", "SourceScopeIsolation",
+                  "CurrentSourceVersions", "OriginalCitations", "PromptInjectionRejected", "ServiceAgreementFacts",
+                  "SixtyDayTermination", "TerminationSourceCitation", "ServerCalculatedSignedTotals",
+                  "MissingIsNotZero", "FourSheetCitations", "VerifiedFollowup", "EurOnlyFollowup",
+                  "NoMatchSearch", "NoFabricatedAnswer", "FinalSourceCitation", "AnalysisCitations",
+                  "EmbeddedPdfValidated", "SubmissionIdempotency", "UploadedJobCompleted"
+              }
+              if (not isinstance(value, dict) or set(value) - allowed or
+                  value.get("phase") != "CustomerAcceptance" or
+                  value.get("customerCase") != os.environ["DIAGNOSTIC_CUSTOMER_CASE"] or
+                  value.get("scenario") not in {"A", "B", "C", "D", "E", "F", "G", "Summary"} or
+                  value.get("status") not in {"Completed", "Failed", "Refused", "Pending", "Submitted", "Reused"} or
+                  value.get("failureCode") not in codes):
+                  raise RuntimeError("The customer diagnostic returned an invalid metadata record.")
+              if (value.get("origin") not in {None, "OperatorCli"} or
+                  value.get("coverage") not in {
+                      None, "BackendSubmission", "StoredDocumentAndExportHelpers", "AskAiProcessor"}):
+                  raise RuntimeError("The customer diagnostic returned an invalid coverage category.")
+              for key in counts:
+                  item = value.get(key)
+                  if item is not None and (type(item) is not int or not 0 <= item <= 1_000_000_000):
+                      raise RuntimeError("The customer diagnostic returned an invalid count.")
+              for key, pattern in (("jobId", r"[a-fA-F0-9]{32}"), ("runId", r"[a-fA-F0-9]{64}"),
+                                   ("sourceSha256", r"[a-fA-F0-9]{64}"), ("layoutSha256", r"[a-fA-F0-9]{64}")):
+                  item = value.get(key)
+                  if item is not None and (not isinstance(item, str) or not re.fullmatch(pattern, item)):
+                      raise RuntimeError("The customer diagnostic returned an invalid opaque reference.")
+              for key in ("reused", "hasWarnings"):
+                  if value.get(key) is not None and type(value[key]) is not bool:
+                      raise RuntimeError("The customer diagnostic returned an invalid flag.")
+              if value.get("jobStatus") not in {None, "Queued", "Running", "Completed", "Failed"}:
+                  raise RuntimeError("The customer diagnostic returned an invalid document state.")
+              assertions = value.get("assertions")
+              if (not isinstance(assertions, list) or len(assertions) > 48 or any(
+                      not isinstance(item, dict) or set(item) != {"id", "status"} or
+                      item["id"] not in assertion_ids or item["status"] not in {"Passed", "Failed", "NotApplicable"}
+                      for item in assertions)):
+                  raise RuntimeError("The customer diagnostic returned invalid assertion metadata.")
+              sources = value.get("sources")
+              if sources is not None and (not isinstance(sources, list) or len(sources) > 7 or any(
+                      not isinstance(item, dict) or set(item) != {"jobId", "sourceSha256"} or
+                      not isinstance(item["jobId"], str) or not re.fullmatch(r"[a-fA-F0-9]{32}", item["jobId"]) or
+                      not isinstance(item["sourceSha256"], str) or
+                      not re.fullmatch(r"[a-fA-F0-9]{64}", item["sourceSha256"]) for item in sources)):
+                  raise RuntimeError("The customer diagnostic returned invalid source references.")
+              return value
+
           def inspect(arguments):
               result = subprocess.run(
                   ["az", *arguments, "--only-show-errors", "--output", "json"],
@@ -122,7 +208,13 @@ jobs:
           if not replicas:
               raise RuntimeError("The current revision has no active replica.")
           replay = "true" if os.environ["DIAGNOSTIC_MODE"] == "Replay" else "false"
-          if os.environ["DIAGNOSTIC_MODE"] == "DocumentReprocess":
+          if os.environ["DIAGNOSTIC_MODE"] == "CustomerAcceptance":
+              diagnostic = shlex.join([
+                  "dotnet", "/app/DocIntel.Api.dll",
+                  "--diagnose-customer-acceptance", os.environ["DIAGNOSTIC_RUN"],
+                  "--diagnose-customer-case", os.environ["DIAGNOSTIC_CUSTOMER_CASE"],
+                  "--diagnose-customer-live", "true", "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"]])
+          elif os.environ["DIAGNOSTIC_MODE"] == "DocumentReprocess":
               diagnostic = shlex.join([
                   "dotnet", "/app/DocIntel.Api.dll", "--reprocess-document", os.environ["DIAGNOSTIC_RUN"],
                   "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"]])
@@ -169,7 +261,8 @@ jobs:
               if marker < 0:
                   continue
               value = json.loads(line[marker + len("DOCINTEL_DIAGNOSTIC "):])
-              safe = {key: value[key] for key in (
+              safe = customer_record(value) if os.environ["DIAGNOSTIC_MODE"] == "CustomerAcceptance" else {
+                  key: value[key] for key in (
                   "phase", "status", "failureCode", "searches", "inspections",
                   "matchedDocuments", "citations", "httpStatus", "providerCode",
                   "providerParameter", "schemaKeyword", "providerHints",
@@ -183,10 +276,14 @@ jobs:
               records.append(safe)
           if not records:
               raise RuntimeError("The runtime diagnostic returned no verified result. Raw process output was not published.")
-          expected_phase = os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic") else (
+          expected_phase = os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance") else (
               "Replay" if replay == "true" else "Stored")
           if records[-1].get("phase") != expected_phase:
               raise RuntimeError("The requested diagnostic did not complete.")
           if records[-1].get("status") in ("Refused", "NotFound", "Pending") or (
-                  expected_phase in ("Data", "Replay", "Contract", "Synthetic", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic") and records[-1].get("status") == "Failed"):
+                  expected_phase in ("Data", "Replay", "Contract", "Synthetic", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance") and records[-1].get("status") == "Failed"):
+              sys.exit(1)
+          if expected_phase == "CustomerAcceptance" and (
+                  result.returncode or records[-1].get("scenario") != "Summary" or
+                  records[-1].get("status") != "Completed"):
               sys.exit(1)

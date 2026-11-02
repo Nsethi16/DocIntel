@@ -35,6 +35,9 @@ public interface IPdfSlicer
 /// </summary>
 public sealed class PdfPigLayoutExtractor : IPageLayoutExtractor, IPdfSlicer
 {
+    /// <summary>The source-page limit shared by ingestion, layout storage and upload admission.</summary>
+    public const int MaximumPages = DocumentLayoutCodec.MaxPages;
+
     public Task<IReadOnlyList<PageLayout>> ExtractPagesAsync(
         byte[] pdfBytes,
         SplittingConfig config,

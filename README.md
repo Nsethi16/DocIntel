@@ -598,7 +598,17 @@ Jobs expose `hasDevelopmentResults`: `true` identifies development-derived resul
 legacy provenance is unknown. The workspace labels these cases and Ask AI is told to verify
 against original source text rather than trust unverified derived results. The explicit
 `seed-examples` adapter is available only in loopback development with simulation enabled.
-Uploads always require an actual PDF, with a 25 MiB limit; an empty request never creates a sample.
+Uploads require one readable, unencrypted PDF of at most 25 MiB and 1,000 pages.
+Admission opens the PDF structure before retaining artifacts or creating a provider job, so a forged
+`%PDF-` header, encrypted document or invalid page count is rejected rather than queued as an apparently valid upload.
+An empty request never creates a sample.
+The protected operator diagnostic also offers explicit `CustomerAcceptance` cases over the
+fictional `QA-20261102` corpus. It requires `TEST`, the exact completed A-upload ID and the
+uploading actor's current processing/document access. `submit-documents` queues only six
+fixed embedded PDFs through normal artifact/job/queue processing; it is backend acceptance,
+not browser-upload coverage. Other cases inspect those stored results or persist web-only
+test answers with source-isolated access. They never change customer settings, permissions
+or existing documents and never send email or Teams messages.
 Kestrel and multipart parsing have an explicit 26 MiB total request limit (including multipart
 overhead), so oversized bodies are rejected before full application-level buffering. Form values
 are separately bounded. Unexpected errors return sanitized `application/problem+json` with a

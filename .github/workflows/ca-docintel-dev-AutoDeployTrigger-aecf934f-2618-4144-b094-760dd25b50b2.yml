@@ -114,6 +114,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python3 -B -m unittest discover -s .github/tests -p test_decision_diagnostic.py
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python3 -B -m unittest discover -s .github/tests -p test_customer_acceptance_workflow.py
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: docker/setup-buildx-action@v3
       - name: Build the container without publishing
         id: validation_image

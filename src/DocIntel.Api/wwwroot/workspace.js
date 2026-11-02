@@ -534,7 +534,7 @@ let tenants = [];
           if (currentTenant?.tenantId === tenantId) await loadTenantJobs(accepted.jobId);
         } else {
           const messages = {
-            400: 'Upload rejected. Select one valid PDF up to 25 MiB, or refresh to renew request verification.',
+            400: 'Upload rejected. Select one readable, unencrypted PDF up to 25 MiB and 1,000 pages, or refresh to renew request verification.',
             401: 'Sign in again before uploading.',
             403: 'Your account does not have permission to upload to this workspace.',
             413: 'The PDF is too large. The maximum file size is 25 MiB.',
