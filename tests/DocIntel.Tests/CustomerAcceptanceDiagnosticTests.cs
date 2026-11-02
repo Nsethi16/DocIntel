@@ -449,7 +449,8 @@ public sealed class CustomerAcceptanceDiagnosticTests
                 ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery
                     { SearchText = "QA-NONEXISTENT-DO-NOT-INVENT-551" })
             }, token);
-            var page = JsonSerializer.SerializeToElement(result).Deserialize<DocumentQueryPage>()!;
+            var page = JsonSerializer.SerializeToElement(result)
+                .Deserialize<DocumentQueryPage>(JsonSerializerOptions.Web)!;
             Assert.Empty(page.Documents);
             return Answer("No matching evidence was found for that identifier.", [], kind: "NoEvidence");
         };
@@ -796,7 +797,8 @@ public sealed class CustomerAcceptanceDiagnosticTests
             {
                 ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery { SearchText = CreditPacket })
             }, token);
-            var page = JsonSerializer.SerializeToElement(result).Deserialize<DocumentQueryPage>()!;
+            var page = JsonSerializer.SerializeToElement(result)
+                .Deserialize<DocumentQueryPage>(JsonSerializerOptions.Web)!;
             var source = (await Jobs.Inner.GetJobAsync(Assert.Single(page.Documents).JobId, token, Workspace))!;
             var rows = new List<AskAiAnalysisInputRow>();
             string?[] amounts = ["-500.00", "3,500.00", "2,000.00", null];
