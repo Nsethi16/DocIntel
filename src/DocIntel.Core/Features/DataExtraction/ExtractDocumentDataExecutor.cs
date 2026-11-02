@@ -18,6 +18,12 @@ namespace DocIntel.Core.Features.DataExtraction;
 [SendsMessage(typeof(SplittingState))]
 public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, SplittingState>
 {
+    private const int TableBatchSourceCharacterThreshold = 12_000;
+    private const int TableBatchPageCount = 2;
+    private const int MaximumConcurrentTableRequests = 2;
+    private const string DefaultExtractionInstructions =
+        "Extract structured key-value fields and tables strictly from this document slice according to the defined " +
+        "field and column instructions below. Return empty string when a value is not present.";
     private readonly IModelCatalog _modelCatalog;
 
     public ExtractDocumentDataExecutor(IModelCatalog modelCatalog)
@@ -80,48 +86,16 @@ public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, Split
                 continue;
             }
 
-            var instructions = BuildDataExtractionInstructions(profile, feature.CustomSystemPrompt);
-            var chatOptions = new ChatOptions
-            {
-                Instructions = instructions,
-                ResponseFormat = ChatResponseFormat.ForJsonSchema<DataExtractionResponseDto>(
-                    schemaName: "document_data_extraction",
-                    schemaDescription: "Structured key-value fields and tables extracted for a defined document")
-            };
-
-            var agent = new ChatClientAgent(
-                chatClient,
-                new ChatClientAgentOptions
-                {
-                    Id = "DataExtractionAgent",
-                    Name = "DataExtractionAgent",
-                    ChatOptions = chatOptions
-                });
-
             var sourceContent = DocumentPromptBoundary.SourceText(slice);
-
-            var response = await agent.RunAsync(
-                DocumentPromptBoundary.Wrap(sourceContent), cancellationToken: cancellationToken);
-            var cleanedJson = ReasoningCleanupChatClient.CleanModelText(response.Text ?? string.Empty);
-
-            DataExtractionResponseDto? parsed = null;
-            if (!string.IsNullOrWhiteSpace(cleanedJson))
-            {
-                parsed = JsonSerializer.Deserialize<DataExtractionResponseDto>(
-                    cleanedJson,
-                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-            }
-
-            if (parsed?.Fields is null || parsed.Tables is null ||
-                parsed.Fields.Any(f => f is null || String.IsNullOrWhiteSpace(f.FieldName) ||
-                    !Double.IsFinite(f.ConfidenceValue) || f.ConfidenceValue is < 0 or > 100) ||
-                parsed.Tables.Any(t => t is null || String.IsNullOrWhiteSpace(t.TableName) || t.Rows is null ||
-                    t.Rows.Any(r => r is null || r.Fields is null || r.Fields.Any(f =>
-                        f is null || String.IsNullOrWhiteSpace(f.FieldName) || !Double.IsFinite(f.ConfidenceValue) ||
-                        f.ConfidenceValue is < 0 or > 100))))
-            {
-                throw new InvalidDataException("Structured extraction returned invalid fields, tables, or confidence signals.");
-            }
+            var pages = message.Pages.Where(page => page.PageNumber >= slice.StartPage &&
+                page.PageNumber <= slice.EndPage).OrderBy(page => page.PageNumber).ToArray();
+            var parsed = !slice.WasTranslated && profile.Tables.Count > 0 &&
+                sourceContent.Length > TableBatchSourceCharacterThreshold && pages.Length > TableBatchPageCount &&
+                pages.Select(page => page.PageNumber).SequenceEqual(
+                    Enumerable.Range(slice.StartPage, slice.EndPage - slice.StartPage + 1))
+                ? await ExtractBatchesAsync(chatClient, profile, feature.CustomSystemPrompt,
+                    sourceContent, pages, cancellationToken)
+                : await ExtractAsync(chatClient, profile, feature.CustomSystemPrompt, sourceContent, cancellationToken);
             var fields = parsed.Fields
                 .Where(f => !string.IsNullOrWhiteSpace(f.FieldName))
                 .Select(f => new ExtractedFieldValue(
@@ -171,6 +145,87 @@ public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, Split
         return message;
     }
 
+    private static async Task<ParsedExtraction> ExtractBatchesAsync(IChatClient client,
+        DocumentDataExtractionProfile profile, string? customPrompt, string source,
+        PageLayout[] pages, CancellationToken token)
+    {
+        var headerProfile = new DocumentDataExtractionProfile
+            { DocumentName = profile.DocumentName, Fields = profile.Fields };
+        var header = profile.Fields.Count == 0 ? new ParsedExtraction([], []) :
+            await ExtractAsync(client, headerProfile, customPrompt, source, token);
+        if (header.Tables.Count != 0)
+            throw new InvalidDataException("Header extraction returned unrequested tables.");
+        var tableProfile = new DocumentDataExtractionProfile
+            { DocumentName = profile.DocumentName, Tables = profile.Tables };
+        var batches = pages.Chunk(TableBatchPageCount).ToArray();
+        var results = new ParsedExtraction?[batches.Length];
+        await Parallel.ForEachAsync(Enumerable.Range(0, batches.Length),
+            new ParallelOptions { MaxDegreeOfParallelism = MaximumConcurrentTableRequests, CancellationToken = token },
+            async (index, cancellation) =>
+            {
+                var batch = batches[index];
+                var start = batch[0].PageNumber;
+                var end = batch[^1].PageNumber;
+                var content = String.Join("\n<!-- PageBreak -->\n", pages.Where(page =>
+                    page.PageNumber >= start - 1 && page.PageNumber <= end + 1).Select(page =>
+                    $"Original source page {page.PageNumber}:\n" +
+                    (!String.IsNullOrWhiteSpace(page.Markdown) ? page.Markdown : page.BodyText)));
+                var scopedInstructions = (String.IsNullOrWhiteSpace(customPrompt)
+                    ? DefaultExtractionInstructions : customPrompt) +
+                    $"\nExtract only rows starting on original source pages {start}-{end}. " +
+                    "Adjacent source pages are context only: use them to complete a row that crosses a page boundary. " +
+                    "Do not repeat rows that start on a context-only page. Never summarize or aggregate product rows.";
+                var parsed = await ExtractAsync(client, tableProfile, scopedInstructions, content, cancellation);
+                if (parsed.Fields.Count != 0 || parsed.Tables.Any(table => !profile.Tables.Any(expected =>
+                        String.Equals(expected.TableName.Trim(), table.TableName?.Trim(), StringComparison.OrdinalIgnoreCase))))
+                    throw new InvalidDataException("Table extraction returned unrequested fields or tables.");
+                results[index] = parsed;
+            });
+        token.ThrowIfCancellationRequested();
+        var completed = results.OfType<ParsedExtraction>().ToArray();
+        if (completed.Length != batches.Length)
+            throw new InvalidDataException("Table extraction did not complete every source-page batch.");
+        var merged = profile.Tables.Select(expected => new TableDto
+        {
+            TableName = expected.TableName,
+            Rows = completed.SelectMany(result => result.Tables).Where(table =>
+                    String.Equals(expected.TableName.Trim(), table.TableName?.Trim(), StringComparison.OrdinalIgnoreCase))
+                .SelectMany(table => table.Rows ??
+                    throw new InvalidDataException("A table batch returned no row collection.")).ToList()
+        }).ToArray();
+        return new(header.Fields, merged);
+    }
+
+    private static async Task<ParsedExtraction> ExtractAsync(IChatClient client,
+        DocumentDataExtractionProfile profile, string? customPrompt, string content, CancellationToken token)
+    {
+        var agent = new ChatClientAgent(client, new ChatClientAgentOptions
+        {
+            Id = "DataExtractionAgent", Name = "DataExtractionAgent",
+            ChatOptions = new()
+            {
+                Instructions = BuildDataExtractionInstructions(profile, customPrompt),
+                ResponseFormat = ChatResponseFormat.ForJsonSchema<DataExtractionResponseDto>(
+                    schemaName: "document_data_extraction",
+                    schemaDescription: "Structured key-value fields and tables extracted for a defined document")
+            }
+        });
+        var response = await agent.RunAsync(DocumentPromptBoundary.Wrap(content), cancellationToken: token);
+        var cleaned = ReasoningCleanupChatClient.CleanModelText(response.Text ?? String.Empty);
+        var parsed = String.IsNullOrWhiteSpace(cleaned) ? null :
+            JsonSerializer.Deserialize<DataExtractionResponseDto>(cleaned,
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        if (parsed?.Fields is null || parsed.Tables is null ||
+            parsed.Fields.Any(field => field is null || String.IsNullOrWhiteSpace(field.FieldName) ||
+                !Double.IsFinite(field.ConfidenceValue) || field.ConfidenceValue is < 0 or > 100) ||
+            parsed.Tables.Any(table => table is null || String.IsNullOrWhiteSpace(table.TableName) || table.Rows is null ||
+                table.Rows.Any(row => row is null || row.Fields is null || row.Fields.Any(field =>
+                    field is null || String.IsNullOrWhiteSpace(field.FieldName) ||
+                    !Double.IsFinite(field.ConfidenceValue) || field.ConfidenceValue is < 0 or > 100))))
+            throw new InvalidDataException("Structured extraction returned invalid fields, tables, or confidence signals.");
+        return new(parsed.Fields, parsed.Tables);
+    }
+
     private static string BuildDataExtractionInstructions(
         DocumentDataExtractionProfile profile,
         string? customPromptOverride)
@@ -180,7 +235,7 @@ public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, Split
         sb.AppendLine($"DOCUMENT_NAME|{profile.DocumentName}");
         sb.AppendLine(!string.IsNullOrWhiteSpace(customPromptOverride)
             ? customPromptOverride
-            : "Extract structured key-value fields and tables strictly from this document slice according to the defined field and column instructions below. Return empty string when a value is not present.");
+            : DefaultExtractionInstructions);
         sb.AppendLine();
 
         if (profile.Fields.Count > 0)
@@ -217,6 +272,8 @@ public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, Split
         [JsonPropertyName("tables")]
         public List<TableDto>? Tables { get; set; }
     }
+
+    private sealed record ParsedExtraction(IReadOnlyList<FieldDto> Fields, IReadOnlyList<TableDto> Tables);
 
     private sealed class FieldDto
     {

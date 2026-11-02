@@ -619,6 +619,11 @@ classification and structured extraction over those verified original QA slices 
 controlled catalogue. They do not update the customer's catalogue or stored document results.
 Checks include exact field values, signed/missing amounts, every original product row and distinct
 SKU coverage; the long case requires all 300 rows, not just a successful model response.
+Large, untranslated multi-page sources with tables use two-page output batches (at most two model
+requests concurrently), with adjacent pages supplied only as continuation context. Key-value fields
+still use the complete logical document. Every batch must succeed before its tables are merged in
+source-page order; there is no partial-success fallback. Smaller, translated or legacy sources without
+a complete page layout retain the existing whole-source extraction path.
 Kestrel and multipart parsing have an explicit 26 MiB total request limit (including multipart
 overhead), so oversized bodies are rejected before full application-level buffering. Form values
 are separately bounded. Unexpected errors return sanitized `application/problem+json` with a
