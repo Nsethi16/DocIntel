@@ -732,11 +732,12 @@ public sealed class AskAiOrchestrator
 
                 var slice = job.Segments.FirstOrDefault(s => s.SegmentIndex == sliceIndex)
                     ?? throw new ArgumentException("The requested document slice does not exist.");
+                var originalSource = DocumentPromptBoundary.OriginalSourceText(slice);
                 if (slice.StartPage < 1 || slice.EndPage < slice.StartPage ||
-                    textOffset < 0 || textOffset > slice.BodyText.Length ||
-                    textOffset > 0 && textOffset < slice.BodyText.Length &&
-                    Char.IsLowSurrogate(slice.BodyText[textOffset]) &&
-                    Char.IsHighSurrogate(slice.BodyText[textOffset - 1]))
+                    textOffset < 0 || textOffset > originalSource.Length ||
+                    textOffset > 0 && textOffset < originalSource.Length &&
+                    Char.IsLowSurrogate(originalSource[textOffset]) &&
+                    Char.IsHighSurrogate(originalSource[textOffset - 1]))
                 {
                     throw new ArgumentException("Invalid source page range or text offset.");
                 }
@@ -746,12 +747,12 @@ public sealed class AskAiOrchestrator
                     throw new InvalidOperationException("The evidence limit was reached. Narrow the question.");
                 }
 
-                var sourceLength = Math.Min(3_000, slice.BodyText.Length - textOffset);
-                if (sourceLength > 0 && textOffset + sourceLength < slice.BodyText.Length &&
-                    Char.IsHighSurrogate(slice.BodyText[textOffset + sourceLength - 1]) &&
-                    Char.IsLowSurrogate(slice.BodyText[textOffset + sourceLength]))
+                var sourceLength = Math.Min(3_000, originalSource.Length - textOffset);
+                if (sourceLength > 0 && textOffset + sourceLength < originalSource.Length &&
+                    Char.IsHighSurrogate(originalSource[textOffset + sourceLength - 1]) &&
+                    Char.IsLowSurrogate(originalSource[textOffset + sourceLength]))
                     sourceLength--;
-                var sourceText = slice.BodyText.Substring(textOffset, sourceLength);
+                var sourceText = originalSource.Substring(textOffset, sourceLength);
                 var evidenceId = $"e{evidence.Count + 1}";
                 string Entity(string name) => slice.ExtractedEntities.FirstOrDefault(e =>
                     String.Equals(e.Name, name, StringComparison.OrdinalIgnoreCase))?.Value ?? String.Empty;
@@ -793,7 +794,7 @@ public sealed class AskAiOrchestrator
                     slice.StartPage,
                     slice.EndPage,
                     sourceText,
-                    nextTextOffset = textOffset + sourceText.Length < slice.BodyText.Length
+                    nextTextOffset = textOffset + sourceText.Length < originalSource.Length
                         ? (int?)(textOffset + sourceText.Length) : null,
                     InsightSummary = includeInsights ? InspectionPreview(slice.InsightSummary, 4_000) : null,
                     insightSummaryTruncated = (slice.InsightSummary?.Length ?? 0) > 4_000,

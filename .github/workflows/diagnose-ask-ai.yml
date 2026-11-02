@@ -116,7 +116,8 @@ jobs:
           def customer_record(value):
               counts = {"pages", "slices", "translatedSlices", "sourceCharacters", "structuredDocuments",
                         "tableRows", "promptResults", "searches", "inspections", "citations", "analyses",
-                        "layoutPages", "layoutWords", "ocrPages", "embeddedTextPages"}
+                        "layoutPages", "layoutWords", "ocrPages", "embeddedTextPages",
+                        "configuredRules", "configuredProfiles", "recognizedSlices", "entities"}
               allowed = counts | {"phase", "customerCase", "scenario", "status", "failureCode", "jobId",
                                   "runId", "reused", "jobStatus", "sourceSha256", "layoutSha256",
                                   "hasWarnings", "assertions", "sources", "origin", "coverage"}

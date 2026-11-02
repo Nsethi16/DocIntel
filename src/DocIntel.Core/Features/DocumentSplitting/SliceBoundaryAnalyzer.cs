@@ -251,7 +251,7 @@ public static class SliceBoundaryAnalyzer
                 (preceding > 1 || previous.SubDocTotalPages == 1);
             var footerChanged = footerKey.Length > 0 && currentFooterKey.Length > 0 &&
                 (!continuesPagination || ExplicitFormKey(footerKey) && ExplicitFormKey(currentFooterKey)) &&
-                !AreFootersSimilar(footerKey, currentFooterKey, boundarySimilarityThreshold);
+                !AreDocumentFootersSimilar(footerKey, currentFooterKey, boundarySimilarityThreshold);
             var amendmentChanged = page.IsAmendment && !String.IsNullOrWhiteSpace(page.AmendmentId) &&
                                    !string.Equals(page.AmendmentId, currentAmendmentType, StringComparison.OrdinalIgnoreCase);
             var typeChanged = type is not null && currentType is not null &&
@@ -350,6 +350,19 @@ public static class SliceBoundaryAnalyzer
     private static bool ExplicitFormKey(string value) => value.Split(',').Any(part => Regex.IsMatch(part,
         @"^(?:Form[-_]|Document[A-Z]?\d|MSQuote|ProgramSignForm|VLAmendments|[A-Z]\d{2}[-_]\d{4})",
         RegexOptions.IgnoreCase | RegexOptions.CultureInvariant));
+
+    private static bool AreDocumentFootersSimilar(string first, string second, double threshold)
+    {
+        if (AreFootersSimilar(first, second, threshold)) return true;
+        var firstParts = first.Split(',').ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var secondParts = second.Split(',').ToHashSet(StringComparer.OrdinalIgnoreCase);
+        // A final-page annotation can add an ID without replacing the existing complete form identifier.
+        return (firstParts.IsSubsetOf(secondParts) || secondParts.IsSubsetOf(firstParts)) &&
+            firstParts.Intersect(secondParts, StringComparer.OrdinalIgnoreCase).Any(ExplicitFormKey) &&
+            firstParts.Except(secondParts, StringComparer.OrdinalIgnoreCase)
+                .Concat(secondParts.Except(firstParts, StringComparer.OrdinalIgnoreCase))
+                .All(part => !ExplicitFormKey(part));
+    }
 
     private static string? HeaderDocumentType(string text, IReadOnlyList<string> names)
     {

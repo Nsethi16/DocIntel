@@ -580,6 +580,9 @@ recompute results; old citation IDs are not reused as fresh evidence. Changed/de
 legacy cited runs without source versions require a new chat. Existing text-only answers and
 browser-local chats remain readable.
 
+Original-source inspection pages through the complete retained source Markdown, including original
+footer and table content, with legacy body text as the fallback. Translations and derived summaries
+are not substituted for original evidence. Text offsets and Unicode boundaries use that same source.
 Each question is bounded to 64 tool calls, 48 model rounds, 48 inspected evidence windows, 200
 document references, four analyses, eight columns and 100 input records per analysis. Charts
 contain at most 40 rows; analytical output is additionally byte-bounded. These limits and the
@@ -609,6 +612,8 @@ fixed embedded PDFs through normal artifact/job/queue processing; it is backend 
 not browser-upload coverage. Other cases inspect those stored results or persist web-only
 test answers with source-isolated access. They never change customer settings, permissions
 or existing documents and never send email or Teams messages.
+The fixed long-document retest is labeled `E2-Long-Price-Sheet-Retest`; it uses the same authored
+source bytes and preserves the earlier completed E result rather than overwriting its audit history.
 Kestrel and multipart parsing have an explicit 26 MiB total request limit (including multipart
 overhead), so oversized bodies are rejected before full application-level buffering. Form values
 are separately bounded. Unexpected errors return sanitized `application/problem+json` with a

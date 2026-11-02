@@ -147,4 +147,48 @@ public sealed class ConservativeGroupingTests
         Assert.Equal((1, 2), (slices[0].StartPage, slices[0].EndPage));
         Assert.Equal((3, 3), (slices[1].StartPage, slices[1].EndPage));
     }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_Long_Actual_Quote_Does_Not_Split_When_Its_Final_Footer_Adds_A_Note(bool normalize)
+    {
+        // Arrange
+        using var resource = typeof(ConservativeGroupingTests).Assembly.GetManifestResourceStream(
+            "DocIntel.Api.Diagnostics.Fixtures.QA-20261102-E-Long-Price-Sheet.pdf");
+        Assert.NotNull(resource);
+        using var source = new MemoryStream();
+        await resource.CopyToAsync(source);
+        var config = new SplittingConfig { EnableFooterNormalization = normalize };
+        var pages = await new PdfPigLayoutExtractor().ExtractPagesAsync(source.ToArray(), config);
+
+        // Act
+        var slices = SliceBoundaryAnalyzer.GroupPagesHeuristically(pages, config);
+
+        // Assert
+        var document = Assert.Single(slices);
+        Assert.Equal((1, 12), (document.StartPage, document.EndPage));
+        Assert.Contains("QA-FINAL-PAGE-300", document.Markdown);
+        Assert.Contains("QA-SKU-0300", document.Markdown);
+    }
+
+    [Theory]
+    [InlineData("MSQuote-QA931,MSQuote-QA932")]
+    [InlineData("MSQuote-QA9310")]
+    [InlineData("MSQuote-QA932,QA-FINAL-PAGE-300")]
+    public void Extra_Or_Replaced_Actual_Form_Identifiers_Still_Produce_A_Boundary(string footer)
+    {
+        // Arrange
+        var pages = new[]
+        {
+            new PageLayout { PageNumber = 1, FooterText = "MSQuote-QA931", BodyText = "First quote" },
+            new PageLayout { PageNumber = 2, FooterText = footer, BodyText = "Second quote" }
+        };
+
+        // Act
+        var slices = SliceBoundaryAnalyzer.GroupPagesHeuristically(pages, new SplittingConfig());
+
+        // Assert
+        Assert.Equal(2, slices.Count);
+    }
 }

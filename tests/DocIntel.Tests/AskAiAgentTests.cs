@@ -613,13 +613,16 @@ public sealed class AskAiAgentTests
         Assert.DoesNotContain(job.PacketSummary!, Assert.Single(run.Citations).Excerpt);
     }
 
-    [Fact]
-    public async Task A_Source_Offset_Inside_A_Unicode_Pair_Fails_Without_An_Answer()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_Source_Offset_Inside_A_Unicode_Pair_Fails_Without_An_Answer(bool markdown)
     {
         // Arrange
         var store = await CreateDocumentStoreAsync();
         var job = (await store.GetJobAsync("source", tenantId: "tenant-one"))!;
         job.Segments[0].BodyText = new string('x', 2999) + "\U0001F600" + "Final source";
+        if (markdown) job.Segments[0].Markdown = job.Segments[0].BodyText;
         await store.UpsertJobAsync(job);
         var run = CreateRun();
         var orchestrator = CreateOrchestrator(store, SearchCall(),
@@ -636,9 +639,12 @@ public sealed class AskAiAgentTests
     }
 
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public async Task Large_Derived_Tables_Never_Block_Paged_Original_Source_Inspection(bool wideUnicodeValues)
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public async Task Large_Derived_Tables_Never_Block_Paged_Original_Source_Inspection(
+        bool wideUnicodeValues, bool markdown)
     {
         // Arrange
         var store = await CreateDocumentStoreAsync();
@@ -646,6 +652,12 @@ public sealed class AskAiAgentTests
         job.Segments[0].BodyText = wideUnicodeValues
             ? new string('x', 2999) + "\U0001F600" + new string('y', 3000)
             : new string('x', 3000) + new string('y', 3000);
+        var original = job.Segments[0].BodyText;
+        if (markdown)
+        {
+            job.Segments[0].Markdown = original;
+            job.Segments[0].BodyText = "Shorter body projection without the original footer.";
+        }
         var value = wideUnicodeValues ? new string('\u6587', 2000) : "Short table value";
         job.Segments[0].DataExtraction = new DocumentDataExtractionResult("Table", String.Empty, "2-3", [],
             [new ExtractedTableValue("Rows", Enumerable.Range(0, 200).Select(index =>
@@ -695,7 +707,7 @@ public sealed class AskAiAgentTests
         Assert.Equal(wideUnicodeValues ? 3 : 2, inspected.Count);
         Assert.Equal(new string('x', wideUnicodeValues ? 2999 : 3000),
             inspected[0].GetProperty("sourceText").GetString());
-        Assert.Equal(job.Segments[0].BodyText,
+        Assert.Equal(original,
             String.Concat(inspected.Select(result => result.GetProperty("sourceText").GetString())));
         Assert.All(inspected, result =>
         {
@@ -704,6 +716,29 @@ public sealed class AskAiAgentTests
             Assert.True(table.GetProperty("rowsTruncated").GetBoolean());
             Assert.InRange(table.GetProperty("rows").GetArrayLength(), 0, 10);
         });
+    }
+
+    [Fact]
+    public async Task Original_Markdown_Footer_Content_Is_Citable_And_Not_Replaced_With_Translated_Text()
+    {
+        // Arrange
+        var store = await CreateDocumentStoreAsync();
+        var job = (await store.GetJobAsync("source", tenantId: "tenant-one"))!;
+        job.Segments[0].Markdown = job.Segments[0].BodyText + "\n<!-- PageFooter=\"Sixty days notice required.\" -->";
+        job.Segments[0].WasTranslated = true;
+        job.Segments[0].TranslatedText = "Derived text says thirty days.";
+        await store.UpsertJobAsync(job);
+        var orchestrator = CreateOrchestrator(store, SearchCall(), InspectCall(),
+            Final("DocumentAnswer", "The original requires sixty days notice [1].", "e1"));
+
+        // Act
+        var run = await orchestrator.ExecuteRunAsync(CreateRun());
+
+        // Assert
+        var citation = Assert.Single(run.Citations);
+        Assert.Equal(job.Segments[0].Markdown, citation.Excerpt);
+        Assert.DoesNotContain("thirty days", citation.Excerpt);
+        Assert.Equal("OriginalSourceText", citation.EvidenceKind);
     }
 
     private static async Task<InMemoryJobStore> CreateDocumentStoreAsync()

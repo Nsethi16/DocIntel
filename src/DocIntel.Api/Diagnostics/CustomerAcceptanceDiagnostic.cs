@@ -32,7 +32,10 @@ public static class CustomerAcceptanceDiagnostic
         "ask-no-evidence", "ask-injection", "ask-long-tail"
     ];
     private sealed record Slice(int Start, int End, string Language, string? Type, string[] Facts);
-    private sealed record Scenario(string Id, string FileName, int Pages, Slice[] Slices);
+    private sealed record Scenario(string Id, string FileName, int Pages, Slice[] Slices)
+    {
+        public string ResourceFileName { get; init; } = FileName;
+    }
     private static readonly Scenario[] Scenarios =
     [
         new("A", "QA-20261102-A-Service-Agreement.pdf", 4,
@@ -48,8 +51,9 @@ public static class CustomerAcceptanceDiagnostic
              new(4, 4, "es", "Program Signature Form", [])]),
         new("D", "QA-20261102-D-Scanned-Price-Sheet.pdf", 2,
             [new(1, 2, "en", "Customer Price Sheet", ["QA-SCAN-001", "2,400.00", "USD"])]),
-        new("E", "QA-20261102-E-Long-Price-Sheet.pdf", 12,
-            [new(1, 12, "en", "Customer Price Sheet", ["QA-LONG-001", "45,000", "USD", "QA-FINAL-PAGE-300"])]),
+        new("E", "QA-20261102-E2-Long-Price-Sheet-Retest.pdf", 12,
+            [new(1, 12, "en", "Customer Price Sheet", ["QA-LONG-001", "45,000", "USD", "QA-FINAL-PAGE-300"])])
+            { ResourceFileName = "QA-20261102-E-Long-Price-Sheet.pdf" },
         new("F", "QA-20261102-F-Latin-Unsupported.pdf", 2, [new(1, 2, "la", null, [])]),
         new("G", "QA-20261102-G-Credit-Missing-Currency.pdf", 4,
             [new(1, 1, "en", "Customer Price Sheet", [Customer, "QA-CREDIT-001", "-500.00", "USD"]),
@@ -261,7 +265,7 @@ public static class CustomerAcceptanceDiagnostic
     private static async Task<byte[]> EmbeddedAsync(Scenario scenario, CancellationToken token)
     {
         await using var resource = typeof(CustomerAcceptanceDiagnostic).Assembly.GetManifestResourceStream(
-            "DocIntel.Api.Diagnostics.Fixtures." + scenario.FileName)
+            "DocIntel.Api.Diagnostics.Fixtures." + scenario.ResourceFileName)
             ?? throw new AcceptanceGuardException("EmbeddedFixtureUnavailable");
         if (resource.Length is < 5 or > 25 * 1024 * 1024)
             throw new AcceptanceGuardException("EmbeddedFixtureInvalid");
@@ -421,8 +425,9 @@ public static class CustomerAcceptanceDiagnostic
         checks.Add(Check("SourceGroundTruth", boundaries && slices.Select((slice, index) =>
             scenario.Slices[index].Facts.All(fact => Decimal.TryParse(fact,
                 NumberStyles.Number, CultureInfo.InvariantCulture, out var amount)
-                    ? HasSourceAmount(slice.BodyText, amount, scenario.Slices[index].Language)
-                    : Contains(slice.BodyText, fact))).All(value => value)));
+                    ? HasSourceAmount(DocumentPromptBoundary.OriginalSourceText(slice), amount,
+                        scenario.Slices[index].Language)
+                    : Contains(DocumentPromptBoundary.OriginalSourceText(slice), fact))).All(value => value)));
         var artifactsValid = true;
         foreach (var slice in slices)
         {
@@ -461,9 +466,13 @@ public static class CustomerAcceptanceDiagnostic
             checks.Add(Check("FinalPageTermination", layout is not null &&
                 SixtyDays(layout.Pages.Single(page => page.PageNumber == 4).BodyText)));
         if (scenario.Id == "E")
-            checks.Add(Check("LongSourceTail", slices.Length == 1 && slices[0].BodyText.Length > 3_000 &&
-                slices[0].BodyText.IndexOf("QA-FINAL-PAGE-300", StringComparison.Ordinal) >= 3_000 &&
-                layout is not null && Contains(layout.Pages[^1].BodyText, "QA-FINAL-PAGE-300")));
+            checks.Add(Check("LongSourceTail", slices.Length == 1 &&
+                DocumentPromptBoundary.OriginalSourceText(slices[0]).Length > 3_000 &&
+                DocumentPromptBoundary.OriginalSourceText(slices[0])
+                    .IndexOf("QA-FINAL-PAGE-300", StringComparison.Ordinal) >= 3_000 &&
+                layout is not null && Contains(
+                    !String.IsNullOrWhiteSpace(layout.Pages[^1].Markdown)
+                        ? layout.Pages[^1].Markdown : layout.Pages[^1].BodyText, "QA-FINAL-PAGE-300")));
         var unsupported = scenario.Id == "F";
         checks.Add(Check("ExpectedWarnings", unsupported
             ? job.HasWarnings && slices.All(slice => slice.TranslationErrorCode == "TranslationLanguageUnsupported") &&
@@ -580,7 +589,8 @@ public static class CustomerAcceptanceDiagnostic
                 citation.EvidenceKind == "OriginalSourceText" && citation.ReviewVersion is null &&
                 citation.PageRange == $"p.{slice.StartPage}-{slice.EndPage}" &&
                 !String.IsNullOrWhiteSpace(citation.Excerpt) &&
-                slice.BodyText.Contains(citation.Excerpt, StringComparison.Ordinal))),
+                (DocumentPromptBoundary.OriginalSourceText(slice).Contains(citation.Excerpt, StringComparison.Ordinal) ||
+                 slice.BodyText.Contains(citation.Excerpt, StringComparison.Ordinal)))),
             Check("PromptInjectionRejected", !(run.Answer?.Contains("OVERRIDE-QA-ONLY", StringComparison.OrdinalIgnoreCase) ?? false))
         };
         var answer = run.Answer ?? String.Empty;
@@ -727,8 +737,15 @@ public static class CustomerAcceptanceDiagnostic
             sources = sources?.Select(source => new { jobId = source.JobId, sourceSha256 = source.OriginalSha256 }).ToArray(),
             pages = job?.TotalPages, slices = job?.Segments.Count,
             translatedSlices = job?.Segments.Count(slice => slice.WasTranslated),
-            sourceCharacters = job?.Segments.Sum(slice => (long)slice.BodyText.Length),
+            sourceCharacters = job?.Segments.Sum(slice => (long)DocumentPromptBoundary.OriginalSourceText(slice).Length),
             structuredDocuments = job?.Segments.Count(slice => slice.DataExtraction is not null),
+            configuredRules = job?.ProcessingHarness?.Capabilities.GetValueOrDefault(FeatureHarness.IdentifyDocumentsKey)?
+                .IdentifyDocuments?.Rules.Count(rule => rule.IsActive),
+            configuredProfiles = job?.ProcessingHarness?.Capabilities.GetValueOrDefault(FeatureHarness.DataExtractionKey)?
+                .DataExtraction?.Profiles.Count,
+            recognizedSlices = job?.Segments.Count(slice => !String.IsNullOrWhiteSpace(slice.IdentifiedDocumentName) &&
+                !String.Equals(slice.IdentifiedDocumentName, "Undefined", StringComparison.OrdinalIgnoreCase)),
+            entities = job?.ExtractedEntities.Count,
             tableRows = job?.Segments.Sum(slice => (long)(slice.DataExtraction?.Tables.Sum(table => table.Rows.Count) ?? 0)),
             promptResults = job?.PromptColumnResults.Count, hasWarnings = job?.HasWarnings,
             layoutPages = inspection?.LayoutPages, layoutWords = inspection?.LayoutWords,

@@ -58,7 +58,7 @@ public sealed class CustomerAcceptanceDiagnosticTests
     private static readonly string[] OtherNames =
     [
         "QA-20261102-B-Multi-Document-Packet.pdf", "QA-20261102-C-Multilingual-Packet.pdf",
-        "QA-20261102-D-Scanned-Price-Sheet.pdf", "QA-20261102-E-Long-Price-Sheet.pdf",
+        "QA-20261102-D-Scanned-Price-Sheet.pdf", "QA-20261102-E2-Long-Price-Sheet-Retest.pdf",
         "QA-20261102-F-Latin-Unsupported.pdf", CreditPacket
     ];
 
@@ -602,6 +602,29 @@ public sealed class CustomerAcceptanceDiagnosticTests
         Assert.Equal(before, JsonSerializer.Serialize(source));
         Assert.Contains("\"jobId\":\"" + source.JobId + "\"", fixture.Output.ToString());
         Assert.Contains("\"status\":\"Reused\"", fixture.Output.ToString());
+    }
+
+    [Fact]
+    public async Task The_Explicit_Long_Document_Retest_Leaves_The_Previous_Completed_Test_Untouched()
+    {
+        // Arrange
+        var fixture = await Fixture.CreateAsync();
+        var previous = fixture.Source("QA-20261102-E-Long-Price-Sheet.pdf", "Original test result.");
+        await fixture.Jobs.Inner.UpsertJobAsync(previous);
+        var before = JsonSerializer.Serialize(previous);
+
+        // Act
+        var result = await fixture.RunAsync("submit-documents");
+
+        // Assert
+        Assert.Equal(0, result);
+        Assert.Equal(before, JsonSerializer.Serialize(previous));
+        Assert.DoesNotContain(previous.JobId, fixture.Jobs.Reads);
+        Assert.DoesNotContain(fixture.Jobs.Writes, job => job.JobId == previous.JobId);
+        var retest = Assert.Single(fixture.Jobs.Writes,
+            job => job.FileName == "QA-20261102-E2-Long-Price-Sheet-Retest.pdf");
+        Assert.NotEqual(previous.JobId, retest.JobId);
+        Assert.Equal(12, retest.TotalPages);
     }
 
     [Fact]
