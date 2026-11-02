@@ -385,8 +385,8 @@ public sealed class CustomerAcceptanceDiagnosticTests
             Workspace, CustomerAcceptanceDiagnostic.RunIdFor(BasisId, "ask-followup"));
 
         // Assert
-        Assert.Equal(0, analysis);
-        Assert.Equal(0, followup);
+        Assert.True(analysis == 0, fixture.Output.ToString());
+        Assert.True(followup == 0, fixture.Output.ToString());
         Assert.NotNull(stored);
         Assert.Equal(CustomerAcceptanceDiagnostic.RunIdFor(BasisId, "ask-analysis"), stored.PreviousRunId);
         Assert.Equal(1, Assert.Single(stored.Analyses).Coverage.RecordsIncluded);
@@ -422,7 +422,8 @@ public sealed class CustomerAcceptanceDiagnosticTests
         var fixture = await Fixture.CreateAsync();
         var credit = await fixture.AddCreditAsync();
         fixture.Respond = fixture.AnalysisAsync;
-        Assert.Equal(0, await fixture.RunAsync("ask-analysis"));
+        var analysis = await fixture.RunAsync("ask-analysis");
+        Assert.True(analysis == 0, fixture.Output.ToString());
         credit.Segments[0].BodyText += " PrivateChangedSource";
 
         // Act
@@ -443,11 +444,12 @@ public sealed class CustomerAcceptanceDiagnosticTests
         await fixture.AddOtherSourcesAsync();
         fixture.Respond = async (_, options, token) =>
         {
-            var page = Assert.IsType<DocumentQueryPage>(await InvokeAsync(options, "search_documents", new()
+            var result = await InvokeAsync(options, "search_documents", new()
             {
                 ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery
                     { SearchText = "QA-NONEXISTENT-DO-NOT-INVENT-551" })
-            }, token));
+            }, token);
+            var page = JsonSerializer.SerializeToElement(result).Deserialize<DocumentQueryPage>()!;
             Assert.Empty(page.Documents);
             return Answer("No matching evidence was found for that identifier.", [], kind: "NoEvidence");
         };
@@ -456,7 +458,7 @@ public sealed class CustomerAcceptanceDiagnosticTests
         var result = await fixture.RunAsync("ask-no-evidence");
 
         // Assert
-        Assert.Equal(0, result);
+        Assert.True(result == 0, fixture.Output.ToString());
         Assert.Contains("NoFabricatedAnswer", fixture.Output.ToString());
         var run = Assert.Single(await fixture.Runs.ListRunsByTenantAsync(Workspace));
         Assert.Empty(run.Citations);
@@ -790,10 +792,11 @@ public sealed class CustomerAcceptanceDiagnosticTests
             IEnumerable<ChatMessage> messages, ChatOptions options, CancellationToken token)
         {
             var followup = messages.Last().Text!.Contains("EUR totals", StringComparison.Ordinal);
-            var page = Assert.IsType<DocumentQueryPage>(await InvokeAsync(options, "search_documents", new()
+            var result = await InvokeAsync(options, "search_documents", new()
             {
                 ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery { SearchText = CreditPacket })
-            }, token));
+            }, token);
+            var page = JsonSerializer.SerializeToElement(result).Deserialize<DocumentQueryPage>()!;
             var source = (await Jobs.Inner.GetJobAsync(Assert.Single(page.Documents).JobId, token, Workspace))!;
             var rows = new List<AskAiAnalysisInputRow>();
             string?[] amounts = ["-500.00", "3,500.00", "2,000.00", null];
