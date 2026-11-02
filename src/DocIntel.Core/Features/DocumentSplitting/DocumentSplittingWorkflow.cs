@@ -94,7 +94,8 @@ public sealed class DocumentSplittingWorkflow
             return state;
         }
 
-        ObservedDocumentExecutor Observe(Executor<SplittingState, SplittingState> executor) => new(executor, _logger);
+        ObservedDocumentExecutor Observe(Executor<SplittingState, SplittingState> executor) =>
+            new(executor, _logger, onStepCompleted);
         var extractExecutor = Observe(new ExtractPageLayoutsExecutor(_layoutExtractor, _artifactStore, _ocr));
         var detectExecutor = Observe(new DetectSliceBoundariesExecutor());
         var slicePdfExecutor = Observe(new WritePdfSlicesExecutor(_pdfSlicer, _artifactStore));
@@ -123,22 +124,7 @@ public sealed class DocumentSplittingWorkflow
         await using StreamingRun run = await InProcessExecution.RunStreamingAsync(workflow, state, cancellationToken: cancellationToken);
         await foreach (WorkflowEvent evt in run.WatchStreamAsync().WithCancellation(cancellationToken))
         {
-            if (evt is ExecutorCompletedEvent completed && completed.Data is SplittingState stepState)
-            {
-                if (onStepCompleted is not null)
-                {
-                    await stepState.ExecutionGate.WaitAsync(cancellationToken);
-                    try
-                    {
-                        await onStepCompleted(stepState, cancellationToken);
-                    }
-                    finally
-                    {
-                        stepState.ExecutionGate.Release();
-                    }
-                }
-            }
-            else if (evt is WorkflowOutputEvent output && output.Data is SplittingState finalState)
+            if (evt is WorkflowOutputEvent output && output.Data is SplittingState finalState)
             {
                 _logger.LogInformation(
                     "DocumentSplittingWorkflow completed for Tenant='{TenantId}', DocumentId='{DocumentId}': {SliceCount} slice(s) across {PageCount} page(s).",

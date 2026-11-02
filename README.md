@@ -624,6 +624,8 @@ requests concurrently), with adjacent pages supplied only as continuation contex
 still use the complete logical document. Every batch must succeed before its tables are merged in
 source-page order; there is no partial-success fallback. Smaller, translated or legacy sources without
 a complete page layout retain the existing whole-source extraction path.
+Stage snapshots and current-access checks finish inside the executor's state gate before the next
+stage begins. A slow provider cannot prevent earlier layout/slice checkpoints from being saved.
 Kestrel and multipart parsing have an explicit 26 MiB total request limit (including multipart
 overhead), so oversized bodies are rejected before full application-level buffering. Form values
 are separately bounded. Unexpected errors return sanitized `application/problem+json` with a

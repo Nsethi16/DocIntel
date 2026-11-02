@@ -8,7 +8,9 @@ namespace DocIntel.Core.Telemetry;
 /// <summary>Observes every stage without duplicating instrumentation in individual feature implementations.</summary>
 [SendsMessage(typeof(SplittingState))]
 internal sealed class ObservedDocumentExecutor(
-    Executor<SplittingState, SplittingState> inner, ILogger logger) : Executor<SplittingState, SplittingState>(inner.Id)
+    Executor<SplittingState, SplittingState> inner, ILogger logger,
+    Func<SplittingState, CancellationToken, Task>? onStepCompleted = null)
+    : Executor<SplittingState, SplittingState>(inner.Id)
 {
     public override async ValueTask<SplittingState> HandleAsync(
         SplittingState message, IWorkflowContext context, CancellationToken cancellationToken = default)
@@ -39,10 +41,12 @@ internal sealed class ObservedDocumentExecutor(
                 if (inner is TranslateDocumentsExecutor)
                 {
                     operation.Fail(new InvalidOperationException("The optional translation feature did not complete."));
+                    if (onStepCompleted is not null) await onStepCompleted(result, cancellationToken);
                     return result;
                 }
                 throw new InvalidOperationException("The executor reported an unsuccessful processing step.");
             }
+            if (onStepCompleted is not null) await onStepCompleted(result, cancellationToken);
             operation.Complete(skipped: trace?.Executed == false);
             return result;
         }
