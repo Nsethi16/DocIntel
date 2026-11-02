@@ -476,6 +476,12 @@ public sealed class CustomerAcceptanceDiagnosticTests
         // Arrange
         var fixture = await Fixture.CreateAsync();
         var source = fixture.Source(OtherNames[0], String.Empty);
+        using var embedded = typeof(CustomerAcceptanceDiagnosticTests).Assembly.GetManifestResourceStream(
+            "DocIntel.Api.Diagnostics.Fixtures." + source.FileName)!;
+        using var original = new MemoryStream();
+        await embedded.CopyToAsync(original);
+        fixture.Originals[source.JobId] = original.ToArray();
+        source.OriginalSha256 = Convert.ToHexString(SHA256.HashData(original.ToArray()));
         source.TotalPages = 5;
         source.Segments =
         [

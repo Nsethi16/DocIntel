@@ -1,15 +1,15 @@
-using System.Text.Json;
 using DocIntel.Core.Authorization;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Features.DataExtraction;
 using DocIntel.Core.Features.DocumentIdentification;
 using DocIntel.Core.Features.DocumentSplitting;
+using DocIntel.Core.Features.DocumentTranslation;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Models;
 using DocIntel.Core.Ocr;
 using DocIntel.Core.Storage;
-using Microsoft.Agents.AI.Workflows;
+using Microsoft.Extensions.Logging.Abstractions;
 
 namespace DocIntel.Api.Diagnostics;
 
@@ -51,7 +51,8 @@ public static partial class CustomerAcceptanceDiagnostic
         await guard.CheckAsync(token);
         var sourceStamp = AskAiConversationContext.Fingerprint(source);
         var current = guard.CurrentHarness;
-        var model = models.ResolveModelId(current);
+        var model = models.ResolveModelId(current,
+            current.Capabilities.GetValueOrDefault(FeatureHarness.DataExtractionKey)?.ModelIdOverride);
         var defaults = new TenantHarness { TenantId = Workspace, DisplayName = "Controlled QA catalogue" };
         var rules = defaults.Capabilities[FeatureHarness.IdentifyDocumentsKey].IdentifyDocuments!.Rules;
         var profile = customerCase == "schema-signature"
@@ -73,6 +74,7 @@ public static partial class CustomerAcceptanceDiagnostic
             Ocr = new() { Mode = OcrMode.Never },
             Capabilities = new(StringComparer.OrdinalIgnoreCase)
             {
+                [FeatureHarness.SplitAndGroupKey] = new() { Enabled = true, SplitAndGroup = new() },
                 [FeatureHarness.IdentifyDocumentsKey] = new()
                 {
                     Enabled = true, IdentifyDocuments = new() { DecisionModelId = current.DecisionModelId, Rules = rules }
@@ -83,27 +85,16 @@ public static partial class CustomerAcceptanceDiagnostic
                 }
             }
         };
-        var state = new SplittingState
-        {
-            Tenant = tenant, DocumentId = source.JobId, FileName = source.FileName,
-            Slices = JsonSerializer.Deserialize<List<DocumentSlice>>(JsonSerializer.SerializeToUtf8Bytes(source.Segments))
-                ?? throw new InvalidDataException("The verified source slices are unavailable.")
-        };
-        foreach (var slice in state.Slices) slice.DataExtraction = null;
-        var identify = new IdentifyDocumentsExecutor(models);
-        var extract = new ExtractDocumentDataExecutor(models);
-        var workflow = new WorkflowBuilder(identify).AddEdge(identify, extract).WithOutputFrom(extract).Build();
-        SplittingState? result = null;
-        await using (var run = await InProcessExecution.RunStreamingAsync(workflow, state, cancellationToken: token))
-        {
-            await foreach (var evt in run.WatchStreamAsync().WithCancellation(token))
+        var bytes = await DocumentPdfReader.ReadOriginalAsync(source, artifacts, token)
+            ?? throw new AcceptanceGuardException("OriginalUnavailable");
+        await guard.CheckAsync(token);
+        var extractor = new PdfPigLayoutExtractor();
+        var result = await new DocumentSplittingWorkflow(extractor, extractor, models,
+            new DisabledSchemaTranslation(), NullLogger<DocumentSplittingWorkflow>.Instance)
+            .ExecuteAsync(new()
             {
-                if (evt is WorkflowOutputEvent { Data: SplittingState completed }) result = completed;
-                else if (evt is ExecutorFailedEvent { Data: { } failure }) throw failure;
-                else if (evt is WorkflowErrorEvent { Exception: { } workflowFailure }) throw workflowFailure;
-            }
-        }
-        if (result is null) throw new InvalidDataException("The controlled schema check did not complete.");
+                Tenant = tenant, DocumentId = source.JobId, FileName = source.FileName, SourcePdfBytes = bytes
+            }, onStepCompleted: (_, cancellation) => guard.CheckAsync(cancellation), cancellationToken: token);
         await guard.CheckAsync(token);
         var checks = SchemaAssertions(customerCase, result.Slices);
         checks.Add(Check("SchemaNativeDecision", result.ExecutionTrace.Any(step =>
@@ -228,4 +219,17 @@ public static partial class CustomerAcceptanceDiagnostic
 
     private static string Value(IReadOnlyList<ExtractedFieldValue> fields, string name) =>
         fields.FirstOrDefault(field => field.FieldName == name)?.FieldValue ?? String.Empty;
+
+    private sealed class DisabledSchemaTranslation : IDocumentTranslationService
+    {
+        public Task<DocumentSliceTranslationResult> TranslatePdfSliceAsync(byte[]? sourcePdfBytes, string sliceFileName,
+            string fallbackBodyText, IReadOnlyList<string> footers, string targetLanguage, string? azureTranslatorEndpoint,
+            IReadOnlyList<string> doNotTranslateTerms, CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Translation is disabled in this controlled schema check.");
+
+        public Task<(string DetectedLanguage, bool WasTranslated, string TranslatedText)> TranslateSliceAsync(string text,
+            string targetLanguage, string? azureTranslatorEndpoint, IReadOnlyList<string> doNotTranslateTerms,
+            CancellationToken cancellationToken = default) =>
+            throw new InvalidOperationException("Translation is disabled in this controlled schema check.");
+    }
 }
