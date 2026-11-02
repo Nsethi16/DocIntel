@@ -135,7 +135,9 @@ jobs:
                   "DataQueryRejected", "DataAccessDenied", "DataRateLimited", "DataUnavailable", "DataRequestFailed",
                   "ProviderContextLimit", "ProviderQuotaExceeded", "ProviderRateLimited", "ProviderSchemaRejected",
                   "ProviderAccessDenied", "ProviderDeploymentUnavailable", "ProviderTimedOut", "ProviderUnavailable",
-                  "ProviderContentFiltered", "ProviderRequestRejected", "ExecutionFailed"
+                  "ProviderContentFiltered", "ProviderRequestRejected", "ExecutionFailed",
+                  "UnrequestedHeaderTables", "UnrequestedTableOutput", "IncompleteExtractionBatches",
+                  "InvalidStructuredResponse"
               }
               assertion_ids = {
                   "UniqueUploadedFixture", "OriginalIntegrity", "PageCount", "SliceBoundaries", "PerSliceLanguage",

@@ -255,7 +255,7 @@ public static partial class CustomerAcceptanceDiagnostic
         {
             var failure = SchemaFailureMetadata(exception);
             await WriteAsync(output, customerCase, "Summary", "Failed",
-                SafeRunError(AskAiFailureDiagnostics.GetCode(exception)), runId: runId,
+                failure.Code ?? SafeRunError(AskAiFailureDiagnostics.GetCode(exception)), runId: runId,
                 failureType: failure.Type, failureSite: failure.Site);
             return 1;
         }

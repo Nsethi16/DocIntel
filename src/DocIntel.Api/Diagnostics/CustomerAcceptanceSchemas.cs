@@ -15,7 +15,7 @@ namespace DocIntel.Api.Diagnostics;
 
 public static partial class CustomerAcceptanceDiagnostic
 {
-    private static (string Type, string Site) SchemaFailureMetadata(Exception exception)
+    private static (string Type, string Site, string? Code) SchemaFailureMetadata(Exception exception)
     {
         var root = exception.GetBaseException();
         var type = root.GetType().Name is
@@ -30,7 +30,16 @@ public static partial class CustomerAcceptanceDiagnostic
                 ? "Identification" : sites.Any(value => value.Contains("ModelCatalog", StringComparison.Ordinal))
                     ? "ModelConfiguration" : sites.Any(value => value.StartsWith("Microsoft.Agents.", StringComparison.Ordinal))
                         ? "Workflow" : "ControlledDiagnostic";
-        return (type, site);
+        var known = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["Header extraction returned unrequested tables."] = "UnrequestedHeaderTables",
+            ["Table extraction returned unrequested fields or tables."] = "UnrequestedTableOutput",
+            ["Table extraction did not complete every source-page batch."] = "IncompleteExtractionBatches",
+            ["A table batch returned no row collection."] = "IncompleteExtractionBatches",
+            ["Structured extraction returned invalid fields, tables, or confidence signals."] = "InvalidStructuredResponse"
+        };
+        var code = known.FirstOrDefault(pair => root.Message.Contains(pair.Key, StringComparison.Ordinal)).Value;
+        return (type, site, code);
     }
 
     private static async Task<int> SchemaAsync(string customerCase, ActorIdentity actor, SourceGuard guard,

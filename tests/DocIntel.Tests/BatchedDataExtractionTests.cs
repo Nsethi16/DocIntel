@@ -103,6 +103,8 @@ public sealed class BatchedDataExtractionTests
                     Interlocked.Increment(ref _requests);
                     var fields = options.Instructions!.Contains("FIELD|Reference|", StringComparison.Ordinal);
                     var tables = options.Instructions.Contains("TABLE|Lines|", StringComparison.Ordinal);
+                    if (!fields) Assert.Contains("No key-value fields are requested", options.Instructions);
+                    if (!tables) Assert.Contains("No tables are requested", options.Instructions);
                     var text = messages.Last().Text!;
                     var scope = Regex.Match(options.Instructions,
                         @"Extract only rows starting on original source pages (\d+)-(\d+)");

@@ -236,6 +236,9 @@ public sealed class ExtractDocumentDataExecutor : Executor<SplittingState, Split
         sb.AppendLine(!string.IsNullOrWhiteSpace(customPromptOverride)
             ? customPromptOverride
             : DefaultExtractionInstructions);
+        sb.AppendLine("Return only the configured field, table and column names; copy each name exactly.");
+        if (profile.Fields.Count == 0) sb.AppendLine("No key-value fields are requested: return fields as an empty array.");
+        if (profile.Tables.Count == 0) sb.AppendLine("No tables are requested: return tables as an empty array.");
         sb.AppendLine();
 
         if (profile.Fields.Count > 0)
