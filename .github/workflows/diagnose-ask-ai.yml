@@ -150,7 +150,9 @@ jobs:
                   "NoMatchSearch", "NoFabricatedAnswer", "FinalSourceCitation", "AnalysisCitations",
                   "EmbeddedPdfValidated", "SubmissionIdempotency", "UploadedJobCompleted",
                   "SchemaClassification", "SchemaFields", "SchemaRows", "SchemaMissingAmount",
-                  "SchemaNativeDecision", "SchemaNoSimulation", "SchemaSourceUnchanged"
+                  "SchemaNativeDecision", "SchemaNoSimulation", "SchemaSourceUnchanged",
+                  "SchemaFieldShape", "SchemaCustomer", "SchemaCustomerFormatting",
+                  "SchemaQuoteIds", "SchemaQuoteFormatting", "SchemaCurrencies", "SchemaAmounts"
               }
               if (not isinstance(value, dict) or set(value) - allowed or
                   value.get("phase") != "CustomerAcceptance" or

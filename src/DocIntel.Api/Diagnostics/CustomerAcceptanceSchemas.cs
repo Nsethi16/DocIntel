@@ -162,8 +162,16 @@ public static partial class CustomerAcceptanceDiagnostic
         }
         var expectedCount = customerCase == "schema-long" ? 1 : 4;
         checks.Add(Check("SchemaClassification", slices.Count == expectedCount &&
-            slices.All(slice => slice.IdentifiedDocumentName == "Customer Price Sheet")));
+            slices.All(slice => slice.IdentifiedDocumentName == "Customer Price Sheet") &&
+            slices.Select(slice => slice.SegmentIndex).Order().SequenceEqual(Enumerable.Range(0, expectedCount))));
         var fieldsValid = slices.Count == expectedCount;
+        var fieldShape = fieldsValid;
+        var customers = fieldsValid;
+        var customerFormatting = fieldsValid;
+        var quoteIdsValid = fieldsValid;
+        var quoteFormatting = fieldsValid;
+        var currencies = fieldsValid;
+        var amountsValid = fieldsValid;
         var rowsValid = slices.Count == expectedCount;
         var missingValid = customerCase != "schema-price";
         var quoteIds = new[] { "QA-CREDIT-001", "QA-POSITIVE-002", "QA-EURO-003", "QA-MISSING-004" };
@@ -173,22 +181,41 @@ public static partial class CustomerAcceptanceDiagnostic
             if (slice.DataExtraction is not { } data)
             {
                 fieldsValid = rowsValid = false;
+                fieldShape = customers = customerFormatting = quoteIdsValid = quoteFormatting =
+                    currencies = amountsValid = false;
                 continue;
             }
             var index = slice.SegmentIndex;
             fieldsValid &= ExactFields(data.Fields, ["CustomerName", "QuoteNumber", "BillingCurrency", "TotalDealValue"]) &&
                 Value(data.Fields, "CustomerName") == Customer;
+            fieldShape &= ExactFields(data.Fields, ["CustomerName", "QuoteNumber", "BillingCurrency", "TotalDealValue"]);
+            customers &= Value(data.Fields, "CustomerName") == Customer;
+            customerFormatting &= String.Equals(Compact(Value(data.Fields, "CustomerName")).TrimEnd('.', ','),
+                Compact(Customer), StringComparison.OrdinalIgnoreCase);
             if (customerCase == "schema-long")
+            {
                 fieldsValid &= Value(data.Fields, "QuoteNumber") == "QA-LONG-001" &&
                     Value(data.Fields, "BillingCurrency") == "USD" && HasAmount(Value(data.Fields, "TotalDealValue"), 45_000m);
+                quoteIdsValid &= Value(data.Fields, "QuoteNumber") == "QA-LONG-001";
+                quoteFormatting &= Compact(Value(data.Fields, "QuoteNumber")).TrimEnd('.', ',') == "QA-LONG-001";
+                currencies &= Value(data.Fields, "BillingCurrency") == "USD";
+                amountsValid &= HasAmount(Value(data.Fields, "TotalDealValue"), 45_000m);
+            }
             else if (index is >= 0 and < 4)
             {
                 fieldsValid &= Value(data.Fields, "QuoteNumber") == quoteIds[index] &&
                     Value(data.Fields, "BillingCurrency") == (index == 2 ? "EUR" : "USD") &&
                     (index == 3 || HasAmount(Value(data.Fields, "TotalDealValue"), amounts[index]));
                 if (index == 3) missingValid = String.IsNullOrWhiteSpace(Value(data.Fields, "TotalDealValue"));
+                quoteIdsValid &= Value(data.Fields, "QuoteNumber") == quoteIds[index];
+                quoteFormatting &= Compact(Value(data.Fields, "QuoteNumber")).TrimEnd('.', ',') == quoteIds[index];
+                currencies &= Value(data.Fields, "BillingCurrency") == (index == 2 ? "EUR" : "USD");
+                amountsValid &= index == 3 || HasAmount(Value(data.Fields, "TotalDealValue"), amounts[index]);
             }
-            else fieldsValid = false;
+            else
+            {
+                fieldsValid = quoteIdsValid = quoteFormatting = currencies = amountsValid = false;
+            }
             var table = data.Tables.Count == 1 ? data.Tables[0] : null;
             var expectedRows = customerCase == "schema-long" ? 300 : 2;
             rowsValid &= table is { TableName: "SubscriptionPricing" } && table.Rows.Count == expectedRows;
@@ -208,6 +235,13 @@ public static partial class CustomerAcceptanceDiagnostic
                         Value(row.Fields, "PartNumber") == "QA-SKU-001" ? 150m : 75m));
         }
         checks.Add(Check("SchemaFields", fieldsValid));
+        checks.Add(Check("SchemaFieldShape", fieldShape));
+        checks.Add(Check("SchemaCustomer", customers));
+        checks.Add(Check("SchemaCustomerFormatting", customerFormatting));
+        checks.Add(Check("SchemaQuoteIds", quoteIdsValid));
+        checks.Add(Check("SchemaQuoteFormatting", quoteFormatting));
+        checks.Add(Check("SchemaCurrencies", currencies));
+        checks.Add(Check("SchemaAmounts", amountsValid));
         checks.Add(Check("SchemaRows", rowsValid));
         if (customerCase == "schema-price") checks.Add(Check("SchemaMissingAmount", missingValid));
         return checks;
