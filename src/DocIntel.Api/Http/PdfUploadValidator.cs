@@ -1,4 +1,5 @@
 using DocIntel.Core.Features.DocumentSplitting;
+using Microsoft.AspNetCore.Http;
 using UglyToad.PdfPig;
 using UglyToad.PdfPig.Core;
 using UglyToad.PdfPig.Exceptions;
