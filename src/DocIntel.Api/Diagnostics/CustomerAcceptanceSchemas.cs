@@ -15,6 +15,24 @@ namespace DocIntel.Api.Diagnostics;
 
 public static partial class CustomerAcceptanceDiagnostic
 {
+    private static (string Type, string Site) SchemaFailureMetadata(Exception exception)
+    {
+        var root = exception.GetBaseException();
+        var type = root.GetType().Name is
+            "ArgumentException" or "InvalidOperationException" or "InvalidDataException" or "JsonException" or
+            "FormatException" or "RequestFailedException" or "ClientResultException" or "AuthenticationFailedException" or
+            "CosmosException" or "InvalidCastException" or "NullReferenceException"
+            ? root.GetType().Name : "OtherException";
+        var sites = new System.Diagnostics.StackTrace(root).GetFrames()
+            .Select(frame => frame.GetMethod()?.DeclaringType?.FullName ?? String.Empty).ToArray();
+        var site = sites.Any(value => value.Contains(nameof(ExtractDocumentDataExecutor), StringComparison.Ordinal))
+            ? "DataExtraction" : sites.Any(value => value.Contains(nameof(IdentifyDocumentsExecutor), StringComparison.Ordinal))
+                ? "Identification" : sites.Any(value => value.Contains("ModelCatalog", StringComparison.Ordinal))
+                    ? "ModelConfiguration" : sites.Any(value => value.StartsWith("Microsoft.Agents.", StringComparison.Ordinal))
+                        ? "Workflow" : "ControlledDiagnostic";
+        return (type, site);
+    }
+
     private static async Task<int> SchemaAsync(string customerCase, ActorIdentity actor, SourceGuard guard,
         IModelCatalog models, IJobStore jobs, IArtifactStore artifacts, TextWriter output, CancellationToken token)
     {

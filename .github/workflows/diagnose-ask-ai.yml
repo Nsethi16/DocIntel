@@ -121,7 +121,8 @@ jobs:
                         "configuredRules", "configuredProfiles", "recognizedSlices", "entities"}
               allowed = counts | {"phase", "customerCase", "scenario", "status", "failureCode", "jobId",
                                   "runId", "reused", "jobStatus", "sourceSha256", "layoutSha256",
-                                  "hasWarnings", "assertions", "sources", "origin", "coverage"}
+                                  "hasWarnings", "assertions", "sources", "origin", "coverage",
+                                  "failureType", "failureSite"}
               codes = {
                   "None", "InvalidInput", "LiveProbingDisabled", "BasisNotEligible", "FixtureUnavailable",
                   "FixtureDiscoveryLimit", "OriginalUnavailable", "SourceIntegrityFailed", "WorkspaceUnavailable",
@@ -163,6 +164,13 @@ jobs:
                       None, "BackendSubmission", "StoredDocumentAndExportHelpers", "AskAiProcessor",
                       "LiveModelControlledCatalog"}):
                   raise RuntimeError("The customer diagnostic returned an invalid coverage category.")
+              if (value.get("failureType") not in {
+                      None, "ArgumentException", "InvalidOperationException", "InvalidDataException", "JsonException",
+                      "FormatException", "RequestFailedException", "ClientResultException", "AuthenticationFailedException",
+                      "CosmosException", "InvalidCastException", "NullReferenceException", "OtherException"} or
+                  value.get("failureSite") not in {
+                      None, "DataExtraction", "Identification", "ModelConfiguration", "Workflow", "ControlledDiagnostic"}):
+                  raise RuntimeError("The customer diagnostic returned invalid failure metadata.")
               for key in counts:
                   item = value.get(key)
                   if item is not None and (type(item) is not int or not 0 <= item <= 1_000_000_000):

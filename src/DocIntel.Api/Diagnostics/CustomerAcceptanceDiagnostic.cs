@@ -251,9 +251,12 @@ public static partial class CustomerAcceptanceDiagnostic
             await WriteAsync(output, customerCase, "Summary", "Refused", "SourceChanged", runId: runId);
             return 2;
         }
-        catch (Exception)
+        catch (Exception exception)
         {
-            await WriteAsync(output, customerCase, "Summary", "Failed", "DiagnosticFailed", runId: runId);
+            var failure = SchemaFailureMetadata(exception);
+            await WriteAsync(output, customerCase, "Summary", "Failed",
+                SafeRunError(AskAiFailureDiagnostics.GetCode(exception)), runId: runId,
+                failureType: failure.Type, failureSite: failure.Site);
             return 1;
         }
     }
@@ -728,10 +731,10 @@ public static partial class CustomerAcceptanceDiagnostic
     private static Task WriteAsync(TextWriter output, string customerCase, string scenario, string status,
         string failureCode, DocumentJob? job = null, AskAiRun? run = null, List<Assertion>? assertions = null,
         bool reused = false, string? runId = null, IReadOnlyList<DocumentJob>? sources = null,
-        Inspection? inspection = null) =>
+        Inspection? inspection = null, string? failureType = null, string? failureSite = null) =>
         output.WriteLineAsync("DOCINTEL_DIAGNOSTIC " + JsonSerializer.Serialize(new
         {
-            phase = "CustomerAcceptance", customerCase, scenario, status, failureCode,
+            phase = "CustomerAcceptance", customerCase, scenario, status, failureCode, failureType, failureSite,
             origin = "OperatorCli",
             coverage = customerCase == "submit-documents" ? "BackendSubmission" :
                 customerCase.StartsWith("schema-", StringComparison.Ordinal) ? "LiveModelControlledCatalog" :

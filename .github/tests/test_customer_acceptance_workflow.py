@@ -18,6 +18,7 @@ WORKFLOW = (Path(__file__).parents[1] / "workflows" / "diagnose-ask-ai.yml").rea
 CASES = (
     "documents", "submit-documents", "ask-termination", "ask-analysis", "ask-followup",
     "ask-no-evidence", "ask-injection", "ask-long-tail",
+    "schema-signature", "schema-price", "schema-long",
 )
 BASIS = "3c929e3bd68f421baeaf801601cbe77e"
 
@@ -148,6 +149,8 @@ class CustomerAcceptanceWorkflowTests(unittest.TestCase):
         invalid = (
             {"answer": "private answer"},
             {"failureCode": "private provider message"},
+            {"failureType": "private provider message"},
+            {"failureSite": "private customer document"},
             {"jobId": "private identity"},
             {"runId": BASIS},
             {"pages": True},

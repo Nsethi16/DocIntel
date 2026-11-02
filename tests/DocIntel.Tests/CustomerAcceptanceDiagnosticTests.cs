@@ -471,6 +471,62 @@ public sealed class CustomerAcceptanceDiagnosticTests
     }
 
     [Fact]
+    public async Task Controlled_Schema_Execution_Uses_Real_Executors_Without_Changing_Source_Or_Workspace()
+    {
+        // Arrange
+        var fixture = await Fixture.CreateAsync();
+        var source = fixture.Source(OtherNames[0], String.Empty);
+        source.TotalPages = 5;
+        source.Segments =
+        [
+            new() { SegmentIndex = 0, StartPage = 1, EndPage = 2, BodyText = "Customer Price Sheet" },
+            new() { SegmentIndex = 1, StartPage = 3, EndPage = 3, BodyText = "Program Signature Form" },
+            new() { SegmentIndex = 2, StartPage = 4, EndPage = 5, BodyText = "Enterprise Enrollment" }
+        ];
+        await fixture.Jobs.Inner.UpsertJobAsync(source);
+        var beforeSource = JsonSerializer.Serialize(source);
+        var beforeHarness = JsonSerializer.Serialize(fixture.Tenant);
+        var decision = new Mock<IMicrosoftDecisionClient>();
+        decision.Setup(client => client.ChooseAsync(It.IsAny<string>(), It.IsAny<string>(),
+                It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+            .Returns((string text, string _, IReadOnlyDictionary<string, string> _, CancellationToken _) =>
+                Task.FromResult(new MicrosoftDecisionResult(
+                    text.Contains("Program Signature Form", StringComparison.Ordinal) ? "form_0" :
+                    text.Contains("Enterprise Enrollment", StringComparison.Ordinal) ? "form_3" : "form_1",
+                    0.99, "Decision-1")));
+        fixture.Models.Setup(catalog => catalog.ResolveModelId(It.IsAny<TenantHarness>(), It.IsAny<string?>()))
+            .Returns((TenantHarness tenant, string? selected) => selected ?? tenant.DefaultModelId);
+        fixture.Models.Setup(catalog => catalog.ResolveDecisionClient(It.IsAny<TenantHarness>(), It.IsAny<string?>()))
+            .Returns(decision.Object);
+        fixture.Models.Setup(catalog => catalog.UsesDevelopmentSimulation(It.IsAny<TenantHarness>(), It.IsAny<string?>()))
+            .Returns(false);
+        fixture.Models.Setup(catalog => catalog.ResolveChatClient(It.IsAny<TenantHarness>(), It.IsAny<string?>()))
+            .Returns(fixture.Client.Object);
+        fixture.Respond = (_, _, _) => Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant,
+            """
+            {"fields":[{"fieldName":"CustomerEntityName","fieldValue":"QA Alderwind Services LLC","confidenceValue":99},
+            {"fieldName":"MbaMbsaNumber","fieldValue":"QA-MBSA-62001","confidenceValue":99},
+            {"fieldName":"ContractNumber","fieldValue":"QA-AG-62001","confidenceValue":99}],"tables":[]}
+            """)));
+
+        // Act
+        var result = await fixture.RunAsync("schema-signature");
+
+        // Assert
+        Assert.True(result == 0, fixture.Output.ToString());
+        Assert.Equal(beforeSource, JsonSerializer.Serialize(source));
+        Assert.Equal(beforeHarness, JsonSerializer.Serialize(fixture.Tenant));
+        Assert.Empty(fixture.Jobs.Writes);
+        Assert.Empty(fixture.Tickets);
+        Assert.Empty(await fixture.Runs.ListRunsByTenantAsync(Workspace));
+        Assert.Equal(1, fixture.ModelCalls);
+        decision.Verify(client => client.ChooseAsync(It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<CancellationToken>()), Times.Exactly(3));
+        Assert.DoesNotContain(Customer, fixture.Output.ToString());
+        Assert.Contains("\"coverage\":\"LiveModelControlledCatalog\"", fixture.Output.ToString());
+    }
+
+    [Fact]
     public async Task Following_Embedded_Document_Instructions_Is_An_Acceptance_Failure_Not_A_Pass()
     {
         // Arrange
