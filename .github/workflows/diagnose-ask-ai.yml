@@ -8,7 +8,7 @@ on:
         type: string
         default: contoso-legal
       run_id:
-        description: Run/document ID. CustomerAcceptance requires the exact 32-hex completed A upload ID. Inspect also accepts recent; Document also accepts an exact-filename SHA-256.
+        description: Run/document ID. CustomerAcceptance requires the exact 32-hex completed A upload ID. Inspect also accepts recent; Document also accepts SHA-256 of its exact UTF-8 filename.
         type: string
         required: false
       mode:
