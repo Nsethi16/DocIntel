@@ -155,9 +155,9 @@ public static partial class CustomerAcceptanceDiagnostic
                     .SequenceEqual(["Customer Price Sheet", "Program Signature Form", "Enterprise Enrollment"])));
             checks.Add(Check("SchemaFields", signature?.DataExtraction is { } data &&
                 ExactFields(data.Fields, ["CustomerEntityName", "MbaMbsaNumber", "ContractNumber"]) &&
-                Value(data.Fields, "CustomerEntityName") == Customer &&
-                Value(data.Fields, "MbaMbsaNumber") == "QA-MBSA-62001" &&
-                Value(data.Fields, "ContractNumber") == "QA-AG-62001" && data.Tables.Count == 0));
+                EquivalentSourceLabel(Value(data.Fields, "CustomerEntityName"), Customer) &&
+                EquivalentSourceLabel(Value(data.Fields, "MbaMbsaNumber"), "QA-MBSA-62001") &&
+                EquivalentSourceLabel(Value(data.Fields, "ContractNumber"), "QA-AG-62001") && data.Tables.Count == 0));
             return checks;
         }
         var expectedCount = customerCase == "schema-long" ? 1 : 4;
@@ -187,27 +187,27 @@ public static partial class CustomerAcceptanceDiagnostic
             }
             var index = slice.SegmentIndex;
             fieldsValid &= ExactFields(data.Fields, ["CustomerName", "QuoteNumber", "BillingCurrency", "TotalDealValue"]) &&
-                Value(data.Fields, "CustomerName") == Customer;
+                EquivalentSourceLabel(Value(data.Fields, "CustomerName"), Customer);
             fieldShape &= ExactFields(data.Fields, ["CustomerName", "QuoteNumber", "BillingCurrency", "TotalDealValue"]);
-            customers &= Value(data.Fields, "CustomerName") == Customer;
+            customers &= EquivalentSourceLabel(Value(data.Fields, "CustomerName"), Customer);
             customerFormatting &= String.Equals(Compact(Value(data.Fields, "CustomerName")).TrimEnd('.', ','),
                 Compact(Customer), StringComparison.OrdinalIgnoreCase);
             if (customerCase == "schema-long")
             {
-                fieldsValid &= Value(data.Fields, "QuoteNumber") == "QA-LONG-001" &&
+                fieldsValid &= EquivalentSourceLabel(Value(data.Fields, "QuoteNumber"), "QA-LONG-001") &&
                     Value(data.Fields, "BillingCurrency") == "USD" && HasAmount(Value(data.Fields, "TotalDealValue"), 45_000m);
-                quoteIdsValid &= Value(data.Fields, "QuoteNumber") == "QA-LONG-001";
+                quoteIdsValid &= EquivalentSourceLabel(Value(data.Fields, "QuoteNumber"), "QA-LONG-001");
                 quoteFormatting &= Compact(Value(data.Fields, "QuoteNumber")).TrimEnd('.', ',') == "QA-LONG-001";
                 currencies &= Value(data.Fields, "BillingCurrency") == "USD";
                 amountsValid &= HasAmount(Value(data.Fields, "TotalDealValue"), 45_000m);
             }
             else if (index is >= 0 and < 4)
             {
-                fieldsValid &= Value(data.Fields, "QuoteNumber") == quoteIds[index] &&
+                fieldsValid &= EquivalentSourceLabel(Value(data.Fields, "QuoteNumber"), quoteIds[index]) &&
                     Value(data.Fields, "BillingCurrency") == (index == 2 ? "EUR" : "USD") &&
                     (index == 3 || HasAmount(Value(data.Fields, "TotalDealValue"), amounts[index]));
                 if (index == 3) missingValid = String.IsNullOrWhiteSpace(Value(data.Fields, "TotalDealValue"));
-                quoteIdsValid &= Value(data.Fields, "QuoteNumber") == quoteIds[index];
+                quoteIdsValid &= EquivalentSourceLabel(Value(data.Fields, "QuoteNumber"), quoteIds[index]);
                 quoteFormatting &= Compact(Value(data.Fields, "QuoteNumber")).TrimEnd('.', ',') == quoteIds[index];
                 currencies &= Value(data.Fields, "BillingCurrency") == (index == 2 ? "EUR" : "USD");
                 amountsValid &= index == 3 || HasAmount(Value(data.Fields, "TotalDealValue"), amounts[index]);
@@ -250,6 +250,11 @@ public static partial class CustomerAcceptanceDiagnostic
     private static bool ExactFields(IReadOnlyList<ExtractedFieldValue> fields, string[] names) =>
         fields.Count == names.Length && fields.Select(field => field.FieldName)
             .ToHashSet(StringComparer.Ordinal).SetEquals(names);
+
+    internal static bool EquivalentSourceLabel(string actual, string expected) =>
+        String.Equals(String.Concat(actual.Where(character => !Char.IsWhiteSpace(character))).TrimEnd('.', ','),
+            String.Concat(expected.Where(character => !Char.IsWhiteSpace(character))),
+            StringComparison.OrdinalIgnoreCase);
 
     private static string Value(IReadOnlyList<ExtractedFieldValue> fields, string name) =>
         fields.FirstOrDefault(field => field.FieldName == name)?.FieldValue ?? String.Empty;

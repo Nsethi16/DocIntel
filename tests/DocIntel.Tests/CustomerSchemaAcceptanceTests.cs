@@ -7,6 +7,20 @@ namespace DocIntel.Tests;
 public sealed class CustomerSchemaAcceptanceTests
 {
     [Theory]
+    [InlineData("QA-CREDIT-001.", "QA-CREDIT-001", true)]
+    [InlineData(" QA-CREDIT-001,\n", "QA-CREDIT-001", true)]
+    [InlineData("QA Alderwind Services LLC.", "QA Alderwind Services LLC", true)]
+    [InlineData("QA-CREDIT-0010", "QA-CREDIT-001", false)]
+    [InlineData("QA-CREDIT-00,1", "QA-CREDIT-001", false)]
+    [InlineData("QA Alderwind Services LLP.", "QA Alderwind Services LLC", false)]
+    public void Label_Comparison_Allows_Only_Whitespace_And_Terminal_Sentence_Punctuation(
+        string actual, string expected, bool equal)
+    {
+        // Act / Assert
+        Assert.Equal(equal, CustomerAcceptanceDiagnostic.EquivalentSourceLabel(actual, expected));
+    }
+
+    [Theory]
     [InlineData(300, false, false, true)]
     [InlineData(299, false, false, false)]
     [InlineData(300, true, false, false)]
