@@ -27,6 +27,23 @@ namespace DocIntel.Tests;
 public sealed class PersonalEmailTests
 {
     [Fact]
+    public void Native_Microsoft_User_Caches_Support_Protected_Serialization_Without_A_Server_Login()
+    {
+        // Arrange
+        var application = ConfidentialClientApplicationBuilder.Create(Guid.NewGuid().ToString("D"))
+            .WithClientSecret("isolated-fixture-credential")
+            .WithAuthority(AzureCloudInstance.AzurePublic, AadAuthorityAudience.PersonalMicrosoftAccount)
+            .Build();
+        var serializer = Assert.IsAssignableFrom<ITokenCacheSerializer>(application.UserTokenCache);
+
+        // Act
+        var bytes = serializer.SerializeMsalV3();
+        serializer.DeserializeMsalV3(bytes);
+
+        // Assert
+        Assert.NotEmpty(bytes);
+    }
+    [Fact]
     public async Task Custom_Code_Redemption_Requires_The_Browser_Nonce_Not_Just_A_Token_Nonce()
     {
         // Arrange

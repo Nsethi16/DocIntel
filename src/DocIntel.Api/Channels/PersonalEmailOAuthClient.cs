@@ -51,7 +51,7 @@ public sealed class PersonalEmailOAuthClient(
         PersonalEmailCredential credential, PersonalEmailPurpose purpose, CancellationToken cancellationToken)
     {
         var application = Application();
-        application.UserTokenCache.DeserializeMsalV3(credential.TokenCache);
+        Serializer(application).DeserializeMsalV3(credential.TokenCache);
         var account = await application.GetAccountAsync(credential.HomeAccountId)
             ?? throw new PersonalEmailConnectionRequiredException();
         var result = await application.AcquireTokenSilent(Scopes(purpose), account).ExecuteAsync(cancellationToken);
@@ -122,11 +122,15 @@ public sealed class PersonalEmailOAuthClient(
             String.IsNullOrWhiteSpace(result.AccessToken) || result.ExpiresOn <= DateTimeOffset.UtcNow ||
             Scopes(purpose).Any(scope => !granted.Contains(scope, StringComparer.OrdinalIgnoreCase)))
             throw new InvalidDataException("Microsoft did not grant the required personal account permissions.");
-        var cache = application.UserTokenCache.SerializeMsalV3();
+        var cache = Serializer(application).SerializeMsalV3();
         if (cache.Length is 0 or > 524_288)
             throw new InvalidDataException("The Microsoft token cache exceeded its supported size.");
         return new PersonalEmailToken(homeAccount, result.AccessToken, result.ExpiresOn, cache, result.IdToken);
     }
+
+    private static ITokenCacheSerializer Serializer(IConfidentialClientApplication application) =>
+        application.UserTokenCache is ITokenCacheSerializer serializer ? serializer :
+            throw new InvalidOperationException("The Microsoft token cache does not support protected serialization.");
 
     private sealed class MsalHttpClientFactory(HttpClient client) : IMsalHttpClientFactory, IDisposable
     {

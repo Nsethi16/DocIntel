@@ -113,9 +113,11 @@ public static class PersonalEmailHostingExtensions
                 };
                 options.Events.OnAuthorizationCodeReceived = async context =>
                 {
+                    var properties = context.Properties ??
+                        throw new UnauthorizedAccessException("The email connection state is unavailable.");
                     var actor = await OriginalActorAsync(context.HttpContext);
                     var connections = context.HttpContext.RequestServices.GetRequiredService<IPersonalEmailConnections>();
-                    var pending = await connections.GetPendingAsync(actor, RequestId(context.Properties),
+                    var pending = await connections.GetPendingAsync(actor, RequestId(properties),
                         context.HttpContext.RequestAborted);
                     if (context.TokenEndpointRequest is null ||
                         !context.TokenEndpointRequest.Parameters.TryGetValue("code_verifier", out var verifier) ||
@@ -126,10 +128,10 @@ public static class PersonalEmailHostingExtensions
                         context.HttpContext.RequestAborted);
                     if (String.IsNullOrWhiteSpace(token.IdToken))
                         throw new InvalidDataException("Microsoft returned no signed personal account identity.");
-                    context.Properties.Items[CacheItem] = Convert.ToBase64String(token.TokenCache);
-                    context.Properties.Items[AccountItem] = token.HomeAccountId;
-                    context.Properties.Items[TokenItem] = token.AccessToken;
-                    context.Properties.Items[ExpiryItem] = token.ExpiresAtUtc.ToUnixTimeSeconds()
+                    properties.Items[CacheItem] = Convert.ToBase64String(token.TokenCache);
+                    properties.Items[AccountItem] = token.HomeAccountId;
+                    properties.Items[TokenItem] = token.AccessToken;
+                    properties.Items[ExpiryItem] = token.ExpiresAtUtc.ToUnixTimeSeconds()
                         .ToString(CultureInfo.InvariantCulture);
                     context.HandleCodeRedemption(token.AccessToken, token.IdToken);
                 };
@@ -145,14 +147,16 @@ public static class PersonalEmailHostingExtensions
                         if (context.Principal?.FindFirst("tid")?.Value != PersonalEmailOAuthClient.ConsumerTenantId ||
                             String.IsNullOrWhiteSpace(subject))
                             throw new UnauthorizedAccessException("A signed personal Microsoft account is required.");
-                        var items = context.Properties.Items;
+                        var properties = context.Properties ??
+                            throw new UnauthorizedAccessException("The email connection state is unavailable.");
+                        var items = properties.Items;
                         var token = new PersonalEmailToken(
                             Required(items, AccountItem), Required(items, TokenItem),
                             DateTimeOffset.FromUnixTimeSeconds(Int64.Parse(Required(items, ExpiryItem),
                                 CultureInfo.InvariantCulture)),
                             Convert.FromBase64String(Required(items, CacheItem)));
                         var connections = context.HttpContext.RequestServices.GetRequiredService<IPersonalEmailConnections>();
-                        var pending = await connections.CompleteAsync(actor, RequestId(context.Properties),
+                        var pending = await connections.CompleteAsync(actor, RequestId(properties),
                             subject, token, context.HttpContext.RequestAborted);
                         var destination = pending.Purpose == PersonalEmailPurpose.Mailbox
                             ? "/admin.html?tenant=" + Uri.EscapeDataString(settings.ApplicationTenantId) +
@@ -191,7 +195,7 @@ public static class PersonalEmailHostingExtensions
                     finally
                     {
                         foreach (var key in new[] { CacheItem, AccountItem, TokenItem, ExpiryItem })
-                            context.Properties.Items.Remove(key);
+                            context.Properties?.Items.Remove(key);
                     }
                 };
                 options.Events.OnRemoteFailure = context =>
