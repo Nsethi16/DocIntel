@@ -105,7 +105,7 @@ public sealed class PersonalEmailTests
         // Arrange
         var fixture = new Fixture();
         fixture.Access.Setup(access => access.ResolveAsync(fixture.Actor, "tenant", It.IsAny<CancellationToken>()))
-            .ReturnsAsync(new DocumentAccessScope(TenantRole.Reader));
+            .ReturnsAsync(new DocumentAccessScope(TenantRole.Reader, null));
 
         // Act
         var request = await fixture.Connections.BeginAsync(
@@ -556,7 +556,8 @@ public sealed class PersonalEmailTests
             Access.Setup(value => value.ResolveAsync(It.IsAny<ActorIdentity>(), "tenant", It.IsAny<CancellationToken>()))
                 .ReturnsAsync(DocumentAccessScope.Unrestricted);
             Harness.Setup(value => value.GetTenantAsync("tenant", It.IsAny<CancellationToken>()))
-                .ReturnsAsync(new TenantHarness { TenantId = "tenant", Agent = new() { EmailEnabled = true } });
+                .ReturnsAsync(new TenantHarness
+                    { TenantId = "tenant", DisplayName = "Fixture workspace", Agent = new() { EmailEnabled = true } });
             foreach (var (token, graphId, address, purpose) in new[]
             {
                 (MailboxToken, "1111111111111111", "vault-test@outlook.com", PersonalEmailPurpose.Mailbox),
