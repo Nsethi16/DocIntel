@@ -102,6 +102,9 @@ public interface IMailboxClient
 public interface IConnectedMailboxClient : IMailboxClient
 {
     Task<string> GetConnectionProfileAsync(string configuredProfile, CancellationToken cancellationToken);
+    Task<DateTimeOffset?> GetAdmissionStartAsync(string profile, CancellationToken cancellationToken);
+    Task<MailboxChanges> ReadForProfileAsync(
+        string profile, string? continuation, CancellationToken cancellationToken, DateTimeOffset? receivedAfterUtc = null);
     Task<bool> OwnsAddressAsync(ActorIdentity actor, string address, CancellationToken cancellationToken);
     Task SendForProfileAsync(
         string profile, string recipient, string subject, string text, CancellationToken cancellationToken);
@@ -115,6 +118,18 @@ public static class EmailMailboxBinding
         mailbox is IConnectedMailboxClient connected
             ? connected.GetConnectionProfileAsync(options.ConfiguredProfile, cancellationToken)
             : Task.FromResult(options.ConfiguredProfile);
+
+    public static Task<DateTimeOffset?> GetAdmissionStartAsync(
+        IMailboxClient mailbox, string profile, CancellationToken cancellationToken) =>
+        mailbox is IConnectedMailboxClient connected
+            ? connected.GetAdmissionStartAsync(profile, cancellationToken)
+            : Task.FromResult<DateTimeOffset?>(null);
+
+    public static Task<MailboxChanges> ReadAsync(IMailboxClient mailbox, string profile, string? continuation,
+        CancellationToken cancellationToken, DateTimeOffset? receivedAfterUtc) =>
+        mailbox is IConnectedMailboxClient connected
+            ? connected.ReadForProfileAsync(profile, continuation, cancellationToken, receivedAfterUtc)
+            : mailbox.ReadChangesAsync(continuation, cancellationToken, receivedAfterUtc);
 
     public static async Task<bool> OwnsAddressAsync(
         IMailboxClient mailbox, ActorIdentity actor, string address, CancellationToken cancellationToken) =>

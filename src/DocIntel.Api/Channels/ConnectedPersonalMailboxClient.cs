@@ -19,16 +19,40 @@ public sealed class ConnectedPersonalMailboxClient(
     public async Task<MailboxChanges> ReadChangesAsync(
         string? continuation, CancellationToken cancellationToken, DateTimeOffset? receivedAfterUtc = null)
     {
-        if (options.Provider != EmailMailboxProvider.OutlookCom)
-            return await corporate.ReadChangesAsync(continuation, cancellationToken, receivedAfterUtc);
+        var profile = await GetConnectionProfileAsync(options.ConfiguredProfile, cancellationToken);
+        return await ReadForProfileAsync(profile, continuation, cancellationToken, receivedAfterUtc);
+    }
+
+    public async Task<DateTimeOffset?> GetAdmissionStartAsync(string profile, CancellationToken cancellationToken)
+    {
+        if (options.Provider != EmailMailboxProvider.OutlookCom) return null;
         var mailbox = await connections.GetMailboxAsync(cancellationToken);
+        if (mailbox.Profile(options.ConfiguredProfile) != profile)
+            throw new PersonalEmailConnectionRequiredException();
+        return mailbox.VerifiedAtUtc;
+    }
+
+    public async Task<MailboxChanges> ReadForProfileAsync(
+        string profile, string? continuation, CancellationToken cancellationToken, DateTimeOffset? receivedAfterUtc = null)
+    {
+        if (options.Provider != EmailMailboxProvider.OutlookCom)
+        {
+            if (profile != options.ConfiguredProfile)
+                throw new InvalidOperationException("The Exchange mailbox configuration changed.");
+            return await corporate.ReadChangesAsync(continuation, cancellationToken, receivedAfterUtc);
+        }
+        var mailbox = await connections.GetMailboxAsync(cancellationToken);
+        if (mailbox.Profile(options.ConfiguredProfile) != profile)
+            throw new PersonalEmailConnectionRequiredException();
         var token = await connections.AcquireAsync(mailbox, PersonalEmailPurpose.Mailbox, cancellationToken);
         var changes = await PersonalClient(token, mailbox).ReadChangesAsync(
             continuation, cancellationToken, receivedAfterUtc);
+        if (await GetConnectionProfileAsync(options.ConfiguredProfile, cancellationToken) != profile)
+            throw new PersonalEmailConnectionRequiredException();
         return changes with
         {
             Messages = changes.Messages.Select(message =>
-                message with { ConnectionProfile = mailbox.Profile(options.ConfiguredProfile) }).ToArray()
+                message with { ConnectionProfile = profile }).ToArray()
         };
     }
 

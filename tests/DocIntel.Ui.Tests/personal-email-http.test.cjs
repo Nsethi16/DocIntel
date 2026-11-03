@@ -4,6 +4,8 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
+const http = require('node:http');
+const { once } = require('node:events');
 const { startApi, killApi } = require('./helpers/api.cjs');
 
 function settings() {
@@ -73,6 +75,77 @@ test('personal connection endpoints require DocIntel authentication and invalid 
       assert.equal(files.filter(file => file.endsWith('.protected')).length, 0);
     } finally {
       await killApi(api);
+      await fs.rm(directory, { recursive: true });
+    }
+  });
+
+test('reader sender operations use current read access while mailbox operations remain administrator-only',
+  { timeout: 60000 }, async () => {
+    const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'DocIntel.PersonalMail.Roles-'));
+    const configuration = settings();
+    const reader = crypto.randomUUID();
+    const admin = crypto.randomUUID();
+    const keys = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+    const publicKey = { ...keys.publicKey.export({ format: 'jwk' }), kid: 'email-fixture', use: 'sig', alg: 'RS256' };
+    let issuer, api;
+    const provider = http.createServer((request, response) => {
+      const url = new URL(request.url, issuer);
+      const result = url.pathname === '/keys' ? { keys: [publicKey] } : {
+        issuer, jwks_uri: issuer + '/keys', authorization_endpoint: issuer + '/authorize',
+        token_endpoint: issuer + '/token', response_types_supported: ['code'], subject_types_supported: ['public'],
+        id_token_signing_alg_values_supported: ['RS256']
+      };
+      response.writeHead(200, { 'Content-Type': 'application/json' });
+      response.end(JSON.stringify(result));
+    });
+    provider.listen(0, '127.0.0.1');
+    await once(provider, 'listening');
+    issuer = `http://127.0.0.1:${provider.address().port}`;
+    function token(objectId) {
+      const now = Math.floor(Date.now() / 1000);
+      const header = Buffer.from(JSON.stringify({ alg: 'RS256', typ: 'JWT', kid: publicKey.kid })).toString('base64url');
+      const body = Buffer.from(JSON.stringify({
+        iss: issuer, aud: configuration['Identity:ApiClientId'],
+        tid: configuration['Identity:DirectoryTenantId'], oid: objectId, sub: objectId,
+        scp: 'DocIntel.Access', iat: now, nbf: now - 5, exp: now + 600
+      })).toString('base64url');
+      return `${header}.${body}.` +
+        crypto.sign('RSA-SHA256', Buffer.from(`${header}.${body}`), keys.privateKey).toString('base64url');
+    }
+    async function request(route, objectId, method = 'GET') {
+      return fetch(api.url + route, { method, redirect: 'manual',
+        headers: { Authorization: `Bearer ${token(objectId)}` } });
+    }
+    try {
+      await fs.writeFile(path.join(directory, 'appsettings.json'), JSON.stringify({
+        Identity: { Memberships: [reader, admin].map((objectId, index) => ({
+          directoryTenantId: configuration['Identity:DirectoryTenantId'], objectId,
+          applicationTenantId: 'contoso-legal', role: index === 0 ? 'Reader' : 'Admin', allDocuments: true
+        })) }
+      }));
+      api = await startApi(directory, {
+        ...configuration, 'Identity:AllowLoopbackAuthority': true, 'Identity:LoopbackAuthority': issuer
+      });
+      const prefix = '/api/harness/tenants/contoso-legal/email/personal';
+      const status = await request(prefix + '/sender', reader);
+      assert.equal(status.status, 200);
+      assert.equal((await status.json()).state, 'NotConnected');
+      const connect = await request(prefix + '/sender/connect', reader, 'POST');
+      assert.equal(connect.status, 200);
+      const result = await connect.json();
+      assert.match(result.redirectUrl, /^\/auth\/email\/personal\/start\?request=[A-F0-9]{64}$/);
+      const cookieRequired = await request(result.redirectUrl, reader);
+      assert.equal(cookieRequired.status, 401, 'the start route requires the original DocIntel browser session');
+      assert.equal((await request(prefix + '/mailbox', reader)).status, 403);
+      assert.equal((await request(prefix + '/mailbox/connect', reader, 'POST')).status, 403);
+      assert.equal((await request(prefix + '/mailbox', admin)).status, 200);
+      assert.equal((await request(prefix + '/sender/disconnect', reader, 'POST')).status, 200);
+      assert.equal((await request('/api/harness/tenants/another/email/personal/sender', reader)).status, 403);
+      const body = await (await request(prefix + '/sender', reader)).json();
+      assert.deepEqual(Object.keys(body).sort(), ['address', 'available', 'connected', 'state']);
+    } finally {
+      await killApi(api);
+      await new Promise(resolve => provider.close(resolve));
       await fs.rm(directory, { recursive: true });
     }
   });

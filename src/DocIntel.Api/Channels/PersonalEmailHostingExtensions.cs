@@ -17,6 +17,8 @@ namespace DocIntel.Api.Channels;
 public static class PersonalEmailHostingExtensions
 {
     public const string Scheme = "DocIntelPersonalEmail";
+    private const string ActorPolicy = "DocIntelPersonalEmailActor";
+    private const string SessionPolicy = "DocIntelPersonalEmailSession";
     private const string TransientScheme = "DocIntelPersonalEmailTransient";
     private const string RequestItem = "personal-email-request";
     private const string CacheItem = "personal-email-cache";
@@ -46,6 +48,16 @@ public static class PersonalEmailHostingExtensions
         });
         builder.Services.AddSingleton<IPersonalEmailOAuthClient, PersonalEmailOAuthClient>();
         builder.Services.AddSingleton<IPersonalEmailConnections, PersonalEmailConnections>();
+        builder.Services.AddAuthorization(authorization =>
+        {
+            authorization.AddPolicy(ActorPolicy, policy => policy.RequireAuthenticatedUser()
+                .RequireAssertion(context =>
+                    IdentityAccessService.GetActor(context.User)?.DirectoryTenantId == settings.TenantId));
+            authorization.AddPolicy(SessionPolicy, policy => policy
+                .AddAuthenticationSchemes(IdentityHostingExtensions.SessionScheme).RequireAuthenticatedUser()
+                .RequireAssertion(context =>
+                    IdentityAccessService.GetActor(context.User)?.DirectoryTenantId == settings.TenantId));
+        });
         builder.Services.AddAuthentication()
             .AddCookie(TransientScheme, options =>
             {
@@ -121,6 +133,7 @@ public static class PersonalEmailHostingExtensions
                         .ToString(CultureInfo.InvariantCulture);
                     context.HandleCodeRedemption(token.AccessToken, token.IdToken);
                 };
+                options.Events.OnTokenValidated = PersonalEmailOAuthClient.ValidateTokenResponseAsync;
                 // TicketReceived runs after framework signature, state, correlation and nonce validation.
                 options.Events.OnTicketReceived = async context =>
                 {
@@ -201,7 +214,7 @@ public static class PersonalEmailHostingExtensions
         var settings = app.Services.GetRequiredService<EmailChannelOptions>();
         if (!settings.Enabled || !settings.Personal.IsConfigured) return;
         var group = app.MapGroup("/api/harness/tenants/{tenantId}/email/personal")
-            .RequireAuthorization("TenantAccess").RequireRateLimiting("DocIntelApi");
+            .RequireAuthorization(ActorPolicy).RequireRateLimiting("DocIntelApi");
         group.AddEndpointFilter<CsrfEndpointFilter>();
         group.AddEndpointFilter(async (invocation, next) =>
         {
@@ -248,7 +261,7 @@ public static class PersonalEmailHostingExtensions
             var properties = new AuthenticationProperties();
             properties.Items[RequestItem] = request;
             return Results.Challenge(properties, [Scheme]);
-        }).RequireAuthorization("TenantAccess").RequireRateLimiting("DocIntelApi");
+        }).RequireAuthorization(SessionPolicy).RequireRateLimiting("DocIntelApi");
     }
 
     private static ActorIdentity RequireActor(HttpContext context) =>

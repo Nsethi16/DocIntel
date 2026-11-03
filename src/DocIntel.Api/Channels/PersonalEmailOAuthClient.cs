@@ -2,6 +2,8 @@ using System.Net.Http.Headers;
 using System.Text.Json;
 using DocIntel.Core.Channels;
 using Microsoft.Identity.Client;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 
 namespace DocIntel.Api.Channels;
 
@@ -18,6 +20,21 @@ public sealed class PersonalEmailOAuthClient(
 
     public static string[] Scopes(PersonalEmailPurpose purpose) => purpose == PersonalEmailPurpose.Mailbox
         ? ["User.Read", "Mail.Read", "Mail.Send"] : ["User.Read"];
+
+    /// <summary>Restores the protocol/nonce validation the framework skips after custom MSAL code redemption.</summary>
+    public static Task ValidateTokenResponseAsync(TokenValidatedContext context)
+    {
+        var response = context.TokenEndpointResponse ??
+            throw new OpenIdConnectProtocolException("A personal-email token endpoint response is required.");
+        context.Options.ProtocolValidator.ValidateTokenResponse(new OpenIdConnectProtocolValidationContext
+        {
+            ClientId = context.Options.ClientId,
+            ProtocolMessage = response,
+            ValidatedIdToken = context.SecurityToken,
+            Nonce = context.Nonce
+        });
+        return Task.CompletedTask;
+    }
 
     public async Task<PersonalEmailToken> RedeemAsync(
         string code, string verifier, PersonalEmailPurpose purpose, CancellationToken cancellationToken)

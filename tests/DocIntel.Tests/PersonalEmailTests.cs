@@ -2,6 +2,8 @@ using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Security.Claims;
+using System.IdentityModel.Tokens.Jwt;
 using Azure.Core;
 using DocIntel.Api.Channels;
 using DocIntel.Api.Identity;
@@ -13,6 +15,10 @@ using DocIntel.Core.Jobs;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Identity.Client;
+using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Authentication.OpenIdConnect;
+using Microsoft.AspNetCore.Http;
+using Microsoft.IdentityModel.Protocols.OpenIdConnect;
 using Moq;
 using Xunit;
 
@@ -20,6 +26,42 @@ namespace DocIntel.Tests;
 
 public sealed class PersonalEmailTests
 {
+    [Fact]
+    public async Task Custom_Code_Redemption_Requires_The_Browser_Nonce_Not_Just_A_Token_Nonce()
+    {
+        // Arrange
+        var options = new OpenIdConnectOptions { ClientId = Guid.NewGuid().ToString("D") };
+        var nonce = options.ProtocolValidator.GenerateNonce();
+        var jwt = new JwtSecurityToken(PersonalEmailOAuthClient.Issuer, options.ClientId,
+            [new Claim(JwtRegisteredClaimNames.Sub, "validated-fixture-subject"),
+             new Claim(JwtRegisteredClaimNames.Iat, DateTimeOffset.UtcNow.ToUnixTimeSeconds().ToString(),
+                 ClaimValueTypes.Integer64),
+             new Claim("nonce", nonce)],
+            DateTime.UtcNow.AddMinutes(-1), DateTime.UtcNow.AddMinutes(10));
+        var response = new OpenIdConnectMessage
+        {
+            IdToken = new JwtSecurityTokenHandler().WriteToken(jwt), AccessToken = "fixture-access-token"
+        };
+        var context = new TokenValidatedContext(new DefaultHttpContext(),
+            new AuthenticationScheme("personal", null, typeof(OpenIdConnectHandler)), options,
+            new ClaimsPrincipal(new ClaimsIdentity("personal")), new AuthenticationProperties())
+        {
+            SecurityToken = jwt,
+            TokenEndpointResponse = response
+        };
+
+        // Act / Assert
+        await Assert.ThrowsAsync<OpenIdConnectProtocolInvalidNonceException>(() =>
+            PersonalEmailOAuthClient.ValidateTokenResponseAsync(context));
+        context.Nonce = options.ProtocolValidator.GenerateNonce();
+        await Assert.ThrowsAsync<OpenIdConnectProtocolInvalidNonceException>(() =>
+            PersonalEmailOAuthClient.ValidateTokenResponseAsync(context));
+        context.Nonce = nonce;
+        await PersonalEmailOAuthClient.ValidateTokenResponseAsync(context);
+        context.TokenEndpointResponse = null;
+        await Assert.ThrowsAsync<OpenIdConnectProtocolException>(() =>
+            PersonalEmailOAuthClient.ValidateTokenResponseAsync(context));
+    }
     [Fact]
     public void Personal_Mail_Requires_Delegated_Consent_And_Never_Allows_Trusted_Internal_Mode()
     {
@@ -392,6 +434,83 @@ public sealed class PersonalEmailTests
             confirmation.ReadAsync(fixture.Actor, "tenant", run.RunId, CancellationToken.None));
     }
 
+    [Fact]
+    public async Task A_Selected_Checkpoint_Cannot_Read_Through_A_Replacement_Connection()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        await fixture.ConnectAsync(PersonalEmailPurpose.Mailbox);
+        var handler = new MailHandler();
+        var mailbox = fixture.MailboxClient(handler);
+        var selected = await mailbox.GetConnectionProfileAsync(fixture.Options.ConfiguredProfile, CancellationToken.None);
+        var epoch = await mailbox.GetAdmissionStartAsync(selected, CancellationToken.None);
+        var stored = await fixture.Connections.GetMailboxAsync(CancellationToken.None);
+        Assert.Equal(stored.VerifiedAtUtc, epoch);
+
+        // Act
+        await fixture.ConnectAsync(PersonalEmailPurpose.Mailbox);
+
+        // Assert
+        await Assert.ThrowsAsync<PersonalEmailConnectionRequiredException>(() => mailbox.ReadForProfileAsync(
+            selected, "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=old",
+            CancellationToken.None, epoch));
+        Assert.Empty(handler.Urls);
+    }
+
+    [Fact]
+    public async Task An_Empty_Delta_Page_Cannot_Advance_A_Changed_Connection_Generation()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        await fixture.ConnectAsync(PersonalEmailPurpose.Mailbox);
+        var handler = new MailHandler
+        {
+            EmptyPage = true,
+            BeforeResponse = () => fixture.ConnectAsync(PersonalEmailPurpose.Mailbox)
+        };
+        var mailbox = fixture.MailboxClient(handler);
+        var profile = await mailbox.GetConnectionProfileAsync(fixture.Options.ConfiguredProfile, CancellationToken.None);
+
+        // Act / Assert
+        await Assert.ThrowsAsync<PersonalEmailConnectionRequiredException>(() =>
+            mailbox.ReadForProfileAsync(profile, null, CancellationToken.None));
+        Assert.Single(handler.Urls);
+    }
+
+    [Fact]
+    public async Task The_First_Personal_Checkpoint_Admits_Mail_From_Consent_Time_Not_First_Poll_Time()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        var epoch = DateTimeOffset.UtcNow.AddMinutes(-1);
+        var profile = new String('A', 64);
+        var mailbox = new Mock<IConnectedMailboxClient>();
+        mailbox.Setup(value => value.GetConnectionProfileAsync(
+            fixture.Options.ConfiguredProfile, It.IsAny<CancellationToken>())).ReturnsAsync(profile);
+        mailbox.Setup(value => value.GetAdmissionStartAsync(profile, It.IsAny<CancellationToken>()))
+            .ReturnsAsync((DateTimeOffset?)epoch);
+        var observed = new TaskCompletionSource<DateTimeOffset?>(
+            TaskCreationOptions.RunContinuationsAsynchronously);
+        mailbox.Setup(value => value.ReadForProfileAsync(profile, It.IsAny<string?>(),
+                It.IsAny<CancellationToken>(), It.IsAny<DateTimeOffset?>()))
+            .Callback<string, string?, CancellationToken, DateTimeOffset?>((_, _, _, after) => observed.TrySetResult(after))
+            .ReturnsAsync(new MailboxChanges([], null, "fixture-delta"));
+        var runs = new InMemoryAskAiRunStore();
+        var receiver = new EmailQuestionReceiver(fixture.Options, runs, fixture.Harness.Object, mailbox.Object,
+            NullLogger<EmailQuestionReceiver>.Instance);
+        using var worker = new MailboxQuestionWorker(fixture.Options, mailbox.Object, receiver, runs,
+            fixture.Harness.Object, NullLogger<MailboxQuestionWorker>.Instance);
+
+        // Act
+        await worker.StartAsync(CancellationToken.None);
+        var after = await observed.Task.WaitAsync(TimeSpan.FromSeconds(5));
+        await worker.StopAsync(CancellationToken.None);
+
+        // Assert
+        Assert.Equal(epoch, after);
+        Assert.Equal(epoch, Assert.Single(await runs.ListRunsByTenantAsync("tenant")).CreatedAtUtc);
+    }
+
     private sealed class Fixture
     {
         internal ActorIdentity Actor { get; } = new(Guid.NewGuid(), Guid.NewGuid());
@@ -483,11 +602,14 @@ public sealed class PersonalEmailTests
         internal List<string> Urls { get; } = [];
         internal List<string> Preferences { get; } = [];
         internal List<string> SentBodies { get; } = [];
+        internal bool EmptyPage { get; init; }
+        internal Func<Task>? BeforeResponse { get; init; }
         protected override async Task<HttpResponseMessage> SendAsync(
             HttpRequestMessage request, CancellationToken cancellationToken)
         {
             Urls.Add(request.RequestUri!.ToString());
             Preferences.Add(request.Headers.TryGetValues("Prefer", out var prefer) ? String.Join(", ", prefer) : String.Empty);
+            if (BeforeResponse is not null) await BeforeResponse();
             if (request.Method == HttpMethod.Post)
             {
                 SentBodies.Add(await request.Content!.ReadAsStringAsync(cancellationToken));
@@ -498,7 +620,8 @@ public sealed class PersonalEmailTests
             var body = request.RequestUri.AbsolutePath.EndsWith("/messages/delta", StringComparison.Ordinal)
                 ? JsonSerializer.Serialize(new Dictionary<string, object>
                 {
-                    ["value"] = new[] { new { id = "immutable-message", receivedDateTime = DateTimeOffset.UtcNow } },
+                    ["value"] = EmptyPage ? Array.Empty<object>() :
+                        [new { id = "immutable-message", receivedDateTime = DateTimeOffset.UtcNow }],
                     ["@odata.deltaLink"] = "https://graph.microsoft.com/v1.0/me/mailFolders/inbox/messages/delta?$deltatoken=fixture"
                 })
                 : JsonSerializer.Serialize(new

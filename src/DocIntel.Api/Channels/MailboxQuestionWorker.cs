@@ -24,12 +24,14 @@ public sealed class MailboxQuestionWorker(
                     !tenant.Capabilities.TryGetValue(FeatureHarness.AskAiKey, out var feature) || !feature.Enabled) continue;
                 var profile = await EmailMailboxBinding.GetProfileAsync(options, mailbox, stoppingToken);
                 var cursorId = "mailbox-checkpoint-" + profile;
+                var admissionStart = await EmailMailboxBinding.GetAdmissionStartAsync(mailbox, profile, stoppingToken);
                 await runs.TryCreateRunAsync(new AskAiRun
                 {
                     RunId = cursorId,
                     TenantId = options.ApplicationTenantId,
                     Question = "Server mailbox synchronization checkpoint",
-                    Status = JobStatus.Completed
+                    Status = JobStatus.Completed,
+                    CreatedAtUtc = admissionStart ?? DateTimeOffset.UtcNow
                 }, stoppingToken);
                 await using var lease = await runs.TryAcquireAsync(options.ApplicationTenantId, cursorId, stoppingToken);
                 if (lease is null) continue;
@@ -37,11 +39,14 @@ public sealed class MailboxQuestionWorker(
                 poll.CancelAfter(TimeSpan.FromSeconds(90));
                 for (var page = 0; page < 4; page++)
                 {
-                    var changes = await mailbox.ReadChangesAsync(lease.Run.MailboxContinuation, poll.Token, lease.Run.CreatedAtUtc);
+                    var changes = await EmailMailboxBinding.ReadAsync(mailbox, profile,
+                        lease.Run.MailboxContinuation, poll.Token, lease.Run.CreatedAtUtc);
                     foreach (var message in changes.Messages)
                         if (message.ReceivedAtUtc >= lease.Run.CreatedAtUtc)
                             await receiver.ReceiveAsync(message, poll.Token);
                     lease.Run.MailboxContinuation = changes.NextLink ?? changes.DeltaLink;
+                    if (await EmailMailboxBinding.GetProfileAsync(options, mailbox, poll.Token) != profile)
+                        throw new InvalidOperationException("The mailbox connection changed before checkpoint publication.");
                     await lease.SaveAsync(poll.Token);
                     if (changes.NextLink is null) break;
                 }

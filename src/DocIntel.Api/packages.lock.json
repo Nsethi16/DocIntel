@@ -357,15 +357,6 @@
           "Microsoft.IdentityModel.Tokens": "8.15.0"
         }
       },
-      "Microsoft.IdentityModel.Protocols.OpenIdConnect": {
-        "type": "Transitive",
-        "resolved": "8.15.0",
-        "contentHash": "uJ5cHsTHRqx/1W68Gz/7hqUgudai1CXnokIXTQw+ZI1o3hWuhQa1vgSzXX9+IAkOJ/gP+M590Fg3WTwqglJghg==",
-        "dependencies": {
-          "Microsoft.IdentityModel.Protocols": "8.15.0",
-          "System.IdentityModel.Tokens.Jwt": "8.15.0"
-        }
-      },
       "Microsoft.IdentityModel.Tokens": {
         "type": "Transitive",
         "resolved": "8.15.0",
@@ -565,43 +556,6 @@
         "contentHash": "IXoJOXIqc39AIe+CIR7koBtRGMiCt/LPM3lI+PELtDIy9XdyeSrwXFdWV9dzJ2Awl0paLWUaknLxFQ5HpHZUog==",
         "dependencies": {
           "System.Drawing.Common": "6.0.0"
-        }
-      },
-      "docintel.core": {
-        "type": "Project",
-        "dependencies": {
-          "Azure.AI.ContentUnderstanding": "[1.1.0, )",
-          "Azure.AI.DocumentIntelligence": "[1.0.0, )",
-          "Azure.AI.Inference": "[1.0.0-beta.4, )",
-          "Azure.AI.OpenAI": "[2.8.0-beta.1, )",
-          "Azure.AI.Translation.Document": "[2.0.0, )",
-          "Azure.AI.Translation.Text": "[1.0.0, )",
-          "Azure.Identity": "[1.21.0, )",
-          "Azure.Storage.Blobs": "[12.26.0, )",
-          "Azure.Storage.Queues": "[12.28.1, )",
-          "DocumentFormat.OpenXml": "[3.5.1, )",
-          "Microsoft.Agents.AI": "[1.9.0, )",
-          "Microsoft.Agents.AI.Workflows": "[1.9.0, )",
-          "Microsoft.Azure.Cosmos": "[3.54.0, )",
-          "Microsoft.Data.Sqlite": "[10.0.13, )",
-          "Microsoft.Extensions.AI": "[10.6.0, )",
-          "Microsoft.Extensions.AI.Abstractions": "[10.6.0, )",
-          "Microsoft.Extensions.AI.OpenAI": "[10.6.0, )",
-          "Newtonsoft.Json": "[13.0.4, )",
-          "PdfPig": "[0.1.16, )"
-        }
-      },
-      "docintel.servicedefaults": {
-        "type": "Project",
-        "dependencies": {
-          "Azure.Monitor.OpenTelemetry.AspNetCore": "[1.3.0, )",
-          "Microsoft.Extensions.Http.Resilience": "[10.2.0, )",
-          "Microsoft.Extensions.ServiceDiscovery": "[10.2.0, )",
-          "OpenTelemetry.Exporter.OpenTelemetryProtocol": "[1.15.3, )",
-          "OpenTelemetry.Extensions.Hosting": "[1.15.3, )",
-          "OpenTelemetry.Instrumentation.AspNetCore": "[1.15.0, )",
-          "OpenTelemetry.Instrumentation.Http": "[1.15.0, )",
-          "OpenTelemetry.Instrumentation.Runtime": "[1.15.0, )"
         }
       },
       "Azure.AI.ContentUnderstanding": {
@@ -835,6 +789,16 @@
           "Microsoft.Extensions.ServiceDiscovery.Abstractions": "10.2.0"
         }
       },
+      "Microsoft.IdentityModel.Protocols.OpenIdConnect": {
+        "type": "CentralTransitive",
+        "requested": "[8.15.0, )",
+        "resolved": "8.15.0",
+        "contentHash": "uJ5cHsTHRqx/1W68Gz/7hqUgudai1CXnokIXTQw+ZI1o3hWuhQa1vgSzXX9+IAkOJ/gP+M590Fg3WTwqglJghg==",
+        "dependencies": {
+          "Microsoft.IdentityModel.Protocols": "8.15.0",
+          "System.IdentityModel.Tokens.Jwt": "8.15.0"
+        }
+      },
       "Newtonsoft.Json": {
         "type": "CentralTransitive",
         "requested": "[13.0.4, )",
@@ -906,6 +870,43 @@
         "requested": "[0.1.16, )",
         "resolved": "0.1.16",
         "contentHash": "qQcbsNMYVY+K5ELptax2S8thNMk0+rSQq3H/KdYj3LLcko8yTCz8y5KIvsKxIyAuTN0ZYNnfsZkM+0EvxTwHVA=="
+      },
+      "docintel.core": {
+        "type": "Project",
+        "dependencies": {
+          "Azure.AI.ContentUnderstanding": "[1.1.0, )",
+          "Azure.AI.DocumentIntelligence": "[1.0.0, )",
+          "Azure.AI.Inference": "[1.0.0-beta.4, )",
+          "Azure.AI.OpenAI": "[2.8.0-beta.1, )",
+          "Azure.AI.Translation.Document": "[2.0.0, )",
+          "Azure.AI.Translation.Text": "[1.0.0, )",
+          "Azure.Identity": "[1.21.0, )",
+          "Azure.Storage.Blobs": "[12.26.0, )",
+          "Azure.Storage.Queues": "[12.28.1, )",
+          "DocumentFormat.OpenXml": "[3.5.1, )",
+          "Microsoft.Agents.AI": "[1.9.0, )",
+          "Microsoft.Agents.AI.Workflows": "[1.9.0, )",
+          "Microsoft.Azure.Cosmos": "[3.54.0, )",
+          "Microsoft.Data.Sqlite": "[10.0.13, )",
+          "Microsoft.Extensions.AI": "[10.6.0, )",
+          "Microsoft.Extensions.AI.Abstractions": "[10.6.0, )",
+          "Microsoft.Extensions.AI.OpenAI": "[10.6.0, )",
+          "Newtonsoft.Json": "[13.0.4, )",
+          "PdfPig": "[0.1.16, )"
+        }
+      },
+      "docintel.servicedefaults": {
+        "type": "Project",
+        "dependencies": {
+          "Azure.Monitor.OpenTelemetry.AspNetCore": "[1.3.0, )",
+          "Microsoft.Extensions.Http.Resilience": "[10.2.0, )",
+          "Microsoft.Extensions.ServiceDiscovery": "[10.2.0, )",
+          "OpenTelemetry.Exporter.OpenTelemetryProtocol": "[1.15.3, )",
+          "OpenTelemetry.Extensions.Hosting": "[1.15.3, )",
+          "OpenTelemetry.Instrumentation.AspNetCore": "[1.15.0, )",
+          "OpenTelemetry.Instrumentation.Http": "[1.15.0, )",
+          "OpenTelemetry.Instrumentation.Runtime": "[1.15.0, )"
+        }
       }
     }
   }
