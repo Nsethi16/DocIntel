@@ -24,7 +24,11 @@ public static class EmailHostingExtensions
         builder.Services.AddHttpClient(GraphMailboxClient.HttpClientName, client =>
             client.Timeout = TimeSpan.FromSeconds(60))
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
-        builder.Services.AddSingleton<IMailboxClient, GraphMailboxClient>();
+        builder.Services.AddSingleton<GraphMailboxClient>();
+        builder.AddDocIntelPersonalEmail(settings, identity);
+        if (settings.Personal.IsConfigured)
+            builder.Services.AddSingleton<IMailboxClient, ConnectedPersonalMailboxClient>();
+        else builder.Services.AddSingleton<IMailboxClient>(services => services.GetRequiredService<GraphMailboxClient>());
         builder.Services.AddSingleton<EmailQuestionReceiver>();
         builder.Services.AddSingleton<EmailQuestionConfirmation>();
         builder.Services.AddSingleton<IChannelTransport, EmailAnswerTransport>();
@@ -34,6 +38,7 @@ public static class EmailHostingExtensions
     public static void MapDocIntelEmail(this WebApplication app)
     {
         if (!app.Services.GetRequiredService<EmailChannelOptions>().Enabled) return;
+        app.MapDocIntelPersonalEmail();
         var group = app.MapGroup("/api/harness/tenants/{tenantId}/ask/email/runs/{runId}")
             .RequireAuthorization("TenantAccess").RequireRateLimiting("DocIntelApi");
         group.AddEndpointFilter<CsrfEndpointFilter>();

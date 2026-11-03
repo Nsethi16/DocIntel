@@ -8,11 +8,67 @@
   const prefix = `/api/harness/tenants/${encodeURIComponent(tenant || '')}`;
   const endpoint = `${prefix}/ask/email/runs/${encodeURIComponent(run || '')}`;
   const statusUrl = `/ask-run.html?tenant=${encodeURIComponent(tenant || '')}&run=${encodeURIComponent(run || '')}`;
+  const identityEndpoint = `${prefix}/email/personal/sender`;
+  let identityAvailable = false, identityBusy = false;
+  async function loadIdentity() {
+    try {
+      const response = await fetch(identityEndpoint);
+      if (response.status === 404) return;
+      if (!response.ok) throw new Error('Personal email verification status is unavailable.');
+      const result = await response.json();
+      identityAvailable = result.available === true;
+      element('emailPersonalIdentity').hidden = !identityAvailable;
+      element('verifyPersonalEmail').disabled = !identityAvailable || identityBusy;
+      element('disconnectPersonalEmail').disabled = !identityAvailable || result.state === 'NotConnected' || identityBusy;
+      element('emailPersonalIdentityNotice').textContent = result.connected
+        ? `Verified personal sender: ${result.address}`
+        : result.state === 'ReconnectionRequired' ? 'Reconnect your personal Microsoft account to verify your sender address.'
+          : 'No personal sender email is linked. Verify it on the Microsoft sign-in page if needed.';
+    } catch (error) {
+      identityAvailable = false;
+      element('verifyPersonalEmail').disabled = true;
+      element('disconnectPersonalEmail').disabled = true;
+      element('emailPersonalIdentityNotice').textContent = error.message + ' No email identity was changed.';
+    }
+  }
+  async function personalIdentity(action) {
+    if (!valid || !identityAvailable || identityBusy) return;
+    identityBusy = true;
+    element('verifyPersonalEmail').disabled = true;
+    element('disconnectPersonalEmail').disabled = true;
+    let notice;
+    try {
+      const returning = /^mail-[a-fA-F0-9]{64}$/.test(run)
+        ? `?returnRunId=${encodeURIComponent(run)}` : '';
+      const response = await fetch(identityEndpoint + '/' + action + (action === 'connect' ? returning : ''),
+        { method: 'POST' });
+      if (!response.ok) throw new Error('Personal email verification change was not acknowledged.');
+      const result = await response.json();
+      if (action === 'connect') {
+        if (typeof result.redirectUrl !== 'string' ||
+          !/^\/auth\/email\/personal\/start\?request=[a-fA-F0-9]{64}$/.test(result.redirectUrl))
+          throw new Error('The Microsoft verification link was invalid. No sign-in was started.');
+        location.assign(result.redirectUrl);
+      } else {
+        notice = 'Personal sender credentials were disconnected.';
+        button.disabled = true;
+        element('emailQuestion').textContent = '';
+        element('emailDestination').textContent = '';
+      }
+    } catch (error) {
+      notice = error.message + ' No automatic retry was made.';
+    } finally {
+      identityBusy = false;
+      await loadIdentity();
+      if (notice) element('emailPersonalIdentityNotice').textContent = notice;
+    }
+  }
   function statusLink() {
     element('emailRunLink').href = statusUrl;
     element('emailRunLink').hidden = false;
   }
   async function load() {
+    button.disabled = true;
     if (!valid) { element('emailNotice').textContent = 'This confirmation link is incomplete.'; return; }
     try {
       const response = await fetch(endpoint);
@@ -32,6 +88,7 @@
       element('emailQuestion').textContent = '';
       element('emailDestination').textContent = '';
     }
+    await loadIdentity();
   }
   button.addEventListener('click', async () => {
     if (button.disabled) return;
@@ -45,5 +102,7 @@
       element('emailNotice').textContent = error.message + ' No automatic retry was made.';
     }
   });
+  element('verifyPersonalEmail').addEventListener('click', () => personalIdentity('connect'));
+  element('disconnectPersonalEmail').addEventListener('click', () => personalIdentity('disconnect'));
   load();
 })();

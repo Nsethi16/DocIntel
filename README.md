@@ -983,21 +983,87 @@ Configure the operator-owned `Channels:Email` section:
 | Setting | Purpose |
 |---|---|
 | `Enabled` | Explicit opt-in; disabled leaves the worker/routes/transport unregistered |
+| `Provider` | `ExchangeOnline` (unchanged default) or delegated personal `OutlookCom` |
 | `TenantId` | Same Entra directory as the web/API identity |
-| `MailboxObjectId` | Directory object GUID of the single connected mailbox |
+| `MailboxObjectId` | Exchange mailbox directory GUID; not required for `OutlookCom` |
 | `MailboxAddress` | Address shown in Admin connection status and confirmation messages |
 | `ApplicationTenantId` | Fixed application tenant for incoming questions |
 | `PublicOrigin` | Same HTTPS public origin used for sign-in |
 | `PollSeconds` | Delta synchronization cadence, 10-300 seconds; default 30 |
 | `AuthorizationMode` | `ConfirmSender` (safe default) or explicitly configured `TrustedInternal` |
 | `CorporateSenderProof` | Secret transport attestation for `TrustedInternal`; store in a secret provider, never in source/Admin fields |
+| `Personal:ClientId` | Separate OAuth application supporting personal Microsoft accounts |
+| `Personal:ClientSecret` | Confidential-client credential from a managed secret provider, never a mailbox password |
 
-The runtime managed identity needs Microsoft Graph `Mail.Read` and `Mail.Send` application access
+For `ExchangeOnline`, the runtime managed identity needs Microsoft Graph `Mail.Read` and `Mail.Send` application access
 restricted to this mailbox through the organization's supported Exchange application access/RBAC
 controls. Directory lookup requires approved application access to read the user's primary
 `mail`/`userPrincipalName` (for example, `User.Read.All`); have an administrator approve and scope
 the permissions. Do not grant tenant-wide mailbox access just to bypass setup. No credentials
 are accepted in incoming emails or confirmation requests.
+
+#### Personal Outlook.com mailbox setup
+
+Personal `@outlook.com`/`@hotmail.com` mailboxes use delegated Microsoft Graph consent, not Exchange
+Application RBAC, a guest-user mailbox GUID, SMTP passwords or managed-identity mail permissions.
+No Microsoft 365 Business subscription is required for this mailbox provider.
+
+1. In the existing Entra tenant, register a **separate** application for **Personal accounts only**
+   (or personal plus organisational accounts). Do not change the existing DocIntel web/API registrations.
+2. Add a **Web** redirect URI:
+   `<Identity:PublicOrigin>/auth/email/personal/callback`.
+   Keep implicit grant and public-client flows off. This is a confidential authorization-code/PKCE flow.
+3. Configure Microsoft Graph **delegated** `User.Read`, `Mail.Read` and `Mail.Send`.
+   The mailbox owner grants those permissions at Microsoft sign-in; tenant-wide application mail
+   grants do not provide access to a personal mailbox. The application also requests
+   `openid profile offline_access` for sign-in and server-side renewal.
+4. Put the confidential-client secret in Azure Key Vault or the installation's managed secret
+   provider. Give the runtime identity only the required access to that secret. Never put the
+   secret in source, personality fields, email, logs, browser storage or a support message.
+5. Set `Channels__Email__Enabled=true`, `Channels__Email__Provider=OutlookCom`,
+   `Channels__Email__TenantId` to the **existing DocIntel directory**, `ApplicationTenantId` to
+   the intended workspace, `MailboxAddress` to the intended personal mailbox's primary address,
+   and `PublicOrigin` to the existing HTTPS app origin. Set
+   `Channels__Email__AuthorizationMode=ConfirmSender`,
+   `Channels__Email__Personal__ClientId` to the new app ID, and provide
+   `Channels__Email__Personal__ClientSecret` through the protected configuration source.
+   Do not set the DocIntel directory to the consumer tenant or use the personal account ID as
+   `MailboxObjectId`. Preserve the existing runtime identity and model/storage settings.
+6. In **Admin > Agent > Email > Manage**, click **Connect Outlook.com** and sign in as the
+   configured mailbox owner. Selecting another account or a non-primary alias fails explicitly.
+   Save the workspace's Email toggle and ensure Ask AI is enabled.
+7. Send a **new plaintext question** from a different account to that mailbox. Open the
+   source-free confirmation email, sign into DocIntel and explicitly confirm.
+
+If the sender uses a personal email different from their DocIntel primary directory email,
+the confirmation page offers **Verify My Personal Email**. This second Microsoft sign-in
+requests only profile access (`User.Read`, plus OIDC/offline access), not sender-inbox access.
+It binds the verified personal account to the existing `(directoryTenantId, objectId)` in that
+workspace. It does not create membership, admit a Guest, broaden document access, trust an email
+From string or execute the question. Existing eligible primary-directory senders need no link.
+Ownership, active workspace membership and personal profile/consent are rechecked before delivery.
+
+Consumer OAuth has its own callback, correlation/nonce validation and one-use, ten-minute
+connection intents bound to the original DocIntel browser session. The consumer identity never
+replaces that session. Tokens are kept in protected private state using the existing
+Blob/Key Vault Data Protection keyring; production requires shared private execution storage.
+Local Development uses protected, atomic files outside `wwwroot`. Neither tokens nor account
+identifiers are returned in connection-status APIs. A stopped browser does not stop polling;
+revoked consent or an expired refresh path exposes **ReconnectionRequired** instead of silently
+granting access. Reconnect through Microsoft; do not paste tokens into the application.
+
+Personal delta cursors and outgoing sends are bound to a persisted connection generation;
+normal token renewal keeps that generation. Replacing/disconnecting the mailbox invalidates
+old pending connections/confirmations, and the new mailbox checkpoint starts with new mail.
+Resend a new question after reconnecting rather than replaying an old or uncertain send.
+Personal messages request immutable Graph IDs. **Disconnect Mailbox** removes this app's stored
+mailbox credentials; **Disconnect Personal Email** removes the caller's sender link. To revoke
+Microsoft's consent itself, use the account's Microsoft application-permissions controls.
+
+This provider does not ingest attachments or create Teams presence. It keeps the existing
+durable Ask AI, source authorization, source-free confirmation and cited plaintext answer path.
+Configuration or completed OAuth consent is not proof of email delivery: verify the real
+mailbox round trip and inspect run delivery status and the mailbox's Sent Items/Junk folders.
 
 The mailbox worker persists an exclusive, shared Graph delta checkpoint in the existing run
 store. It processes new inbox mail after first activation, not historical mailbox contents;

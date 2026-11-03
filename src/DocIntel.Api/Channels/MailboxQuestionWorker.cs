@@ -14,7 +14,6 @@ public sealed class MailboxQuestionWorker(
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        var cursorId = "mailbox-checkpoint-" + options.Profile;
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(options.PollSeconds));
         do
         {
@@ -23,6 +22,8 @@ public sealed class MailboxQuestionWorker(
                 var tenant = await harness.GetTenantAsync(options.ApplicationTenantId, stoppingToken);
                 if (tenant is not { IsActive: true } || !tenant.Agent.EmailEnabled ||
                     !tenant.Capabilities.TryGetValue(FeatureHarness.AskAiKey, out var feature) || !feature.Enabled) continue;
+                var profile = await EmailMailboxBinding.GetProfileAsync(options, mailbox, stoppingToken);
+                var cursorId = "mailbox-checkpoint-" + profile;
                 await runs.TryCreateRunAsync(new AskAiRun
                 {
                     RunId = cursorId,

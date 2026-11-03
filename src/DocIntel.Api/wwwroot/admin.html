@@ -283,6 +283,13 @@
                 <span class="slider"></span></label>
             </div>
             <div id="agentEmailDetails" class="agent-channel-details" hidden>
+              <div id="agentPersonalEmailControls" hidden>
+                <p>Connect the configured personal Outlook.com mailbox on Microsoft's sign-in page.
+                  DocIntel stores protected OAuth credentials, never your mailbox password.</p>
+                <button type="button" id="agentEmailConnect" disabled>Connect Outlook.com</button>
+                <button type="button" id="agentEmailDisconnect" disabled>Disconnect Mailbox</button>
+                <p id="agentEmailConnectionNotice" role="status" aria-live="polite"></p>
+              </div>
               <p>Mailbox connection and permissions are configured securely by the installation operator.</p>
               <p>The switch enables email for this workspace. It does not create a mailbox, grant access or verify delivery.
                 Save your changes, then complete a real authorized email question and reply test.</p>

@@ -18,7 +18,18 @@ public sealed class GraphMailboxClient(
 {
     public const string HttpClientName = "DocIntelMailboxGraph";
     private const int MaximumResponseBytes = 2 * 1024 * 1024;
-    private string MailboxRoot => $"https://graph.microsoft.com/v1.0/users/{options.MailboxObjectId:D}";
+    private readonly string? personalGraphId;
+    private string MailboxRoot => personalGraphId is null
+        ? $"https://graph.microsoft.com/v1.0/users/{options.MailboxObjectId:D}"
+        : "https://graph.microsoft.com/v1.0/me";
+
+    internal GraphMailboxClient(IHttpClientFactory clients, AccessToken token, EmailChannelOptions options,
+        string graphId, ILogger<GraphMailboxClient> logger) : this(clients, new SnapshotCredential(token), options, logger)
+    {
+        if (String.IsNullOrWhiteSpace(graphId) || graphId.Length > 512 || graphId.Any(Char.IsControl))
+            throw new InvalidDataException("A verified personal mailbox identity is required.");
+        personalGraphId = graphId;
+    }
 
     public async Task<MailboxChanges> ReadChangesAsync(string? continuation, CancellationToken cancellationToken,
         DateTimeOffset? receivedAfterUtc = null)
@@ -30,7 +41,8 @@ public sealed class GraphMailboxClient(
         var url = continuation ?? initial;
         ValidateMailboxLink(url);
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
-        request.Headers.TryAddWithoutValidation("Prefer", "outlook.body-content-type=\"text\", odata.maxpagesize=25");
+        request.Headers.TryAddWithoutValidation("Prefer", "outlook.body-content-type=\"text\", odata.maxpagesize=25" +
+            (personalGraphId is null ? String.Empty : ", IdType=\"ImmutableId\""));
         using var result = await SendAsync(request, cancellationToken);
         using var body = await ReadAsync(result, cancellationToken);
         var messages = new List<MailboxQuestion>();
@@ -47,7 +59,8 @@ public sealed class GraphMailboxClient(
                 using var detail = new HttpRequestMessage(HttpMethod.Get, MailboxRoot +
                     "/messages/" + Uri.EscapeDataString(messageId) +
                     "?$select=id,subject,body,from,sender,receivedDateTime,internetMessageHeaders");
-                detail.Headers.TryAddWithoutValidation("Prefer", "outlook.body-content-type=\"text\"");
+                detail.Headers.TryAddWithoutValidation("Prefer", "outlook.body-content-type=\"text\"" +
+                    (personalGraphId is null ? String.Empty : ", IdType=\"ImmutableId\""));
                 using var detailResult = await SendAsync(detail, cancellationToken);
                 message = await ReadAsync(detailResult, cancellationToken, 128 * 1024);
             }
@@ -177,9 +190,29 @@ public sealed class GraphMailboxClient(
         if (link.Length > 16_384 || !Uri.TryCreate(link, UriKind.Absolute, out var uri) ||
             uri.Scheme != "https" || uri.Host != "graph.microsoft.com" || !uri.IsDefaultPort ||
             uri.UserInfo.Length > 0 || uri.Fragment.Length > 0 ||
-            !uri.AbsolutePath.StartsWith($"/v1.0/users/{options.MailboxObjectId:D}/", StringComparison.OrdinalIgnoreCase) ||
+            !(personalGraphId is null
+                ? uri.AbsolutePath.StartsWith($"/v1.0/users/{options.MailboxObjectId:D}/", StringComparison.OrdinalIgnoreCase)
+                : uri.AbsolutePath.StartsWith("/v1.0/me/", StringComparison.OrdinalIgnoreCase) ||
+                  uri.AbsolutePath.StartsWith("/v1.0/users/" + Uri.EscapeDataString(personalGraphId) + "/",
+                      StringComparison.OrdinalIgnoreCase)) ||
             !uri.AbsolutePath.EndsWith("/messages/delta", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("The mailbox continuation does not belong to the configured Graph resource.");
+    }
+
+    private sealed class SnapshotCredential(AccessToken token) : TokenCredential
+    {
+        public override AccessToken GetToken(TokenRequestContext requestContext, CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (token.ExpiresOn <= DateTimeOffset.UtcNow ||
+                requestContext.Scopes is not ["https://graph.microsoft.com/.default"])
+                throw new UnauthorizedAccessException("The delegated Graph token is unavailable for this operation.");
+            return token;
+        }
+
+        public override ValueTask<AccessToken> GetTokenAsync(
+            TokenRequestContext requestContext, CancellationToken cancellationToken) =>
+            ValueTask.FromResult(GetToken(requestContext, cancellationToken));
     }
 
     private static async Task<JsonDocument> ReadAsync(HttpResponseMessage response, CancellationToken cancellationToken,

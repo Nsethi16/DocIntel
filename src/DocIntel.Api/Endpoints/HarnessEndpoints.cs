@@ -4,6 +4,7 @@ using System.Security.Cryptography;
 using DocIntel.Api.Http;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Api.Identity;
+using DocIntel.Api.Channels;
 using DocIntel.Core.Authorization;
 using DocIntel.Core.Features.DocumentSplitting;
 using DocIntel.Core.Features.DocumentTranslation;
@@ -123,10 +124,27 @@ public static class HarnessEndpoints
                 configuration["Channels:Teams:ApplicationTenantId"] == tenantId;
             var email = configuration.GetValue<bool>("Channels:Email:Enabled") &&
                 configuration["Channels:Email:ApplicationTenantId"] == tenantId;
+            var emailOptions = context.RequestServices.GetRequiredService<DocIntel.Core.Channels.EmailChannelOptions>();
+            PersonalEmailStatus? personal = null;
+            if (email && emailOptions.Provider == DocIntel.Core.Channels.EmailMailboxProvider.OutlookCom &&
+                context.RequestServices.GetService<IPersonalEmailConnections>() is { } connections)
+            {
+                var actor = IdentityAccessService.GetActor(context.User);
+                if (actor is not null)
+                    personal = await connections.GetStatusAsync(actor, tenantId, PersonalEmailPurpose.Mailbox, ct);
+            }
             return Results.Ok(new
             {
                 teams = new { configured = teams },
-                email = new { configured = email, address = email ? configuration["Channels:Email:MailboxAddress"] : null }
+                email = new
+                {
+                    configured = email,
+                    address = email ? configuration["Channels:Email:MailboxAddress"] : null,
+                    provider = email ? emailOptions.Provider.ToString() : null,
+                    personalAvailable = email && emailOptions.Personal.IsConfigured,
+                    connected = personal?.Connected,
+                    state = personal?.State
+                }
             });
         });
 

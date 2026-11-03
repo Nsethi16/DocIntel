@@ -10,12 +10,23 @@ using Microsoft.Extensions.Logging;
 namespace DocIntel.Core.Channels;
 
 public enum EmailAuthorizationMode { ConfirmSender, TrustedInternal }
+public enum EmailMailboxProvider { ExchangeOnline, OutlookCom }
+
+/// <summary>Separate consumer OAuth registration; credentials belong in a managed secret provider.</summary>
+public sealed class PersonalEmailOAuthOptions
+{
+    public Guid ClientId { get; set; }
+    public string ClientSecret { get; set; } = String.Empty;
+    public bool IsConfigured => ClientId != Guid.Empty && !String.IsNullOrWhiteSpace(ClientSecret);
+}
 
 /// <summary>Operator-owned mailbox binding. No sender address or URL grants document permissions.</summary>
 public sealed class EmailChannelOptions
 {
     public const string SectionName = "Channels:Email";
     public bool Enabled { get; set; }
+    public EmailMailboxProvider Provider { get; set; }
+    public PersonalEmailOAuthOptions Personal { get; set; } = new();
     public Guid TenantId { get; set; }
     public Guid MailboxObjectId { get; set; }
     public string MailboxAddress { get; set; } = String.Empty;
@@ -33,7 +44,14 @@ public sealed class EmailChannelOptions
             (CorporateSenderProof.Length is < 43 or > 256 ||
              CorporateSenderProof.Any(character => !Char.IsAsciiLetterOrDigit(character) && character is not '-' and not '_')))
             throw new InvalidOperationException("Automatic email requires a securely configured corporate sender attestation.");
-        if (TenantId == Guid.Empty || MailboxObjectId == Guid.Empty || !IsAddress(MailboxAddress) ||
+        if (!Enum.IsDefined(Provider) || Personal is null || Personal.ClientSecret is null ||
+            Provider == EmailMailboxProvider.OutlookCom &&
+                (!Personal.IsConfigured || AuthorizationMode != EmailAuthorizationMode.ConfirmSender) ||
+            (Personal.ClientId != Guid.Empty || Personal.ClientSecret.Length > 0) &&
+                (!Personal.IsConfigured || Personal.ClientSecret.Length > 4_096 ||
+                 Personal.ClientSecret.Any(Char.IsControl)) ||
+            TenantId == Guid.Empty || Provider == EmailMailboxProvider.ExchangeOnline && MailboxObjectId == Guid.Empty ||
+            !IsAddress(MailboxAddress) ||
             String.IsNullOrWhiteSpace(ApplicationTenantId) || ApplicationTenantId.Length > 128 ||
             ApplicationTenantId.Any(c => !Char.IsAsciiLetterOrDigit(c) && c != '-') ||
             PollSeconds is < 10 or > 300 || !Uri.TryCreate(PublicOrigin, UriKind.Absolute, out var origin) ||
@@ -51,6 +69,14 @@ public sealed class EmailChannelOptions
         AuthorizationMode,
         ProofHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(CorporateSenderProof)))
     })));
+    /// <summary>Consumer connection changes invalidate pending confirmations without coupling them to token refresh.</summary>
+    public string ConfiguredProfile => Provider == EmailMailboxProvider.ExchangeOnline ? Profile :
+        Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            Profile,
+            Provider,
+            Personal.ClientId
+        })));
     public string ConfirmationUrl(string runId) => PublicOrigin.TrimEnd('/') + "/email-question.html?tenant=" +
         Uri.EscapeDataString(ApplicationTenantId) + "&run=" + Uri.EscapeDataString(runId);
     public string RunUrl(string runId) => PublicOrigin.TrimEnd('/') + "/ask-run.html?tenant=" +
@@ -60,7 +86,8 @@ public sealed class EmailChannelOptions
 }
 
 public sealed record MailboxQuestion(string MessageId, string Sender, string Subject, string Text,
-    DateTimeOffset ReceivedAtUtc, bool Automatic = false, bool TrustedInternalSender = false);
+    DateTimeOffset ReceivedAtUtc, bool Automatic = false, bool TrustedInternalSender = false,
+    string? ConnectionProfile = null);
 public sealed record MailboxChanges(IReadOnlyList<MailboxQuestion> Messages, string? NextLink, string? DeltaLink);
 
 public interface IMailboxClient
@@ -69,6 +96,38 @@ public interface IMailboxClient
         DateTimeOffset? receivedAfterUtc = null);
     Task<IReadOnlyList<string>> GetActorAddressesAsync(ActorIdentity actor, CancellationToken cancellationToken);
     Task SendAsync(string recipient, string subject, string text, CancellationToken cancellationToken);
+}
+
+/// <summary>Personal mailbox operations are fenced to the persisted OAuth connection that admitted the message.</summary>
+public interface IConnectedMailboxClient : IMailboxClient
+{
+    Task<string> GetConnectionProfileAsync(string configuredProfile, CancellationToken cancellationToken);
+    Task<bool> OwnsAddressAsync(ActorIdentity actor, string address, CancellationToken cancellationToken);
+    Task SendForProfileAsync(
+        string profile, string recipient, string subject, string text, CancellationToken cancellationToken);
+}
+
+/// <summary>Preserves the existing Exchange contracts while binding delegated mailbox operations to their connection.</summary>
+public static class EmailMailboxBinding
+{
+    public static Task<string> GetProfileAsync(
+        EmailChannelOptions options, IMailboxClient mailbox, CancellationToken cancellationToken) =>
+        mailbox is IConnectedMailboxClient connected
+            ? connected.GetConnectionProfileAsync(options.ConfiguredProfile, cancellationToken)
+            : Task.FromResult(options.ConfiguredProfile);
+
+    public static async Task<bool> OwnsAddressAsync(
+        IMailboxClient mailbox, ActorIdentity actor, string address, CancellationToken cancellationToken) =>
+        mailbox is IConnectedMailboxClient connected
+            ? await connected.OwnsAddressAsync(actor, address, cancellationToken)
+            : (await mailbox.GetActorAddressesAsync(actor, cancellationToken))
+                .Contains(address, StringComparer.OrdinalIgnoreCase);
+
+    public static Task SendAsync(IMailboxClient mailbox, string profile, string recipient,
+        string subject, string text, CancellationToken cancellationToken) =>
+        mailbox is IConnectedMailboxClient connected
+            ? connected.SendForProfileAsync(profile, recipient, subject, text, cancellationToken)
+            : mailbox.SendAsync(recipient, subject, text, cancellationToken);
 }
 
 /// <summary>Separate inbound-confirmation state; it never makes a question executable on a GET request.</summary>
@@ -106,6 +165,9 @@ public sealed class EmailQuestionReceiver(
         var tenant = await harness.GetTenantAsync(options.ApplicationTenantId, cancellationToken);
         if (tenant is not { IsActive: true } || !tenant.Agent.EmailEnabled ||
             !tenant.Capabilities.TryGetValue(FeatureHarness.AskAiKey, out var feature) || !feature.Enabled) return;
+        var profile = await EmailMailboxBinding.GetProfileAsync(options, mailbox, cancellationToken);
+        if (options.Provider == EmailMailboxProvider.OutlookCom && message.ConnectionProfile != profile)
+            throw new InvalidOperationException("The mailbox connection changed before the message was admitted.");
         VerifiedEmailActor? verified = null;
         if (options.AuthorizationMode == EmailAuthorizationMode.TrustedInternal)
         {
@@ -123,12 +185,11 @@ public sealed class EmailQuestionReceiver(
                 return;
             }
         }
-        var runId = "mail-" + Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
-        {
-            options.MailboxObjectId,
-            options.ApplicationTenantId,
-            message.MessageId
-        })));
+        var messageIdentity = options.Provider == EmailMailboxProvider.OutlookCom
+            ? JsonSerializer.SerializeToUtf8Bytes(new { profile, options.ApplicationTenantId, message.MessageId })
+            : JsonSerializer.SerializeToUtf8Bytes(new
+                { options.MailboxObjectId, options.ApplicationTenantId, message.MessageId });
+        var runId = "mail-" + Convert.ToHexString(SHA256.HashData(messageIdentity));
         var run = new AskAiRun
         {
             RunId = runId,
@@ -139,7 +200,7 @@ public sealed class EmailQuestionReceiver(
             ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Email },
             PendingEmail = new PendingEmailQuestion
             {
-                Profile = options.Profile,
+                Profile = profile,
                 Sender = verified?.Address ?? message.Sender,
                 MessageId = message.MessageId,
                 ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(24),
@@ -149,7 +210,7 @@ public sealed class EmailQuestionReceiver(
             ChannelDelivery = verified is null ? null : new ChannelDelivery
             {
                 Transport = "Email",
-                Profile = options.Profile,
+                Profile = profile,
                 DestinationId = verified.Address,
                 MessageId = message.MessageId
             }
@@ -163,7 +224,7 @@ public sealed class EmailQuestionReceiver(
         await using var lease = await runs.TryAcquireAsync(run.TenantId, run.RunId, cancellationToken)
             ?? throw new InvalidOperationException("The message is still owned by another worker; retain the mailbox checkpoint.");
         if (lease.Run.Status != JobStatus.AwaitingConfirmation ||
-            lease.Run.PendingEmail is not { } pending || pending.Profile != options.Profile) return;
+            lease.Run.PendingEmail is not { } pending || pending.Profile != profile) return;
         if (pending.ChallengeStatus == ChannelDeliveryStatus.Sending)
         {
             pending.ChallengeStatus = ChannelDeliveryStatus.OutcomeUnknown;
@@ -177,9 +238,10 @@ public sealed class EmailQuestionReceiver(
         await lease.SaveAsync(challenge.Token);
         try
         {
-            await mailbox.SendAsync(pending.Sender, $"{tenant.Agent.DisplayName}: confirm your document question",
+            await EmailMailboxBinding.SendAsync(mailbox, profile, pending.Sender,
+                $"{tenant.Agent.DisplayName}: confirm your document question",
                 $"You received this because a question was emailed to {options.MailboxAddress}.\n\n" +
-                "Sign in with your work account, review the question and explicitly confirm it before processing:\n" +
+                "Sign in to DocIntel, verify your sender email if needed, and explicitly confirm the question:\n" +
                 options.ConfirmationUrl(runId) +
                 "\n\nThis link expires in 24 hours. No document information is included in this email. " +
                 "If you did not send the question, do not confirm it.", challenge.Token);
@@ -224,7 +286,7 @@ public sealed class EmailQuestionConfirmation(
             run.ChannelDelivery = new ChannelDelivery
             {
                 Transport = "Email",
-                Profile = options.Profile,
+                Profile = run.PendingEmail!.Profile,
                 DestinationId = run.PendingEmail.Sender,
                 MessageId = run.PendingEmail.MessageId
             };
@@ -238,9 +300,10 @@ public sealed class EmailQuestionConfirmation(
     private async Task AuthorizeAsync(ActorIdentity actor, AskAiRun run, CancellationToken cancellationToken)
     {
         options.Validate();
+        var profile = await EmailMailboxBinding.GetProfileAsync(options, mailbox, cancellationToken);
         if (!options.Enabled || actor.DirectoryTenantId != options.TenantId ||
             run.TenantId != options.ApplicationTenantId || run.PendingEmail is not { } pending ||
-            pending.Profile != options.Profile ||
+            pending.Profile != profile ||
             pending.AuthorizationMode != EmailAuthorizationMode.ConfirmSender ||
             (run.Status == JobStatus.AwaitingConfirmation && pending.ExpiresAtUtc <= DateTimeOffset.UtcNow) ||
             (run.Actor is not null && run.Actor != actor) ||
@@ -250,8 +313,7 @@ public sealed class EmailQuestionConfirmation(
         if (tenant is not { IsActive: true } || !tenant.Agent.EmailEnabled ||
             !tenant.Capabilities.TryGetValue(FeatureHarness.AskAiKey, out var feature) || !feature.Enabled)
             throw new UnauthorizedAccessException("Email questions are disabled.");
-        var addresses = await mailbox.GetActorAddressesAsync(actor, cancellationToken);
-        if (!addresses.Contains(pending.Sender, StringComparer.OrdinalIgnoreCase))
+        if (!await EmailMailboxBinding.OwnsAddressAsync(mailbox, actor, pending.Sender, cancellationToken))
             throw new UnauthorizedAccessException("Sign in using the account that owns the original email address.");
     }
 }
@@ -263,21 +325,22 @@ public sealed class EmailAnswerTransport(
     public string Name => "Email";
     public async Task SendAsync(AskAiRun run, ChannelDelivery target, CancellationToken cancellationToken = default)
     {
-        if (!options.Enabled || target.Profile != options.Profile || run.TenantId != options.ApplicationTenantId ||
+        var profile = await EmailMailboxBinding.GetProfileAsync(options, mailbox, cancellationToken);
+        if (!options.Enabled || target.Profile != profile || run.TenantId != options.ApplicationTenantId ||
             run.Actor is not { } actor || actor.DirectoryTenantId != options.TenantId ||
-            run.PendingEmail is not { } pending || pending.Profile != options.Profile ||
+            run.PendingEmail is not { } pending || pending.Profile != profile ||
             !(pending.AuthorizationMode == EmailAuthorizationMode.ConfirmSender && pending.ConfirmedAtUtc is not null ||
               pending.AuthorizationMode == EmailAuthorizationMode.TrustedInternal &&
               options.AuthorizationMode == EmailAuthorizationMode.TrustedInternal && pending.AuthenticatedAtUtc is not null) ||
             !String.Equals(target.DestinationId, run.PendingEmail.Sender, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The verified mailbox destination is unavailable.");
-        var current = await mailbox.GetActorAddressesAsync(actor, cancellationToken);
-        if (!current.Contains(target.DestinationId, StringComparer.OrdinalIgnoreCase))
+        if (!await EmailMailboxBinding.OwnsAddressAsync(mailbox, actor, target.DestinationId, cancellationToken))
             throw new UnauthorizedAccessException("The sender no longer owns the reply address.");
         var name = run.AgentProfile?.DisplayName ?? "DocIntel";
         var sources = String.Join("\n", run.Citations.Select(citation =>
             $"[{citation.CitationNumber}] {citation.FileName} | {citation.DocumentName} | {citation.PageRange}"));
-        await mailbox.SendAsync(target.DestinationId, name + ": answer to your document question",
+        await EmailMailboxBinding.SendAsync(mailbox, profile, target.DestinationId,
+            name + ": answer to your document question",
             (run.Answer ?? throw new InvalidOperationException("A completed answer is required.")) +
             "\n\nSources:\n" + sources + "\n\nView the answer and original sources (sign-in required): " +
             options.RunUrl(run.RunId), cancellationToken);

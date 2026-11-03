@@ -5,6 +5,14 @@
   <script src="/identity.js" defer></script><script src="/email-question.js" defer></script></head>
 <body><main><div class="shell-preferences" data-appearance-host></div><a href="/">Document Workspace</a><h1>Confirm Your Document Question</h1>
   <p id="emailNotice" role="status" aria-live="polite">Verifying the signed-in account...</p>
+  <section id="emailPersonalIdentity" hidden aria-labelledby="emailPersonalIdentityHeading">
+    <h2 id="emailPersonalIdentityHeading">Personal Sender Email</h2>
+    <p>Link your own personal Microsoft account if its email differs from your DocIntel sign-in.
+      This verifies the reply address; it does not grant document access or read your sender inbox.</p>
+    <p id="emailPersonalIdentityNotice" role="status" aria-live="polite"></p>
+    <button type="button" id="verifyPersonalEmail" disabled>Verify My Personal Email</button>
+    <button type="button" id="disconnectPersonalEmail" disabled>Disconnect Personal Email</button>
+  </section>
   <p id="emailDestination"></p><h2>Question Received by Email</h2><p id="emailQuestion"></p>
   <p>Only confirm a question you recognize. Processing uses your current document permissions;
     the answer is sent only to the verified original sender address. Opening this page does not run the agent.</p>

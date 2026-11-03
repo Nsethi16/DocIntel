@@ -64,15 +64,19 @@ function runtime() {
     }
     return elements.get(id);
   };
-  const app = { element, requests: [], response: { email: { configured: false }, teams: { configured: false } } };
+  const app = { element, requests: [], operations: [], navigations: [],
+    response: { email: { configured: false }, teams: { configured: false } } };
   element('adminSections').addEventListener = (type, listener) => { app[type] = listener; };
   for (const id of ['processingSettingsTab', 'agentSettingsTab', 'tenantUsersTab'])
     element(id).focus = () => { app.focused = id; };
   const context = vm.createContext({
     document: { getElementById: element },
-    fetch: async url => {
+    location: { assign: url => app.navigations.push(url) },
+    fetch: async (url, options) => {
       app.requests.push(url);
-      return { ok: true, json: async () => typeof app.response === 'function' ? app.response() : app.response };
+      app.operations.push({ url, options });
+      const result = typeof app.response === 'function' ? await app.response(url, options) : app.response;
+      return { ok: !result.status || result.status < 400, json: async () => result };
     }
   });
   vm.runInContext(source, context);
@@ -80,6 +84,70 @@ function runtime() {
   return app;
 }
 
+test('personal Outlook connection state exposes owner consent controls without sending or signing in automatically', async () => {
+    const app = runtime();
+    app.response = { email: { configured: true, personalAvailable: true, provider: 'OutlookCom',
+      address: 'vault@example.com', state: 'NotConnected', connected: false }, teams: { configured: false } };
+    await app.settings.connections('tenant');
+    assert.equal(app.element('agentPersonalEmailControls').hidden, false);
+    assert.equal(app.element('agentEmailConnect').disabled, false);
+    assert.equal(app.element('agentEmailDisconnect').disabled, true);
+    assert.match(app.element('agentEmailStatus').textContent, /not connected/);
+    assert.equal(app.navigations.length, 0);
+    assert.equal(app.operations.filter(operation => operation.options?.method === 'POST').length, 0);
+  });
+
+  test('personal mailbox connection uses a protected POST and accepts only the local opaque start route', async () => {
+    const app = runtime();
+    const status = { email: { configured: true, personalAvailable: true, provider: 'OutlookCom',
+      address: 'vault@example.com', state: 'NotConnected', connected: false }, teams: { configured: false } };
+    app.response = status;
+    await app.settings.connections('tenant');
+    const redirect = '/auth/email/personal/start?request=' + 'A'.repeat(64);
+    app.response = (url, options) => options?.method === 'POST' ? { redirectUrl: redirect } : status;
+    await app.settings.personalEmail('connect');
+    assert.deepEqual(app.navigations, [redirect]);
+    assert.equal(app.operations.filter(operation => operation.options?.method === 'POST').length, 1);
+    assert.match(app.operations.find(operation => operation.options?.method === 'POST').url, /\/mailbox\/connect$/);
+    app.response = (url, options) => options?.method === 'POST'
+      ? { redirectUrl: 'https://untrusted.example' } : status;
+    await app.settings.personalEmail('connect');
+    assert.equal(app.navigations.length, 1);
+    assert.match(app.element('agentEmailConnectionNotice').textContent, /invalid.*No automatic retry/);
+  });
+
+  test('renewal and disconnect states are explicit rather than a successful delivery claim', async () => {
+    const app = runtime();
+    const status = { email: { configured: true, personalAvailable: true, provider: 'OutlookCom',
+      address: 'vault@example.com', state: 'ReconnectionRequired', connected: false }, teams: { configured: false } };
+    app.response = status;
+    await app.settings.connections('tenant');
+    assert.match(app.element('agentEmailStatus').textContent, /consent needs renewal/);
+    assert.equal(app.element('agentEmailDisconnect').disabled, false);
+    app.response = (url, options) => options?.method === 'POST' ? { disconnected: true } : status;
+    await app.settings.personalEmail('disconnect');
+    assert.equal(app.navigations.length, 0);
+    assert.match(app.element('agentEmailConnectionNotice').textContent, /no longer use/);
+  });
+
+  test('a late personal mailbox action cannot navigate or update a newly selected workspace', async () => {
+    const app = runtime();
+    const status = { email: { configured: true, personalAvailable: true, provider: 'OutlookCom',
+      address: 'vault@example.com', state: 'NotConnected', connected: false }, teams: { configured: false } };
+    app.response = status;
+    await app.settings.connections('first');
+    let resolve;
+    app.response = (url, options) => options?.method === 'POST'
+      ? new Promise(done => { resolve = done; }) : { email: { configured: false }, teams: { configured: false } };
+    const pending = app.settings.personalEmail('connect');
+    app.settings.render({ displayName: 'Second workspace' });
+    await app.settings.connections('second');
+    resolve({ redirectUrl: '/auth/email/personal/start?request=' + 'B'.repeat(64) });
+    await pending;
+    assert.equal(app.navigations.length, 0);
+    assert.equal(app.element('agentPersonalEmailControls').hidden, true);
+    assert.match(app.element('agentEmailStatus').textContent, /Not connected/);
+  });
 test('personality editing roundtrips safely with an illustrative style preview and no generated-answer claim', () => {
   const app = runtime();
   app.settings.render({ displayName: '<img onerror=evil()>', purpose: 'Explain contracts', tone: 'Friendly',

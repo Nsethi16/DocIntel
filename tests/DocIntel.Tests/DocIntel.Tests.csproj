@@ -22,6 +22,11 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Compile Include="..\..\src\DocIntel.Api\Http\PdfUploadValidator.cs" Link="Http\PdfUploadValidator.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Channels\GraphMailboxClient.cs" Link="Channels\GraphMailboxClient.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Channels\PersonalEmailState.cs" Link="Channels\PersonalEmailState.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Channels\PersonalEmailStateStores.cs" Link="Channels\PersonalEmailStateStores.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Channels\PersonalEmailConnections.cs" Link="Channels\PersonalEmailConnections.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Channels\PersonalEmailOAuthClient.cs" Link="Channels\PersonalEmailOAuthClient.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Channels\ConnectedPersonalMailboxClient.cs" Link="Channels\ConnectedPersonalMailboxClient.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Channels\MailboxQuestionWorker.cs" Link="Channels\MailboxQuestionWorker.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Workers\ProviderStartupCheck.cs" Link="Workers\ProviderStartupCheck.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Http\ContainerAppsIngressExtensions.cs" Link="Http\ContainerAppsIngressExtensions.cs" />
