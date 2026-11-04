@@ -114,12 +114,12 @@ public sealed class EmailChannelTests
 
         // Assert
         var snapshots = await fixture.Runs.ListRunsByTenantAsync("tenant");
-        Assert.Single(snapshots.Where(run => run.PendingEmail is not null));
-        var budget = Assert.Single(snapshots.Where(run => run.EmailAdmission?.Recipient == fixture.Actor));
+        Assert.Single(snapshots, run => run.PendingEmail is not null);
+        var budget = Assert.Single(snapshots, run => run.EmailAdmission?.Recipient == fixture.Actor);
         Assert.Null(budget.Actor);
         Assert.Equal(fixture.Actor, budget.EmailAdmission!.Recipient);
         Assert.Single(budget.EmailAdmission.RunIds);
-        Assert.Single(Assert.Single(snapshots.Where(run => run.EmailAdmission is { Recipient: null }))
+        Assert.Single(Assert.Single(snapshots, run => run.EmailAdmission is { Recipient: null })
             .EmailAdmission!.RunIds);
         fixture.Queue.Verify(value => value.TryEnqueueAsync(It.IsAny<AskAiQueueTicket>(),
             It.IsAny<CancellationToken>()), Times.Once);
@@ -179,7 +179,7 @@ public sealed class EmailChannelTests
         await receiver.ReceiveAsync(fixture.Message with { MessageId = "other-question", Sender = "other@example.com" });
 
         // Assert
-        Assert.Single((await fixture.Runs.ListRunsByTenantAsync("tenant")).Where(run => run.PendingEmail is not null));
+        Assert.Single(await fixture.Runs.ListRunsByTenantAsync("tenant"), run => run.PendingEmail is not null);
         fixture.Queue.Verify(value => value.TryEnqueueAsync(It.IsAny<AskAiQueueTicket>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -604,6 +604,6 @@ public sealed class EmailChannelTests
             Confirmation = new EmailQuestionConfirmation(Options, Mailbox.Object, Access.Object, Runs, Queue.Object, Harness.Object);
         }
         public async Task<AskAiRun> RunAsync() =>
-            Assert.Single((await Runs.ListRunsByTenantAsync("tenant")).Where(run => run.PendingEmail is not null));
+            Assert.Single(await Runs.ListRunsByTenantAsync("tenant"), run => run.PendingEmail is not null);
     }
 }

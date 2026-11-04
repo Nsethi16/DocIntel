@@ -504,7 +504,7 @@ public sealed class PersonalEmailTests
         // Act
         await receiver.ReceiveAsync(message);
         await receiver.ReceiveAsync(message);
-        var run = Assert.Single((await runs.ListRunsByTenantAsync("tenant")).Where(item => item.PendingEmail is not null));
+        var run = Assert.Single(await runs.ListRunsByTenantAsync("tenant"), item => item.PendingEmail is not null);
         Assert.Empty(handler.SentBodies);
         run.Answer = "AUTOMATIC_CITED_ANSWER";
         await new EmailAnswerTransport(fixture.Options, mailbox, assigned).SendAsync(run, run.ChannelDelivery!);
