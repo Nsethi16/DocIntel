@@ -55,6 +55,16 @@ public static class AskAiRunDiagnostic
             await WriteAsync(output, "EmailPreview", preview, code);
             return code == "None" ? 0 : 1;
         }
+        catch (UnauthorizedAccessException)
+        {
+            await WriteAsync(output, "EmailPreview", preview, "AccessRevoked");
+            return 1;
+        }
+        catch (OperationCanceledException) when (deadline.IsCancellationRequested)
+        {
+            await WriteAsync(output, "EmailPreview", preview, "TimedOut");
+            return 1;
+        }
         catch (Exception exception)
         {
             await WriteAsync(output, "EmailPreview", preview, AskAiFailureDiagnostics.GetCode(exception));
