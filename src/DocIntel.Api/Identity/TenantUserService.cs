@@ -172,9 +172,22 @@ public sealed class TenantUserService(
         var person = await directory.FindByEmailAsync(address, cancellationToken);
         if (person is not { AccountEnabled: true, Member: true } || !EmailChannelOptions.IsAddress(person.Email)) return null;
         var actor = new ActorIdentity(directory.DirectoryTenantId, person.ObjectId);
-        if (!(await GetAccessAsync(actor, tenantId, cancellationToken)).CanRead ||
+        if (!await IsAssignedUserAsync(actor, tenantId, cancellationToken) ||
             (await harness.GetTenantAsync(tenantId, cancellationToken))?.IsActive != true) return null;
         return new VerifiedEmailActor(actor, person.Email);
+    }
+
+    /// <summary>Requires a current human workspace assignment, including operator bootstrap users and managed readers.</summary>
+    public async Task<bool> IsAssignedUserAsync(
+        ActorIdentity actor, string tenantId, CancellationToken cancellationToken)
+    {
+        if (configuration.CurrentValue.Memberships.Any(member => member.ServicePrincipal &&
+            member.DirectoryTenantId == actor.DirectoryTenantId && member.ObjectId == actor.ObjectId))
+            return false;
+        var snapshot = await store.GetAsync(tenantId, cancellationToken);
+        return Effective(tenantId, snapshot).Any(entry => entry.DirectoryTenantId == actor.DirectoryTenantId &&
+            entry.ObjectId == actor.ObjectId && entry.Status == TenantUserStatus.Active) &&
+            (await GetAccessAsync(actor, tenantId, cancellationToken)).CanRead;
     }
 
     private async Task RequireAdministratorAsync(

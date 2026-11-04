@@ -26,9 +26,20 @@ exposing a new document-scope interface. Removed memberships remain explicit ove
 Graph email ingestion uses a durable leased delta cursor. Safe-default confirmation requires
 sign-in/address binding. Opt-in automatic internal mail instead requires a protected Exchange
 transport attestation, matching sender/from and one active directory user with current tenant
-membership, then queues Ask AI directly under that user. It never authorizes by email From alone.
-See README for the required stripping/stamping and credential-protection invariants; these rules
-are operator setup, not something the application silently creates. Teams shared mentions queue under the verified user and reply privately, or
+membership, then queues Ask AI directly under that user. Neither mode treats email From as proof
+of sender identity. The separate, explicitly opted-in **ApprovedUsers** mode is a recipient-authorized
+read-and-notify service policy: it accepts routing hints only for one active assigned user with a
+directory-verified or OAuth-linked address, runs read-only Ask AI within that recipient's current scope,
+and replies exclusively to their verified inbox. It does not authenticate the message's author;
+forged From addresses can trigger unsolicited processing and replies to approved users.
+Durable recipient and workspace admission caps bound this risk. Current assignments/ownership are
+rechecked before and during processing and at delivery, and unattended email cannot invoke extension tools.
+Replies include the original question and an unexpected-email notice. ConfirmSender remains the
+installation default. Policy changes preserve the mail cursor, never auto-confirm old runs, and do
+not resend completed/uncertain answers. Personal sender linking remains profile-only, without Mail.Read.
+See README for both policy models and the corporate stripping/stamping/credential-protection invariants;
+these rules are operator setup, not something the application silently creates.
+Teams shared mentions queue under the verified user and reply privately, or
 provide an actor-authorized web link if a personal chat cannot be established. No document answer
 is posted into an unverified shared audience. External sends persist intent before sending and
 uncertain outcomes never automatically replay. See the README's current channel setup and

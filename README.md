@@ -990,7 +990,9 @@ Configure the operator-owned `Channels:Email` section:
 | `ApplicationTenantId` | Fixed application tenant for incoming questions |
 | `PublicOrigin` | Same HTTPS public origin used for sign-in |
 | `PollSeconds` | Delta synchronization cadence, 10-300 seconds; default 30 |
-| `AuthorizationMode` | `ConfirmSender` (safe default) or explicitly configured `TrustedInternal` |
+| `AuthorizationMode` | `ConfirmSender` (safe default), explicitly opted-in `ApprovedUsers`, or authenticated corporate `TrustedInternal` |
+| `AutomaticQuestionsPerSenderHour` | ApprovedUsers admission cap per assigned user across their addresses/connections; default 20, range 1-200 |
+| `AutomaticQuestionsPerWorkspaceHour` | Aggregate ApprovedUsers admission cap; default 100, range 1-2,000 |
 | `CorporateSenderProof` | Secret transport attestation for `TrustedInternal`; store in a secret provider, never in source/Admin fields |
 | `Personal:ClientId` | Separate OAuth application supporting personal Microsoft accounts |
 | `Personal:ClientSecret` | Confidential-client credential from a managed secret provider, never a mailbox password |
@@ -1024,7 +1026,8 @@ No Microsoft 365 Business subscription is required for this mailbox provider.
    `Channels__Email__TenantId` to the **existing DocIntel directory**, `ApplicationTenantId` to
    the intended workspace, `MailboxAddress` to the intended personal mailbox's primary address,
    and `PublicOrigin` to the existing HTTPS app origin. Set
-   `Channels__Email__AuthorizationMode=ConfirmSender`,
+   `Channels__Email__AuthorizationMode=ApprovedUsers` for the approved-recipient policy below
+   (or retain safe-default `ConfirmSender` for individual sign-in confirmation),
    `Channels__Email__Personal__ClientId` to the new app ID, and provide
    `Channels__Email__Personal__ClientSecret` through the protected configuration source.
    Do not set the DocIntel directory to the consumer tenant or use the personal account ID as
@@ -1032,15 +1035,20 @@ No Microsoft 365 Business subscription is required for this mailbox provider.
 6. In **Admin > Agent > Email > Manage**, click **Connect Outlook.com** and sign in as the
    configured mailbox owner. Selecting another account or a non-primary alias fails explicitly.
    Save the workspace's Email toggle and ensure Ask AI is enabled.
-7. Send a **new plaintext question** from a different account to that mailbox. Open the
-   source-free confirmation email, sign into DocIntel and explicitly confirm.
+7. Ensure the sender has an active **User or TenantAdmin** assignment in **Users & Access**.
+   For ApprovedUsers, leave **Require confirmation for each email question** unchecked and save.
+   If a personal sender address differs from their directory primary email, they open **My Email**
+   in the workspace and verify that personal account once before sending a question.
+8. Send a **new plaintext question** from that approved address. ApprovedUsers queues the answer
+   automatically and replies to the original message; it sends no confirmation email. ConfirmSender
+   instead sends a source-free confirmation link and requires explicit confirmation.
 
 If the sender uses a personal email different from their DocIntel primary directory email,
-the confirmation page offers **Verify My Personal Email**. This second Microsoft sign-in
+**My Email** and the optional confirmation page offer **Verify My Personal Email**. This second Microsoft sign-in
 requests only profile access (`User.Read`, plus OIDC/offline access), not sender-inbox access.
 It binds the verified personal account to the existing `(directoryTenantId, objectId)` in that
-workspace. It does not create membership, admit a Guest, broaden document access, trust an email
-From string or execute the question. Existing eligible primary-directory senders need no link.
+workspace. It does not create membership, admit a Guest, broaden document access, authenticate
+an individual email message or execute a question. Existing eligible primary-directory senders need no link.
 Ownership, active workspace membership and personal profile/consent are rechecked before delivery.
 
 Consumer OAuth has its own callback, correlation/nonce validation and one-use, ten-minute
@@ -1061,14 +1069,14 @@ mailbox credentials; **Disconnect Personal Email** removes the caller's sender l
 Microsoft's consent itself, use the account's Microsoft application-permissions controls.
 
 This provider does not ingest attachments or create Teams presence. It keeps the existing
-durable Ask AI, source authorization, source-free confirmation and cited plaintext answer path.
+durable Ask AI, source authorization, selected confirmation policy and cited plaintext answer path.
 Final answers use the original question message's native Graph reply operation, preserving its
 subject/thread rather than sending an unrelated answer email. The verified original sender is
 the only recipient; CC/BCC recipients are cleared and a different/unverified Reply-To is refused.
 The original message ID must match the confirmed delivery, and the personal connection is
 checked again before the reply POST. This uses the existing Mail.Read/Mail.Send consent;
 Mail.ReadWrite and draft access are not required. The source-free confirmation remains a
-separate new email. Already-sent answers are not resent after an upgrade. If the original
+separate new email only when per-question confirmation is required. Already-sent answers are not resent after an upgrade. If the original
 message is unavailable, the app does not silently substitute an unthreaded email.
 Configuration or completed OAuth consent is not proof of email delivery: verify the real
 mailbox round trip and inspect run delivery status and the mailbox's Sent Items/Junk folders.
@@ -1080,7 +1088,7 @@ oversized/unsupported messages are logged as not accepted rather than blocking t
 Questions must be plain text and at most 8,000 characters. Automatic replies/self-mail are ignored.
 Immutable activity identity deduplicates messages. No incoming attachment or URL is fetched.
 
-An email From address is not trusted as authorization. The initial message receives only a
+An email From address is never proof of sender identity. In safe-default **ConfirmSender**, the initial message receives only a
 source-free, 24-hour confirmation link. The sender signs in, sees the question and destination,
 and explicitly confirms through a CSRF-protected POST. Graph verifies the signed-in directory
 object owns the original sender address before revealing/executing the question. Forwarding the
@@ -1090,7 +1098,43 @@ once. Answers use the snapshotted personality, include citations/source links, a
 verified original address only; Reply-To/CC/BCC from the inbound message are not used.
 Aliases not returned as the account's primary mail/UPN are rejected rather than guessed.
 
-For **automatic email without interactive sign-in**, set `AuthorizationMode=TrustedInternal`
+#### Approved-user automatic replies: explicit recipient-authorized service policy
+
+Set `AuthorizationMode=ApprovedUsers` only when the workspace owner approves unattended,
+read-only AI processing and email notifications for active assigned users. This is intentionally
+different from authenticating the author of each email. Anyone who knows an approved address
+could forge a From address and cause an unsolicited question and reply to that **approved inbox**.
+For environments requiring authenticated requests, retain ConfirmSender or use the corporate
+transport mode below. Do not describe a From-only match as an authenticated user action.
+
+The receiver resolves exactly one current human workspace assignment using either the authoritative
+primary directory email or a personal address linked through profile-only Microsoft verification.
+Reader/User assignments are eligible; an admin role is not required. Linking never grants membership.
+Unknown, disabled, removed, service-principal, outside-directory and ambiguous recipients are ignored
+without sending a confirmation or document answer. A conflicting directory/personal mapping is denied.
+Current assignment, workspace/channel state and address ownership are checked before model use,
+throughout execution and before delivery. Unattended email cannot invoke extension/MCP tools.
+Answers stay within the recipient's current document permissions and original-source checks.
+
+The final answer is a native reply only to that verified inbox, with no CC/BCC or different Reply-To.
+It includes the original question as untrusted text and an unexpected-email warning. Durable,
+leased recipient and workspace admission caps apply **before** AI execution; defaults are 20 per
+user and 100 total per UTC hour. Duplicate messages do not consume additional reservations,
+restarts preserve budgets, and leases prevent replicas from exceeding the aggregate limit.
+Over-limit messages are logged and not queued; they are not automatically replayed later.
+
+The operator must enable this named mode explicitly. The protected deployment workflow offers
+**enable_approved_email_replies** (default false) for a one-time opt-in on the existing app; normal
+releases preserve its current email policy and secret references. Admin shows the effective mode
+and limits. Checking **Require confirmation for each email question** restores per-question
+confirmation for that workspace. Switching between ConfirmSender and ApprovedUsers preserves
+the mailbox cursor and connection generation; old awaiting-confirmation runs are not auto-confirmed
+and completed/uncertain deliveries are not resent. Changing back to ConfirmSender blocks pending
+unattended answers. No sender Mail.Read permission or new mailbox consent is required.
+
+#### Authenticated corporate automatic mail
+
+For **automatic email with authenticated sender identity**, set `AuthorizationMode=TrustedInternal`
 only after the operator has configured and verified a trusted corporate mail path. This also
 requires `Identity:Directory:Enabled=true`. The dedicated mailbox's Exchange transport policy must
 remove **all** preexisting `X-DocIntel-Internal-Sender-Proof` headers before trusted stamping,
@@ -1101,7 +1145,7 @@ The proof must never be exposed through outbound mail, other recipients' deliver
 model content, logs, or Admin APIs. Require a dedicated protected transport path, reject/strip
 external or relay-originated claims, disable unauthorized mailbox forwarding, and validate
 mixed-recipient/bypass/connector cases before enabling this mode. If your mail environment cannot
-guarantee these invariants, leave confirmation enabled; the app cannot establish Exchange rule
+guarantee these invariants, do not claim authenticated automatic sender identity; the app cannot establish Exchange rule
 correctness from an incoming header alone.
 
 The application requires one exact proof header and matching Graph `sender`/`from` identities.
@@ -1111,8 +1155,8 @@ without a challenge or confirmation email. The answer is sent only to the employ
 directory work address, never arbitrary Reply-To/CC/BCC recipients. Untrusted, ambiguous, disabled
 or unassigned senders create no question and receive no document answer. Membership and directory
 address ownership are checked again before delivery. Rotate the transport proof as a credential;
-changing authorization mode/proof invalidates old profile-bound pending mail rather than authorizing
-it under a different trust policy.
+changing the corporate proof or switching to/from TrustedInternal invalidates old profile-bound pending mail rather than
+authorizing it under a different trust policy. ApprovedUsers is not a shortcut for this transport attestation.
 
 Graph requests use a fixed HTTPS host, mailbox identity and Graph token audience, with redirects
 disabled. Stored continuation links must belong to the configured mailbox delta resource.

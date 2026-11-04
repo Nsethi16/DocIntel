@@ -2,6 +2,7 @@ using System.Net;
 using System.Text.Json;
 using Azure.Core;
 using DocIntel.Api.Identity;
+using DocIntel.Core.Authorization;
 using Moq;
 using Xunit;
 
@@ -54,7 +55,7 @@ public sealed class GraphEnterpriseDirectoryTests
         });
 
         // Act / Assert
-        await Assert.ThrowsAsync<InvalidDataException>(() =>
+        await Assert.ThrowsAsync<AmbiguousEmailAddressException>(() =>
             fixture.Directory.FindByEmailAsync("person@example.com", CancellationToken.None));
     }
 

@@ -13,6 +13,7 @@ function runtime(responses) {
   const requests = [];
   const navigations = [];
   const nodes = [];
+  const handlers = new Map();
   const context = vm.createContext({
     URL, Request, Headers,
     location: {
@@ -22,7 +23,7 @@ function runtime(responses) {
       reload: () => navigations.push('reload')
     },
     document: {
-      addEventListener: () => {},
+      addEventListener: (name, callback) => handlers.set(name, callback),
       getElementById: id => nodes.find(node => node.id === id),
       createElement: () => ({ style: {}, setAttribute() {} }),
       body: { appendChild: node => nodes.push(node) }
@@ -40,7 +41,7 @@ function runtime(responses) {
     }
   });
   vm.runInContext(script, context);
-  return { context, requests, navigations, nodes };
+  return { context, requests, navigations, nodes, handlers };
 }
 
 test('browser mutations acquire one CSRF token and preserve the original request body', async () => {
@@ -131,4 +132,20 @@ test('server-authorized role headers update controls only for the selected tenan
   await app.context.fetch('/api/harness/tenants/one/jobs');
   assert.equal(admin.style.display, '');
   assert.equal(upload.style.display, '');
+});
+
+test('My Email opens one-time sender setup for the currently selected workspace without sending a question', async () => {
+  const app = runtime([{ data: identity }]);
+  const click = new Map();
+  const email = { id: 'identityEmailSetup', hidden: true, addEventListener: (name, callback) => click.set(name, callback) };
+  const tenant = { id: 'tenantSelectDropdown', value: 'one' };
+  app.nodes.push(email, tenant);
+  await app.context.DocIntelIdentity.refresh();
+  app.handlers.get('DOMContentLoaded')();
+  assert.equal(email.hidden, false);
+  tenant.value = 'two';
+  click.get('click')();
+  assert.deepEqual(app.navigations, ['/email-question.html?tenant=two']);
+  assert.equal(app.requests.length, 1);
+  assert.equal(app.requests[0].input, '/api/identity/me');
 });

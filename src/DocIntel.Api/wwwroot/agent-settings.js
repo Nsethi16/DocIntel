@@ -2,7 +2,7 @@
   'use strict';
   const defaults = Object.freeze({
     displayName: 'DocIntel', purpose: 'Help people find clear, evidence-backed answers in their documents.',
-    tone: 'Professional', instructions: '', emailEnabled: false, teamsEnabled: false
+    tone: 'Professional', instructions: '', emailEnabled: false, emailConfirmationRequired: false, teamsEnabled: false
   });
   const node = id => document.getElementById(id);
   const channelControls = {
@@ -21,6 +21,7 @@
       tone: node('agentTone').value,
       instructions: node('agentInstructions').value,
       emailEnabled: node('agentEmailEnabled').checked,
+      emailConfirmationRequired: node('agentEmailConfirmationRequired').checked,
       teamsEnabled: node('agentTeamsEnabled').checked
     };
   }
@@ -52,6 +53,7 @@
     for (const [key, id] of [['displayName', 'agentDisplayName'], ['purpose', 'agentPurpose'],
       ['tone', 'agentTone'], ['instructions', 'agentInstructions']]) node(id).value = profile[key];
     node('agentEmailEnabled').checked = profile.emailEnabled;
+    node('agentEmailConfirmationRequired').checked = profile.emailConfirmationRequired;
     node('agentTeamsEnabled').checked = profile.teamsEnabled;
     for (const [panel, button] of Object.values(channelControls)) {
       node(panel).hidden = true;
@@ -75,6 +77,12 @@
       const result = await response.json();
       if (current !== revision) return;
       const personal = result.email.provider === 'OutlookCom' && result.email.personalAvailable === true;
+      node('agentEmailPolicy').textContent = result.email.authorizationMode === 'ApprovedUsers'
+        ? `ApprovedUsers is enabled by the operator. Limits: ${result.email.automaticQuestionsPerSenderHour} ` +
+          `automatic questions per user and ${result.email.automaticQuestionsPerWorkspaceHour} per workspace per UTC hour.`
+        : result.email.authorizationMode === 'TrustedInternal'
+          ? 'Trusted corporate transport authentication is required. The per-question confirmation setting does not bypass it.'
+          : 'Per-question confirmation is required by the operator. Enable ApprovedUsers mailbox mode to allow automatic replies.';
       node('agentEmailStatus').textContent = personal
         ? result.email.connected
           ? `Outlook.com connected: ${result.email.address} - live delivery must be verified`

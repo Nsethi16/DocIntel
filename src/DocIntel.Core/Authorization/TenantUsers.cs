@@ -69,8 +69,17 @@ public interface IEnterpriseDirectory
 
 public sealed record VerifiedEmailActor(ActorIdentity Actor, string Address);
 
+public sealed class AmbiguousEmailAddressException() :
+    InvalidOperationException("The email address has ambiguous directory ownership.");
+
 /// <summary>Server-side identity binding used only after corporate mail transport authentication succeeds.</summary>
 public interface IAutomaticEmailAuthorization
+{
+    Task<VerifiedEmailActor?> ResolveAsync(string tenantId, string address, CancellationToken cancellationToken);
+}
+
+/// <summary>Resolves an approved recipient, not an authenticated email sender, for read-only unattended answers.</summary>
+public interface IAssignedEmailAuthorization
 {
     Task<VerifiedEmailActor?> ResolveAsync(string tenantId, string address, CancellationToken cancellationToken);
 }

@@ -4,7 +4,9 @@
   const tenant = parameters.get('tenant'), run = parameters.get('run');
   const element = id => document.getElementById(id);
   const button = element('confirmEmailQuestion');
-  const valid = tenant && run && tenant.length <= 128 && run.length <= 512;
+  const validTenant = tenant && /^[a-zA-Z0-9-]{1,128}$/.test(tenant);
+  const identityOnly = validTenant && run === null;
+  const valid = validTenant && (identityOnly || run && run.length <= 512);
   const prefix = `/api/harness/tenants/${encodeURIComponent(tenant || '')}`;
   const endpoint = `${prefix}/ask/email/runs/${encodeURIComponent(run || '')}`;
   const statusUrl = `/ask-run.html?tenant=${encodeURIComponent(tenant || '')}&run=${encodeURIComponent(run || '')}`;
@@ -13,10 +15,16 @@
   async function loadIdentity() {
     try {
       const response = await fetch(identityEndpoint);
-      if (response.status === 404) return;
+      if (response.status === 404) {
+        if (identityOnly) element('emailNotice').textContent =
+          'Personal sender verification is not configured. Use your workspace directory email or contact its administrator.';
+        return;
+      }
       if (!response.ok) throw new Error('Personal email verification status is unavailable.');
       const result = await response.json();
       identityAvailable = result.available === true;
+      if (identityOnly && !identityAvailable) element('emailNotice').textContent =
+        'Personal sender verification is unavailable. Use your workspace directory email or contact its administrator.';
       element('emailPersonalIdentity').hidden = !identityAvailable;
       element('verifyPersonalEmail').disabled = !identityAvailable || identityBusy;
       element('disconnectPersonalEmail').disabled = !identityAvailable || result.state === 'NotConnected' || identityBusy;
@@ -29,6 +37,7 @@
       element('verifyPersonalEmail').disabled = true;
       element('disconnectPersonalEmail').disabled = true;
       element('emailPersonalIdentityNotice').textContent = error.message + ' No email identity was changed.';
+      if (identityOnly) element('emailNotice').textContent = error.message + ' No email identity was changed.';
     }
   }
   async function personalIdentity(action) {
@@ -70,6 +79,15 @@
   async function load() {
     button.disabled = true;
     if (!valid) { element('emailNotice').textContent = 'This confirmation link is incomplete.'; return; }
+    if (identityOnly) {
+      document.title = 'My Email - DocIntel';
+      element('emailPageHeading').textContent = 'My Email';
+      element('emailQuestionDetails').hidden = true;
+      element('emailNotice').textContent = 'Verify your personal sender address once, then email new questions from it. ' +
+        'Workspace access is still managed in Users & Access. No question is submitted from this page.';
+      await loadIdentity();
+      return;
+    }
     try {
       const response = await fetch(endpoint);
       if (!response.ok) throw new Error('This question is expired, disabled or unavailable for your signed-in email account.');

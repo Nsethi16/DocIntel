@@ -163,6 +163,28 @@ test('personality editing roundtrips safely with an illustrative style preview a
   assert.match(app.element('agentPreviewMessage').textContent, /lead with the answer/);
 });
 
+test('per-question confirmation is a separate saved preference and does not change email enablement', () => {
+  const app = runtime();
+  app.settings.render({ emailEnabled: true });
+  assert.equal(app.settings.read().emailConfirmationRequired, false);
+  app.element('agentEmailConfirmationRequired').checked = true;
+  assert.equal(app.settings.read().emailConfirmationRequired, true);
+  assert.equal(app.settings.read().emailEnabled, true);
+  app.settings.render({ emailEnabled: true, emailConfirmationRequired: true });
+  assert.equal(app.element('agentEmailConfirmationRequired').checked, true);
+});
+
+test('Admin describes the actual operator automation policy and both admission limits', async () => {
+  const app = runtime();
+  app.response = { email: { configured: true, authorizationMode: 'ApprovedUsers',
+    automaticQuestionsPerSenderHour: 20, automaticQuestionsPerWorkspaceHour: 100 }, teams: { configured: false } };
+  await app.settings.connections('tenant');
+  assert.match(app.element('agentEmailPolicy').textContent, /ApprovedUsers.*20.*100/);
+  app.response = { email: { configured: true, authorizationMode: 'ConfirmSender' }, teams: { configured: false } };
+  await app.settings.connections('tenant');
+  assert.match(app.element('agentEmailPolicy').textContent, /confirmation is required by the operator/);
+});
+
 test('Manage summaries show current drafts as text without exposing the full response guidance', () => {
   const app = runtime();
   app.settings.render({ displayName: '<img onerror=evil()>', purpose: '<script>purpose</script>',

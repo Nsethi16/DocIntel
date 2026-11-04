@@ -63,7 +63,7 @@ public sealed class ConnectedPersonalMailboxClient(
     public async Task<bool> OwnsAddressAsync(
         ActorIdentity actor, string address, CancellationToken cancellationToken)
     {
-        if (options.AuthorizationMode == EmailAuthorizationMode.ConfirmSender &&
+        if (options.AuthorizationMode is EmailAuthorizationMode.ConfirmSender or EmailAuthorizationMode.ApprovedUsers &&
             await connections.OwnsSenderAsync(actor, address, cancellationToken) is { } owned)
             return owned;
         return (await corporate.GetActorAddressesAsync(actor, cancellationToken))

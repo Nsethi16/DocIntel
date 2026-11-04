@@ -63,7 +63,7 @@
     if (url.origin !== location.origin || !url.pathname.startsWith('/api/harness')) {
       return nativeFetch(input, options);
     }
-    await ensureIdentity();
+    const identity = await ensureIdentity();
     const method = (options.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
     new Headers(options.headers).forEach((value, name) => headers.set(name, value));
@@ -75,6 +75,8 @@
     const tenantPath = url.pathname.match(/^\/api\/harness\/tenants\/([^/]+)(?:\/|$)/);
     const selected = document.getElementById('tenantSelectDropdown')?.value ||
       new URL(location.href).searchParams.get('tenant');
+    const emailSetup = document.getElementById('identityEmailSetup');
+    if (emailSetup) emailSetup.hidden = identity.localDevelopment || !selected;
     const canAdmin = response.headers.get('X-DocIntel-Can-Admin');
     if (tenantPath && decodeURIComponent(tenantPath[1]) === selected && canAdmin !== null) {
       const adminLink = document.getElementById('adminStudioSwitchLink');
@@ -128,10 +130,18 @@
       signOut.hidden = identity.localDevelopment;
       signOut.style.display = identity.localDevelopment ? 'none' : '';
     }
+    const emailSetup = document.getElementById('identityEmailSetup');
+    if (emailSetup) emailSetup.hidden = identity.localDevelopment || !tenantId;
     if (location.pathname === '/admin.html' && !canAdminister) location.replace('/');
     return identity;
   }
   document.addEventListener('DOMContentLoaded', () => {
+    document.getElementById('identityEmailSetup')?.addEventListener('click', () => {
+      const tenant = document.getElementById('tenantSelectDropdown')?.value ||
+        new URL(location.href).searchParams.get('tenant');
+      if (tenant && /^[a-zA-Z0-9-]{1,128}$/.test(tenant))
+        location.assign('/email-question.html?tenant=' + encodeURIComponent(tenant));
+    });
     syncIdentityControls().catch(() => { if (!redirecting) showAccessError(); });
   });
 })();

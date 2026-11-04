@@ -8,7 +8,7 @@ const source = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'DocIntel
 const script = source.replace(/\n  load\(\);\n\}\)\(\);\s*$/, '\n  globalThis.loadQuestion = load;\n})();');
 assert.notEqual(source, script);
 
-function runtime(responses) {
+function runtime(responses, search = '?tenant=tenant&run=one') {
   const elements = new Map(), calls = [];
   function element(id) {
     if (!elements.has(id)) elements.set(id, { textContent: '', disabled: id === 'confirmEmailQuestion',
@@ -20,7 +20,7 @@ function runtime(responses) {
     return elements.get(id);
   }
   const context = vm.createContext({
-    URLSearchParams, location: { search: '?tenant=tenant&run=one', assign: url => calls.push({ navigation: url }) },
+    URLSearchParams, location: { search, assign: url => calls.push({ navigation: url }) },
     document: { getElementById: element },
     fetch: async (url, options) => {
       calls.push({ url, options });
@@ -116,4 +116,31 @@ test('disconnecting personal sender credentials clears the displayed question an
   assert.equal(app.element('emailQuestion').textContent, '');
   assert.equal(app.element('emailDestination').textContent, '');
   assert.match(app.calls[2].url, /\/sender\/disconnect$/);
+});
+
+test('My Email verifies a sender once without requiring, reading or confirming any email question', async () => {
+  const link = '/auth/email/personal/start?request=' + 'C'.repeat(64);
+  const app = runtime([{ available: true, connected: false, state: 'NotConnected' }, { redirectUrl: link },
+    { available: true, connected: false, state: 'NotConnected' }], '?tenant=tenant');
+  await app.load();
+  assert.equal(app.element('emailPageHeading').textContent, 'My Email');
+  assert.equal(app.element('emailQuestionDetails').hidden, true);
+  assert.equal(app.element('confirmEmailQuestion').disabled, true);
+  assert.equal(app.calls.length, 1);
+  assert.match(app.calls[0].url, /\/email\/personal\/sender$/);
+  await app.element('verifyPersonalEmail').click();
+  assert.match(app.calls[1].url, /\/email\/personal\/sender\/connect$/);
+  assert.equal(app.calls[1].options.method, 'POST');
+  assert.ok(app.calls.some(call => call.navigation === link));
+  assert.ok(app.calls.every(call => !call.url?.includes('/ask/email/runs/')));
+});
+
+test('My Email reports missing or failed setup without hiding the actionable error inside a hidden section', async () => {
+  for (const response of [{ status: 404 }, { status: 503 }]) {
+    const app = runtime([response], '?tenant=tenant');
+    await app.load();
+    assert.match(app.element('emailNotice').textContent, /not configured|unavailable/);
+    assert.equal(app.element('confirmEmailQuestion').disabled, true);
+    assert.equal(app.calls.length, 1);
+  }
 });

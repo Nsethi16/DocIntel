@@ -6,7 +6,7 @@ namespace DocIntel.Core.Harness;
 [JsonConverter(typeof(JsonStringEnumConverter))]
 public enum AgentTone { Professional, Friendly, Concise }
 
-/// <summary>Tenant-owned presentation guidance, never a source of permissions, secrets or tool authority.</summary>
+/// <summary>Tenant-owned style and channel preferences; only presentation guidance enters the model prompt.</summary>
 public sealed record AgentProfile
 {
     public string DisplayName { get; init; } = "DocIntel";
@@ -14,6 +14,7 @@ public sealed record AgentProfile
     public AgentTone Tone { get; init; } = AgentTone.Professional;
     public string Instructions { get; init; } = String.Empty;
     public bool EmailEnabled { get; init; }
+    public bool EmailConfirmationRequired { get; init; }
     public bool TeamsEnabled { get; init; }
 
     public bool IsValid => Enum.IsDefined(Tone) && Valid(DisplayName, 64, true) &&

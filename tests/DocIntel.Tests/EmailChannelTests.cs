@@ -16,6 +16,292 @@ public sealed class EmailChannelTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
+    public async Task Assigned_Users_Receive_One_Threaded_Answer_Without_A_Confirmation_Email(bool revoke)
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Options.AuthorizationMode = EmailAuthorizationMode.ApprovedUsers;
+        fixture.Tenant.Agent = fixture.Tenant.Agent with { EmailConfirmationRequired = false };
+        var assigned = new Mock<IAssignedEmailAuthorization>();
+        assigned.Setup(value => value.ResolveAsync("tenant", fixture.Message.Sender, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VerifiedEmailActor(fixture.Actor, fixture.Message.Sender));
+        var receiver = new EmailQuestionReceiver(fixture.Options, fixture.Runs, fixture.Harness.Object,
+            fixture.Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance, queue: fixture.Queue.Object,
+            assignedAuthorization: assigned.Object);
+        var model = new Mock<IChatClient>();
+        model.Setup(value => value.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>())).ReturnsAsync(new ChatResponse(
+                new ChatMessage(ChatRole.Assistant, "{\"kind\":\"Conversation\",\"answer\":\"Approved recipient answer\",\"evidenceIds\":[]}")));
+        var catalog = new ModelCatalog(customClients: new Dictionary<string, IChatClient>
+            { [fixture.Tenant.DefaultModelId] = model.Object });
+        var jobs = new InMemoryJobStore();
+        var orchestrator = new AskAiOrchestrator(fixture.Harness.Object, jobs, catalog, [],
+            NullLogger<AskAiOrchestrator>.Instance, fixture.Access.Object, assignedEmailAuthorization: assigned.Object);
+        var delivery = new ChannelDeliveryProcessor(
+            [new EmailAnswerTransport(fixture.Options, fixture.Mailbox.Object, assigned.Object)],
+            NullLogger<ChannelDeliveryProcessor>.Instance, fixture.Access.Object, fixture.Harness.Object, jobs);
+        var processor = new AskAiRunProcessor(fixture.Runs, orchestrator, new(),
+            NullLogger<AskAiRunProcessor>.Instance, delivery);
+
+        // Act
+        await receiver.ReceiveAsync(fixture.Message with { Text = "Hello" });
+        var run = await fixture.RunAsync();
+        await processor.ProcessAsync(new(run.RunId, run.TenantId));
+        if (revoke)
+            assigned.Setup(value => value.ResolveAsync("tenant", fixture.Message.Sender, It.IsAny<CancellationToken>()))
+                .ReturnsAsync((VerifiedEmailActor?)null);
+        await processor.ProcessAsync(new(run.RunId, run.TenantId));
+        await receiver.ReceiveAsync(fixture.Message with { Text = "Hello" });
+
+        // Assert
+        Assert.Equal(fixture.Actor, run.Actor);
+        Assert.Equal(JobStatus.Queued, run.Status);
+        Assert.NotNull(run.PendingEmail!.AssignedAtUtc);
+        Assert.Null(run.PendingEmail.AuthenticatedAtUtc);
+        Assert.Null(run.PendingEmail.ConfirmedAtUtc);
+        fixture.Mailbox.Verify(value => value.SendAsync(It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Mailbox.Verify(value => value.ReplyAsync(fixture.Message.MessageId, fixture.Message.Sender,
+            It.Is<string>(body => body.Contains("Approved recipient answer")), It.IsAny<CancellationToken>()),
+            revoke ? Times.Never() : Times.Once());
+        fixture.Queue.Verify(value => value.TryEnqueueAsync(It.IsAny<AskAiQueueTicket>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Equal(revoke ? ChannelDeliveryStatus.OutcomeUnknown : ChannelDeliveryStatus.Sent,
+            (await fixture.RunAsync()).ChannelDelivery!.Status);
+    }
+
+    [Fact]
+    public async Task An_Unknown_Automatic_Recipient_Receives_No_Challenge_And_Consumes_No_Model_Admission()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Options.AuthorizationMode = EmailAuthorizationMode.ApprovedUsers;
+        fixture.Tenant.Agent = fixture.Tenant.Agent with { EmailConfirmationRequired = false };
+        var receiver = new EmailQuestionReceiver(fixture.Options, fixture.Runs, fixture.Harness.Object,
+            fixture.Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance, queue: fixture.Queue.Object,
+            assignedAuthorization: Mock.Of<IAssignedEmailAuthorization>());
+
+        // Act
+        await receiver.ReceiveAsync(fixture.Message);
+
+        // Assert
+        Assert.Empty(await fixture.Runs.ListRunsByTenantAsync("tenant"));
+        fixture.Mailbox.Verify(value => value.SendAsync(It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
+        fixture.Queue.Verify(value => value.TryEnqueueAsync(It.IsAny<AskAiQueueTicket>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Automatic_Admission_Is_Durable_Bounded_And_Does_Not_Charge_Duplicate_Messages()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Options.AuthorizationMode = EmailAuthorizationMode.ApprovedUsers;
+        fixture.Options.AutomaticQuestionsPerSenderHour = 1;
+        fixture.Tenant.Agent = fixture.Tenant.Agent with { EmailConfirmationRequired = false };
+        var assigned = new Mock<IAssignedEmailAuthorization>();
+        assigned.Setup(value => value.ResolveAsync("tenant", fixture.Message.Sender, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VerifiedEmailActor(fixture.Actor, fixture.Message.Sender));
+        EmailQuestionReceiver Receiver() => new(fixture.Options, fixture.Runs, fixture.Harness.Object,
+            fixture.Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance, queue: fixture.Queue.Object,
+            assignedAuthorization: assigned.Object);
+
+        // Act
+        await Receiver().ReceiveAsync(fixture.Message);
+        await Receiver().ReceiveAsync(fixture.Message);
+        await Receiver().ReceiveAsync(fixture.Message with { MessageId = "second-message" });
+
+        // Assert
+        var snapshots = await fixture.Runs.ListRunsByTenantAsync("tenant");
+        Assert.Single(snapshots.Where(run => run.PendingEmail is not null));
+        var budget = Assert.Single(snapshots.Where(run => run.EmailAdmission?.Recipient == fixture.Actor));
+        Assert.Null(budget.Actor);
+        Assert.Equal(fixture.Actor, budget.EmailAdmission!.Recipient);
+        Assert.Single(budget.EmailAdmission.RunIds);
+        Assert.Single(Assert.Single(snapshots.Where(run => run.EmailAdmission is { Recipient: null }))
+            .EmailAdmission!.RunIds);
+        fixture.Queue.Verify(value => value.TryEnqueueAsync(It.IsAny<AskAiQueueTicket>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+        Assert.Single(await fixture.Runs.ListUnfinishedRunsAsync(100));
+    }
+
+    [Fact]
+    public async Task Changing_To_Automatic_Mode_Does_Not_Execute_An_Old_Awaiting_Confirmation_Question()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        await fixture.Receiver.ReceiveAsync(fixture.Message);
+        var originalProfile = fixture.Options.Profile;
+        fixture.Options.AuthorizationMode = EmailAuthorizationMode.ApprovedUsers;
+        fixture.Tenant.Agent = fixture.Tenant.Agent with { EmailConfirmationRequired = false };
+        var assigned = new Mock<IAssignedEmailAuthorization>();
+        assigned.Setup(value => value.ResolveAsync("tenant", fixture.Message.Sender, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VerifiedEmailActor(fixture.Actor, fixture.Message.Sender));
+        var receiver = new EmailQuestionReceiver(fixture.Options, fixture.Runs, fixture.Harness.Object,
+            fixture.Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance, queue: fixture.Queue.Object,
+            assignedAuthorization: assigned.Object);
+
+        // Act
+        await receiver.ReceiveAsync(fixture.Message);
+
+        // Assert
+        Assert.Equal(originalProfile, fixture.Options.Profile);
+        var pending = await fixture.RunAsync();
+        Assert.Equal(JobStatus.AwaitingConfirmation, pending.Status);
+        Assert.Null(pending.Actor);
+        Assert.Null(pending.PendingEmail!.AssignedAtUtc);
+        Assert.Null(pending.PendingEmail.ConfirmedAtUtc);
+        Assert.Single(await fixture.Runs.ListRunsByTenantAsync("tenant"));
+        fixture.Queue.Verify(value => value.TryEnqueueAsync(It.IsAny<AskAiQueueTicket>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task The_Workspace_Admission_Cap_Cannot_Be_Bypassed_By_Using_Different_Approved_Addresses()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Options.AuthorizationMode = EmailAuthorizationMode.ApprovedUsers;
+        fixture.Options.AutomaticQuestionsPerWorkspaceHour = 1;
+        fixture.Tenant.Agent = fixture.Tenant.Agent with { EmailConfirmationRequired = false };
+        var other = new ActorIdentity(fixture.Actor.DirectoryTenantId, Guid.NewGuid());
+        var assigned = new Mock<IAssignedEmailAuthorization>();
+        assigned.Setup(value => value.ResolveAsync("tenant", It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync((string _, string address, CancellationToken _) =>
+                new VerifiedEmailActor(address == fixture.Message.Sender ? fixture.Actor : other, address));
+        var receiver = new EmailQuestionReceiver(fixture.Options, fixture.Runs, fixture.Harness.Object,
+            fixture.Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance, queue: fixture.Queue.Object,
+            assignedAuthorization: assigned.Object);
+
+        // Act
+        await receiver.ReceiveAsync(fixture.Message);
+        await receiver.ReceiveAsync(fixture.Message with { MessageId = "other-question", Sender = "other@example.com" });
+
+        // Assert
+        Assert.Single((await fixture.Runs.ListRunsByTenantAsync("tenant")).Where(run => run.PendingEmail is not null));
+        fixture.Queue.Verify(value => value.TryEnqueueAsync(It.IsAny<AskAiQueueTicket>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Expired_Admission_Windows_Reset_Without_Creating_Unbounded_New_Checkpoints()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Options.AuthorizationMode = EmailAuthorizationMode.ApprovedUsers;
+        fixture.Options.AutomaticQuestionsPerSenderHour = 1;
+        fixture.Options.AutomaticQuestionsPerWorkspaceHour = 1;
+        fixture.Tenant.Agent = fixture.Tenant.Agent with { EmailConfirmationRequired = false };
+        var assigned = new Mock<IAssignedEmailAuthorization>();
+        assigned.Setup(value => value.ResolveAsync("tenant", fixture.Message.Sender, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VerifiedEmailActor(fixture.Actor, fixture.Message.Sender));
+        var receiver = new EmailQuestionReceiver(fixture.Options, fixture.Runs, fixture.Harness.Object,
+            fixture.Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance, queue: fixture.Queue.Object,
+            assignedAuthorization: assigned.Object);
+        await receiver.ReceiveAsync(fixture.Message);
+        var budgets = (await fixture.Runs.ListRunsByTenantAsync("tenant"))
+            .Where(run => run.EmailAdmission is not null).ToList();
+        foreach (var budget in budgets)
+        {
+            await using var lease = await fixture.Runs.TryAcquireAsync("tenant", budget.RunId);
+            lease!.Run.EmailAdmission = budget.EmailAdmission! with
+                { StartedAtUtc = budget.EmailAdmission!.StartedAtUtc.AddHours(-1) };
+            await lease.SaveAsync();
+        }
+
+        // Act
+        await receiver.ReceiveAsync(fixture.Message with { MessageId = "next-hour-question" });
+
+        // Assert
+        var snapshots = await fixture.Runs.ListRunsByTenantAsync("tenant");
+        Assert.Equal(2, snapshots.Count(run => run.PendingEmail is not null));
+        Assert.Equal(2, snapshots.Count(run => run.EmailAdmission is not null));
+        Assert.All(snapshots.Where(run => run.EmailAdmission is not null), run =>
+            Assert.Single(run.EmailAdmission!.RunIds));
+        fixture.Queue.Verify(value => value.TryEnqueueAsync(It.IsAny<AskAiQueueTicket>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
+    public async Task Operator_Confirmation_Mode_Remains_Safe_Even_If_The_Workspace_Preference_Is_Unchecked()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Tenant.Agent = fixture.Tenant.Agent with { EmailConfirmationRequired = false };
+
+        // Act
+        await fixture.Receiver.ReceiveAsync(fixture.Message);
+
+        // Assert
+        Assert.Equal(JobStatus.AwaitingConfirmation, (await fixture.RunAsync()).Status);
+        fixture.Mailbox.Verify(value => value.SendAsync(It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Automatic_Questions_Recheck_Recipient_Before_Model_Use_And_Cannot_Invoke_Extension_Tools(bool extension)
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Options.AuthorizationMode = EmailAuthorizationMode.ApprovedUsers;
+        fixture.Tenant.Agent = fixture.Tenant.Agent with { EmailConfirmationRequired = false };
+        var assigned = new Mock<IAssignedEmailAuthorization>();
+        assigned.Setup(value => value.ResolveAsync("tenant", fixture.Message.Sender, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VerifiedEmailActor(fixture.Actor, fixture.Message.Sender));
+        var receiver = new EmailQuestionReceiver(fixture.Options, fixture.Runs, fixture.Harness.Object,
+            fixture.Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance, queue: fixture.Queue.Object,
+            assignedAuthorization: assigned.Object);
+        await receiver.ReceiveAsync(fixture.Message);
+        var run = await fixture.RunAsync();
+        if (!extension)
+            assigned.Setup(value => value.ResolveAsync("tenant", fixture.Message.Sender, It.IsAny<CancellationToken>()))
+                .ReturnsAsync((VerifiedEmailActor?)null);
+        var model = new Mock<IChatClient>();
+        var catalog = new ModelCatalog(customClients: new Dictionary<string, IChatClient>
+            { [fixture.Tenant.DefaultModelId] = model.Object });
+        var provider = new Mock<IAskAiToolProvider>();
+        var orchestrator = new AskAiOrchestrator(fixture.Harness.Object, new InMemoryJobStore(), catalog,
+            extension ? [provider.Object] : [], NullLogger<AskAiOrchestrator>.Instance, fixture.Access.Object,
+            assignedEmailAuthorization: assigned.Object);
+        var processor = new AskAiRunProcessor(fixture.Runs, orchestrator, new(),
+            NullLogger<AskAiRunProcessor>.Instance);
+
+        // Act
+        await processor.ProcessAsync(new(run.RunId, run.TenantId));
+
+        // Assert
+        Assert.Equal(JobStatus.Failed, (await fixture.RunAsync()).Status);
+        Assert.Equal("AccessRevoked", (await fixture.RunAsync()).ErrorCode);
+        model.Verify(value => value.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+            It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()), Times.Never);
+        provider.Verify(value => value.GetTools(It.IsAny<TenantHarness>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Automatic_Recipient_Binding_Cannot_Change_The_Original_Sender_Address()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Options.AuthorizationMode = EmailAuthorizationMode.ApprovedUsers;
+        fixture.Tenant.Agent = fixture.Tenant.Agent with { EmailConfirmationRequired = false };
+        var assigned = new Mock<IAssignedEmailAuthorization>();
+        assigned.Setup(value => value.ResolveAsync("tenant", fixture.Message.Sender, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new VerifiedEmailActor(fixture.Actor, "other@example.com"));
+        var receiver = new EmailQuestionReceiver(fixture.Options, fixture.Runs, fixture.Harness.Object,
+            fixture.Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance, queue: fixture.Queue.Object,
+            assignedAuthorization: assigned.Object);
+
+        // Act / Assert
+        await Assert.ThrowsAsync<InvalidDataException>(() => receiver.ReceiveAsync(fixture.Message));
+        Assert.Empty(await fixture.Runs.ListRunsByTenantAsync("tenant"));
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
     public async Task Trusted_Employee_Email_Executes_Ask_AI_Without_Confirmation_And_Rechecks_Access_Before_Sending(bool revoke)
     {
         // Arrange
@@ -288,7 +574,7 @@ public sealed class EmailChannelTests
         {
             TenantId = "tenant",
             DisplayName = "Tenant",
-            Agent = new() { DisplayName = "Meridian", EmailEnabled = true }
+            Agent = new() { DisplayName = "Meridian", EmailEnabled = true, EmailConfirmationRequired = true }
         };
         public InMemoryAskAiRunStore Runs { get; } = new();
         public Mock<IMailboxClient> Mailbox { get; } = new();
@@ -317,6 +603,7 @@ public sealed class EmailChannelTests
             Receiver = new EmailQuestionReceiver(Options, Runs, Harness.Object, Mailbox.Object, NullLogger<EmailQuestionReceiver>.Instance);
             Confirmation = new EmailQuestionConfirmation(Options, Mailbox.Object, Access.Object, Runs, Queue.Object, Harness.Object);
         }
-        public async Task<AskAiRun> RunAsync() => Assert.Single(await Runs.ListRunsByTenantAsync("tenant"));
+        public async Task<AskAiRun> RunAsync() =>
+            Assert.Single((await Runs.ListRunsByTenantAsync("tenant")).Where(run => run.PendingEmail is not null));
     }
 }

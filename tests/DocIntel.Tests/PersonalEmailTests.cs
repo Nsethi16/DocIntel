@@ -14,6 +14,7 @@ using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Microsoft.Identity.Client;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.OpenIdConnect;
@@ -465,6 +466,73 @@ public sealed class PersonalEmailTests
     }
 
     [Fact]
+    public async Task Approved_Personal_Users_Are_Queued_And_Replied_To_Without_Any_Confirmation_Email()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        await fixture.ConnectAsync(PersonalEmailPurpose.Mailbox);
+        await fixture.ConnectAsync(PersonalEmailPurpose.Sender);
+        var originalProfile = fixture.Options.ConfiguredProfile;
+        fixture.Options.AuthorizationMode = EmailAuthorizationMode.ApprovedUsers;
+        fixture.Options.Validate();
+        fixture.Identity.Memberships.Add(new()
+        {
+            DirectoryTenantId = fixture.Actor.DirectoryTenantId, ObjectId = fixture.Actor.ObjectId,
+            ApplicationTenantId = "tenant", Role = TenantRole.Admin
+        });
+        fixture.Harness.Setup(value => value.GetTenantAsync("tenant", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TenantHarness
+                { TenantId = "tenant", DisplayName = "Tenant", Agent = new() { EmailEnabled = true } });
+        var directory = new Mock<IEnterpriseDirectory>();
+        var membership = new Mock<ITenantUserStore>();
+        membership.Setup(value => value.GetAsync("tenant", It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new TenantUsersSnapshot { TenantId = "tenant" });
+        var identity = new Mock<IOptionsMonitor<IdentityOptions>>();
+        identity.SetupGet(value => value.CurrentValue).Returns(fixture.Identity);
+        var users = new TenantUserService(membership.Object, identity.Object, directory.Object,
+            fixture.Harness.Object, NullLogger<TenantUserService>.Instance);
+        var assigned = new AssignedEmailAuthorization(fixture.Options, users, fixture.Harness.Object,
+            NullLogger<AssignedEmailAuthorization>.Instance, fixture.Store, fixture.Connections);
+        var handler = new MailHandler();
+        var mailbox = fixture.MailboxClient(handler);
+        var runs = new InMemoryAskAiRunStore();
+        var queue = new Mock<IAskAiQueue>();
+        var receiver = new EmailQuestionReceiver(fixture.Options, runs, fixture.Harness.Object, mailbox,
+            NullLogger<EmailQuestionReceiver>.Instance, queue: queue.Object, assignedAuthorization: assigned);
+        var message = Assert.Single((await mailbox.ReadChangesAsync(null, CancellationToken.None)).Messages);
+
+        // Act
+        await receiver.ReceiveAsync(message);
+        await receiver.ReceiveAsync(message);
+        var run = Assert.Single((await runs.ListRunsByTenantAsync("tenant")).Where(item => item.PendingEmail is not null));
+        Assert.Empty(handler.SentBodies);
+        run.Answer = "AUTOMATIC_CITED_ANSWER";
+        await new EmailAnswerTransport(fixture.Options, mailbox, assigned).SendAsync(run, run.ChannelDelivery!);
+
+        // Assert
+        Assert.Equal(originalProfile, fixture.Options.ConfiguredProfile);
+        Assert.Equal(JobStatus.Queued, run.Status);
+        Assert.Equal(fixture.Actor, run.Actor);
+        Assert.Equal(EmailAuthorizationMode.ApprovedUsers, run.PendingEmail!.AuthorizationMode);
+        Assert.NotNull(run.PendingEmail.AssignedAtUtc);
+        Assert.Null(run.PendingEmail.ConfirmedAtUtc);
+        Assert.Null(run.PendingEmail.AuthenticatedAtUtc);
+        Assert.Equal(["User.Read"], PersonalEmailOAuthClient.Scopes(PersonalEmailPurpose.Sender));
+        Assert.EndsWith("/v1.0/me/messages/immutable-message/reply", handler.Urls[^1]);
+        using var reply = JsonDocument.Parse(Assert.Single(handler.SentBodies));
+        var content = reply.RootElement.GetProperty("message");
+        var text = content.GetProperty("body").GetProperty("content").GetString();
+        Assert.Contains("AUTOMATIC_CITED_ANSWER", text);
+        Assert.Contains(message.Text.Trim(), text);
+        Assert.Contains("If you did not send the question", text);
+        Assert.Single(content.GetProperty("toRecipients").EnumerateArray());
+        Assert.Empty(content.GetProperty("ccRecipients").EnumerateArray());
+        Assert.Empty(content.GetProperty("bccRecipients").EnumerateArray());
+        queue.Verify(value => value.TryEnqueueAsync(It.IsAny<AskAiQueueTicket>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task Disconnect_During_Original_Message_Verification_Prevents_The_Reply_Post()
     {
         // Arrange
@@ -616,7 +684,8 @@ public sealed class PersonalEmailTests
                 .ReturnsAsync(DocumentAccessScope.Unrestricted);
             Harness.Setup(value => value.GetTenantAsync("tenant", It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new TenantHarness
-                    { TenantId = "tenant", DisplayName = "Fixture workspace", Agent = new() { EmailEnabled = true } });
+                    { TenantId = "tenant", DisplayName = "Fixture workspace",
+                      Agent = new() { EmailEnabled = true, EmailConfirmationRequired = true } });
             foreach (var (token, graphId, address, purpose) in new[]
             {
                 (MailboxToken, "1111111111111111", "vault-test@outlook.com", PersonalEmailPurpose.Mailbox),

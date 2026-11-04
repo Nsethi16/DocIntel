@@ -47,7 +47,7 @@ public sealed class GraphEnterpriseDirectory(
         var matching = people.Where(person => person.AccountEnabled && person.Member &&
             (String.Equals(person.Email, email, StringComparison.OrdinalIgnoreCase) ||
              String.Equals(person.UserPrincipalName, email, StringComparison.OrdinalIgnoreCase))).ToList();
-        if (matching.Count > 1) throw new InvalidDataException("The sender address has ambiguous directory ownership.");
+        if (matching.Count > 1) throw new AmbiguousEmailAddressException();
         return matching.SingleOrDefault();
     }
 

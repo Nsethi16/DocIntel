@@ -139,7 +139,7 @@ test('the actual deployment command passes the selected subscription resources a
   const environment = {
     AZURE_CONTAINER_REGISTRY: 'personalregistry', AZURE_CONTAINER_APP_NAME: 'personal-docintel',
     AZURE_RESOURCE_GROUP: 'personal-rg', GITHUB_SHA: 'fixture-sha', DOCINTEL_CONTAINER_NAME: '',
-    LEGACY_SAMPLE_REPAIR: 'false'
+    LEGACY_SAMPLE_REPAIR: 'false', ENABLE_APPROVED_EMAIL_REPLIES: 'false'
   };
   const result = runBash('az() { printf "%s\\n" "$@"; }\n' + script, environment);
   assert.equal(result.status, 0, result.stderr);
@@ -147,7 +147,7 @@ test('the actual deployment command passes the selected subscription resources a
     'containerapp', 'update', '--name', 'personal-docintel', '--resource-group', 'personal-rg',
     '--image', 'personalregistry.azurecr.io/personal-docintel:fixture-sha',
     '--set-env-vars', 'Readiness__UpgradeLegacySampleDefaults=false',
-    'Readiness__ProbeModelsOnStartup=true'
+    'Readiness__ProbeModelsOnStartup=true', '--only-show-errors', '--output', 'none'
   ]);
   const named = runBash('az() { printf "%s\\n" "$@"; }\n' + script, {
     ...environment, DOCINTEL_CONTAINER_NAME: 'docintel-api'
@@ -160,6 +160,14 @@ test('the actual deployment command passes the selected subscription resources a
   assert.equal(repair.status, 0, repair.stderr);
   assert.ok(repair.stdout.trim().split(/\r?\n/).includes('Readiness__UpgradeLegacySampleDefaults=true'));
   assert.match(workflow, /upgrade_legacy_sample_defaults:[\s\S]*?type: boolean[\s\S]*?default: false/);
+  const approved = runBash('az() { printf "%s\\n" "$@"; }\n' + script, {
+    ...environment, ENABLE_APPROVED_EMAIL_REPLIES: 'true'
+  });
+  assert.equal(approved.status, 0, approved.stderr);
+  assert.ok(approved.stdout.trim().split(/\r?\n/).includes('Channels__Email__AuthorizationMode=ApprovedUsers'));
+  assert.ok(!result.stdout.includes('Channels__Email__AuthorizationMode'));
+  assert.match(workflow, /enable_approved_email_replies:[\s\S]*?type: boolean[\s\S]*?default: false/);
+  assert.doesNotMatch(script, /--replace-env-vars|secret list|secret show/);
 });
 
 test('existing releases reconcile native Decision before full preflight and image publication', () => {

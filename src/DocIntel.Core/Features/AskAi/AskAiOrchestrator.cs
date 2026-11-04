@@ -141,6 +141,8 @@ public sealed class AskAiRun
     public PendingEmailQuestion? PendingEmail { get; set; }
     [JsonPropertyName("mailboxContinuation")]
     public string? MailboxContinuation { get; set; }
+    [JsonPropertyName("emailAdmission")]
+    public EmailAdmissionWindow? EmailAdmission { get; set; }
 
     [JsonPropertyName("citations")]
     public List<AskAiCitation> Citations { get; set; } = [];
@@ -564,6 +566,7 @@ public sealed class AskAiOrchestrator
     private readonly ITenantAccessResolver? _accessResolver;
     private readonly IAskAiRunStore? _runStore;
     private readonly AskAiExecutionOptions _executionOptions;
+    private readonly IAssignedEmailAuthorization? _assignedEmailAuthorization;
 
     public bool CanAutomaticallyReplay => !_toolProviders.Any();
 
@@ -574,7 +577,8 @@ public sealed class AskAiOrchestrator
         IEnumerable<IAskAiToolProvider>? toolProviders,
         ILogger<AskAiOrchestrator> logger,
         ITenantAccessResolver? accessResolver = null, ReviewService? reviews = null, IReviewStore? reviewStore = null,
-        IAskAiRunStore? runStore = null, AskAiExecutionOptions? executionOptions = null)
+        IAskAiRunStore? runStore = null, AskAiExecutionOptions? executionOptions = null,
+        IAssignedEmailAuthorization? assignedEmailAuthorization = null)
     {
         _harnessStore = harnessStore ?? throw new ArgumentNullException(nameof(harnessStore));
         _jobStore = jobStore ?? throw new ArgumentNullException(nameof(jobStore));
@@ -584,6 +588,7 @@ public sealed class AskAiOrchestrator
         _accessResolver = accessResolver;
         _runStore = runStore;
         _executionOptions = executionOptions ?? new();
+        _assignedEmailAuthorization = assignedEmailAuthorization;
         _executionOptions.Validate();
     }
 
@@ -606,6 +611,12 @@ public sealed class AskAiOrchestrator
 
         async Task<DocumentAccessScope> ResolveAccessAsync(CancellationToken ct)
         {
+            if (run.PendingEmail?.AssignedAtUtc is not null)
+            {
+                if (_toolProviders.Any())
+                    throw new UnauthorizedAccessException("Unattended email cannot invoke extension tools.");
+                await AssignedEmailAdmission.RequireRecipientAsync(_assignedEmailAuthorization, run, ct);
+            }
             var access = _accessResolver is null ? DocumentAccessScope.Unrestricted
                 : await _accessResolver.ResolveAsync(run.Actor, run.TenantId, ct);
             if (!access.CanRead)

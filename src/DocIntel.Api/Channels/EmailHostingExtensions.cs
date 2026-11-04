@@ -1,4 +1,5 @@
 using DocIntel.Api.Identity;
+using DocIntel.Core.Authorization;
 using DocIntel.Core.Channels;
 
 namespace DocIntel.Api.Channels;
@@ -26,6 +27,7 @@ public static class EmailHostingExtensions
             .ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { AllowAutoRedirect = false });
         builder.Services.AddSingleton<GraphMailboxClient>();
         builder.AddDocIntelPersonalEmail(settings, identity);
+        builder.Services.AddSingleton<IAssignedEmailAuthorization, AssignedEmailAuthorization>();
         if (settings.Personal.IsConfigured)
             builder.Services.AddSingleton<IMailboxClient, ConnectedPersonalMailboxClient>();
         else builder.Services.AddSingleton<IMailboxClient>(services => services.GetRequiredService<GraphMailboxClient>());

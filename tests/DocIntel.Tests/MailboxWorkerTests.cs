@@ -26,7 +26,8 @@ public sealed class MailboxWorkerTests
         var runs = new InMemoryAskAiRunStore();
         var harness = new Mock<IHarnessStore>();
         harness.Setup(h => h.GetTenantAsync("tenant", It.IsAny<CancellationToken>())).ReturnsAsync(
-            new TenantHarness { TenantId = "tenant", DisplayName = "Tenant", Agent = new() { EmailEnabled = true } });
+            new TenantHarness { TenantId = "tenant", DisplayName = "Tenant",
+                Agent = new() { EmailEnabled = true, EmailConfirmationRequired = true } });
         var mailbox = new Mock<IMailboxClient>();
         var sent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         mailbox.Setup(m => m.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))

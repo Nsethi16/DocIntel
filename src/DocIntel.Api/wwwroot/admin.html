@@ -283,6 +283,15 @@
                 <span class="slider"></span></label>
             </div>
             <div id="agentEmailDetails" class="agent-channel-details" hidden>
+              <p>In ApprovedUsers mailbox mode, active users in Users &amp; Access receive replies to their original emails.
+                Personal sender addresses need a one-time verification using My Email in the workspace.</p>
+              <p id="agentEmailPolicy" role="status">Checking the operator's email authorization policy...</p>
+              <label><input type="checkbox" id="agentEmailConfirmationRequired" data-change="onAgentProfileChanged">
+                Require confirmation for each email question</label>
+              <p>With ApprovedUsers enabled, leave this unchecked for automatic answers. Unknown, ambiguous and disabled
+                senders are not processed. Replies go only to a currently verified user address, never other
+                recipients. Anyone who knows a user's address could trigger an unsolicited question and reply.
+                An email From address is a routing hint, not proof of who sent the message.</p>
               <div id="agentPersonalEmailControls" hidden>
                 <p>Connect the configured personal Outlook.com mailbox on Microsoft's sign-in page.
                   DocIntel stores protected OAuth credentials, never your mailbox password.</p>

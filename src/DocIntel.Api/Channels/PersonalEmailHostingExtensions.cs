@@ -162,7 +162,8 @@ public static class PersonalEmailHostingExtensions
                             ? "/admin.html?tenant=" + Uri.EscapeDataString(settings.ApplicationTenantId) +
                                 "&personal-email=connected"
                             : pending.ReturnRunId is null
-                                ? "/?tenant=" + Uri.EscapeDataString(settings.ApplicationTenantId) + "&personal-email=verified"
+                                ? "/email-question.html?tenant=" + Uri.EscapeDataString(settings.ApplicationTenantId) +
+                                    "&personal-email=verified"
                                 : "/email-question.html?tenant=" + Uri.EscapeDataString(settings.ApplicationTenantId) +
                                     "&run=" + Uri.EscapeDataString(pending.ReturnRunId) + "&personal-email=verified";
                         context.Response.Redirect(destination);

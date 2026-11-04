@@ -24,6 +24,7 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <Compile Include="..\..\src\DocIntel.Api\Http\PdfUploadValidator.cs" Link="Http\PdfUploadValidator.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Channels\GraphMailboxClient.cs" Link="Channels\GraphMailboxClient.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Channels\AssignedEmailAuthorization.cs" Link="Channels\AssignedEmailAuthorization.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Channels\PersonalEmailState.cs" Link="Channels\PersonalEmailState.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Channels\PersonalEmailStateStores.cs" Link="Channels\PersonalEmailStateStores.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Channels\PersonalEmailConnections.cs" Link="Channels\PersonalEmailConnections.cs" />

@@ -50,6 +50,10 @@ on:
         description: One-time upgrade of the original version-1 Fabrikam sample to gpt-5-mini; customized profiles are not changed.
         type: boolean
         default: false
+      enable_approved_email_replies:
+        description: Explicitly allow automatic read-only answers to approved workspace recipients without per-email confirmation. From addresses can be spoofed; answers remain restricted to verified recipient inboxes.
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -161,6 +165,7 @@ jobs:
       AZURE_RESOURCE_GROUP: ${{ vars.AZURE_RESOURCE_GROUP || 'Docintel' }}
       DOCINTEL_CONTAINER_NAME: ${{ vars.DOCINTEL_CONTAINER_NAME }}
       LEGACY_SAMPLE_REPAIR: ${{ inputs.upgrade_legacy_sample_defaults && 'true' || 'false' }}
+      ENABLE_APPROVED_EMAIL_REPLIES: ${{ inputs.enable_approved_email_replies && 'true' || 'false' }}
       DOCINTEL_DECISION_RESOURCE_ID: ${{ vars.DOCINTEL_DECISION_RESOURCE_ID }}
       DOCINTEL_DECISION_ENDPOINT: ${{ vars.DOCINTEL_DECISION_ENDPOINT }}
       DOCINTEL_DECISION_DEPLOYMENT: ${{ vars.DOCINTEL_DECISION_DEPLOYMENT }}
@@ -231,13 +236,33 @@ jobs:
           if [[ -n "$DOCINTEL_CONTAINER_NAME" ]]; then
             container_args=(--container-name "$DOCINTEL_CONTAINER_NAME")
           fi
+          email_args=()
+          if [[ "$ENABLE_APPROVED_EMAIL_REPLIES" == "true" ]]; then
+            email_args=("Channels__Email__AuthorizationMode=ApprovedUsers")
+          fi
           az containerapp update \
             --name "$AZURE_CONTAINER_APP_NAME" \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --image "${AZURE_CONTAINER_REGISTRY}.azurecr.io/${AZURE_CONTAINER_APP_NAME}:${GITHUB_SHA}" \
             --set-env-vars "Readiness__UpgradeLegacySampleDefaults=${LEGACY_SAMPLE_REPAIR:-false}" \
-              "Readiness__ProbeModelsOnStartup=true" \
+              "Readiness__ProbeModelsOnStartup=true" "${email_args[@]}" \
+            --only-show-errors --output none \
             "${container_args[@]}"
+      - name: Verify the explicitly enabled approved-user email policy
+        if: inputs.enable_approved_email_replies
+        shell: pwsh
+        run: |
+          $prefix = if ([string]::IsNullOrWhiteSpace($env:DOCINTEL_CONTAINER_NAME)) {
+            'properties.template.containers[0].env'
+          } else {
+            "properties.template.containers[?name=='$($env:DOCINTEL_CONTAINER_NAME)'].env[]"
+          }
+          $query = "$prefix | [?name=='Channels__Email__AuthorizationMode'].value"
+          $modes = @(az containerapp show --name $env:AZURE_CONTAINER_APP_NAME `
+            --resource-group $env:AZURE_RESOURCE_GROUP --query $query --output tsv --only-show-errors)
+          if ($LASTEXITCODE -ne 0 -or $modes.Count -ne 1 -or $modes[0] -ne 'ApprovedUsers') {
+            throw 'The requested approved-user email policy was not applied to the selected application container.'
+          }
       - name: Verify native Decision with the deployed runtime identity
         run: python3 -B .github/scripts/decision_diagnostic.py
       - name: Verify the released image and revision readiness

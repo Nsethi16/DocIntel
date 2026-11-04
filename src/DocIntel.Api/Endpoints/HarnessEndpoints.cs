@@ -141,6 +141,9 @@ public static class HarnessEndpoints
                     configured = email,
                     address = email ? configuration["Channels:Email:MailboxAddress"] : null,
                     provider = email ? emailOptions.Provider.ToString() : null,
+                    authorizationMode = email ? emailOptions.AuthorizationMode.ToString() : null,
+                    automaticQuestionsPerSenderHour = emailOptions.AutomaticQuestionsPerSenderHour,
+                    automaticQuestionsPerWorkspaceHour = emailOptions.AutomaticQuestionsPerWorkspaceHour,
                     personalAvailable = email && emailOptions.Personal.IsConfigured,
                     connected = personal?.Connected,
                     state = personal?.State

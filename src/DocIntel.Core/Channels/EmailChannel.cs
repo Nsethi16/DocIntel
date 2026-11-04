@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 
 namespace DocIntel.Core.Channels;
 
-public enum EmailAuthorizationMode { ConfirmSender, TrustedInternal }
+public enum EmailAuthorizationMode { ConfirmSender, TrustedInternal, ApprovedUsers }
 public enum EmailMailboxProvider { ExchangeOnline, OutlookCom }
 
 /// <summary>Separate consumer OAuth registration; credentials belong in a managed secret provider.</summary>
@@ -33,6 +33,8 @@ public sealed class EmailChannelOptions
     public string ApplicationTenantId { get; set; } = String.Empty;
     public string PublicOrigin { get; set; } = String.Empty;
     public int PollSeconds { get; set; } = 30;
+    public int AutomaticQuestionsPerSenderHour { get; set; } = 20;
+    public int AutomaticQuestionsPerWorkspaceHour { get; set; } = 100;
     public EmailAuthorizationMode AuthorizationMode { get; set; }
     /// <summary>Secret transport attestation; Exchange must strip incoming copies and stamp only authenticated internal mail.</summary>
     public string CorporateSenderProof { get; set; } = String.Empty;
@@ -46,7 +48,7 @@ public sealed class EmailChannelOptions
             throw new InvalidOperationException("Automatic email requires a securely configured corporate sender attestation.");
         if (!Enum.IsDefined(Provider) || Personal is null || Personal.ClientSecret is null ||
             Provider == EmailMailboxProvider.OutlookCom &&
-                (!Personal.IsConfigured || AuthorizationMode != EmailAuthorizationMode.ConfirmSender) ||
+                (!Personal.IsConfigured || AuthorizationMode == EmailAuthorizationMode.TrustedInternal) ||
             (Personal.ClientId != Guid.Empty || Personal.ClientSecret.Length > 0) &&
                 (!Personal.IsConfigured || Personal.ClientSecret.Length > 4_096 ||
                  Personal.ClientSecret.Any(Char.IsControl)) ||
@@ -54,7 +56,9 @@ public sealed class EmailChannelOptions
             !IsAddress(MailboxAddress) ||
             String.IsNullOrWhiteSpace(ApplicationTenantId) || ApplicationTenantId.Length > 128 ||
             ApplicationTenantId.Any(c => !Char.IsAsciiLetterOrDigit(c) && c != '-') ||
-            PollSeconds is < 10 or > 300 || !Uri.TryCreate(PublicOrigin, UriKind.Absolute, out var origin) ||
+            PollSeconds is < 10 or > 300 || AutomaticQuestionsPerSenderHour is < 1 or > 200 ||
+            AutomaticQuestionsPerWorkspaceHour is < 1 or > 2_000 ||
+            !Uri.TryCreate(PublicOrigin, UriKind.Absolute, out var origin) ||
             origin.Scheme != "https" || !origin.IsDefaultPort || origin.AbsolutePath != "/" ||
             origin.UserInfo.Length > 0 || origin.Query.Length > 0 || origin.Fragment.Length > 0 || PublicOrigin.Length > 512)
             throw new InvalidOperationException("Email requires a verified directory/mailbox ID, mailbox address, tenant and HTTPS app origin.");
@@ -66,7 +70,9 @@ public sealed class EmailChannelOptions
         MailboxAddress,
         ApplicationTenantId,
         PublicOrigin,
-        AuthorizationMode,
+        // ApprovedUsers keeps the existing cursor; each run retains and rechecks its own authorization evidence.
+        AuthorizationMode = AuthorizationMode == EmailAuthorizationMode.ApprovedUsers
+            ? EmailAuthorizationMode.ConfirmSender : AuthorizationMode,
         ProofHash = Convert.ToHexString(SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(CorporateSenderProof)))
     })));
     /// <summary>Consumer connection changes invalidate pending confirmations without coupling them to token refresh.</summary>
@@ -165,13 +171,15 @@ public sealed class PendingEmailQuestion
     public DateTimeOffset? ConfirmedAtUtc { get; set; }
     public EmailAuthorizationMode AuthorizationMode { get; init; }
     public DateTimeOffset? AuthenticatedAtUtc { get; init; }
+    /// <summary>Workspace-authorized recipient automation; never evidence that the sender authored this message.</summary>
+    public DateTimeOffset? AssignedAtUtc { get; init; }
 }
 
-/// <summary>Deduplicates mailbox messages and sends only a source-free sign-in challenge before user authorization.</summary>
+/// <summary>Deduplicates mailbox questions and binds automatic answers to current assigned recipients.</summary>
 public sealed class EmailQuestionReceiver(
     EmailChannelOptions options, IAskAiRunStore runs, IHarnessStore harness, IMailboxClient mailbox,
     ILogger<EmailQuestionReceiver> logger, IAutomaticEmailAuthorization? automaticAuthorization = null,
-    IAskAiQueue? queue = null)
+    IAskAiQueue? queue = null, IAssignedEmailAuthorization? assignedAuthorization = null)
 {
     public async Task ReceiveAsync(MailboxQuestion message, CancellationToken cancellationToken = default)
     {
@@ -193,6 +201,8 @@ public sealed class EmailQuestionReceiver(
         if (options.Provider == EmailMailboxProvider.OutlookCom && message.ConnectionProfile != profile)
             throw new InvalidOperationException("The mailbox connection changed before the message was admitted.");
         VerifiedEmailActor? verified = null;
+        var assigned = options.AuthorizationMode == EmailAuthorizationMode.ApprovedUsers &&
+            !tenant.Agent.EmailConfirmationRequired;
         if (options.AuthorizationMode == EmailAuthorizationMode.TrustedInternal)
         {
             if (!message.TrustedInternalSender)
@@ -209,11 +219,39 @@ public sealed class EmailQuestionReceiver(
                 return;
             }
         }
+        else if (assigned)
+        {
+            if (assignedAuthorization is null || queue is null)
+                throw new InvalidOperationException("Approved-user email requires current recipient authorization and dispatch.");
+            verified = await assignedAuthorization.ResolveAsync(
+                options.ApplicationTenantId, message.Sender, cancellationToken);
+            if (verified is null)
+            {
+                logger.LogWarning("An email has no unique active approved recipient; no question or confirmation was created.");
+                return;
+            }
+        }
+        if (verified is not null &&
+            (verified.Actor.DirectoryTenantId != options.TenantId || verified.Actor.ObjectId == Guid.Empty ||
+             !EmailChannelOptions.IsAddress(verified.Address) ||
+             !String.Equals(verified.Address, message.Sender, StringComparison.OrdinalIgnoreCase)))
+            throw new InvalidDataException("Email authorization did not match the original recipient.");
         var messageIdentity = options.Provider == EmailMailboxProvider.OutlookCom
             ? JsonSerializer.SerializeToUtf8Bytes(new { profile, options.ApplicationTenantId, message.MessageId })
             : JsonSerializer.SerializeToUtf8Bytes(new
                 { options.MailboxObjectId, options.ApplicationTenantId, message.MessageId });
         var runId = "mail-" + Convert.ToHexString(SHA256.HashData(messageIdentity));
+        if (assigned)
+        {
+            // Policy changes never auto-confirm an older run or replay an already processed message.
+            if (await runs.GetRunAsync(options.ApplicationTenantId, runId, cancellationToken) is not null) return;
+            if (!await AssignedEmailAdmission.ReserveAsync(
+                runs, options, verified!.Actor, runId, cancellationToken))
+            {
+                logger.LogWarning("Automatic email admission reached a recipient or workspace limit; no question was queued.");
+                return;
+            }
+        }
         var run = new AskAiRun
         {
             RunId = runId,
@@ -228,8 +266,11 @@ public sealed class EmailQuestionReceiver(
                 Sender = verified?.Address ?? message.Sender,
                 MessageId = message.MessageId,
                 ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(24),
-                AuthorizationMode = options.AuthorizationMode,
-                AuthenticatedAtUtc = verified is null ? null : DateTimeOffset.UtcNow
+                AuthorizationMode = assigned ? EmailAuthorizationMode.ApprovedUsers :
+                    options.AuthorizationMode == EmailAuthorizationMode.TrustedInternal
+                        ? EmailAuthorizationMode.TrustedInternal : EmailAuthorizationMode.ConfirmSender,
+                AuthenticatedAtUtc = verified is not null && !assigned ? DateTimeOffset.UtcNow : null,
+                AssignedAtUtc = assigned ? DateTimeOffset.UtcNow : null
             },
             ChannelDelivery = verified is null ? null : new ChannelDelivery
             {
@@ -329,6 +370,7 @@ public sealed class EmailQuestionConfirmation(
             run.TenantId != options.ApplicationTenantId || run.PendingEmail is not { } pending ||
             pending.Profile != profile ||
             pending.AuthorizationMode != EmailAuthorizationMode.ConfirmSender ||
+            pending.AssignedAtUtc is not null ||
             (run.Status == JobStatus.AwaitingConfirmation && pending.ExpiresAtUtc <= DateTimeOffset.UtcNow) ||
             (run.Actor is not null && run.Actor != actor) ||
             !(await access.ResolveAsync(actor, run.TenantId, cancellationToken)).CanRead)
@@ -344,7 +386,8 @@ public sealed class EmailQuestionConfirmation(
 
 /// <summary>One native reply to the original question, with current access and verified-recipient checks.</summary>
 public sealed class EmailAnswerTransport(
-    EmailChannelOptions options, IMailboxClient mailbox) : IChannelTransport
+    EmailChannelOptions options, IMailboxClient mailbox,
+    IAssignedEmailAuthorization? assignedAuthorization = null) : IChannelTransport
 {
     public string Name => "Email";
     public async Task SendAsync(AskAiRun run, ChannelDelivery target, CancellationToken cancellationToken = default)
@@ -356,16 +399,24 @@ public sealed class EmailAnswerTransport(
             String.IsNullOrWhiteSpace(pending.MessageId) ||
             !String.Equals(target.MessageId, pending.MessageId, StringComparison.Ordinal) ||
             !(pending.AuthorizationMode == EmailAuthorizationMode.ConfirmSender && pending.ConfirmedAtUtc is not null ||
+              pending.AuthorizationMode == EmailAuthorizationMode.ApprovedUsers &&
+              options.AuthorizationMode == EmailAuthorizationMode.ApprovedUsers && pending.AssignedAtUtc is not null ||
               pending.AuthorizationMode == EmailAuthorizationMode.TrustedInternal &&
               options.AuthorizationMode == EmailAuthorizationMode.TrustedInternal && pending.AuthenticatedAtUtc is not null) ||
             !String.Equals(target.DestinationId, run.PendingEmail.Sender, StringComparison.OrdinalIgnoreCase))
             throw new InvalidOperationException("The verified mailbox destination is unavailable.");
+        if (pending.AssignedAtUtc is not null)
+            await AssignedEmailAdmission.RequireRecipientAsync(assignedAuthorization, run, cancellationToken);
         if (!await EmailMailboxBinding.OwnsAddressAsync(mailbox, actor, target.DestinationId, cancellationToken))
             throw new UnauthorizedAccessException("The sender no longer owns the reply address.");
         var sources = String.Join("\n", run.Citations.Select(citation =>
             $"[{citation.CitationNumber}] {citation.FileName} | {citation.DocumentName} | {citation.PageRange}"));
+        var notice = pending.AssignedAtUtc is null ? String.Empty :
+            "Automatic answer for an approved workspace recipient; you did not confirm this question individually.\n" +
+            "If you did not send the question, ignore this reply and notify your workspace administrator.\n\n" +
+            "Original email question (untrusted text):\n" + run.Question + "\n\nAnswer:\n";
         await EmailMailboxBinding.ReplyAsync(mailbox, profile, pending.MessageId, target.DestinationId,
-            (run.Answer ?? throw new InvalidOperationException("A completed answer is required.")) +
+            notice + (run.Answer ?? throw new InvalidOperationException("A completed answer is required.")) +
             "\n\nSources:\n" + sources + "\n\nView the answer and original sources (sign-in required): " +
             options.RunUrl(run.RunId), cancellationToken);
     }

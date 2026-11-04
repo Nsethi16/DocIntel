@@ -226,7 +226,7 @@ public sealed class PersonalEmailConnections(
         if (!options.Enabled || !options.Personal.IsConfigured || !Enum.IsDefined(purpose) ||
             tenantId != options.ApplicationTenantId || actor.DirectoryTenantId != options.TenantId ||
             identity.Mode != IdentityMode.Entra ||
-            options.AuthorizationMode != EmailAuthorizationMode.ConfirmSender ||
+            options.AuthorizationMode is not (EmailAuthorizationMode.ConfirmSender or EmailAuthorizationMode.ApprovedUsers) ||
             purpose == PersonalEmailPurpose.Mailbox && options.Provider != EmailMailboxProvider.OutlookCom ||
             identity.Memberships.Any(item => item.ServicePrincipal && item.DirectoryTenantId == actor.DirectoryTenantId &&
                 item.ObjectId == actor.ObjectId))
