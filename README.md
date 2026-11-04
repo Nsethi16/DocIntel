@@ -528,8 +528,14 @@ provider diagnostics. It has no document or run-store dependency and accepts no 
 An explicitly confirmed failed-web-question replay is bounded to 300 seconds, preserves the original
 actor's current access, executes only replay-safe built-ins, and never modifies the saved run or delivers
 an answer. Only fixed diagnostic metadata and counts, including whether a bar dataset was produced, are printed.
-For a screenshot without a run URL, `Inspect` with run ID `recent` reports at most ten failed runs
-from the past seven days in the selected workspace. Only opaque run references, timestamps, fixed
+For a screenshot or missing email reply without a run URL, `Inspect` with run ID `recent` reports
+at most ten failed web runs or email questions of any status from the past seven days in the selected
+workspace. Email answer delivery and sender-confirmation states are separate from model completion.
+It also reports the operator/workspace email policy, cached mailbox connection, at most three stored
+mailbox checkpoints, and current eligibility of at most twenty already-linked personal addresses.
+This performs existing profile/authorization checks, not Inbox reads, model calls, message ingestion,
+cursor updates, question replay or email delivery. Expired consent, disabled channels, missing links,
+rejected recipients and incomplete diagnostic coverage remain explicit. Only opaque run references, timestamps, fixed
 failure categories, bounded stage counts and safe HTTP status are printed; questions, actors,
 source content and generated answers are never published. `recent` cannot be used with `Replay`.
 The Azure diagnostic workflow's optional `ask_run_id` looks up that opaque reference in the app's

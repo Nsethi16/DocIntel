@@ -34,6 +34,7 @@
     <Compile Include="..\..\src\DocIntel.Api\Workers\ProviderStartupCheck.cs" Link="Workers\ProviderStartupCheck.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Http\ContainerAppsIngressExtensions.cs" Link="Http\ContainerAppsIngressExtensions.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\AskAiRunDiagnostic.cs" Link="Diagnostics\AskAiRunDiagnostic.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Diagnostics\EmailChannelDiagnostic.cs" Link="Diagnostics\EmailChannelDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\AskAiDataDiagnostic.cs" Link="Diagnostics\AskAiDataDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\DocumentJobDiagnostic.cs" Link="Diagnostics\DocumentJobDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\ProcessingAcceptanceDiagnostic.cs" Link="Diagnostics\ProcessingAcceptanceDiagnostic.cs" />

@@ -208,13 +208,23 @@ if (askContractMode)
 }
 if (diagnosticMode)
 {
+    var tenantId = builder.Configuration["diagnose-tenant"] ?? String.Empty;
+    var runId = builder.Configuration["diagnose-ask-run"] ?? String.Empty;
+    var replay = String.Equals(builder.Configuration["diagnose-replay"], "true", StringComparison.Ordinal);
+    var emailResult = runId == "recent" && !replay
+        ? await EmailChannelDiagnostic.ExecuteAsync(
+            tenantId, app.Services.GetRequiredService<DocIntel.Core.Channels.EmailChannelOptions>(),
+            app.Services.GetRequiredService<DocIntel.Core.Harness.IHarnessStore>(),
+            app.Services.GetService<IPersonalEmailStateStore>(),
+            app.Services.GetService<DocIntel.Core.Authorization.IAssignedEmailAuthorization>(),
+            app.Services.GetService<DocIntel.Core.Channels.IMailboxClient>(), Console.Out)
+        : 0;
     Environment.ExitCode = await AskAiRunDiagnostic.ExecuteAsync(
-        builder.Configuration["diagnose-tenant"] ?? String.Empty,
-        builder.Configuration["diagnose-ask-run"] ?? String.Empty,
-        String.Equals(builder.Configuration["diagnose-replay"], "true", StringComparison.Ordinal),
+        tenantId, runId, replay,
         app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.IAskAiRunStore>(),
         app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.AskAiOrchestrator>(),
         Console.Out);
+    if (emailResult != 0) Environment.ExitCode = emailResult;
     await app.DisposeAsync();
     return;
 }

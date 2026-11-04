@@ -1,6 +1,8 @@
 using System.Text.Json;
+using DocIntel.Api.Channels;
 using DocIntel.Api.Diagnostics;
 using DocIntel.Core.Authorization;
+using DocIntel.Core.Channels;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
@@ -126,6 +128,92 @@ public sealed class AskAiDiagnosticTests
         // Assert
         Assert.Equal(String.Empty, output.ToString());
         store.VerifyNoOtherCalls();
+        client.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData(JobStatus.Queued, ChannelDeliveryStatus.Pending)]
+    [InlineData(JobStatus.Running, ChannelDeliveryStatus.Pending)]
+    [InlineData(JobStatus.Completed, ChannelDeliveryStatus.Sent)]
+    [InlineData(JobStatus.Completed, ChannelDeliveryStatus.OutcomeUnknown)]
+    [InlineData(JobStatus.Failed, ChannelDeliveryStatus.Failed)]
+    public async Task Recent_Reports_Email_Execution_And_Delivery_Separately_Without_Replay(
+        JobStatus status, ChannelDeliveryStatus deliveryStatus)
+    {
+        // Arrange
+        var source = EmailSource(status, deliveryStatus);
+        var original = JsonSerializer.Serialize(source);
+        var store = new Mock<IAskAiRunStore>(MockBehavior.Strict);
+        store.Setup(service => service.ListRunsByTenantAsync("tenant", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([source]);
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+        using var output = new StringWriter();
+
+        // Act
+        var result = await AskAiRunDiagnostic.ExecuteAsync("tenant", "recent", false, store.Object,
+            Orchestrator(client, Access(DocumentAccessScope.Unrestricted)), output);
+
+        // Assert
+        Assert.Equal(0, result);
+        Assert.Contains("\"phase\":\"Email\",\"stage\":\"AnswerDelivery\"", output.ToString());
+        Assert.Contains($"\"status\":\"{deliveryStatus}\"", output.ToString());
+        Assert.Contains($"\"phase\":\"Stored\",\"runId\":\"{source.RunId}\"", output.ToString());
+        Assert.Contains($"\"status\":\"{status}\"", output.ToString());
+        Assert.DoesNotContain("private", output.ToString());
+        Assert.Equal(original, JsonSerializer.Serialize(source));
+        client.VerifyNoOtherCalls();
+        store.Verify(service => service.ListRunsByTenantAsync("tenant", It.IsAny<CancellationToken>()), Times.Once);
+        store.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Recent_Reports_Confirmation_And_Checkpoint_Metadata_Without_Exposing_Their_Contents()
+    {
+        // Arrange
+        var source = EmailSource(JobStatus.AwaitingConfirmation, null);
+        var checkpoint = new AskAiRun
+        {
+            RunId = "mailbox-checkpoint-" + new string('A', 64),
+            TenantId = "tenant", Question = "private-checkpoint", Status = JobStatus.Completed,
+            MailboxContinuation = "https://private-continuation.example.test"
+        };
+        var store = new Mock<IAskAiRunStore>(MockBehavior.Strict);
+        store.Setup(service => service.ListRunsByTenantAsync("tenant", It.IsAny<CancellationToken>()))
+            .ReturnsAsync([source, checkpoint]);
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+        using var output = new StringWriter();
+
+        // Act
+        var result = await AskAiRunDiagnostic.ExecuteAsync("tenant", "recent", false, store.Object,
+            Orchestrator(client, Access(DocumentAccessScope.Unrestricted)), output);
+
+        // Assert
+        Assert.Equal(0, result);
+        Assert.Contains("\"stage\":\"MailboxCheckpoint\"", output.ToString());
+        Assert.Contains("\"status\":\"Tracking\",\"createdAtUtc\":", output.ToString());
+        Assert.Contains("\"stage\":\"SenderConfirmation\"", output.ToString());
+        Assert.Contains("\"status\":\"AwaitingConfirmation\"", output.ToString());
+        Assert.DoesNotContain("private", output.ToString());
+        client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task A_Failed_Email_Can_Be_Inspected_But_Cannot_Be_Replayed()
+    {
+        // Arrange
+        var source = EmailSource(JobStatus.Failed, ChannelDeliveryStatus.Pending);
+        var store = Store(source);
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+        using var output = new StringWriter();
+
+        // Act
+        var result = await AskAiRunDiagnostic.ExecuteAsync("tenant", source.RunId, true, store.Object,
+            Orchestrator(client, Access(DocumentAccessScope.Unrestricted)), output);
+
+        // Assert
+        Assert.Equal(2, result);
+        Assert.Contains("\"status\":\"Refused\"", output.ToString());
+        Assert.DoesNotContain("private", output.ToString());
         client.VerifyNoOtherCalls();
     }
 
@@ -256,6 +344,27 @@ public sealed class AskAiDiagnosticTests
         Status = JobStatus.Failed,
         ErrorCode = "ExecutionFailed",
         CreatedAtUtc = createdAtUtc ?? DateTimeOffset.UtcNow
+    };
+
+    private static AskAiRun EmailSource(JobStatus status, ChannelDeliveryStatus? deliveryStatus) => new()
+    {
+        RunId = "mail-" + new string('A', 64),
+        TenantId = "tenant",
+        Actor = new ActorIdentity(Guid.NewGuid(), Guid.NewGuid()),
+        Question = "private-question",
+        Status = status,
+        ErrorCode = status == JobStatus.Failed ? "ExecutionFailed" : null,
+        ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Email },
+        PendingEmail = new PendingEmailQuestion
+        {
+            Profile = "private-profile", Sender = "private@example.test", MessageId = "private-message",
+            ExpiresAtUtc = DateTimeOffset.UtcNow.AddHours(1), ChallengeStatus = ChannelDeliveryStatus.Sent
+        },
+        ChannelDelivery = deliveryStatus is null ? null : new ChannelDelivery
+        {
+            Transport = "Email", Profile = "private-profile", DestinationId = "private@example.test",
+            MessageId = "private-message", Status = deliveryStatus.Value
+        }
     };
 
     private static Mock<IAskAiRunStore> Store(AskAiRun source)
