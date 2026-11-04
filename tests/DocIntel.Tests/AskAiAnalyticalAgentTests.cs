@@ -23,6 +23,15 @@ public sealed class AskAiAnalyticalAgentTests
             ("Contoso", "100.25", "USD", "2026-01-01"),
             ("Contoso", "50.50", "USD", "2026-01-02"),
             (singleCustomer ? "Contoso" : "Woodgrove", "300.00", "USD", "2026-01-03"));
+        for (var number = 0; number < fixture.Request.Rows.Count; number++)
+        {
+            var row = fixture.Request.Rows[number];
+            fixture.Request.Rows[number] = new()
+            {
+                EvidenceId = row.EvidenceId, Unit = row.Unit, Cells = row.Cells,
+                SourceQuote = "The model rephrased this record instead of copying a paragraph."
+            };
+        }
         var jobs = new InMemoryJobStore();
         var index = 0;
         foreach (var source in fixture.Evidence.Values)

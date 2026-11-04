@@ -51,7 +51,9 @@ public static class AskAiRunDiagnostic
         {
             await orchestrator.ExecuteRunAsync(preview, onStepProgress: (run, _) =>
                 WriteAnalysisRejectionAsync(output, run.Steps.LastOrDefault()), cancellationToken: deadline.Token);
-            var code = preview.Analyses.Any(analysis => analysis.Visualization == "bar") ? "None" : "ChartNotProduced";
+            var code = preview.Analyses.Any(analysis => analysis.Visualization == "bar") &&
+                preview.EmailHtmlBody?.Contains("aria-label=\"Bar chart\"", StringComparison.Ordinal) == true
+                ? "None" : "ChartNotProduced";
             await WriteAsync(output, "EmailPreview", preview, code);
             return code == "None" ? 0 : 1;
         }

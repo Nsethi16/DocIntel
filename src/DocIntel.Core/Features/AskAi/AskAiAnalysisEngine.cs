@@ -19,6 +19,7 @@ public static class AskAiAnalysisEngine
             "Aggregation and charts require compatible grouping, date and numeric columns." => "AnalysisGrouping",
             "Each record requires inspected evidence, an exact source quote and declared cells." => "AnalysisRecord",
             "A record quote must identify one occurrence in inspected original text." => "AnalysisQuote",
+            "The record values do not identify a unique bounded span in inspected original text." => "AnalysisQuote",
             "Use an explicit source-supported unit; ambiguous currency symbols cannot be aggregated." => "AnalysisUnit",
             "Every supplied cell must occur in that record's original-source quote." => "AnalysisCell",
             "The record unit and unit cell must agree." => "AnalysisUnitConflict",
@@ -68,20 +69,29 @@ public static class AskAiAnalysisEngine
         var seen = new HashSet<string>(StringComparer.Ordinal);
         var duplicates = 0;
         var missing = 0;
+        var locatedSourceSpan = false;
         var allEvidence = new HashSet<string>(StringComparer.Ordinal);
         foreach (var row in request.Rows)
         {
             if (row is null || !evidence.TryGetValue(row.EvidenceId, out var source) ||
-                String.IsNullOrWhiteSpace(row.SourceQuote) || row.SourceQuote.Length > 2_000 ||
+                row.SourceQuote is null || row.SourceQuote.Length > 2_000 ||
                 row.Cells is null || row.Cells.Keys.Any(key => !request.Columns.Exists(column => column.Key == key)))
                 throw new ArgumentException("Each record requires inspected evidence, an exact source quote and declared cells.");
             var quote = Normalize(row.SourceQuote);
             var text = Normalize(source.SourceText);
-            var quoteOffset = text.IndexOf(quote, StringComparison.Ordinal);
-            if (quoteOffset < 0 || text.IndexOf(quote, quoteOffset + 1, StringComparison.Ordinal) >= 0)
-                throw new ArgumentException("A record quote must identify one occurrence in inspected original text.");
             var rawUnit = String.IsNullOrWhiteSpace(row.Unit) ? row.Cells.GetValueOrDefault("unit") : row.Unit;
             var unit = Normalize(rawUnit ?? String.Empty);
+            var quoteOffset = quote.Length == 0 ? -1 : text.IndexOf(quote, StringComparison.Ordinal);
+            if (quoteOffset < 0)
+            {
+                if (!TryLocateSourceSpan(text, row, request.Columns, unit, out quote))
+                    throw new ArgumentException(
+                        "The record values do not identify a unique bounded span in inspected original text.");
+                quoteOffset = text.IndexOf(quote, StringComparison.Ordinal);
+                locatedSourceSpan = true;
+            }
+            if (text.IndexOf(quote, quoteOffset + 1, StringComparison.Ordinal) >= 0)
+                throw new ArgumentException("A record quote must identify one occurrence in inspected original text.");
             if (unit.Length > 64 || unit is "$" or "\u20ac" or "\u00a3" ||
                 unit.Length > 0 && !Regex.IsMatch(quote,
                     $@"(?<!\p{{L}}){Regex.Escape(unit)}(?![\p{{L}}\p{{N}}])",
@@ -135,6 +145,9 @@ public static class AskAiAnalysisEngine
         {
             "Computed from cited, inspected source records; this is not a certified complete-workspace total."
         };
+        if (locatedSourceSpan)
+            notes.Add("Source spans were located from exact field values in inspected original text; " +
+                "model-rewritten paragraphs were not accepted as quotations.");
         notes.AddRange(request.Columns.Where(column => column.Kind == "date")
             .Select(column => $"Date parsing: {column.Label}: {column.DateFormat}."));
         notes.AddRange(request.Columns.Where(column => column.Kind == "number")
@@ -281,6 +294,46 @@ public static class AskAiAnalysisEngine
     }
 
     private static string Normalize(string value) => Regex.Replace(value, @"\s+", " ").Trim();
+
+    private static bool TryLocateSourceSpan(
+        string text, AskAiAnalysisInputRow row, IReadOnlyList<AskAiAnalysisInputColumn> columns,
+        string unit, out string quote)
+    {
+        quote = String.Empty;
+        var start = text.Length;
+        var end = 0;
+        var hasUniqueTextAnchor = false;
+        foreach (var column in columns)
+        {
+            if (!row.Cells.TryGetValue(column.Key, out var supplied) || String.IsNullOrWhiteSpace(supplied)) continue;
+            var raw = Normalize(supplied);
+            if (raw.Length > 500 || !ContainsValue(text, raw, column.Kind == "number", unit)) return false;
+            if (column.Key == "unit" || String.Equals(raw, unit, StringComparison.Ordinal)) continue;
+            var index = text.IndexOf(raw, StringComparison.OrdinalIgnoreCase);
+            if (index < 0) return false;
+            var repeated = text.IndexOf(raw, index + 1, StringComparison.OrdinalIgnoreCase) >= 0;
+            if (column.Kind == "number" && repeated) return false;
+            if (column.Kind == "text" && !repeated) hasUniqueTextAnchor = true;
+            start = Math.Min(start, index);
+            end = Math.Max(end, index + raw.Length);
+        }
+        if (!hasUniqueTextAnchor || end <= start) return false;
+        // Include only an adjacent unit, never a currency from a different record elsewhere in the excerpt.
+        if (unit.Length is > 0 and <= 64)
+        {
+            var right = end;
+            while (right < text.Length && Char.IsWhiteSpace(text[right])) right++;
+            if (text.AsSpan(right).StartsWith(unit.AsSpan(), StringComparison.Ordinal)) end = right + unit.Length;
+            var left = start;
+            while (left > 0 && Char.IsWhiteSpace(text[left - 1])) left--;
+            if (left >= unit.Length &&
+                text.AsSpan(left - unit.Length, unit.Length).SequenceEqual(unit.AsSpan()))
+                start = left - unit.Length;
+        }
+        if (end - start > 2_000) return false;
+        quote = text[start..end];
+        return true;
+    }
 
     private static bool ContainsValue(string text, string value, bool numeric, string unit)
     {

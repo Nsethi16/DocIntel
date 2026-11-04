@@ -519,6 +519,11 @@ Failed web responses retain their run reference and saved timestamp with a prote
 Provider errors expose only allowlisted HTTP status/code/schema-keyword/parameter diagnostics, never raw
 provider messages, requests or document content. A saved error remains historical; viewing details only
 polls that run and never resubmits the question.
+Analytical records may omit `sourceQuote`: the server locates a verbatim span using exact raw cell
+values in that same inspected excerpt, with a unique non-unit text anchor, unambiguous numeric values
+and a 2,000-character context bound. It never accepts a rewritten model paragraph as source evidence.
+Signs, formatting, units, missing values, record deduplication and source citations retain their
+existing checks. Repeated values need an explicit, unique verbatim quote to disambiguate them.
 The manual Ask AI diagnostic workflow also has a `Contract` mode. It requires the existing
 `Readiness:ProbeModelsOnStartup` live-probing opt-in, sends at most four tiny synthetic requests
 to compare plain, JSON-only, tools-only and combined contracts through the production model adapter,

@@ -20,6 +20,80 @@ public sealed class AskAiAnalysisTests
     }
 
     [Theory]
+    [InlineData("")]
+    [InlineData("Contoso's invoice dated 2026-01-01 is for 100.00 USD.")]
+    public void Exact_Source_Values_Can_Locate_Their_Own_Verbatim_Span_Without_A_Model_Retyped_Paragraph(string hint)
+    {
+        // Arrange
+        var fixture = Invoices("sum", "bar", "supplier", ("Contoso", "100.00", "USD", "2026-01-01"));
+        var row = fixture.Request.Rows[0];
+        fixture.Request.Rows[0] = new()
+        {
+            EvidenceId = row.EvidenceId, SourceQuote = hint, Cells = row.Cells, Unit = row.Unit
+        };
+
+        // Act
+        var result = AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence);
+
+        // Assert
+        Assert.Equal("bar", result.Visualization);
+        Assert.Equal(100m, Assert.Single(result.Rows).Cells["value"]);
+        Assert.Equal(100m, Assert.Single(result.Rows).Cells["sharePercent"]);
+        Assert.Contains(result.Notes, note => note.Contains("exact field values"));
+        Assert.Equal(["e1"], result.EvidenceIds);
+    }
+
+    [Theory]
+    [InlineData("credit")]
+    [InlineData("substring")]
+    [InlineData("wrong-unit")]
+    [InlineData("repeated-number")]
+    [InlineData("distant")]
+    public void Located_Spans_Still_Reject_Lost_Signs_Substrings_Wrong_Units_Ambiguity_And_Distant_Records(string issue)
+    {
+        // Arrange
+        var fixture = Invoices("sum", "bar", "supplier",
+            ("Contoso", issue == "credit" ? "-100.00" : issue == "substring" ? "10,000.00" : "100.00",
+                "EUR", "2026-01-01"));
+        var row = fixture.Request.Rows[0];
+        row.Cells["amount"] = issue == "substring" ? "10" : "100.00";
+        if (issue == "wrong-unit")
+            fixture.Evidence["e1"] = fixture.Evidence["e1"] with
+                { SourceText = fixture.Evidence["e1"].SourceText + "\nOther invoice uses USD." };
+        if (issue == "repeated-number")
+            fixture.Evidence["e1"] = fixture.Evidence["e1"] with
+                { SourceText = fixture.Evidence["e1"].SourceText + "\nUnrelated amount 100.00 EUR." };
+        if (issue == "distant")
+            fixture.Evidence["e1"] = fixture.Evidence["e1"] with
+                { SourceText = fixture.Evidence["e1"].SourceText.Replace(
+                    "; Amount", "; " + new string('x', 2_100) + " Amount", StringComparison.Ordinal) };
+        fixture.Request.Rows[0] = new()
+        {
+            EvidenceId = row.EvidenceId, SourceQuote = String.Empty, Cells = row.Cells,
+            Unit = issue == "wrong-unit" ? "USD" : "EUR"
+        };
+
+        // Act / Assert
+        Assert.Throws<ArgumentException>(() => AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence));
+    }
+
+    [Fact]
+    public void A_Located_Numeric_Span_Requires_A_Unique_Nonunit_Text_Anchor()
+    {
+        // Arrange
+        var fixture = Invoices("sum", "bar", "supplier", ("Contoso", "100.00", "USD", "2026-01-01"));
+        var row = fixture.Request.Rows[0];
+        row.Cells["supplier"] = null;
+        fixture.Request.Rows[0] = new()
+        {
+            EvidenceId = row.EvidenceId, SourceQuote = String.Empty, Cells = row.Cells, Unit = row.Unit
+        };
+
+        // Act / Assert
+        Assert.Throws<ArgumentException>(() => AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence));
+    }
+
+    [Theory]
     [InlineData("-100.00")]
     [InlineData("(100.00)")]
     [InlineData("- 100.00")]

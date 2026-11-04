@@ -88,7 +88,7 @@ public sealed class AskAiAnalysisInputColumn
     public string DateFormat { get; init; } = "yyyy-MM-dd";
 }
 
-/// <summary>Raw source values must occur within this exact inspected source quotation.</summary>
+/// <summary>Exact raw values bind to one bounded inspected source span; an optional quote can disambiguate repeats.</summary>
 public sealed class AskAiAnalysisInputRow
 {
     public string EvidenceId { get; init; } = String.Empty;

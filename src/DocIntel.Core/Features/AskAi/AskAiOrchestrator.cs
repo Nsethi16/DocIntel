@@ -1045,9 +1045,12 @@ public sealed class AskAiOrchestrator
                 Supply 1-8 columns with unique lowercase keys; kind text/number/date; numberFormat
                 dot-decimal/comma-decimal; dateFormat yyyy-MM-dd, dd/MM/yyyy, MM/dd/yyyy, dd-MM-yyyy,
                 MM-dd-yyyy, d MMM yyyy or d MMMM yyyy.
-                Each of at most 100 rows needs evidenceId, an exact sourceQuote identifying that record,
-                cells with raw strings copied from that quote (or null for missing), and an explicit unit
-                copied within that quote for numeric aggregation. Never infer USD from '$'.
+                Each of at most 100 rows needs evidenceId, exact raw cells from that inspected original text
+                (or null for missing), and an explicit source-supported unit for numeric aggregation.
+                Prefer sourceQuote="" to let the server locate a bounded verbatim span from those exact values.
+                Include a unique text anchor such as the source quote/invoice ID. Repeated numeric values need
+                a specific verbatim sourceQuote to disambiguate the record; do not rewrite a paragraph as a quote.
+                Never infer USD from '$'.
                 Include a source-record identifier column when otherwise identical records are distinct.
                 groupBy names a column; valueColumn names a numeric column; dateBucket is none/month/quarter/year.
                 count needs no valueColumn or unit. Sum/count results include same-unit sharePercent values.
