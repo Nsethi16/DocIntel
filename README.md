@@ -538,6 +538,12 @@ cursor updates, question replay or email delivery. Expired consent, disabled cha
 rejected recipients and incomplete diagnostic coverage remain explicit. Only opaque run references, timestamps, fixed
 failure categories, bounded stage counts and safe HTTP status are printed; questions, actors,
 source content and generated answers are never published. `recent` cannot be used with `Replay`.
+For a delivered email whose chart is missing, `EmailPreview` with that exact opaque `mail-` run ID
+and explicit confirmation `PREVIEW` repeats only the read-only analysis in memory under the original
+actor's current access and email policy. It requires live probing and no extension tools. It never
+queues, saves, sends or resends a question, and prints only counts and fixed analytical rejection
+categories; a missing bar dataset is an explicit failure, not a successful chart. Existing failed-web
+`Replay` restrictions remain unchanged.
 The Azure diagnostic workflow's optional `ask_run_id` looks up that opaque reference in the app's
 linked log workspace over the past day, including prior revisions. It prints only allowlisted
 exception types/codes/sites, never raw log messages; missing logs or lookup failure are explicit.

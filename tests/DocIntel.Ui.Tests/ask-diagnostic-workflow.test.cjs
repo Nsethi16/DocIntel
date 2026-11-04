@@ -37,7 +37,7 @@ test('recent failure references can only be inspected and cannot authorize a rep
 });
 
 test('contract probing is a distinct document-free mode and does not weaken saved-question replay approval', () => {
-  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance\]/);
+  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview\]/);
   assert.match(workflow, /Contract checks do not accept saved run identifiers/);
   assert.match(workflow, /"--diagnose-ask-contract", "true"/);
   assert.match(workflow, /"--diagnose-ask-synthetic", "true"/);
@@ -47,6 +47,14 @@ test('contract probing is a distinct document-free mode and does not weaken save
   assert.match(program, /startupReadiness\.ProbeModelsOnStartup/);
   const contract = program.indexOf('if (askContractMode)', program.indexOf('var app = builder.Build()'));
   assert.ok(contract > 0 && contract < program.indexOf('app.UseDocIntelResponseHeaders()'));
+});
+
+test('email analysis preview is explicitly confirmed and never schedules a delivery', () => {
+  assert.match(workflow, /EmailPreview requires PREVIEW and one opaque email run ID/);
+  assert.match(workflow, /"--diagnose-email-preview", os.environ\["DIAGNOSTIC_RUN"\]/);
+  assert.match(workflow, /"--diagnose-confirmation", "PREVIEW"/);
+  assert.match(program, /ExecuteEmailPreviewAsync/);
+  assert.match(program, /builder\.Configuration\["diagnose-confirmation"\] == "PREVIEW"/);
 });
 
 test('document lookup uses opaque references and translation probing needs its own explicit confirmation', () => {

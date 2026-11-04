@@ -11,6 +11,57 @@ public static class AskAiRunDiagnostic
 {
     private const string Prefix = "DOCINTEL_DIAGNOSTIC ";
 
+    /// <summary>Explicit in-memory analysis preview; preserves the email actor's current access and never sends or saves.</summary>
+    public static async Task<int> ExecuteEmailPreviewAsync(
+        string tenantId, string runId, bool confirmed, bool liveProbingEnabled,
+        IAskAiRunStore store, AskAiOrchestrator orchestrator, TextWriter output,
+        CancellationToken cancellationToken = default)
+    {
+        if (!confirmed || !liveProbingEnabled || !PersonalEmailState.ValidTenant(tenantId) ||
+            !PersonalEmailState.ValidRun(runId))
+        {
+            await output.WriteLineAsync(Prefix +
+                """{"phase":"EmailPreview","status":"Refused","failureCode":"InvalidPreviewInput"}""");
+            return 2;
+        }
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(TimeSpan.FromSeconds(300));
+        var source = await store.GetRunAsync(tenantId, runId, deadline.Token);
+        if (source is null || source.TenantId != tenantId || source.RunId != runId ||
+            source.Status is not (JobStatus.Completed or JobStatus.Failed) || source.Actor is null ||
+            source.PendingEmail is not { } pending || source.ChannelDelivery is null ||
+            !(pending.AuthorizationMode == EmailAuthorizationMode.ApprovedUsers && pending.AssignedAtUtc is not null ||
+              pending.AuthorizationMode == EmailAuthorizationMode.ConfirmSender && pending.ConfirmedAtUtc is not null ||
+              pending.AuthorizationMode == EmailAuthorizationMode.TrustedInternal && pending.AuthenticatedAtUtc is not null) ||
+            source.ReplyChannel.ChannelType != AskAiChannelType.Email ||
+            !String.IsNullOrWhiteSpace(source.ReplyChannel.CallbackWebhookUrl) ||
+            !orchestrator.CanAutomaticallyReplay)
+        {
+            await output.WriteLineAsync(Prefix +
+                """{"phase":"EmailPreview","status":"Refused","failureCode":"PreviewSourceUnavailable"}""");
+            return 2;
+        }
+        var preview = new AskAiRun
+        {
+            RunId = Guid.NewGuid().ToString("N"), TenantId = tenantId, Actor = source.Actor,
+            Question = source.Question, PendingEmail = source.PendingEmail,
+            ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Email }
+        };
+        try
+        {
+            await orchestrator.ExecuteRunAsync(preview, onStepProgress: (run, _) =>
+                WriteAnalysisRejectionAsync(output, run.Steps.LastOrDefault()), cancellationToken: deadline.Token);
+            var code = preview.Analyses.Any(analysis => analysis.Visualization == "bar") ? "None" : "ChartNotProduced";
+            await WriteAsync(output, "EmailPreview", preview, code);
+            return code == "None" ? 0 : 1;
+        }
+        catch (Exception exception)
+        {
+            await WriteAsync(output, "EmailPreview", preview, AskAiFailureDiagnostics.GetCode(exception));
+            return 1;
+        }
+    }
+
     /// <summary>Inspects one/recent stored runs or replays an explicitly selected failed web question in memory.</summary>
     public static async Task<int> ExecuteAsync(string tenantId, string runId, bool replay,
         IAskAiRunStore store, AskAiOrchestrator orchestrator, TextWriter output,
@@ -139,7 +190,7 @@ public static class AskAiRunDiagnostic
             runId = run.RunId,
             createdAtUtc = run.CreatedAtUtc,
             completedAtUtc = run.CompletedAtUtc,
-            status = phase == "Replay" && failureCode != "None" ? "Failed" : run.Status.ToString(),
+            status = phase is "Replay" or "EmailPreview" && failureCode != "None" ? "Failed" : run.Status.ToString(),
             failureCode,
             httpStatus = run.ProviderFailure?.HttpStatus is >= 100 and <= 599 ? run.ProviderFailure.HttpStatus : null,
             lastStep = run.Steps.LastOrDefault()?.StepName is
@@ -152,6 +203,30 @@ public static class AskAiRunDiagnostic
             hasBarChart = run.Analyses.Any(analysis => analysis.Visualization == "bar"),
             matchedDocuments = run.DocumentsEvaluated,
             citations = run.Citations.Count
+        }));
+    }
+
+    private static Task WriteAnalysisRejectionAsync(TextWriter output, AskAiStepTrace? step)
+    {
+        var code = step?.Notes switch
+        {
+            "Analysis input rejected: AnalysisShape." => "AnalysisShape",
+            "Analysis input rejected: AnalysisColumns." => "AnalysisColumns",
+            "Analysis input rejected: AnalysisGrouping." => "AnalysisGrouping",
+            "Analysis input rejected: AnalysisRecord." => "AnalysisRecord",
+            "Analysis input rejected: AnalysisQuote." => "AnalysisQuote",
+            "Analysis input rejected: AnalysisUnit." => "AnalysisUnit",
+            "Analysis input rejected: AnalysisCell." => "AnalysisCell",
+            "Analysis input rejected: AnalysisUnitConflict." => "AnalysisUnitConflict",
+            "Analysis input rejected: AnalysisNumberFormat." => "AnalysisNumberFormat",
+            "Analysis input rejected: AnalysisOverflow." => "AnalysisOverflow",
+            "Analysis input rejected: AnalysisDateFormat." => "AnalysisDateFormat",
+            "Analysis input rejected: AnalysisInputRejected." => "AnalysisInputRejected",
+            _ => null
+        };
+        return code is null ? Task.CompletedTask : output.WriteLineAsync(Prefix + JsonSerializer.Serialize(new
+        {
+            phase = "Analysis", status = "Rejected", failureCode = code
         }));
     }
 }

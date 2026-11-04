@@ -13,14 +13,16 @@ namespace DocIntel.Tests;
 
 public sealed class AskAiAnalyticalAgentTests
 {
-    [Fact]
-    public async Task A_Complex_Question_Produces_Server_Computed_Charts_And_Resolved_Row_Citations()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_Complex_Question_Produces_Server_Computed_Charts_And_Resolved_Row_Citations(bool singleCustomer)
     {
         // Arrange
         var fixture = AskAiAnalysisTests.Invoices("sum", "bar", "supplier",
             ("Contoso", "100.25", "USD", "2026-01-01"),
             ("Contoso", "50.50", "USD", "2026-01-02"),
-            ("Woodgrove", "300.00", "USD", "2026-01-03"));
+            (singleCustomer ? "Contoso" : "Woodgrove", "300.00", "USD", "2026-01-03"));
         var jobs = new InMemoryJobStore();
         var index = 0;
         foreach (var source in fixture.Evidence.Values)
@@ -49,7 +51,7 @@ public sealed class AskAiAnalyticalAgentTests
                 using var computed = JsonSerializer.SerializeToDocument(result);
                 Assert.Equal("a1", computed.RootElement.GetProperty("analysisId").GetString());
                 return Response("""
-                    {"kind":"DocumentAnswer","answer":"Woodgrove has the higher inspected spend.",
+                    {"kind":"DocumentAnswer","answer":"The inspected supplier totals are shown below.",
                     "evidenceIds":["e1","e2","e3"],"analysisIds":["a1"]}
                     """);
             });
@@ -65,16 +67,20 @@ public sealed class AskAiAnalyticalAgentTests
         // Assert
         var analysis = Assert.Single(run.Analyses);
         Assert.Equal("bar", analysis.Visualization);
-        Assert.Equal(300m, analysis.Rows[0].Cells["value"]);
-        Assert.Equal(150.75m, analysis.Rows[1].Cells["value"]);
-        Assert.Equal(new[] { 1, 2 }, analysis.Rows[1].CitationNumbers);
+        Assert.Equal(singleCustomer ? 1 : 2, analysis.Rows.Count);
+        Assert.Equal(singleCustomer ? 450.75m : 300m, analysis.Rows[0].Cells["value"]);
+        if (!singleCustomer)
+        {
+            Assert.Equal(150.75m, analysis.Rows[1].Cells["value"]);
+            Assert.Equal(new[] { 1, 2 }, analysis.Rows[1].CitationNumbers);
+        }
         Assert.Equal(3, run.Citations.Count);
         Assert.Equal(3, run.SourceVersions.Count);
         Assert.Equal(3, analysis.Coverage.DocumentsInspected);
-        Assert.Contains("150.75", run.EmailHtmlBody);
+        Assert.Contains(singleCustomer ? "450.75" : "150.75", run.EmailHtmlBody);
         Assert.Contains("aria-label=\"Bar chart\"", run.EmailHtmlBody);
         Assert.Contains("<th scope=\"col\"", run.EmailHtmlBody);
-        Assert.Contains("33.44%", run.EmailHtmlBody);
+        Assert.Contains(singleCustomer ? "100.00%" : "33.44%", run.EmailHtmlBody);
         Assert.DoesNotContain("Compare supplier spend.", run.EmailHtmlBody);
         Assert.DoesNotContain("Full tables and visualizations", run.EmailHtmlBody);
         Assert.Contains("Full tables", run.TeamsAdaptiveCardJson);

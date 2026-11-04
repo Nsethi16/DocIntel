@@ -14,7 +14,7 @@ on:
       mode:
         description: Choose saved diagnostics, synthetic checks, or explicit operator-only CustomerAcceptance over uploaded QA documents.
         type: choice
-        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance]
+        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview]
         default: Inspect
       customer_case:
         description: CustomerAcceptance only. One bounded case per dispatch. submit-documents queues fixed embedded B-G PDFs through the backend, not the browser; documents is read-only.
@@ -22,7 +22,7 @@ on:
         options: [documents, submit-documents, ask-termination, ask-analysis, ask-followup, ask-no-evidence, ask-injection, ask-long-tail, schema-signature, schema-price, schema-long]
         default: documents
       confirmation:
-        description: TEST authorizes CustomerAcceptance, REPLAY a replay, PROBE a translation probe, REPROCESS one failed upload retry. Provider usage can incur charges.
+        description: TEST authorizes CustomerAcceptance, REPLAY a failed-web replay, PREVIEW an in-memory email analysis (never sends), PROBE translation, REPROCESS an upload retry. Provider usage can incur charges.
         type: string
         default: ''
       translation_variant:
@@ -68,6 +68,11 @@ jobs:
           if ($env:DIAGNOSTIC_MODE -eq 'Replay' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'REPLAY') {
             throw 'Replay requires the exact confirmation REPLAY.'
           }
+          if ($env:DIAGNOSTIC_MODE -eq 'EmailPreview' -and
+              ($env:DIAGNOSTIC_CONFIRMATION -cne 'PREVIEW' -or
+               $env:DIAGNOSTIC_RUN -cnotmatch '^mail-[A-Fa-f0-9]{64}$')) {
+            throw 'EmailPreview requires PREVIEW and one opaque email run ID; it never sends or saves a run.'
+          }
           if ($env:DIAGNOSTIC_MODE -eq 'TranslationProbe' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'PROBE') {
             throw 'TranslationProbe requires the exact confirmation PROBE.'
           }
@@ -85,10 +90,11 @@ jobs:
             $env:TRANSLATION_VARIANT -eq 'WithoutGlossary' -and $env:DIAGNOSTIC_MODE -ne 'TranslationProbe') {
             throw 'A glossary comparison requires an explicit TranslationProbe.'
           }
-          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe', 'DocumentReprocess', 'ProcessingSynthetic', 'TranslationSynthetic', 'CustomerAcceptance')) { throw 'Invalid diagnostic mode.' }
+          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe', 'DocumentReprocess', 'ProcessingSynthetic', 'TranslationSynthetic', 'CustomerAcceptance', 'EmailPreview')) { throw 'Invalid diagnostic mode.' }
           if ($env:DIAGNOSTIC_TENANT -notmatch '^[a-z0-9][a-z0-9-]{0,127}$' -or
             ($env:DIAGNOSTIC_MODE -notin @('Contract', 'Synthetic', 'ProcessingSynthetic', 'TranslationSynthetic') -and
              $env:DIAGNOSTIC_RUN -notmatch '^[a-fA-F0-9]{32}$' -and
+             -not ($env:DIAGNOSTIC_MODE -eq 'EmailPreview' -and $env:DIAGNOSTIC_RUN -cmatch '^mail-[A-Fa-f0-9]{64}$') -and
              -not ($env:DIAGNOSTIC_MODE -eq 'Document' -and $env:DIAGNOSTIC_RUN -match '^[a-fA-F0-9]{64}$') -and
              -not ($env:DIAGNOSTIC_MODE -eq 'Inspect' -and $env:DIAGNOSTIC_RUN -ceq 'recent'))) {
             throw 'Invalid tenant/run identifiers.'
@@ -225,7 +231,13 @@ jobs:
           if not replicas:
               raise RuntimeError("The current revision has no active replica.")
           replay = "true" if os.environ["DIAGNOSTIC_MODE"] == "Replay" else "false"
-          if os.environ["DIAGNOSTIC_MODE"] == "CustomerAcceptance":
+          if os.environ["DIAGNOSTIC_MODE"] == "EmailPreview":
+              diagnostic = shlex.join([
+                  "dotnet", "/app/DocIntel.Api.dll",
+                  "--diagnose-email-preview", os.environ["DIAGNOSTIC_RUN"],
+                  "--diagnose-confirmation", "PREVIEW",
+                  "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"]])
+          elif os.environ["DIAGNOSTIC_MODE"] == "CustomerAcceptance":
               diagnostic = shlex.join([
                   "dotnet", "/app/DocIntel.Api.dll",
                   "--diagnose-customer-acceptance", os.environ["DIAGNOSTIC_RUN"],
@@ -293,12 +305,12 @@ jobs:
               records.append(safe)
           if not records:
               raise RuntimeError("The runtime diagnostic returned no verified result. Raw process output was not published.")
-          expected_phase = os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance") else (
+          expected_phase = os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance", "EmailPreview") else (
               "Replay" if replay == "true" else "Stored")
           if records[-1].get("phase") != expected_phase:
               raise RuntimeError("The requested diagnostic did not complete.")
           if records[-1].get("status") in ("Refused", "NotFound", "Pending") or (
-                  expected_phase in ("Data", "Replay", "Contract", "Synthetic", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance") and records[-1].get("status") == "Failed"):
+                  expected_phase in ("Data", "Replay", "Contract", "Synthetic", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance", "EmailPreview") and records[-1].get("status") == "Failed"):
               sys.exit(1)
           if expected_phase == "CustomerAcceptance" and (
                   result.returncode or records[-1].get("scenario") != "Summary" or

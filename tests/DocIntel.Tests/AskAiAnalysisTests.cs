@@ -5,6 +5,20 @@ namespace DocIntel.Tests;
 
 public sealed class AskAiAnalysisTests
 {
+    [Fact]
+    public void Rejected_Analysis_Diagnostics_Never_Expose_Unexpected_Exception_Content()
+    {
+        // Arrange
+        var exception = new ArgumentException("private source excerpt or amount");
+
+        // Act
+        var code = AskAiAnalysisEngine.RejectionCode(exception);
+
+        // Assert
+        Assert.Equal("AnalysisInputRejected", code);
+        Assert.DoesNotContain("private", code);
+    }
+
     [Theory]
     [InlineData("-100.00")]
     [InlineData("(100.00)")]

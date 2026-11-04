@@ -10,6 +10,24 @@ public sealed record AskAiAnalysisEvidence(string SourceText, string DocumentIde
 /// <summary>Validates source-backed rows and computes bounded, unit-separated analytical results.</summary>
 public static class AskAiAnalysisEngine
 {
+    /// <summary>Fixed diagnostic categories only; exception messages and source values are never logged.</summary>
+    public static string RejectionCode(Exception exception) => exception is OverflowException ? "AnalysisOverflow" :
+        exception.Message switch
+        {
+            "Analysis requires a bounded title, supported operation, 1-8 columns and 1-100 rows." => "AnalysisShape",
+            "Analysis columns require unique safe keys, labels, types and explicit parsing formats." => "AnalysisColumns",
+            "Aggregation and charts require compatible grouping, date and numeric columns." => "AnalysisGrouping",
+            "Each record requires inspected evidence, an exact source quote and declared cells." => "AnalysisRecord",
+            "A record quote must identify one occurrence in inspected original text." => "AnalysisQuote",
+            "Use an explicit source-supported unit; ambiguous currency symbols cannot be aggregated." => "AnalysisUnit",
+            "Every supplied cell must occur in that record's original-source quote." => "AnalysisCell",
+            "The record unit and unit cell must agree." => "AnalysisUnitConflict",
+            "A numeric cell does not match its explicit decimal/grouping format." => "AnalysisNumberFormat",
+            "A numeric cell exceeds the supported decimal range." => "AnalysisOverflow",
+            "A date cell does not match its explicit date format." => "AnalysisDateFormat",
+            _ => "AnalysisInputRejected"
+        };
+
     private static readonly HashSet<string> Operations = ["rows", "sum", "average", "count", "min", "max", "outliers"];
     private static readonly HashSet<string> DateFormats =
         ["yyyy-MM-dd", "dd/MM/yyyy", "MM/dd/yyyy", "dd-MM-yyyy", "MM-dd-yyyy", "d MMM yyyy", "d MMMM yyyy"];

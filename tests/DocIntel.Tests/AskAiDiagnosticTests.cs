@@ -17,6 +17,101 @@ namespace DocIntel.Tests;
 public sealed class AskAiDiagnosticTests
 {
     [Theory]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    public async Task Email_Preview_Requires_Explicit_Confirmation_And_Live_Probing(bool confirmed, bool live)
+    {
+        // Arrange
+        var store = new Mock<IAskAiRunStore>(MockBehavior.Strict);
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+        using var output = new StringWriter();
+
+        // Act
+        var result = await AskAiRunDiagnostic.ExecuteEmailPreviewAsync(
+            "tenant", "mail-" + new string('A', 64), confirmed, live, store.Object,
+            Orchestrator(client, Access(DocumentAccessScope.Unrestricted)), output);
+
+        // Assert
+        Assert.Equal(2, result);
+        Assert.Contains("InvalidPreviewInput", output.ToString());
+        store.VerifyNoOtherCalls();
+        client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Email_Preview_Does_Not_Save_Or_Send_And_A_Missing_Chart_Is_Not_Success()
+    {
+        // Arrange
+        var source = EmailSource(JobStatus.Completed, ChannelDeliveryStatus.Sent);
+        source.PendingEmail!.ConfirmedAtUtc = DateTimeOffset.UtcNow;
+        var original = JsonSerializer.Serialize(source);
+        var store = Store(source);
+        var client = Client("""{"kind":"Conversation","answer":"Private model response.","evidenceIds":[]}""");
+        using var output = new StringWriter();
+
+        // Act
+        var result = await AskAiRunDiagnostic.ExecuteEmailPreviewAsync(
+            "tenant", source.RunId, true, true, store.Object,
+            Orchestrator(client, Access(DocumentAccessScope.Unrestricted)), output);
+
+        // Assert
+        Assert.Equal(1, result);
+        Assert.Contains("\"phase\":\"EmailPreview\"", output.ToString());
+        Assert.Contains("\"failureCode\":\"ChartNotProduced\"", output.ToString());
+        Assert.DoesNotContain("private", output.ToString(), StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(original, JsonSerializer.Serialize(source));
+        store.Verify(service => service.GetRunAsync("tenant", source.RunId, It.IsAny<CancellationToken>()), Times.Once);
+        store.VerifyNoOtherCalls();
+    }
+
+    [Theory]
+    [InlineData("unconfirmed")]
+    [InlineData("unfinished")]
+    [InlineData("extension")]
+    public async Task Email_Preview_Refuses_Unsafe_Or_Unfinished_Sources(string issue)
+    {
+        // Arrange
+        var source = EmailSource(issue == "unfinished" ? JobStatus.Queued : JobStatus.Completed,
+            ChannelDeliveryStatus.Sent);
+        if (issue != "unconfirmed") source.PendingEmail!.ConfirmedAtUtc = DateTimeOffset.UtcNow;
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+        var extension = new Mock<IAskAiToolProvider>(MockBehavior.Strict);
+        using var output = new StringWriter();
+
+        // Act
+        var result = await AskAiRunDiagnostic.ExecuteEmailPreviewAsync(
+            "tenant", source.RunId, true, true, Store(source).Object,
+            Orchestrator(client, Access(DocumentAccessScope.Unrestricted),
+                issue == "extension" ? [extension.Object] : []), output);
+
+        // Assert
+        Assert.Equal(2, result);
+        Assert.Contains("PreviewSourceUnavailable", output.ToString());
+        client.VerifyNoOtherCalls();
+        extension.VerifyNoOtherCalls();
+    }
+
+    [Fact]
+    public async Task Email_Preview_Still_Requires_The_Original_Actors_Current_Document_Access()
+    {
+        // Arrange
+        var source = EmailSource(JobStatus.Completed, ChannelDeliveryStatus.Sent);
+        source.PendingEmail!.ConfirmedAtUtc = DateTimeOffset.UtcNow;
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+        using var output = new StringWriter();
+
+        // Act
+        var result = await AskAiRunDiagnostic.ExecuteEmailPreviewAsync(
+            "tenant", source.RunId, true, true, Store(source).Object,
+            Orchestrator(client, Access(DocumentAccessScope.Denied)), output);
+
+        // Assert
+        Assert.Equal(1, result);
+        Assert.Contains("AccessRevoked", output.ToString());
+        client.VerifyNoOtherCalls();
+    }
+
+    [Theory]
     [InlineData("""{"kind":"DocumentAnswer","answer":"Unsupported claim.","evidenceIds":[]}""", "MissingEvidence")]
     [InlineData("""{"kind":"NoEvidence","answer":"No matches [1].","evidenceIds":[]}""", "CitationMismatch")]
     [InlineData("""{"kind":"Conversation","answer":"","evidenceIds":[]}""", "InvalidModelAnswer")]

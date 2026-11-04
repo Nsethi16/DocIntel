@@ -964,10 +964,12 @@ public sealed class AskAiOrchestrator
             }
             catch (Exception exception) when (exception is ArgumentException or OverflowException)
             {
+                var code = AskAiAnalysisEngine.RejectionCode(exception);
                 run.Steps.Add(new AskAiStepTrace("analyze_evidence", null, timer.Elapsed.TotalMilliseconds,
-                    "Analysis input was rejected. No calculated result was published."));
+                    "Analysis input rejected: " + code + "."));
+                if (onStepProgress is not null) await onStepProgress(run, ct);
                 return new { error = exception is OverflowException
-                    ? "The calculation exceeds the supported decimal range." : exception.Message };
+                    ? "The calculation exceeds the supported decimal range." : exception.Message, failureCode = code };
             }
         }
 
@@ -1072,6 +1074,7 @@ public sealed class AskAiOrchestrator
                 Keep narrative explanations and material assumptions, missing data and limitations in answer.
                 Honor the requested grouping: "by customer" means groupBy the customer column,
                 not a separate category for each quote. Retain quote identifiers in source rows for deduplication.
+                A single customer is a valid one-bar chart; do not replace it with a description or an offer.
                 """ : String.Empty),
             Tools = tools.Select(tool => (AITool)new GuardedFunction(
                 tool, CheckBudget, exception => retrievalFailure = exception,

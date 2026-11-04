@@ -17,13 +17,14 @@ var isolatedDiagnosticMode = directoryDiagnosticMode || nativeDecisionDiagnostic
 var askContractMode = args.Contains("--diagnose-ask-contract", StringComparer.Ordinal);
 var askSyntheticMode = args.Contains("--diagnose-ask-synthetic", StringComparer.Ordinal);
 var askDataMode = args.Contains("--diagnose-ask-data", StringComparer.Ordinal);
+var emailPreviewMode = args.Contains("--diagnose-email-preview", StringComparer.Ordinal);
 var documentDiagnosticMode = args.Contains("--diagnose-document", StringComparer.Ordinal);
 var documentReprocessMode = args.Contains("--reprocess-document", StringComparer.Ordinal);
 var processingSyntheticMode = args.Contains("--diagnose-processing-synthetic", StringComparer.Ordinal);
 var translationSyntheticMode = args.Contains("--diagnose-translation-synthetic", StringComparer.Ordinal);
 var customerAcceptanceMode = args.Contains("--diagnose-customer-acceptance", StringComparer.Ordinal);
 var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal) ||
-    askContractMode || askSyntheticMode || askDataMode || documentDiagnosticMode ||
+    askContractMode || askSyntheticMode || askDataMode || emailPreviewMode || documentDiagnosticMode ||
     documentReprocessMode || processingSyntheticMode || translationSyntheticMode || customerAcceptanceMode;
 WebApplicationBuilder builder;
 try
@@ -106,6 +107,17 @@ builder.Services.AddHostedService<AskAiRunWorker>();
 builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);
 
 var app = builder.Build();
+if (emailPreviewMode)
+{
+    Environment.ExitCode = await AskAiRunDiagnostic.ExecuteEmailPreviewAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty,
+        builder.Configuration["diagnose-email-preview"] ?? String.Empty,
+        builder.Configuration["diagnose-confirmation"] == "PREVIEW", startupReadiness.ProbeModelsOnStartup,
+        app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.IAskAiRunStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.AskAiOrchestrator>(), Console.Out);
+    await app.DisposeAsync();
+    return;
+}
 if (customerAcceptanceMode)
 {
     Environment.ExitCode = await CustomerAcceptanceDiagnostic.ExecuteAsync(
