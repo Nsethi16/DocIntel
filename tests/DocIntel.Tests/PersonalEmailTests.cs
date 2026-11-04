@@ -427,6 +427,65 @@ public sealed class PersonalEmailTests
     }
 
     [Fact]
+    public async Task A_Personal_Answer_Uses_The_Confirmed_Immutable_Original_Message_And_Native_Reply()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        await fixture.ConnectAsync(PersonalEmailPurpose.Mailbox);
+        await fixture.ConnectAsync(PersonalEmailPurpose.Sender);
+        var handler = new MailHandler();
+        var mailbox = fixture.MailboxClient(handler);
+        var runs = new InMemoryAskAiRunStore();
+        var receiver = new EmailQuestionReceiver(fixture.Options, runs, fixture.Harness.Object, mailbox,
+            NullLogger<EmailQuestionReceiver>.Instance);
+        var confirmation = new EmailQuestionConfirmation(fixture.Options, mailbox, fixture.Access.Object, runs,
+            Mock.Of<IAskAiQueue>(), fixture.Harness.Object);
+        var message = Assert.Single((await mailbox.ReadChangesAsync(null, CancellationToken.None)).Messages);
+        await receiver.ReceiveAsync(message);
+        var pending = Assert.Single(await runs.ListRunsByTenantAsync("tenant"));
+        var run = await confirmation.ConfirmAsync(fixture.Actor, "tenant", pending.RunId, CancellationToken.None);
+        run.Answer = "CITED_DOCUMENT_ANSWER";
+
+        // Act
+        await new EmailAnswerTransport(fixture.Options, mailbox).SendAsync(run, run.ChannelDelivery!);
+
+        // Assert
+        Assert.EndsWith("/v1.0/me/messages/immutable-message/reply", handler.Urls[^1]);
+        Assert.Contains("IdType=\"ImmutableId\"", handler.Preferences[^1]);
+        Assert.Equal(2, handler.SentBodies.Count);
+        using var reply = JsonDocument.Parse(handler.SentBodies[^1]);
+        var content = reply.RootElement.GetProperty("message");
+        Assert.Contains("CITED_DOCUMENT_ANSWER", content.GetProperty("body").GetProperty("content").GetString());
+        Assert.Equal("sender-test@hotmail.com",
+            content.GetProperty("toRecipients")[0].GetProperty("emailAddress").GetProperty("address").GetString());
+        Assert.Equal(1, content.GetProperty("toRecipients").GetArrayLength());
+        Assert.Empty(content.GetProperty("ccRecipients").EnumerateArray());
+        Assert.Empty(content.GetProperty("bccRecipients").EnumerateArray());
+        Assert.False(content.TryGetProperty("subject", out _));
+    }
+
+    [Fact]
+    public async Task Disconnect_During_Original_Message_Verification_Prevents_The_Reply_Post()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        await fixture.ConnectAsync(PersonalEmailPurpose.Mailbox);
+        var handler = new MailHandler
+        {
+            BeforeResponse = () => fixture.Connections.DisconnectAsync(
+                fixture.Actor, "tenant", PersonalEmailPurpose.Mailbox, CancellationToken.None)
+        };
+        var mailbox = fixture.MailboxClient(handler);
+        var profile = await mailbox.GetConnectionProfileAsync(fixture.Options.ConfiguredProfile, CancellationToken.None);
+
+        // Act / Assert
+        await Assert.ThrowsAsync<PersonalEmailConnectionRequiredException>(() => mailbox.ReplyForProfileAsync(
+            profile, "immutable-message", "sender-test@hotmail.com", "PRIVATE_ANSWER", CancellationToken.None));
+        Assert.Single(handler.Urls);
+        Assert.Empty(handler.SentBodies);
+    }
+
+    [Fact]
     public async Task Replacing_The_Mailbox_Invalidates_An_Old_Message_And_Confirmation()
     {
         // Arrange

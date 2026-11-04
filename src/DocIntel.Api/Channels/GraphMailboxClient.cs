@@ -168,6 +168,68 @@ public sealed class GraphMailboxClient(
             throw new HttpRequestException("Graph did not acknowledge the message submission.");
     }
 
+    public Task ReplyAsync(
+        string messageId, string recipient, string text, CancellationToken cancellationToken) =>
+        ReplyAsync(messageId, recipient, text, null, cancellationToken);
+
+    internal async Task ReplyAsync(string messageId, string recipient, string text,
+        Func<CancellationToken, Task>? verifyBeforeSend, CancellationToken cancellationToken)
+    {
+        if (String.IsNullOrWhiteSpace(messageId) || messageId.Length > 1_024 || messageId.Any(Char.IsControl) ||
+            !EmailChannelOptions.IsAddress(recipient) || text.Length > 128_000)
+            throw new ArgumentException("A bound original message and one verified reply recipient are required.");
+        var messageUrl = MailboxRoot + "/messages/" + Uri.EscapeDataString(messageId);
+        using (var original = new HttpRequestMessage(HttpMethod.Get, messageUrl + "?$select=id,from,replyTo"))
+        {
+            if (personalGraphId is not null)
+                original.Headers.TryAddWithoutValidation("Prefer", "IdType=\"ImmutableId\"");
+            using var response = await SendAsync(original, cancellationToken);
+            using var document = await ReadAsync(response, cancellationToken, 32 * 1024);
+            var message = document.RootElement;
+            if (!message.TryGetProperty("id", out var id) || id.GetString() != messageId ||
+                !message.TryGetProperty("from", out var from) ||
+                !from.TryGetProperty("emailAddress", out var address) ||
+                !address.TryGetProperty("address", out var sender) ||
+                !String.Equals(sender.GetString(), recipient, StringComparison.OrdinalIgnoreCase))
+                throw new UnauthorizedAccessException("The original message does not match the verified reply recipient.");
+            if (message.TryGetProperty("replyTo", out var replyTo))
+            {
+                if (replyTo.ValueKind != JsonValueKind.Array)
+                    throw new InvalidDataException("The original message has an unsupported reply envelope.");
+                foreach (var target in replyTo.EnumerateArray())
+                    if (!target.TryGetProperty("emailAddress", out var replyAddress) ||
+                        !replyAddress.TryGetProperty("address", out var value) ||
+                        !String.Equals(value.GetString(), recipient, StringComparison.OrdinalIgnoreCase))
+                        throw new UnauthorizedAccessException("An unverified Reply-To destination cannot receive the answer.");
+            }
+        }
+        if (verifyBeforeSend is not null) await verifyBeforeSend(cancellationToken);
+        using var request = new HttpRequestMessage(HttpMethod.Post, messageUrl + "/reply")
+        {
+            Content = JsonContent.Create(new
+            {
+                message = new
+                {
+                    body = new { contentType = "Text", content = text },
+                    toRecipients = new[] { new { emailAddress = new { address = recipient } } },
+                    ccRecipients = Array.Empty<object>(),
+                    bccRecipients = Array.Empty<object>(),
+                    replyTo = Array.Empty<object>(),
+                    internetMessageHeaders = new[]
+                    {
+                        new { name = "X-Auto-Response-Suppress", value = "All" },
+                        new { name = "X-DocIntel-Automated-Message", value = "true" }
+                    }
+                }
+            })
+        };
+        if (personalGraphId is not null)
+            request.Headers.TryAddWithoutValidation("Prefer", "IdType=\"ImmutableId\"");
+        using var result = await SendAsync(request, cancellationToken);
+        if (result.StatusCode != System.Net.HttpStatusCode.Accepted)
+            throw new HttpRequestException("Graph did not acknowledge the original-message reply.");
+    }
+
     private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         options.Validate();

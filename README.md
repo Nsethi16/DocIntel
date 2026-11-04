@@ -1062,6 +1062,14 @@ Microsoft's consent itself, use the account's Microsoft application-permissions 
 
 This provider does not ingest attachments or create Teams presence. It keeps the existing
 durable Ask AI, source authorization, source-free confirmation and cited plaintext answer path.
+Final answers use the original question message's native Graph reply operation, preserving its
+subject/thread rather than sending an unrelated answer email. The verified original sender is
+the only recipient; CC/BCC recipients are cleared and a different/unverified Reply-To is refused.
+The original message ID must match the confirmed delivery, and the personal connection is
+checked again before the reply POST. This uses the existing Mail.Read/Mail.Send consent;
+Mail.ReadWrite and draft access are not required. The source-free confirmation remains a
+separate new email. Already-sent answers are not resent after an upgrade. If the original
+message is unavailable, the app does not silently substitute an unthreaded email.
 Configuration or completed OAuth consent is not proof of email delivery: verify the real
 mailbox round trip and inspect run delivery status and the mailbox's Sent Items/Junk folders.
 
@@ -1119,8 +1127,9 @@ shared mention with a private answer, and the chosen email authorization/answer 
 different users to verify destination isolation. For automatic mail, also test spoofed/missing/duplicate
 proofs, differing sender/from, outside-directory mail, unassigned/disabled users, membership revocation
 and unrelated mailbox denial. Verify actual Exchange delivery separately from Graph acknowledgement.
-The current send is a new plaintext email, not an Outlook-threaded reply; attachment ingestion and
-dedicated failure-notification emails are not implemented. Endpoint refusals, native SDK/Graph contracts,
+The confirmation is a new source-free email; the cited final answer is a native plaintext reply
+to the original question. Attachment ingestion and dedicated failure-notification emails are not
+implemented. Endpoint refusals, native SDK/Graph contracts,
 deduplication, delta restart behavior and confirmation UI have offline tests; no real mailbox,
 bot installation, external message, directory consent or cloud deployment was performed here.
 

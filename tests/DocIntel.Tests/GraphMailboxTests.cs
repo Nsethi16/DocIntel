@@ -132,6 +132,123 @@ public sealed class GraphMailboxTests
         Assert.False(body.RootElement.GetProperty("message").TryGetProperty("replyTo", out _));
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_Native_Reply_Preserves_The_Original_Thread_And_Only_Targets_The_Verified_Sender(bool sameReplyTo)
+    {
+        // Arrange
+        var fixture = new Fixture();
+        var originalId = "original/with+encoded=id";
+        fixture.Handler.ResponseFactory = request => request.Method == HttpMethod.Post
+            ? new HttpResponseMessage(HttpStatusCode.Accepted)
+            : new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(JsonSerializer.Serialize(new
+                {
+                    id = originalId,
+                    from = new { emailAddress = new { address = "verified@example.com" } },
+                    replyTo = sameReplyTo
+                        ? new[] { new { emailAddress = new { address = "VERIFIED@example.com" } } }
+                        : [],
+                    ccRecipients = new[] { new { emailAddress = new { address = "unverified-cc@example.com" } } }
+                }))
+            };
+
+        // Act
+        await fixture.Client.ReplyAsync(originalId, "verified@example.com", "CITED_ANSWER", CancellationToken.None);
+
+        // Assert
+        Assert.Equal(fixture.MailboxRoot + "/messages/" + Uri.EscapeDataString(originalId) + "/reply",
+            fixture.Handler.Url);
+        Assert.Equal(2, fixture.Handler.Calls);
+        Assert.DoesNotContain(fixture.Handler.Urls, url => url.EndsWith("/sendMail", StringComparison.Ordinal));
+        using var body = JsonDocument.Parse(fixture.Handler.Body!);
+        Assert.False(body.RootElement.TryGetProperty("comment", out _));
+        var message = body.RootElement.GetProperty("message");
+        Assert.False(message.TryGetProperty("subject", out _));
+        Assert.Equal("Text", message.GetProperty("body").GetProperty("contentType").GetString());
+        Assert.Equal("CITED_ANSWER", message.GetProperty("body").GetProperty("content").GetString());
+        Assert.Equal("verified@example.com", message.GetProperty("toRecipients")[0]
+            .GetProperty("emailAddress").GetProperty("address").GetString());
+        Assert.Equal(1, message.GetProperty("toRecipients").GetArrayLength());
+        Assert.Empty(message.GetProperty("ccRecipients").EnumerateArray());
+        Assert.Empty(message.GetProperty("bccRecipients").EnumerateArray());
+        Assert.Empty(message.GetProperty("replyTo").EnumerateArray());
+        Assert.DoesNotContain("unverified-cc", fixture.Handler.Body);
+    }
+
+    [Theory]
+    [InlineData("different-id")]
+    [InlineData("different-from")]
+    [InlineData("unverified-reply-to")]
+    public async Task A_Native_Reply_Rejects_Mismatched_Or_Unverified_Original_Recipients(string mode)
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Handler.Response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new StringContent(JsonSerializer.Serialize(new
+            {
+                id = mode == "different-id" ? "another-original" : "original",
+                from = new { emailAddress = new
+                    { address = mode == "different-from" ? "other@example.com" : "verified@example.com" } },
+                replyTo = mode == "unverified-reply-to"
+                    ? new[] { new { emailAddress = new { address = "attacker@example.com" } } }
+                    : []
+            }))
+        };
+
+        // Act / Assert
+        await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
+            fixture.Client.ReplyAsync("original", "verified@example.com", "PRIVATE_ANSWER", CancellationToken.None));
+        Assert.Equal(1, fixture.Handler.Calls);
+        Assert.Null(fixture.Handler.Body);
+    }
+
+    [Theory]
+    [InlineData(202)]
+    [InlineData(503)]
+    public async Task Native_Reply_Is_Submitted_Once_And_Never_Falls_Back_To_A_New_Email(int status)
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Handler.ResponseFactory = request => request.Method == HttpMethod.Post
+            ? new HttpResponseMessage((HttpStatusCode)status) { Content = new StringContent("PRIVATE_PROVIDER_DETAIL") }
+            : new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("{\"id\":\"original\",\"from\":{\"emailAddress\":{\"address\":\"verified@example.com\"}},\"replyTo\":[]}")
+            };
+
+        // Act
+        if (status == 202)
+            await fixture.Client.ReplyAsync("original", "verified@example.com", "Answer", CancellationToken.None);
+        else
+        {
+            var failure = await Assert.ThrowsAsync<HttpRequestException>(() =>
+                fixture.Client.ReplyAsync("original", "verified@example.com", "Answer", CancellationToken.None));
+            Assert.DoesNotContain("PRIVATE_", failure.Message);
+        }
+
+        // Assert
+        Assert.Equal(2, fixture.Handler.Calls);
+        Assert.EndsWith("/messages/original/reply", fixture.Handler.Url);
+    }
+
+    [Fact]
+    public async Task A_Deleted_Original_Message_Is_Not_Replaced_With_An_Unthreaded_Send()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        fixture.Handler.Response = new HttpResponseMessage(HttpStatusCode.NotFound);
+
+        // Act / Assert
+        await Assert.ThrowsAsync<HttpRequestException>(() =>
+            fixture.Client.ReplyAsync("deleted", "verified@example.com", "Answer", CancellationToken.None));
+        Assert.Equal(1, fixture.Handler.Calls);
+        Assert.Null(fixture.Handler.Body);
+    }
+
     [Fact]
     public async Task Reply_Address_Verification_Requires_The_Exact_Directory_Object_Returned_By_Graph()
     {

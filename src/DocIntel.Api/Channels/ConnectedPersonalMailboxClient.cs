@@ -93,6 +93,34 @@ public sealed class ConnectedPersonalMailboxClient(
         await PersonalClient(token, mailbox).SendAsync(recipient, subject, text, cancellationToken);
     }
 
+    public async Task ReplyAsync(
+        string messageId, string recipient, string text, CancellationToken cancellationToken)
+    {
+        var profile = await GetConnectionProfileAsync(options.ConfiguredProfile, cancellationToken);
+        await ReplyForProfileAsync(profile, messageId, recipient, text, cancellationToken);
+    }
+
+    public async Task ReplyForProfileAsync(
+        string profile, string messageId, string recipient, string text, CancellationToken cancellationToken)
+    {
+        if (options.Provider != EmailMailboxProvider.OutlookCom)
+        {
+            if (profile != options.ConfiguredProfile)
+                throw new InvalidOperationException("The Exchange mailbox configuration changed.");
+            await corporate.ReplyAsync(messageId, recipient, text, cancellationToken);
+            return;
+        }
+        var mailbox = await connections.GetMailboxAsync(cancellationToken);
+        if (mailbox.Profile(options.ConfiguredProfile) != profile)
+            throw new PersonalEmailConnectionRequiredException();
+        var token = await connections.AcquireAsync(mailbox, PersonalEmailPurpose.Mailbox, cancellationToken);
+        await PersonalClient(token, mailbox).ReplyAsync(messageId, recipient, text, async ct =>
+        {
+            if (await GetConnectionProfileAsync(options.ConfiguredProfile, ct) != profile)
+                throw new PersonalEmailConnectionRequiredException();
+        }, cancellationToken);
+    }
+
     private GraphMailboxClient PersonalClient(PersonalEmailToken token, PersonalEmailCredential mailbox) =>
         new(clients, new AccessToken(token.AccessToken, token.ExpiresAtUtc), options, mailbox.GraphId, logger);
 }

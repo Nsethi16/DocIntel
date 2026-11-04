@@ -96,6 +96,7 @@ public interface IMailboxClient
         DateTimeOffset? receivedAfterUtc = null);
     Task<IReadOnlyList<string>> GetActorAddressesAsync(ActorIdentity actor, CancellationToken cancellationToken);
     Task SendAsync(string recipient, string subject, string text, CancellationToken cancellationToken);
+    Task ReplyAsync(string messageId, string recipient, string text, CancellationToken cancellationToken);
 }
 
 /// <summary>Personal mailbox operations are fenced to the persisted OAuth connection that admitted the message.</summary>
@@ -108,6 +109,8 @@ public interface IConnectedMailboxClient : IMailboxClient
     Task<bool> OwnsAddressAsync(ActorIdentity actor, string address, CancellationToken cancellationToken);
     Task SendForProfileAsync(
         string profile, string recipient, string subject, string text, CancellationToken cancellationToken);
+    Task ReplyForProfileAsync(
+        string profile, string messageId, string recipient, string text, CancellationToken cancellationToken);
 }
 
 /// <summary>Preserves the existing Exchange contracts while binding delegated mailbox operations to their connection.</summary>
@@ -143,6 +146,12 @@ public static class EmailMailboxBinding
         mailbox is IConnectedMailboxClient connected
             ? connected.SendForProfileAsync(profile, recipient, subject, text, cancellationToken)
             : mailbox.SendAsync(recipient, subject, text, cancellationToken);
+
+    public static Task ReplyAsync(IMailboxClient mailbox, string profile, string messageId,
+        string recipient, string text, CancellationToken cancellationToken) =>
+        mailbox is IConnectedMailboxClient connected
+            ? connected.ReplyForProfileAsync(profile, messageId, recipient, text, cancellationToken)
+            : mailbox.ReplyAsync(messageId, recipient, text, cancellationToken);
 }
 
 /// <summary>Separate inbound-confirmation state; it never makes a question executable on a GET request.</summary>
@@ -333,7 +342,7 @@ public sealed class EmailQuestionConfirmation(
     }
 }
 
-/// <summary>One acknowledged Graph send, with current directory-address verification and no arbitrary Reply-To override.</summary>
+/// <summary>One native reply to the original question, with current access and verified-recipient checks.</summary>
 public sealed class EmailAnswerTransport(
     EmailChannelOptions options, IMailboxClient mailbox) : IChannelTransport
 {
@@ -344,6 +353,8 @@ public sealed class EmailAnswerTransport(
         if (!options.Enabled || target.Profile != profile || run.TenantId != options.ApplicationTenantId ||
             run.Actor is not { } actor || actor.DirectoryTenantId != options.TenantId ||
             run.PendingEmail is not { } pending || pending.Profile != profile ||
+            String.IsNullOrWhiteSpace(pending.MessageId) ||
+            !String.Equals(target.MessageId, pending.MessageId, StringComparison.Ordinal) ||
             !(pending.AuthorizationMode == EmailAuthorizationMode.ConfirmSender && pending.ConfirmedAtUtc is not null ||
               pending.AuthorizationMode == EmailAuthorizationMode.TrustedInternal &&
               options.AuthorizationMode == EmailAuthorizationMode.TrustedInternal && pending.AuthenticatedAtUtc is not null) ||
@@ -351,11 +362,9 @@ public sealed class EmailAnswerTransport(
             throw new InvalidOperationException("The verified mailbox destination is unavailable.");
         if (!await EmailMailboxBinding.OwnsAddressAsync(mailbox, actor, target.DestinationId, cancellationToken))
             throw new UnauthorizedAccessException("The sender no longer owns the reply address.");
-        var name = run.AgentProfile?.DisplayName ?? "DocIntel";
         var sources = String.Join("\n", run.Citations.Select(citation =>
             $"[{citation.CitationNumber}] {citation.FileName} | {citation.DocumentName} | {citation.PageRange}"));
-        await EmailMailboxBinding.SendAsync(mailbox, profile, target.DestinationId,
-            name + ": answer to your document question",
+        await EmailMailboxBinding.ReplyAsync(mailbox, profile, pending.MessageId, target.DestinationId,
             (run.Answer ?? throw new InvalidOperationException("A completed answer is required.")) +
             "\n\nSources:\n" + sources + "\n\nView the answer and original sources (sign-in required): " +
             options.RunUrl(run.RunId), cancellationToken);

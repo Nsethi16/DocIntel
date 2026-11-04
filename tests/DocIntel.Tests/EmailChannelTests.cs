@@ -60,7 +60,7 @@ public sealed class EmailChannelTests
         var completed = await fixture.RunAsync();
         Assert.Equal(JobStatus.Completed, completed.Status);
         Assert.Equal(revoke ? ChannelDeliveryStatus.Failed : ChannelDeliveryStatus.Sent, completed.ChannelDelivery!.Status);
-        fixture.Mailbox.Verify(m => m.SendAsync("reader@example.com", It.IsAny<string>(),
+        fixture.Mailbox.Verify(m => m.ReplyAsync(fixture.Message.MessageId, "reader@example.com",
             It.Is<string>(body => body.Contains("Hello from Meridian")), It.IsAny<CancellationToken>()),
             revoke ? Times.Never() : Times.Once());
         fixture.Mailbox.Verify(m => m.SendAsync(It.IsAny<string>(), It.IsAny<string>(),
@@ -214,8 +214,53 @@ public sealed class EmailChannelTests
         // Act / Assert
         await Assert.ThrowsAsync<UnauthorizedAccessException>(() =>
             new EmailAnswerTransport(fixture.Options, fixture.Mailbox.Object).SendAsync(run, run.ChannelDelivery!));
-        fixture.Mailbox.Verify(m => m.SendAsync(It.IsAny<string>(), It.IsAny<string>(),
+        fixture.Mailbox.Verify(m => m.ReplyAsync(It.IsAny<string>(), It.IsAny<string>(),
             It.Is<string>(text => text.Contains("PRIVATE_DOCUMENT_RESULT")), It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
+    public async Task Final_Answer_Replies_To_The_Original_Message_Without_Reusing_The_Challenge_Send_Path()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        await fixture.Receiver.ReceiveAsync(fixture.Message);
+        var pending = await fixture.RunAsync();
+        var run = await fixture.Confirmation.ConfirmAsync(
+            fixture.Actor, "tenant", pending.RunId, CancellationToken.None);
+        run.Answer = "CITED_DOCUMENT_ANSWER";
+
+        // Act
+        await new EmailAnswerTransport(fixture.Options, fixture.Mailbox.Object).SendAsync(run, run.ChannelDelivery!);
+
+        // Assert
+        fixture.Mailbox.Verify(m => m.ReplyAsync(fixture.Message.MessageId, fixture.Message.Sender,
+            It.Is<string>(body => body.Contains("CITED_DOCUMENT_ANSWER") && body.Contains("/ask-run.html?")),
+            It.IsAny<CancellationToken>()), Times.Once);
+        fixture.Mailbox.Verify(m => m.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task A_Delivery_Cannot_Reply_To_Another_Message_Than_The_Confirmed_Original()
+    {
+        // Arrange
+        var fixture = new Fixture();
+        await fixture.Receiver.ReceiveAsync(fixture.Message);
+        var pending = await fixture.RunAsync();
+        var run = await fixture.Confirmation.ConfirmAsync(
+            fixture.Actor, "tenant", pending.RunId, CancellationToken.None);
+        run.Answer = "PRIVATE_DOCUMENT_ANSWER";
+        var target = new ChannelDelivery
+        {
+            Transport = "Email", Profile = run.PendingEmail!.Profile,
+            DestinationId = fixture.Message.Sender, MessageId = "different-original-message"
+        };
+
+        // Act / Assert
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new EmailAnswerTransport(fixture.Options, fixture.Mailbox.Object).SendAsync(run, target));
+        fixture.Mailbox.Verify(m => m.ReplyAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]
