@@ -169,14 +169,15 @@ public sealed class GraphMailboxClient(
     }
 
     public Task ReplyAsync(
-        string messageId, string recipient, string text, CancellationToken cancellationToken) =>
-        ReplyAsync(messageId, recipient, text, null, cancellationToken);
+        string messageId, string recipient, string html, CancellationToken cancellationToken) =>
+        ReplyAsync(messageId, recipient, html, null, cancellationToken);
 
-    internal async Task ReplyAsync(string messageId, string recipient, string text,
+    internal async Task ReplyAsync(string messageId, string recipient, string html,
         Func<CancellationToken, Task>? verifyBeforeSend, CancellationToken cancellationToken)
     {
         if (String.IsNullOrWhiteSpace(messageId) || messageId.Length > 1_024 || messageId.Any(Char.IsControl) ||
-            !EmailChannelOptions.IsAddress(recipient) || text.Length > 128_000)
+            !EmailChannelOptions.IsAddress(recipient) ||
+            String.IsNullOrWhiteSpace(html) || html.Length > EmailAnswerRenderer.MaximumBodyCharacters)
             throw new ArgumentException("A bound original message and one verified reply recipient are required.");
         var messageUrl = MailboxRoot + "/messages/" + Uri.EscapeDataString(messageId);
         using (var original = new HttpRequestMessage(HttpMethod.Get, messageUrl + "?$select=id,from,replyTo"))
@@ -210,7 +211,7 @@ public sealed class GraphMailboxClient(
             {
                 message = new
                 {
-                    body = new { contentType = "Text", content = text },
+                    body = new { contentType = "HTML", content = html },
                     toRecipients = new[] { new { emailAddress = new { address = recipient } } },
                     ccRecipients = Array.Empty<object>(),
                     bccRecipients = Array.Empty<object>(),

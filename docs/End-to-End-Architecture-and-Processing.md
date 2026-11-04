@@ -34,8 +34,11 @@ and replies exclusively to their verified inbox. It does not authenticate the me
 forged From addresses can trigger unsolicited processing and replies to approved users.
 Durable recipient and workspace admission caps bound this risk. Current assignments/ownership are
 rechecked before and during processing and at delivery, and unattended email cannot invoke extension tools.
-Replies include the original question and an unexpected-email notice. ConfirmSender remains the
-installation default. Policy changes preserve the mail cursor, never auto-confirm old runs, and do
+Replies begin with the answer rather than an automation disclaimer or repeated original question.
+Server-rendered, encoded HTML provides Outlook-compatible tables/bars, cited source links and
+explicit analytical limits; raw model HTML, tracking images and executable content are never used.
+The policy's recipient-authorization/spoofing disclosure remains in Admin and operator documentation.
+ConfirmSender remains the installation default. Policy changes preserve the mail cursor, never auto-confirm old runs, and do
 not resend completed/uncertain answers. Personal sender linking remains profile-only, without Mail.Read.
 See README for both policy models and the corporate stripping/stamping/credential-protection invariants;
 these rules are operator setup, not something the application silently creates.

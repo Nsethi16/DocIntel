@@ -457,6 +457,7 @@ public sealed class PersonalEmailTests
         using var reply = JsonDocument.Parse(handler.SentBodies[^1]);
         var content = reply.RootElement.GetProperty("message");
         Assert.Contains("CITED_DOCUMENT_ANSWER", content.GetProperty("body").GetProperty("content").GetString());
+        Assert.Equal("HTML", content.GetProperty("body").GetProperty("contentType").GetString());
         Assert.Equal("sender-test@hotmail.com",
             content.GetProperty("toRecipients")[0].GetProperty("emailAddress").GetProperty("address").GetString());
         Assert.Equal(1, content.GetProperty("toRecipients").GetArrayLength());
@@ -523,8 +524,11 @@ public sealed class PersonalEmailTests
         var content = reply.RootElement.GetProperty("message");
         var text = content.GetProperty("body").GetProperty("content").GetString();
         Assert.Contains("AUTOMATIC_CITED_ANSWER", text);
-        Assert.Contains(message.Text.Trim(), text);
-        Assert.Contains("If you did not send the question", text);
+        Assert.DoesNotContain(message.Text.Trim(), text);
+        Assert.DoesNotContain("If you did not send the question", text);
+        Assert.DoesNotContain("Automatic answer for", text);
+        Assert.DoesNotContain("Original email question", text);
+        Assert.Equal("HTML", content.GetProperty("body").GetProperty("contentType").GetString());
         Assert.Single(content.GetProperty("toRecipients").EnumerateArray());
         Assert.Empty(content.GetProperty("ccRecipients").EnumerateArray());
         Assert.Empty(content.GetProperty("bccRecipients").EnumerateArray());

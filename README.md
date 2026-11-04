@@ -1075,7 +1075,7 @@ mailbox credentials; **Disconnect Personal Email** removes the caller's sender l
 Microsoft's consent itself, use the account's Microsoft application-permissions controls.
 
 This provider does not ingest attachments or create Teams presence. It keeps the existing
-durable Ask AI, source authorization, selected confirmation policy and cited plaintext answer path.
+durable Ask AI, source authorization, selected confirmation policy and cited HTML answer path.
 Final answers use the original question message's native Graph reply operation, preserving its
 subject/thread rather than sending an unrelated answer email. The verified original sender is
 the only recipient; CC/BCC recipients are cleared and a different/unverified Reply-To is refused.
@@ -1123,7 +1123,9 @@ throughout execution and before delivery. Unattended email cannot invoke extensi
 Answers stay within the recipient's current document permissions and original-source checks.
 
 The final answer is a native reply only to that verified inbox, with no CC/BCC or different Reply-To.
-It includes the original question as untrusted text and an unexpected-email warning. Durable,
+It starts directly with the answer, without an automation disclaimer or a repeated original question.
+The recipient-authorized policy and spoofing risk remain disclosed in Admin and this operator guide.
+Durable,
 leased recipient and workspace admission caps apply **before** AI execution; defaults are 20 per
 user and 100 total per UTC hour. Duplicate messages do not consume additional reservations,
 restarts preserve budgets, and leases prevent replicas from exceeding the aggregate limit.
@@ -1177,8 +1179,16 @@ shared mention with a private answer, and the chosen email authorization/answer 
 different users to verify destination isolation. For automatic mail, also test spoofed/missing/duplicate
 proofs, differing sender/from, outside-directory mail, unassigned/disabled users, membership revocation
 and unrelated mailbox denial. Verify actual Exchange delivery separately from Graph acknowledgement.
-The confirmation is a new source-free email; the cited final answer is a native plaintext reply
-to the original question. Attachment ingestion and dedicated failure-notification emails are not
+The confirmation is a new source-free plaintext email; the cited final answer is a native HTML reply
+to the original question. A shared server-side renderer encodes all model/source text and renders a
+small Markdown subset, real tables and same-unit, non-negative horizontal bars using inline styles
+and layout tables compatible with Outlook. There are no scripts, SVGs, remote images or model-supplied
+links. The existing original-message and recipient checks remain unchanged. Analytical answers use
+the server-calculated datasets, retaining row citations, amounts, shares, totals and missing-data/
+coverage limits. Email previews show at most 25 data rows and 20 chart categories per analysis;
+larger results and long messages explicitly link to the full signed-in answer instead of silently
+discarding data. Negative/missing/mixed-unit bars and line charts use an explicit table presentation.
+Attachment ingestion and dedicated failure-notification emails are not
 implemented. Endpoint refusals, native SDK/Graph contracts,
 deduplication, delta restart behavior and confirmation UI have offline tests; no real mailbox,
 bot installation, external message, directory consent or cloud deployment was performed here.

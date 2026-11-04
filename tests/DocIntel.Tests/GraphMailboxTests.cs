@@ -129,6 +129,8 @@ public sealed class GraphMailboxTests
         var recipients = body.RootElement.GetProperty("message").GetProperty("toRecipients");
         Assert.Equal(1, recipients.GetArrayLength());
         Assert.Equal("verified@example.com", recipients[0].GetProperty("emailAddress").GetProperty("address").GetString());
+        Assert.Equal("Text", body.RootElement.GetProperty("message").GetProperty("body")
+            .GetProperty("contentType").GetString());
         Assert.False(body.RootElement.GetProperty("message").TryGetProperty("replyTo", out _));
     }
 
@@ -156,7 +158,8 @@ public sealed class GraphMailboxTests
             };
 
         // Act
-        await fixture.Client.ReplyAsync(originalId, "verified@example.com", "CITED_ANSWER", CancellationToken.None);
+        const string answer = "<p>CITED_ANSWER</p><table><tr><td>12,450.00 USD</td></tr></table>";
+        await fixture.Client.ReplyAsync(originalId, "verified@example.com", answer, CancellationToken.None);
 
         // Assert
         Assert.Equal(fixture.MailboxRoot + "/messages/" + Uri.EscapeDataString(originalId) + "/reply",
@@ -167,8 +170,8 @@ public sealed class GraphMailboxTests
         Assert.False(body.RootElement.TryGetProperty("comment", out _));
         var message = body.RootElement.GetProperty("message");
         Assert.False(message.TryGetProperty("subject", out _));
-        Assert.Equal("Text", message.GetProperty("body").GetProperty("contentType").GetString());
-        Assert.Equal("CITED_ANSWER", message.GetProperty("body").GetProperty("content").GetString());
+        Assert.Equal("HTML", message.GetProperty("body").GetProperty("contentType").GetString());
+        Assert.Equal(answer, message.GetProperty("body").GetProperty("content").GetString());
         Assert.Equal("verified@example.com", message.GetProperty("toRecipients")[0]
             .GetProperty("emailAddress").GetProperty("address").GetString());
         Assert.Equal(1, message.GetProperty("toRecipients").GetArrayLength());

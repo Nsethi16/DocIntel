@@ -94,27 +94,27 @@ public sealed class ConnectedPersonalMailboxClient(
     }
 
     public async Task ReplyAsync(
-        string messageId, string recipient, string text, CancellationToken cancellationToken)
+        string messageId, string recipient, string html, CancellationToken cancellationToken)
     {
         var profile = await GetConnectionProfileAsync(options.ConfiguredProfile, cancellationToken);
-        await ReplyForProfileAsync(profile, messageId, recipient, text, cancellationToken);
+        await ReplyForProfileAsync(profile, messageId, recipient, html, cancellationToken);
     }
 
     public async Task ReplyForProfileAsync(
-        string profile, string messageId, string recipient, string text, CancellationToken cancellationToken)
+        string profile, string messageId, string recipient, string html, CancellationToken cancellationToken)
     {
         if (options.Provider != EmailMailboxProvider.OutlookCom)
         {
             if (profile != options.ConfiguredProfile)
                 throw new InvalidOperationException("The Exchange mailbox configuration changed.");
-            await corporate.ReplyAsync(messageId, recipient, text, cancellationToken);
+            await corporate.ReplyAsync(messageId, recipient, html, cancellationToken);
             return;
         }
         var mailbox = await connections.GetMailboxAsync(cancellationToken);
         if (mailbox.Profile(options.ConfiguredProfile) != profile)
             throw new PersonalEmailConnectionRequiredException();
         var token = await connections.AcquireAsync(mailbox, PersonalEmailPurpose.Mailbox, cancellationToken);
-        await PersonalClient(token, mailbox).ReplyAsync(messageId, recipient, text, async ct =>
+        await PersonalClient(token, mailbox).ReplyAsync(messageId, recipient, html, async ct =>
         {
             if (await GetConnectionProfileAsync(options.ConfiguredProfile, ct) != profile)
                 throw new PersonalEmailConnectionRequiredException();

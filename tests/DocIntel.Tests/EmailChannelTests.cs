@@ -62,7 +62,9 @@ public sealed class EmailChannelTests
         fixture.Mailbox.Verify(value => value.SendAsync(It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);
         fixture.Mailbox.Verify(value => value.ReplyAsync(fixture.Message.MessageId, fixture.Message.Sender,
-            It.Is<string>(body => body.Contains("Approved recipient answer")), It.IsAny<CancellationToken>()),
+            It.Is<string>(body => body.Contains("Approved recipient answer") &&
+                !body.Contains("Automatic answer for") && !body.Contains("Original email question") &&
+                !body.Contains("If you did not send the question")), It.IsAny<CancellationToken>()),
             revoke ? Times.Never() : Times.Once());
         fixture.Queue.Verify(value => value.TryEnqueueAsync(It.IsAny<AskAiQueueTicket>(),
             It.IsAny<CancellationToken>()), Times.Once);
@@ -514,13 +516,15 @@ public sealed class EmailChannelTests
         var run = await fixture.Confirmation.ConfirmAsync(
             fixture.Actor, "tenant", pending.RunId, CancellationToken.None);
         run.Answer = "CITED_DOCUMENT_ANSWER";
+        run.EmailHtmlBody = "<script>Do not trust a cached HTML body.</script>";
 
         // Act
         await new EmailAnswerTransport(fixture.Options, fixture.Mailbox.Object).SendAsync(run, run.ChannelDelivery!);
 
         // Assert
         fixture.Mailbox.Verify(m => m.ReplyAsync(fixture.Message.MessageId, fixture.Message.Sender,
-            It.Is<string>(body => body.Contains("CITED_DOCUMENT_ANSWER") && body.Contains("/ask-run.html?")),
+            It.Is<string>(body => body.Contains("CITED_DOCUMENT_ANSWER") && body.Contains("/ask-run.html?") &&
+                !body.Contains("<script>") && !body.Contains(fixture.Message.Text)),
             It.IsAny<CancellationToken>()), Times.Once);
         fixture.Mailbox.Verify(m => m.SendAsync(It.IsAny<string>(), It.IsAny<string>(), It.IsAny<string>(),
             It.IsAny<CancellationToken>()), Times.Once);

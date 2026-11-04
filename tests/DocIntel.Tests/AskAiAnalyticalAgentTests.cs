@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DocIntel.Core.Channels;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
@@ -36,6 +37,8 @@ public sealed class AskAiAnalyticalAgentTests
                 It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
             .Returns(async (IEnumerable<ChatMessage> _, ChatOptions options, CancellationToken token) =>
             {
+                Assert.Contains("Do not draw ASCII/block-character charts", options.Instructions);
+                Assert.Contains("\"by customer\" means groupBy the customer column", options.Instructions);
                 await InvokeAsync(options, "browse_documents", new()
                     { ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery()) }, token);
                 for (var number = 1; number <= 3; number++)
@@ -50,7 +53,11 @@ public sealed class AskAiAnalyticalAgentTests
                     "evidenceIds":["e1","e2","e3"],"analysisIds":["a1"]}
                     """);
             });
-        var run = new AskAiRun { RunId = "analysis", TenantId = "workspace", Question = "Compare supplier spend." };
+        var run = new AskAiRun
+        {
+            RunId = "analysis", TenantId = "workspace", Question = "Compare supplier spend.",
+            ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Email }
+        };
 
         // Act
         await Orchestrator(jobs, client.Object).ExecuteRunAsync(run);
@@ -65,6 +72,11 @@ public sealed class AskAiAnalyticalAgentTests
         Assert.Equal(3, run.SourceVersions.Count);
         Assert.Equal(3, analysis.Coverage.DocumentsInspected);
         Assert.Contains("150.75", run.EmailHtmlBody);
+        Assert.Contains("aria-label=\"Bar chart\"", run.EmailHtmlBody);
+        Assert.Contains("<th scope=\"col\"", run.EmailHtmlBody);
+        Assert.Contains("33.44%", run.EmailHtmlBody);
+        Assert.DoesNotContain("Compare supplier spend.", run.EmailHtmlBody);
+        Assert.DoesNotContain("Full tables and visualizations", run.EmailHtmlBody);
         Assert.Contains("Full tables", run.TeamsAdaptiveCardJson);
         Assert.Contains(run.Steps, step => step.StepName == "analyze_evidence");
         Assert.Equal(JobStatus.Completed, run.Status);

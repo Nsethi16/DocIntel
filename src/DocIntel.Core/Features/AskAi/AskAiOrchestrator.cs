@@ -1062,7 +1062,17 @@ public sealed class AskAiOrchestrator
                 factual answer needs citations. A greeting, clarification, or no-evidence answer uses [].
                 analysisIds lists only exact IDs from successful analyze_evidence calls, or [].
                 Include all selected analyses' evidenceIds. Table/chart citations also count as cited evidence.
-                """,
+                """ + (run.ReplyChannel.ChannelType == AskAiChannelType.Email ? """
+
+                This answer will be rendered as an HTML email. Start directly with the answer.
+                Do not repeat the original question, add an automation disclaimer, or write raw HTML.
+                For calculations, rankings, tables or charts, use analyze_evidence and select its analysisIds.
+                The email renderer provides real tables, bars, row citations, units and coverage.
+                Do not draw ASCII/block-character charts or duplicate the analytical dataset as a prose table.
+                Keep narrative explanations and material assumptions, missing data and limitations in answer.
+                Honor the requested grouping: "by customer" means groupBy the customer column,
+                not a separate category for each quote. Retain quote identifiers in source rows for deduplication.
+                """ : String.Empty),
             Tools = tools.Select(tool => (AITool)new GuardedFunction(
                 tool, CheckBudget, exception => retrievalFailure = exception,
                 tool.Name is "search_documents" or "browse_documents" ? SearchToolSchema : null)).ToList(),
@@ -1169,7 +1179,7 @@ public sealed class AskAiOrchestrator
         run.Analyses = selectedAnalyses;
         run.SourceVersions = sourceVersions;
         var channelAnswer = answer.Answer + FormatAnalysisFallback(run.Analyses);
-        run.EmailHtmlBody = FormatEmailHtmlResponse(run.AgentProfile.DisplayName, run.Question, channelAnswer, run.Citations);
+        run.EmailHtmlBody = EmailAnswerRenderer.Render(run);
         run.TeamsAdaptiveCardJson = FormatTeamsAdaptiveCardJson(
             run.AgentProfile.DisplayName, run.Question, channelAnswer, run.Citations);
         run.Status = JobStatus.Completed;
@@ -1327,33 +1337,6 @@ public sealed class AskAiOrchestrator
                 "Full tables and visualizations are available in the web answer.\n" + String.Join("\n", analysis.Notes);
         });
         return "\n\n" + String.Join("\n\n", blocks);
-    }
-
-    internal static string FormatEmailHtmlResponse(
-        string tenantDisplayName,
-        string question,
-        string markdownAnswer,
-        IReadOnlyList<AskAiCitation> citations)
-    {
-        var htmlAnswer = System.Net.WebUtility.HtmlEncode(markdownAnswer)
-            .Replace("\n", "<br/>");
-
-        var citesHtml = string.Join("", citations.Select(c =>
-            $"<li style='margin-bottom:6px;'><strong>[{c.CitationNumber}] {System.Net.WebUtility.HtmlEncode(c.CleanName)}</strong> ({System.Net.WebUtility.HtmlEncode(c.DocumentName)}, {System.Net.WebUtility.HtmlEncode(c.PageRange)}) — <a href='{c.PdfUrl}'>Open PDF</a> | <a href='{c.WorkspaceUrl}'>Open in Workspace</a></li>"));
-
-        return $"""
-        <div style="font-family:'Segoe UI',sans-serif;color:#16161d;max-width:680px;line-height:1.6;">
-          <div style="font-size:12px;color:#5d6074;text-transform:uppercase;letter-spacing:0.05em;">{System.Net.WebUtility.HtmlEncode(tenantDisplayName)} · DocIntel Ask AI</div>
-          <h3 style="margin:6px 0 14px 0;font-size:17px;">Q: {System.Net.WebUtility.HtmlEncode(question)}</h3>
-          <div style="background:#fafafc;border:1px solid #e3e1ec;border-radius:10px;padding:16px;margin-bottom:16px;">
-            {htmlAnswer}
-          </div>
-          <div style="font-size:12px;font-weight:600;color:#5d6074;text-transform:uppercase;margin-bottom:8px;">Document Citations ({citations.Count})</div>
-          <ul style="padding-left:18px;font-size:13px;margin:0;">
-            {citesHtml}
-          </ul>
-        </div>
-        """;
     }
 
     internal static string FormatTeamsAdaptiveCardJson(

@@ -102,7 +102,8 @@ public interface IMailboxClient
         DateTimeOffset? receivedAfterUtc = null);
     Task<IReadOnlyList<string>> GetActorAddressesAsync(ActorIdentity actor, CancellationToken cancellationToken);
     Task SendAsync(string recipient, string subject, string text, CancellationToken cancellationToken);
-    Task ReplyAsync(string messageId, string recipient, string text, CancellationToken cancellationToken);
+    /// <summary>Replies to the verified original sender with application-rendered, encoded HTML.</summary>
+    Task ReplyAsync(string messageId, string recipient, string html, CancellationToken cancellationToken);
 }
 
 /// <summary>Personal mailbox operations are fenced to the persisted OAuth connection that admitted the message.</summary>
@@ -116,7 +117,7 @@ public interface IConnectedMailboxClient : IMailboxClient
     Task SendForProfileAsync(
         string profile, string recipient, string subject, string text, CancellationToken cancellationToken);
     Task ReplyForProfileAsync(
-        string profile, string messageId, string recipient, string text, CancellationToken cancellationToken);
+        string profile, string messageId, string recipient, string html, CancellationToken cancellationToken);
 }
 
 /// <summary>Preserves the existing Exchange contracts while binding delegated mailbox operations to their connection.</summary>
@@ -154,10 +155,10 @@ public static class EmailMailboxBinding
             : mailbox.SendAsync(recipient, subject, text, cancellationToken);
 
     public static Task ReplyAsync(IMailboxClient mailbox, string profile, string messageId,
-        string recipient, string text, CancellationToken cancellationToken) =>
+        string recipient, string html, CancellationToken cancellationToken) =>
         mailbox is IConnectedMailboxClient connected
-            ? connected.ReplyForProfileAsync(profile, messageId, recipient, text, cancellationToken)
-            : mailbox.ReplyAsync(messageId, recipient, text, cancellationToken);
+            ? connected.ReplyForProfileAsync(profile, messageId, recipient, html, cancellationToken)
+            : mailbox.ReplyAsync(messageId, recipient, html, cancellationToken);
 }
 
 /// <summary>Separate inbound-confirmation state; it never makes a question executable on a GET request.</summary>
@@ -409,15 +410,7 @@ public sealed class EmailAnswerTransport(
             await AssignedEmailAdmission.RequireRecipientAsync(assignedAuthorization, run, cancellationToken);
         if (!await EmailMailboxBinding.OwnsAddressAsync(mailbox, actor, target.DestinationId, cancellationToken))
             throw new UnauthorizedAccessException("The sender no longer owns the reply address.");
-        var sources = String.Join("\n", run.Citations.Select(citation =>
-            $"[{citation.CitationNumber}] {citation.FileName} | {citation.DocumentName} | {citation.PageRange}"));
-        var notice = pending.AssignedAtUtc is null ? String.Empty :
-            "Automatic answer for an approved workspace recipient; you did not confirm this question individually.\n" +
-            "If you did not send the question, ignore this reply and notify your workspace administrator.\n\n" +
-            "Original email question (untrusted text):\n" + run.Question + "\n\nAnswer:\n";
         await EmailMailboxBinding.ReplyAsync(mailbox, profile, pending.MessageId, target.DestinationId,
-            notice + (run.Answer ?? throw new InvalidOperationException("A completed answer is required.")) +
-            "\n\nSources:\n" + sources + "\n\nView the answer and original sources (sign-in required): " +
-            options.RunUrl(run.RunId), cancellationToken);
+            EmailAnswerRenderer.Render(run, options.PublicOrigin), cancellationToken);
     }
 }

@@ -64,7 +64,8 @@ public sealed class AgentProfileTests
         Assert.Contains("workspace-scoped tools", options.Instructions);
         Assert.Contains("Preserve original terminology when quoting document evidence.", options.Instructions);
         Assert.Contains("\"Tenant ID\"", options.Instructions);
-        Assert.Contains("Meridian", run.EmailHtmlBody);
+        Assert.Contains("Hello, I can help with your agreements.", run.EmailHtmlBody);
+        Assert.DoesNotContain("Q: Hi", run.EmailHtmlBody);
         Assert.Contains("Meridian", run.TeamsAdaptiveCardJson);
     }
 
