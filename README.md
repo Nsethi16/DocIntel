@@ -591,6 +591,8 @@ three separate attempts; completed answers and failed evidence are never overwri
 Identity, channels, retention and
 model resources/capacity are not changed. English already-target-language preview notices are
 omitted in both UIs; explicit failures and uncertain detection remain visible.
+Stored question inspection also reports allowlisted analytical rejection categories without
+printing row values, source quotations, raw step descriptions or model answers.
 `CommercialRefresh` requires `REPROCESS` and requeues only the identical, owned fixed portfolio
 jobs that failed or have incomplete required capabilities. It preserves original PDFs and earlier
 attempt artifacts, refuses exhausted three-attempt jobs, and leaves running/queued work unchanged.

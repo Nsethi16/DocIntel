@@ -181,6 +181,9 @@ public static class AskAiRunDiagnostic
 
     private static async Task WriteAsync(TextWriter output, string phase, AskAiRun run, string failureCode)
     {
+        if (phase == "Stored")
+            foreach (var step in run.Steps.Take(64))
+                await WriteAnalysisRejectionAsync(output, step);
         if (phase == "Stored" && run.PendingEmail is { } pending)
         {
             var delivery = run.ChannelDelivery;

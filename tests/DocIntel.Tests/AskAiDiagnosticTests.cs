@@ -168,6 +168,37 @@ public sealed class AskAiDiagnosticTests
     }
 
     [Fact]
+    public async Task Stored_Analysis_Rejections_Report_Only_Known_Codes_And_Never_Private_Step_Content()
+    {
+        // Arrange
+        var source = Source();
+        source.Steps =
+        [
+            new("analyze_evidence", "private-query", 0, "Analysis input rejected: AnalysisQuote."),
+            new("analyze_evidence", "private-query", 0, "Analysis input rejected: private-source-value.")
+        ];
+        var original = JsonSerializer.Serialize(source);
+        var store = Store(source);
+        var client = new Mock<IChatClient>(MockBehavior.Strict);
+        using var output = new StringWriter();
+
+        // Act
+        var result = await AskAiRunDiagnostic.ExecuteAsync(source.TenantId, source.RunId, false,
+            store.Object, Orchestrator(client, Access(DocumentAccessScope.Unrestricted)), output);
+
+        // Assert
+        Assert.Equal(0, result);
+        Assert.Contains("\"phase\":\"Analysis\"", output.ToString());
+        Assert.Contains("\"failureCode\":\"AnalysisQuote\"", output.ToString());
+        Assert.DoesNotContain("private-", output.ToString());
+        Assert.DoesNotContain(source.Question, output.ToString());
+        Assert.Equal(original, JsonSerializer.Serialize(source));
+        Assert.Contains("\"phase\":\"Stored\"", output.ToString().Split(
+            Environment.NewLine, StringSplitOptions.RemoveEmptyEntries)[^1]);
+        client.VerifyNoOtherCalls();
+    }
+
+    [Fact]
     public async Task Recent_Inspection_Is_Read_Only_Bounded_And_Reports_No_Private_Content()
     {
         // Arrange
