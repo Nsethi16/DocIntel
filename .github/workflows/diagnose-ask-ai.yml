@@ -14,7 +14,7 @@ on:
       mode:
         description: Choose saved diagnostics, synthetic checks, or explicit operator-only CustomerAcceptance over uploaded QA documents.
         type: choice
-        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview]
+        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview, DealVelocityApply, DealVelocityInspect]
         default: Inspect
       customer_case:
         description: CustomerAcceptance only. One bounded case per dispatch. submit-documents queues fixed embedded B-G PDFs through the backend, not the browser; documents is read-only.
@@ -22,7 +22,7 @@ on:
         options: [documents, submit-documents, ask-termination, ask-analysis, ask-followup, ask-no-evidence, ask-injection, ask-long-tail, schema-signature, schema-price, schema-long]
         default: documents
       confirmation:
-        description: TEST authorizes CustomerAcceptance, REPLAY a failed-web replay, PREVIEW an in-memory email analysis (never sends), PROBE translation, REPROCESS an upload retry. Provider usage can incur charges.
+        description: DEALVELOCITY authorizes the fixed workspace rename and fictional PDF submission. TEST authorizes CustomerAcceptance, REPLAY a failed-web replay, PREVIEW no-send email analysis, PROBE translation, REPROCESS a retry. Provider usage can incur charges.
         type: string
         default: ''
       translation_variant:
@@ -73,6 +73,9 @@ jobs:
                $env:DIAGNOSTIC_RUN -cnotmatch '^mail-[A-Fa-f0-9]{64}$')) {
             throw 'EmailPreview requires PREVIEW and one opaque email run ID; it never sends or saves a run.'
           }
+          if ($env:DIAGNOSTIC_MODE -eq 'DealVelocityApply' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'DEALVELOCITY') {
+            throw 'DealVelocityApply requires DEALVELOCITY; it renames only the existing workspace and submits fixed fictional PDFs.'
+          }
           if ($env:DIAGNOSTIC_MODE -eq 'TranslationProbe' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'PROBE') {
             throw 'TranslationProbe requires the exact confirmation PROBE.'
           }
@@ -90,11 +93,13 @@ jobs:
             $env:TRANSLATION_VARIANT -eq 'WithoutGlossary' -and $env:DIAGNOSTIC_MODE -ne 'TranslationProbe') {
             throw 'A glossary comparison requires an explicit TranslationProbe.'
           }
-          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe', 'DocumentReprocess', 'ProcessingSynthetic', 'TranslationSynthetic', 'CustomerAcceptance', 'EmailPreview')) { throw 'Invalid diagnostic mode.' }
+          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe', 'DocumentReprocess', 'ProcessingSynthetic', 'TranslationSynthetic', 'CustomerAcceptance', 'EmailPreview', 'DealVelocityApply', 'DealVelocityInspect')) { throw 'Invalid diagnostic mode.' }
           if ($env:DIAGNOSTIC_TENANT -notmatch '^[a-z0-9][a-z0-9-]{0,127}$' -or
             ($env:DIAGNOSTIC_MODE -notin @('Contract', 'Synthetic', 'ProcessingSynthetic', 'TranslationSynthetic') -and
              $env:DIAGNOSTIC_RUN -notmatch '^[a-fA-F0-9]{32}$' -and
              -not ($env:DIAGNOSTIC_MODE -eq 'EmailPreview' -and $env:DIAGNOSTIC_RUN -cmatch '^mail-[A-Fa-f0-9]{64}$') -and
+             -not ($env:DIAGNOSTIC_MODE -in @('DealVelocityApply', 'DealVelocityInspect') -and
+                   $env:DIAGNOSTIC_TENANT -ceq 'contoso-legal' -and $env:DIAGNOSTIC_RUN -cmatch '^mail-[A-Fa-f0-9]{64}$') -and
              -not ($env:DIAGNOSTIC_MODE -eq 'Document' -and $env:DIAGNOSTIC_RUN -match '^[a-fA-F0-9]{64}$') -and
              -not ($env:DIAGNOSTIC_MODE -eq 'Inspect' -and $env:DIAGNOSTIC_RUN -ceq 'recent'))) {
             throw 'Invalid tenant/run identifiers.'
@@ -231,7 +236,13 @@ jobs:
           if not replicas:
               raise RuntimeError("The current revision has no active replica.")
           replay = "true" if os.environ["DIAGNOSTIC_MODE"] == "Replay" else "false"
-          if os.environ["DIAGNOSTIC_MODE"] == "EmailPreview":
+          if os.environ["DIAGNOSTIC_MODE"] in ("DealVelocityApply", "DealVelocityInspect"):
+              diagnostic = shlex.join([
+                  "dotnet", "/app/DocIntel.Api.dll", "--manage-deal-velocity", os.environ["DIAGNOSTIC_RUN"],
+                  "--deal-velocity-action", "Apply" if os.environ["DIAGNOSTIC_MODE"] == "DealVelocityApply" else "Inspect",
+                  "--diagnose-confirmation", "DEALVELOCITY",
+                  "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"]])
+          elif os.environ["DIAGNOSTIC_MODE"] == "EmailPreview":
               diagnostic = shlex.join([
                   "dotnet", "/app/DocIntel.Api.dll",
                   "--diagnose-email-preview", os.environ["DIAGNOSTIC_RUN"],
@@ -290,6 +301,32 @@ jobs:
               if marker < 0:
                   continue
               value = json.loads(line[marker + len("DOCINTEL_DIAGNOSTIC "):])
+              if os.environ["DIAGNOSTIC_MODE"] in ("DealVelocityApply", "DealVelocityInspect"):
+                  allowed_files = {
+                      "DV-Demo-DV-Q-2026-1041-Arbor-Ridge-Manufacturing.pdf",
+                      "DV-Demo-DV-Q-2026-1042-Arbor-Ridge-Manufacturing.pdf",
+                      "DV-Demo-DV-Q-2026-2081-Summit-Harbor-Logistics.pdf",
+                      "DV-Demo-DV-Q-2026-3051-Redwood-Lane-Retail.pdf",
+                      "DV-Demo-DV-Q-2026-4101-Crescent-Vale-Health-Services.pdf",
+                      "DV-Demo-Q1041-Arbor-Ridge-Copy.pdf", "DV-Demo-Q2082-Summit-Harbor-Draft.pdf",
+                      "DV-Demo-Arbor-Ridge-Master-Services-Agreement.pdf",
+                      "DV-Demo-Summit-Harbor-Deposit-Invoice.pdf"}
+                  if (value.get("phase") != "DealVelocity" or
+                      value.get("fileName") not in allowed_files | {None} or
+                      value.get("workspaceName") not in {None, "Other", "Deal Velocity"} or
+                      value.get("status") not in {"Renamed", "NotRenamed", "Queued", "Running", "Completed",
+                        "Failed", "Pending", "Submitted", "NotFound", "Refused"} or
+                      value.get("failureCode") not in {"None", "InvalidSetupInput", "ProcessingFailed",
+                        "CurrentAdministratorRequired", "WorkspaceChanged", "DocumentConflictOrIntegrityFailed",
+                        "TimedOut", "SetupFailed"}):
+                      raise RuntimeError("Invalid fixed demonstration setup metadata.")
+                  safe = {key: value[key] for key in (
+                      "phase", "stage", "status", "failureCode", "workspaceName", "version", "fileName",
+                      "jobId", "pages", "slices", "sourceCharacters", "hasWarnings", "recognizedSlices", "structuredDocuments",
+                      "entities", "failedStages") if key in value}
+                  print(json.dumps(safe))
+                  records.append(safe)
+                  continue
               safe = customer_record(value) if os.environ["DIAGNOSTIC_MODE"] == "CustomerAcceptance" else {
                   key: value[key] for key in (
                   "phase", "status", "failureCode", "searches", "inspections",
@@ -305,12 +342,12 @@ jobs:
               records.append(safe)
           if not records:
               raise RuntimeError("The runtime diagnostic returned no verified result. Raw process output was not published.")
-          expected_phase = os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance", "EmailPreview") else (
+          expected_phase = "DealVelocity" if os.environ["DIAGNOSTIC_MODE"] in ("DealVelocityApply", "DealVelocityInspect") else os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance", "EmailPreview") else (
               "Replay" if replay == "true" else "Stored")
           if records[-1].get("phase") != expected_phase:
               raise RuntimeError("The requested diagnostic did not complete.")
           if records[-1].get("status") in ("Refused", "NotFound", "Pending") or (
-                  expected_phase in ("Data", "Replay", "Contract", "Synthetic", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance", "EmailPreview") and records[-1].get("status") == "Failed"):
+                  expected_phase in ("Data", "Replay", "Contract", "Synthetic", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance", "EmailPreview", "DealVelocity") and records[-1].get("status") == "Failed"):
               sys.exit(1)
           if expected_phase == "CustomerAcceptance" and (
                   result.returncode or records[-1].get("scenario") != "Summary" or

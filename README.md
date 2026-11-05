@@ -565,6 +565,16 @@ probing and no extension tools. It never
 queues, saves, sends or resends a question, and prints only counts and fixed analytical rejection
 categories; a missing bar dataset is an explicit failure, not a successful chart. Existing failed-web
 `Replay` restrictions remain unchanged.
+`DealVelocityApply` is a separate explicit operator action: confirmation `DEALVELOCITY` renames
+only the existing `contoso-legal` display label to **Deal Velocity** and queues nine fixed, clearly
+fictional commercial PDFs. It requires a saved human workspace request whose actor still has
+workspace-wide administrator/process access. The workspace ID, users, channels, models, retention
+and original documents are preserved; optimistic harness versioning prevents concurrent overwrite.
+The immutable corpus covers multiple USD customers, one EUR quote, an identical copy, missing
+pricing, an MSA and an invoice that must not be double-counted as a new quote. Stable IDs/hashes
+make confirmed retries idempotent. `DealVelocityInspect` is read-only and distinguishes queued,
+failed, completed and completed-with-warning results; completion requires original integrity,
+source text and production provenance. Neither mode grants permissions or changes cloud resources.
 The Azure diagnostic workflow's optional `ask_run_id` looks up that opaque reference in the app's
 linked log workspace over the past day, including prior revisions. It prints only allowlisted
 exception types/codes/sites, never raw log messages; missing logs or lookup failure are explicit.

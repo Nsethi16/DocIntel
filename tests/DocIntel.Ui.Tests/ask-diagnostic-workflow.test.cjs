@@ -37,7 +37,7 @@ test('recent failure references can only be inspected and cannot authorize a rep
 });
 
 test('contract probing is a distinct document-free mode and does not weaken saved-question replay approval', () => {
-  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview\]/);
+  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview, DealVelocityApply, DealVelocityInspect\]/);
   assert.match(workflow, /Contract checks do not accept saved run identifiers/);
   assert.match(workflow, /"--diagnose-ask-contract", "true"/);
   assert.match(workflow, /"--diagnose-ask-synthetic", "true"/);
@@ -65,7 +65,17 @@ test('document lookup uses opaque references and translation probing needs its o
   assert.match(workflow, /options: \[Configured, WithoutGlossary\]/);
   assert.match(workflow, /"--diagnose-document", os.environ\["DIAGNOSTIC_RUN"\]/);
   assert.match(workflow, /"--diagnose-translation-probe", "true" if os.environ\["DIAGNOSTIC_MODE"\] == "TranslationProbe" else "false"/);
-  assert.doesNotMatch(workflow, /"fileName",|"bodyText",|"translatedText",/);
+  assert.doesNotMatch(workflow, /"bodyText",|"translatedText",/);
+  assert.match(workflow, /value\.get\("fileName"\) not in allowed_files/);
+});
+
+test('fixed demo submission is explicit, existing-workspace-only and keeps general diagnostics content-free', () => {
+  assert.match(workflow, /DealVelocityApply requires DEALVELOCITY/);
+  assert.match(workflow, /\$env:DIAGNOSTIC_TENANT -ceq 'contoso-legal'/);
+  assert.match(workflow, /"--manage-deal-velocity", os\.environ\["DIAGNOSTIC_RUN"\]/);
+  assert.match(workflow, /"Other", "Deal Velocity"/);
+  assert.match(workflow, /value\.get\("fileName"\) not in allowed_files/);
+  assert.doesNotMatch(workflow, /"question",|"actor",|"answer",/);
 });
 
 test('the diagnostic CLI exits before web hosting and background workers start', () => {

@@ -18,13 +18,14 @@ var askContractMode = args.Contains("--diagnose-ask-contract", StringComparer.Or
 var askSyntheticMode = args.Contains("--diagnose-ask-synthetic", StringComparer.Ordinal);
 var askDataMode = args.Contains("--diagnose-ask-data", StringComparer.Ordinal);
 var emailPreviewMode = args.Contains("--diagnose-email-preview", StringComparer.Ordinal);
+var dealVelocityMode = args.Contains("--manage-deal-velocity", StringComparer.Ordinal);
 var documentDiagnosticMode = args.Contains("--diagnose-document", StringComparer.Ordinal);
 var documentReprocessMode = args.Contains("--reprocess-document", StringComparer.Ordinal);
 var processingSyntheticMode = args.Contains("--diagnose-processing-synthetic", StringComparer.Ordinal);
 var translationSyntheticMode = args.Contains("--diagnose-translation-synthetic", StringComparer.Ordinal);
 var customerAcceptanceMode = args.Contains("--diagnose-customer-acceptance", StringComparer.Ordinal);
 var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal) ||
-    askContractMode || askSyntheticMode || askDataMode || emailPreviewMode || documentDiagnosticMode ||
+    askContractMode || askSyntheticMode || askDataMode || emailPreviewMode || dealVelocityMode || documentDiagnosticMode ||
     documentReprocessMode || processingSyntheticMode || translationSyntheticMode || customerAcceptanceMode;
 WebApplicationBuilder builder;
 try
@@ -107,6 +108,24 @@ builder.Services.AddHostedService<AskAiRunWorker>();
 builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);
 
 var app = builder.Build();
+if (dealVelocityMode)
+{
+    var action = builder.Configuration["deal-velocity-action"];
+    if (action is not ("Apply" or "Inspect"))
+        throw new ArgumentException("Choose Apply or Inspect for the fixed Deal Velocity setup.");
+    Environment.ExitCode = await DealVelocityWorkspaceSetup.ExecuteAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty,
+        builder.Configuration["manage-deal-velocity"] ?? String.Empty, action == "Apply",
+        builder.Configuration["diagnose-confirmation"] == "DEALVELOCITY", startupReadiness.ProbeModelsOnStartup,
+        app.Services.GetRequiredService<DocIntel.Core.Harness.IHarnessStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.IAskAiRunStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Authorization.ITenantAccessResolver>(),
+        app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Storage.IArtifactStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobQueue>(), Console.Out);
+    await app.DisposeAsync();
+    return;
+}
 if (emailPreviewMode)
 {
     Environment.ExitCode = await AskAiRunDiagnostic.ExecuteEmailPreviewAsync(

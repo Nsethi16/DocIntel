@@ -20,6 +20,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <EmbeddedResource Include="Diagnostics\DealVelocityDocuments\*.pdf"
+                      LogicalName="DocIntel.Api.Diagnostics.DealVelocityDocuments.%(Filename)%(Extension)" />
     <EmbeddedResource Include="Diagnostics\Fixtures\QA-20261102-*.pdf"
                       LogicalName="DocIntel.Api.Diagnostics.Fixtures.%(Filename)%(Extension)" />
     <None Update="Diagnostics\docintel-directory-probe.v1"
