@@ -55,6 +55,20 @@ public sealed class AskAiAnalyticalAgentTests
                 for (var number = 1; number <= 3; number++)
                     await InvokeAsync(options, "inspect_document_slice",
                         new() { ["jobId"] = $"source{number}", ["sliceIndex"] = 0, ["textOffset"] = 0 }, token);
+                var exactAmount = fixture.Request.Rows[0].Cells["amount"];
+                fixture.Request.Rows[0].Cells["amount"] = "999999.00";
+                var rejected = await InvokeAsync(options, "analyze_evidence",
+                    new() { ["request"] = JsonSerializer.SerializeToElement(fixture.Request) }, token);
+                using (var failure = JsonSerializer.SerializeToDocument(rejected))
+                {
+                    Assert.Equal("AnalysisCell", failure.RootElement.GetProperty("failureCode").GetString());
+                    var repair = failure.RootElement.GetProperty("repair");
+                    Assert.Equal("e1", repair.GetProperty("evidenceId").GetString());
+                    Assert.Equal("amount", repair.GetProperty("columnKey").GetString());
+                    Assert.Contains("100.25", repair.GetProperty("inspectedSourceText").GetString());
+                    Assert.DoesNotContain("999999.00", repair.GetProperty("sourceQuote").GetString());
+                }
+                fixture.Request.Rows[0].Cells["amount"] = exactAmount;
                 var result = await InvokeAsync(options, "analyze_evidence",
                     new() { ["request"] = JsonSerializer.SerializeToElement(fixture.Request) }, token);
                 using var computed = JsonSerializer.SerializeToDocument(result);

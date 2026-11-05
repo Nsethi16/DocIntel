@@ -93,6 +93,30 @@ public sealed class AskAiAnalysisTests
         Assert.Throws<ArgumentException>(() => AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence));
     }
 
+    [Fact]
+    public void Rejected_Values_Identify_Their_Column_For_Repair_Without_Silently_Changing_The_Amount()
+    {
+        // Arrange
+        var fixture = Invoices("sum", "bar", "supplier", ("Contoso", "100.00", "USD", "2026-01-01"));
+        var row = fixture.Request.Rows[0];
+        row.Cells["amount"] = "999.00";
+        fixture.Request.Rows[0] = new()
+        {
+            EvidenceId = row.EvidenceId, SourceQuote = String.Empty, Cells = row.Cells, Unit = row.Unit
+        };
+
+        // Act
+        var error = Assert.Throws<ArgumentException>(() =>
+            AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence));
+
+        // Assert
+        Assert.Equal("AnalysisCell", AskAiAnalysisEngine.RejectionCode(error));
+        Assert.Equal("e1", error.Data["AnalysisEvidenceId"]);
+        Assert.Equal("amount", error.Data["AnalysisColumn"]);
+        Assert.DoesNotContain("999.00", error.Message);
+        Assert.DoesNotContain("Contoso", error.Message);
+    }
+
     [Theory]
     [InlineData("-100.00")]
     [InlineData("(100.00)")]

@@ -20,6 +20,7 @@ public static class AskAiAnalysisEngine
             "Each record requires inspected evidence, an exact source quote and declared cells." => "AnalysisRecord",
             "A record quote must identify one occurrence in inspected original text." => "AnalysisQuote",
             "The record values do not identify a unique bounded span in inspected original text." => "AnalysisQuote",
+            "A repeated numeric value needs an explicit unique source quote." => "AnalysisQuote",
             "Use an explicit source-supported unit; ambiguous currency symbols cannot be aggregated." => "AnalysisUnit",
             "Every supplied cell must occur in that record's original-source quote." => "AnalysisCell",
             "The record unit and unit cell must agree." => "AnalysisUnitConflict",
@@ -85,13 +86,13 @@ public static class AskAiAnalysisEngine
             if (quoteOffset < 0)
             {
                 if (!TryLocateSourceSpan(text, row, request.Columns, unit, out quote))
-                    throw new ArgumentException(
-                        "The record values do not identify a unique bounded span in inspected original text.");
+                    throw RecordError(
+                        "The record values do not identify a unique bounded span in inspected original text.", row);
                 quoteOffset = text.IndexOf(quote, StringComparison.Ordinal);
                 locatedSourceSpan = true;
             }
             if (text.IndexOf(quote, quoteOffset + 1, StringComparison.Ordinal) >= 0)
-                throw new ArgumentException("A record quote must identify one occurrence in inspected original text.");
+                throw RecordError("A record quote must identify one occurrence in inspected original text.", row);
             if (unit.Length > 64 || unit is "$" or "\u20ac" or "\u00a3" ||
                 unit.Length > 0 && !Regex.IsMatch(quote,
                     $@"(?<!\p{{L}}){Regex.Escape(unit)}(?![\p{{L}}\p{{N}}])",
@@ -108,7 +109,8 @@ public static class AskAiAnalysisEngine
                 }
                 raw = Normalize(raw);
                 if (raw.Length > 500 || !ContainsValue(quote, raw, column.Kind == "number", unit))
-                    throw new ArgumentException("Every supplied cell must occur in that record's original-source quote.");
+                    throw RecordError("Every supplied cell must occur in that record's original-source quote.",
+                        row, column.Key);
                 cells[column.Key] = column.Kind switch
                 {
                     "number" => ParseNumber(raw, unit, column.NumberFormat),
@@ -307,12 +309,15 @@ public static class AskAiAnalysisEngine
         {
             if (!row.Cells.TryGetValue(column.Key, out var supplied) || String.IsNullOrWhiteSpace(supplied)) continue;
             var raw = Normalize(supplied);
-            if (raw.Length > 500 || !ContainsValue(text, raw, column.Kind == "number", unit)) return false;
+            if (raw.Length > 500 || !ContainsValue(text, raw, column.Kind == "number", unit))
+                throw RecordError("Every supplied cell must occur in that record's original-source quote.",
+                    row, column.Key);
             if (column.Key == "unit" || String.Equals(raw, unit, StringComparison.Ordinal)) continue;
             var index = text.IndexOf(raw, StringComparison.OrdinalIgnoreCase);
             if (index < 0) return false;
             var repeated = text.IndexOf(raw, index + 1, StringComparison.OrdinalIgnoreCase) >= 0;
-            if (column.Kind == "number" && repeated) return false;
+            if (column.Kind == "number" && repeated)
+                throw RecordError("A repeated numeric value needs an explicit unique source quote.", row, column.Key);
             if (column.Kind == "text" && !repeated) hasUniqueTextAnchor = true;
             start = Math.Min(start, index);
             end = Math.Max(end, index + raw.Length);
@@ -333,6 +338,15 @@ public static class AskAiAnalysisEngine
         if (end - start > 2_000) return false;
         quote = text[start..end];
         return true;
+    }
+
+    private static ArgumentException RecordError(
+        string message, AskAiAnalysisInputRow row, string? columnKey = null)
+    {
+        var exception = new ArgumentException(message);
+        exception.Data["AnalysisEvidenceId"] = row.EvidenceId;
+        exception.Data["AnalysisColumn"] = columnKey;
+        return exception;
     }
 
     private static bool ContainsValue(string text, string value, bool numeric, string unit)

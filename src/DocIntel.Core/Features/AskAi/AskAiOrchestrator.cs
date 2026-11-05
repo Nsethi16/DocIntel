@@ -968,8 +968,30 @@ public sealed class AskAiOrchestrator
                 run.Steps.Add(new AskAiStepTrace("analyze_evidence", null, timer.Elapsed.TotalMilliseconds,
                     "Analysis input rejected: " + code + "."));
                 if (onStepProgress is not null) await onStepProgress(run, ct);
+                object? repair = null;
+                if (exception.Data["AnalysisEvidenceId"] is string rejectedId &&
+                    analysisEvidence.TryGetValue(rejectedId, out var rejectedSource))
+                {
+                    var end = Math.Min(2_000, rejectedSource.SourceText.Length);
+                    if (end > 0 && end < rejectedSource.SourceText.Length &&
+                        Char.IsHighSurrogate(rejectedSource.SourceText[end - 1])) end--;
+                    repair = new
+                    {
+                        evidenceId = rejectedId,
+                        columnKey = exception.Data["AnalysisColumn"] as string,
+                        sourceQuote = rejectedSource.SourceText[..end],
+                        inspectedSourceText = rejectedSource.SourceText,
+                        instruction = "This is original text for this evidenceId, not a document summary. " +
+                            "Copy the exact raw value for the rejected column, including punctuation, digits, " +
+                            "group separators, signs and units. Do not copy a formatted display value. " +
+                            "You may use this sourceQuote if it contains all values for that record, " +
+                            "or copy a more specific contiguous verbatim span. " +
+                            "Do not replace missing values with zero or calculate totals yourself."
+                    };
+                }
                 return new { error = exception is OverflowException
-                    ? "The calculation exceeds the supported decimal range." : exception.Message, failureCode = code };
+                    ? "The calculation exceeds the supported decimal range." : exception.Message,
+                    failureCode = code, repair };
             }
         }
 

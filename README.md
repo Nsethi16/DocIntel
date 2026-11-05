@@ -524,6 +524,9 @@ values in that same inspected excerpt, with a unique non-unit text anchor, unamb
 and a 2,000-character context bound. It never accepts a rewritten model paragraph as source evidence.
 Signs, formatting, units, missing values, record deduplication and source citations retain their
 existing checks. Repeated values need an explicit, unique verbatim quote to disambiguate them.
+If a record is rejected, the tool identifies its evidence reference and column and returns a bounded
+verbatim source candidate to the already-authorized model for correction. It does not silently
+substitute or calculate an unsupported cell. Source repair text never enters diagnostic logs.
 The manual Ask AI diagnostic workflow also has a `Contract` mode. It requires the existing
 `Readiness:ProbeModelsOnStartup` live-probing opt-in, sends at most four tiny synthetic requests
 to compare plain, JSON-only, tools-only and combined contracts through the production model adapter,
