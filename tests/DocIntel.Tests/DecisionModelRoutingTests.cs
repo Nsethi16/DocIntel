@@ -139,6 +139,36 @@ public sealed class DecisionModelRoutingTests
     }
 
     [Fact]
+    public async Task Branded_Multiline_Headers_Keep_The_Actual_Document_Title_And_Identifiers_In_Native_Evidence()
+    {
+        // Arrange
+        var state = State();
+        var source = "Deal Velocity\nCOMMERCIAL SERVICES\nCOMMERCIAL OPERATIONS\nDVX-Q-2026-1101\n" +
+            "Analytics Platform\nCommercial Offer\nCustomer: Arbor Ridge Manufacturing LLC\n" +
+            "Quote Number: DVX-Q-2026-1101\nBilling Currency: USD\nTotal Deal Value: 158,400.00 USD\n";
+        state.Pages = [new() { PageNumber = 1, BodyText = source }];
+        state.Slices[0].BodyText = source;
+        var native = new Mock<IMicrosoftDecisionClient>(MockBehavior.Strict);
+        native.Setup(client => client.ChooseAsync(It.Is<string>(text =>
+                text.Contains("Commercial Offer", StringComparison.Ordinal) &&
+                text.Contains("Quote Number: DVX-Q-2026-1101", StringComparison.Ordinal) &&
+                text.Contains("158,400.00 USD", StringComparison.Ordinal) &&
+                System.Text.Encoding.UTF8.GetByteCount(text) < 8192),
+            It.IsAny<string>(), It.IsAny<IReadOnlyDictionary<string, string>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new MicrosoftDecisionResult("form_0", 0.91, "Decision-1"));
+        native.Setup(client => client.Dispose());
+
+        // Act
+        await new IdentifyDocumentsExecutor(Catalog(native.Object).Object)
+            .HandleAsync(state, Mock.Of<IWorkflowContext>());
+
+        // Assert
+        Assert.Equal("Signature Form", state.Slices[0].IdentifiedDocumentName);
+        Assert.Equal(source, state.Pages[0].BodyText);
+        Assert.Equal(source, state.Slices[0].BodyText);
+    }
+
+    [Fact]
     public async Task A_Later_Native_Failure_Does_Not_Publish_Partial_Identification()
     {
         // Arrange

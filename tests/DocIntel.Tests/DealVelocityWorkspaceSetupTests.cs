@@ -317,6 +317,55 @@ public sealed class DealVelocityWorkspaceSetupTests
         Assert.Equal(14, fixture.Tickets.Count);
     }
 
+    [Fact]
+    public async Task Explicit_Commercial_Refresh_Reuses_Only_Owned_Incomplete_Ids_And_Preserves_Their_Originals()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        await fixture.ExecuteAsync(apply: true, commercial: true);
+        var sources = await fixture.Jobs.ListJobsByTenantAsync("contoso-legal");
+        var incomplete = sources[0];
+        incomplete.Status = JobStatus.Completed;
+        incomplete.ExecutionAttempts = 1;
+        incomplete.HasDevelopmentResults = false;
+        incomplete.Segments = [new() { StartPage = 1, EndPage = incomplete.TotalPages, BodyText = "Source." }];
+        var original = fixture.Originals[incomplete.JobId];
+
+        // Act
+        var result = await fixture.ExecuteAsync(apply: true, commercial: true, refresh: true);
+
+        // Assert
+        Assert.Equal(0, result);
+        Assert.Equal(14, (await fixture.Jobs.ListJobsByTenantAsync("contoso-legal")).Count);
+        Assert.Equal(15, fixture.Tickets.Count);
+        var queued = await fixture.Jobs.GetJobAsync(incomplete.JobId, tenantId: "contoso-legal");
+        Assert.Equal(JobStatus.Queued, queued!.Status);
+        Assert.Equal(incomplete.OriginalSha256, queued.OriginalSha256);
+        Assert.Equal(original, fixture.Originals[incomplete.JobId]);
+        Assert.Equal(incomplete.SubmittedBy, queued.SubmittedBy);
+        Assert.Equal(1, queued.ExecutionAttempts);
+    }
+
+    [Fact]
+    public async Task Commercial_Refresh_Refuses_Exhausted_Attempts_Without_Queuing_Them()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        await fixture.ExecuteAsync(apply: true, commercial: true);
+        var incomplete = (await fixture.Jobs.ListJobsByTenantAsync("contoso-legal"))[0];
+        incomplete.Status = JobStatus.Failed;
+        incomplete.ExecutionAttempts = 3;
+
+        // Act
+        var result = await fixture.ExecuteAsync(apply: true, commercial: true, refresh: true);
+
+        // Assert
+        Assert.Equal(1, result);
+        Assert.Contains("RetryLimitReached", fixture.Output.ToString());
+        Assert.Equal(JobStatus.Failed, incomplete.Status);
+        Assert.Equal(14, fixture.Tickets.Count);
+    }
+
     private sealed class Fixture : IDisposable
     {
         public ActorIdentity Actor { get; } = new(Guid.NewGuid(), Guid.NewGuid());
@@ -382,10 +431,10 @@ public sealed class DealVelocityWorkspaceSetupTests
         }
 
         public Task<int> ExecuteAsync(bool apply, bool confirmed = true, bool live = true,
-            bool commercial = false, IJobStore? jobs = null) =>
+            bool commercial = false, IJobStore? jobs = null, bool refresh = false) =>
             DealVelocityWorkspaceSetup.ExecuteAsync("contoso-legal", BasisId, apply, confirmed, live,
                 Harness.Object, Runs.Object, Access.Object, jobs ?? Jobs, Artifacts.Object, Queue.Object, Output,
-                commercialPortfolio: commercial);
+                commercialPortfolio: commercial, refreshIncomplete: refresh);
         public void Dispose() => Output.Dispose();
         private static TenantHarness Copy(TenantHarness tenant) =>
             JsonSerializer.Deserialize<TenantHarness>(JsonSerializer.SerializeToUtf8Bytes(tenant))!;

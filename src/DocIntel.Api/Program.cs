@@ -130,12 +130,14 @@ if (dealVelocityMode)
 {
     var action = builder.Configuration["deal-velocity-action"];
     var commercialPortfolio = builder.Configuration["commercial-portfolio"] == "true";
+    var refreshIncomplete = builder.Configuration["refresh-portfolio"] == "true";
     if (action is not ("Apply" or "Inspect"))
         throw new ArgumentException("Choose Apply or Inspect for the fixed Deal Velocity setup.");
     Environment.ExitCode = await DealVelocityWorkspaceSetup.ExecuteAsync(
         builder.Configuration["diagnose-tenant"] ?? String.Empty,
         builder.Configuration["manage-deal-velocity"] ?? String.Empty, action == "Apply",
-        builder.Configuration["diagnose-confirmation"] == (commercialPortfolio ? "PORTFOLIO" : "DEALVELOCITY"),
+        builder.Configuration["diagnose-confirmation"] ==
+            (refreshIncomplete ? "REPROCESS" : commercialPortfolio ? "PORTFOLIO" : "DEALVELOCITY"),
         startupReadiness.ProbeModelsOnStartup,
         app.Services.GetRequiredService<DocIntel.Core.Harness.IHarnessStore>(),
         app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.IAskAiRunStore>(),
@@ -144,7 +146,8 @@ if (dealVelocityMode)
         app.Services.GetRequiredService<DocIntel.Core.Storage.IArtifactStore>(),
         app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobQueue>(), Console.Out,
         commercialPortfolio: commercialPortfolio,
-        slicer: app.Services.GetRequiredService<DocIntel.Core.Features.DocumentSplitting.IPdfSlicer>());
+        slicer: app.Services.GetRequiredService<DocIntel.Core.Features.DocumentSplitting.IPdfSlicer>(),
+        refreshIncomplete: refreshIncomplete);
     await app.DisposeAsync();
     return;
 }

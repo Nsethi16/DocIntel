@@ -25,10 +25,12 @@ public static class DealVelocityWorkspaceSetup
         string tenantId, string basisRunId, bool apply, bool confirmed, bool liveProbingEnabled,
         IHarnessStore harnesses, IAskAiRunStore runs, ITenantAccessResolver access,
         IJobStore jobs, IArtifactStore artifacts, IJobQueue queue, TextWriter output,
-        CancellationToken cancellationToken = default, bool commercialPortfolio = false, IPdfSlicer? slicer = null)
+        CancellationToken cancellationToken = default, bool commercialPortfolio = false, IPdfSlicer? slicer = null,
+        bool refreshIncomplete = false)
     {
         if (tenantId != WorkspaceId || !PersonalEmailState.ValidRun(basisRunId) ||
-            apply && (!confirmed || !liveProbingEnabled))
+            apply && (!confirmed || !liveProbingEnabled) ||
+            refreshIncomplete && (!apply || !commercialPortfolio))
         {
             await WriteAsync(output, "Setup", "Refused", "InvalidSetupInput");
             return 2;
@@ -113,6 +115,28 @@ public static class DealVelocityWorkspaceSetup
                     var original = await artifacts.GetOriginalPdfAsync(WorkspaceId, id, deadline.Token);
                     if (original is null || Convert.ToHexString(SHA256.HashData(original)) != hash)
                         throw new InvalidDataException("The saved demonstration original failed its integrity check.");
+                }
+                if (refreshIncomplete && job is not null &&
+                    (job.Status == JobStatus.Failed || job.Status == JobStatus.Completed &&
+                        PortfolioFailure(document.Key, job) != "None"))
+                {
+                    if (job.ExecutionAttempts >= 3)
+                    {
+                        await WriteAsync(output, "Summary", "Failed", "RetryLimitReached");
+                        return 1;
+                    }
+                    var retry = JsonSerializer.Deserialize<DocumentJob>(JsonSerializer.SerializeToUtf8Bytes(job))
+                        ?? throw new InvalidDataException("The selected portfolio document is unavailable.");
+                    retry.StoreVersion = job.StoreVersion;
+                    retry.Status = JobStatus.Queued;
+                    retry.ErrorMessage = null;
+                    retry.ErrorCode = null;
+                    retry.CompletedAtUtc = null;
+                    var checkedTenant = await RequireAdministratorAsync(actor, harnesses, access, deadline.Token);
+                    if (JsonSerializer.Serialize(checkedTenant) != fingerprint) throw new HarnessConflictException();
+                    await SaveFencedAsync(jobs, retry, deadline.Token);
+                    await queue.TryEnqueueAsync(new(id, WorkspaceId), deadline.Token);
+                    job = retry;
                 }
                 pending |= job is null || job.Status is JobStatus.Queued or JobStatus.Running;
                 failed |= job?.Status == JobStatus.Failed;
@@ -224,19 +248,24 @@ public static class DealVelocityWorkspaceSetup
                 ?? throw new InvalidDataException("An earlier document is unavailable.");
             renamed.StoreVersion = known.StoreVersion;
             await RequireAdministratorAsync(actor, harnesses, access, token);
-            try
-            {
-                await jobs.UpsertJobAsync(renamed, token);
-            }
-            catch (InvalidOperationException)
-            {
-                throw new DocumentLifecycleConflictException();
-            }
-            catch (CosmosException exception) when (exception.StatusCode is
-                HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed or HttpStatusCode.NotFound)
-            {
-                throw new DocumentLifecycleConflictException();
-            }
+            await SaveFencedAsync(jobs, renamed, token);
+        }
+    }
+
+    private static async Task SaveFencedAsync(IJobStore jobs, DocumentJob job, CancellationToken token)
+    {
+        try
+        {
+            await jobs.UpsertJobAsync(job, token);
+        }
+        catch (InvalidOperationException)
+        {
+            throw new DocumentLifecycleConflictException();
+        }
+        catch (CosmosException exception) when (exception.StatusCode is
+            HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed or HttpStatusCode.NotFound)
+        {
+            throw new DocumentLifecycleConflictException();
         }
     }
 
@@ -297,6 +326,14 @@ public static class DealVelocityWorkspaceSetup
             insightCount = job?.Segments.Count(slice => !String.IsNullOrWhiteSpace(slice.InsightSummary)),
             evaluatedPromptResults = job?.PromptColumnResults.Count(result => result.Status == "Evaluated"),
             verifiedOcrPages,
+            classification = job?.Segments.Select(slice => new
+            {
+                slice.SegmentIndex, slice.StartPage, slice.EndPage, slice.IdentificationConfidence,
+                documentType = slice.IdentifiedDocumentName is
+                    "Commercial Quote" or "Master Services Agreement" or "Statement of Work" or "Purchase Order" or
+                    "Invoice" or "Contract Amendment" or "Data Processing Addendum" or "Undefined"
+                    ? slice.IdentifiedDocumentName : "Other"
+            }).ToArray(),
             sourceCharacters = job?.Segments.Sum(slice => (long)DocumentPromptBoundary.OriginalSourceText(slice).Length),
             recognizedSlices = job?.Segments.Count(slice => !String.IsNullOrWhiteSpace(slice.IdentifiedDocumentName) &&
                 !String.Equals(slice.IdentifiedDocumentName, "Undefined", StringComparison.OrdinalIgnoreCase)),

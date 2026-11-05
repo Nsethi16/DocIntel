@@ -591,6 +591,11 @@ three separate attempts; completed answers and failed evidence are never overwri
 Identity, channels, retention and
 model resources/capacity are not changed. English already-target-language preview notices are
 omitted in both UIs; explicit failures and uncertain detection remain visible.
+`CommercialRefresh` requires `REPROCESS` and requeues only the identical, owned fixed portfolio
+jobs that failed or have incomplete required capabilities. It preserves original PDFs and earlier
+attempt artifacts, refuses exhausted three-attempt jobs, and leaves running/queued work unchanged.
+Native classification samples bounded leading headings and identifiers across source pages, so
+branding or a wrapped title cannot consume the entire four-line header sample.
 The Azure diagnostic workflow's optional `ask_run_id` looks up that opaque reference in the app's
 linked log workspace over the past day, including prior revisions. It prints only allowlisted
 exception types/codes/sites, never raw log messages; missing logs or lookup failure are explicit.
