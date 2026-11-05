@@ -37,6 +37,9 @@
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\EmailChannelDiagnostic.cs" Link="Diagnostics\EmailChannelDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\DealVelocityDemoCorpus.cs" Link="Diagnostics\DealVelocityDemoCorpus.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\DealVelocityWorkspaceSetup.cs" Link="Diagnostics\DealVelocityWorkspaceSetup.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Diagnostics\CommercialPortfolioCorpus.cs" Link="Diagnostics\CommercialPortfolioCorpus.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Diagnostics\CommercialPortfolioConfiguration.cs" Link="Diagnostics\CommercialPortfolioConfiguration.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Diagnostics\CommercialPortfolioQuestions.cs" Link="Diagnostics\CommercialPortfolioQuestions.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\AskAiDataDiagnostic.cs" Link="Diagnostics\AskAiDataDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\DocumentJobDiagnostic.cs" Link="Diagnostics\DocumentJobDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\ProcessingAcceptanceDiagnostic.cs" Link="Diagnostics\ProcessingAcceptanceDiagnostic.cs" />
@@ -48,6 +51,8 @@
                       LogicalName="DocIntel.Api.Diagnostics.Fixtures.%(Filename)%(Extension)" />
     <EmbeddedResource Include="..\..\src\DocIntel.Api\Diagnostics\DealVelocityDocuments\*.pdf"
                       LogicalName="DocIntel.Api.Diagnostics.DealVelocityDocuments.%(Filename)%(Extension)" />
+    <EmbeddedResource Include="..\..\src\DocIntel.Api\Diagnostics\CommercialPortfolio\*.pdf"
+                      LogicalName="DocIntel.Api.Diagnostics.CommercialPortfolio.%(Filename)%(Extension)" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\DirectoryConnectionDiagnostic.cs" Link="Diagnostics\DirectoryConnectionDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\NativeDecisionDiagnostic.cs" Link="Diagnostics\NativeDecisionDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Identity\IdentityOptions.cs" Link="Identity\IdentityOptions.cs" />

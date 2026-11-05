@@ -37,7 +37,7 @@ test('recent failure references can only be inspected and cannot authorize a rep
 });
 
 test('contract probing is a distinct document-free mode and does not weaken saved-question replay approval', () => {
-  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview, DealVelocityApply, DealVelocityInspect\]/);
+  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview, DealVelocityApply, DealVelocityInspect, CommercialApply, CommercialInspect, CommercialQuestion\]/);
   assert.match(workflow, /Contract checks do not accept saved run identifiers/);
   assert.match(workflow, /"--diagnose-ask-contract", "true"/);
   assert.match(workflow, /"--diagnose-ask-synthetic", "true"/);
@@ -75,6 +75,18 @@ test('fixed demo submission is explicit, existing-workspace-only and keeps gener
   assert.match(workflow, /"--manage-deal-velocity", os\.environ\["DIAGNOSTIC_RUN"\]/);
   assert.match(workflow, /"Other", "Deal Velocity"/);
   assert.match(workflow, /value\.get\("fileName"\) not in allowed_files/);
+  assert.doesNotMatch(workflow, /"question",|"actor",|"answer",/);
+});
+
+test('commercial portfolio changes and saved questions require distinct explicit confirmations', () => {
+  assert.match(workflow, /CommercialApply requires PORTFOLIO/);
+  assert.match(workflow, /CommercialQuestion requires ASK/);
+  assert.match(workflow, /"--commercial-portfolio"/);
+  assert.match(workflow, /"--commercial-question"/);
+  assert.match(workflow, /"translatedSlices", "languages"/);
+  assert.match(program, /commercialPortfolio \? "PORTFOLIO" : "DEALVELOCITY"/);
+  assert.match(workflow, /"PORTFOLIO" if os.environ\["DIAGNOSTIC_MODE"\]\.startswith\("Commercial"\)/);
+  assert.match(workflow, /"PortfolioFeaturesIncomplete", "PacketSplitIncomplete", "OcrNotVerified"/);
   assert.doesNotMatch(workflow, /"question",|"actor",|"answer",/);
 });
 

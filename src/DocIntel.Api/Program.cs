@@ -19,13 +19,15 @@ var askSyntheticMode = args.Contains("--diagnose-ask-synthetic", StringComparer.
 var askDataMode = args.Contains("--diagnose-ask-data", StringComparer.Ordinal);
 var emailPreviewMode = args.Contains("--diagnose-email-preview", StringComparer.Ordinal);
 var dealVelocityMode = args.Contains("--manage-deal-velocity", StringComparer.Ordinal);
+var commercialQuestionMode = args.Contains("--commercial-question", StringComparer.Ordinal);
 var documentDiagnosticMode = args.Contains("--diagnose-document", StringComparer.Ordinal);
 var documentReprocessMode = args.Contains("--reprocess-document", StringComparer.Ordinal);
 var processingSyntheticMode = args.Contains("--diagnose-processing-synthetic", StringComparer.Ordinal);
 var translationSyntheticMode = args.Contains("--diagnose-translation-synthetic", StringComparer.Ordinal);
 var customerAcceptanceMode = args.Contains("--diagnose-customer-acceptance", StringComparer.Ordinal);
 var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal) ||
-    askContractMode || askSyntheticMode || askDataMode || emailPreviewMode || dealVelocityMode || documentDiagnosticMode ||
+    askContractMode || askSyntheticMode || askDataMode || emailPreviewMode || dealVelocityMode ||
+    commercialQuestionMode || documentDiagnosticMode ||
     documentReprocessMode || processingSyntheticMode || translationSyntheticMode || customerAcceptanceMode;
 WebApplicationBuilder builder;
 try
@@ -108,21 +110,41 @@ builder.Services.AddHostedService<AskAiRunWorker>();
 builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);
 
 var app = builder.Build();
+if (commercialQuestionMode)
+{
+    Environment.ExitCode = await CommercialPortfolioQuestions.ExecuteAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty,
+        builder.Configuration["commercial-question"] ?? String.Empty,
+        builder.Configuration["commercial-scenario"] ?? String.Empty,
+        builder.Configuration["diagnose-confirmation"] == "ASK", startupReadiness.ProbeModelsOnStartup,
+        app.Services.GetRequiredService<DocIntel.Core.Harness.IHarnessStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.IAskAiRunStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Authorization.ITenantAccessResolver>(),
+        app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Models.IModelCatalog>(),
+        app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.AskAiExecutionOptions>(), Console.Out);
+    await app.DisposeAsync();
+    return;
+}
 if (dealVelocityMode)
 {
     var action = builder.Configuration["deal-velocity-action"];
+    var commercialPortfolio = builder.Configuration["commercial-portfolio"] == "true";
     if (action is not ("Apply" or "Inspect"))
         throw new ArgumentException("Choose Apply or Inspect for the fixed Deal Velocity setup.");
     Environment.ExitCode = await DealVelocityWorkspaceSetup.ExecuteAsync(
         builder.Configuration["diagnose-tenant"] ?? String.Empty,
         builder.Configuration["manage-deal-velocity"] ?? String.Empty, action == "Apply",
-        builder.Configuration["diagnose-confirmation"] == "DEALVELOCITY", startupReadiness.ProbeModelsOnStartup,
+        builder.Configuration["diagnose-confirmation"] == (commercialPortfolio ? "PORTFOLIO" : "DEALVELOCITY"),
+        startupReadiness.ProbeModelsOnStartup,
         app.Services.GetRequiredService<DocIntel.Core.Harness.IHarnessStore>(),
         app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.IAskAiRunStore>(),
         app.Services.GetRequiredService<DocIntel.Core.Authorization.ITenantAccessResolver>(),
         app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobStore>(),
         app.Services.GetRequiredService<DocIntel.Core.Storage.IArtifactStore>(),
-        app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobQueue>(), Console.Out);
+        app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobQueue>(), Console.Out,
+        commercialPortfolio: commercialPortfolio,
+        slicer: app.Services.GetRequiredService<DocIntel.Core.Features.DocumentSplitting.IPdfSlicer>());
     await app.DisposeAsync();
     return;
 }

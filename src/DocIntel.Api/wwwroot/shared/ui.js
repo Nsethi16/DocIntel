@@ -206,6 +206,8 @@ function translationPreviewNote(job, slice) {
   }
   const source = String(slice.detectedLanguage || '').trim();
   const target = String(slice.targetLanguage || '').trim();
+  if (source.toLowerCase().split('-')[0] === 'en' && target.toLowerCase().split('-')[0] === 'en' &&
+    slice.languageDetection?.useAutomaticSourceLanguage !== true) return null;
   if (source && target && slice.languageDetection?.useAutomaticSourceLanguage !== true &&
     source.toLowerCase() === target.toLowerCase()) {
     return { kind: '', text: `Translation not needed: the detected and target language are ${source.toUpperCase()}. ` +

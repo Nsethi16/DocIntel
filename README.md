@@ -575,6 +575,22 @@ pricing, an MSA and an invoice that must not be double-counted as a new quote. S
 make confirmed retries idempotent. `DealVelocityInspect` is read-only and distinguishes queued,
 failed, completed and completed-with-warning results; completion requires original integrity,
 source text and production provenance. Neither mode grants permissions or changes cloud resources.
+
+For presentation-ready multilingual material, `CommercialApply` requires `PORTFOLIO`, adds commercial
+identification/extraction definitions and two source-grounded prompt columns, enables the requested
+processing capabilities, and submits fourteen richly formatted DVX documents (37 pages). These
+include Spanish, French, German and bilingual originals, a multi-document packet, a genuine raster
+invoice for OCR and a procurement copy. The content is synthetic; filenames and visible layouts use
+normal commercial branding. No earlier documents are deleted: only the nine previously created
+DV-Demo filenames are safely cleaned with current admin access and version-fenced metadata writes.
+`CommercialInspect` checks actual processing, packet boundaries, feature outputs, genuine OCR and
+translated-PDF availability; missing required foreign-language translation
+is a failure, not a hidden English no-op. `CommercialQuestion` requires `ASK` and saves one of four
+fixed complex, source-scoped web answers without email delivery. Confirmed retries create at most
+three separate attempts; completed answers and failed evidence are never overwritten.
+Identity, channels, retention and
+model resources/capacity are not changed. English already-target-language preview notices are
+omitted in both UIs; explicit failures and uncertain detection remain visible.
 The Azure diagnostic workflow's optional `ask_run_id` looks up that opaque reference in the app's
 linked log workspace over the past day, including prior revisions. It prints only allowlisted
 exception types/codes/sites, never raw log messages; missing logs or lookup failure are explicit.

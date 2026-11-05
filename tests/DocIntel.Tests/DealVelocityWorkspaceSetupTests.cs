@@ -192,6 +192,131 @@ public sealed class DealVelocityWorkspaceSetupTests
         Assert.False(fixture.Tenant.Agent.EmailEnabled);
     }
 
+    [Fact]
+    public async Task Commercial_Apply_Cleans_Only_Known_Filenames_Without_Reprocessing_Or_Changing_Their_Content()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        await fixture.ExecuteAsync(apply: true);
+        var originals = await fixture.Jobs.ListJobsByTenantAsync("contoso-legal");
+        foreach (var job in originals)
+        {
+            job.Status = JobStatus.Completed;
+            job.HasDevelopmentResults = false;
+            job.ExecutionAttempts = 1;
+            job.Segments = [new() { StartPage = 1, EndPage = job.TotalPages, BodyText = "Preserved source." }];
+        }
+        var fingerprints = originals.ToDictionary(job => job.JobId, AskAiConversationContext.Fingerprint);
+        var unrelated = new DocumentJob
+        {
+            JobId = new string('f', 32), TenantId = "contoso-legal", TenantDisplayName = "Deal Velocity",
+            AppliedHarnessVersion = 1, FileName = "Demo-Customer-Owned-Document.pdf", Status = JobStatus.Completed
+        };
+        await fixture.Jobs.UpsertJobAsync(unrelated);
+
+        // Act
+        var first = await fixture.ExecuteAsync(apply: true, commercial: true);
+        var second = await fixture.ExecuteAsync(apply: true, commercial: true);
+        var current = await fixture.Jobs.ListJobsByTenantAsync("contoso-legal");
+
+        // Assert
+        Assert.Equal(0, first);
+        Assert.Equal(0, second);
+        Assert.Equal(24, current.Count);
+        Assert.Equal(23, fixture.Tickets.Count);
+        foreach (var original in originals)
+        {
+            var renamed = Assert.Single(current, job => job.JobId == original.JobId);
+            Assert.DoesNotContain("Demo", renamed.FileName, StringComparison.OrdinalIgnoreCase);
+            Assert.Equal(fingerprints[original.JobId], AskAiConversationContext.Fingerprint(renamed));
+            Assert.Equal(original.OriginalSha256, renamed.OriginalSha256);
+            Assert.Equal(original.SubmittedBy, renamed.SubmittedBy);
+            Assert.Equal(original.ExecutionAttempts, renamed.ExecutionAttempts);
+            Assert.Equal(JobStatus.Completed, renamed.Status);
+        }
+        Assert.Equal(unrelated.FileName, Assert.Single(current, job => job.JobId == unrelated.JobId).FileName);
+    }
+
+    [Fact]
+    public async Task Commercial_Rename_Rejects_A_Stale_Metadata_Write_And_Preserves_The_Current_Document()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        await fixture.ExecuteAsync(apply: true);
+        var original = (await fixture.Jobs.ListJobsByTenantAsync("contoso-legal"))[0];
+        original.Status = JobStatus.Completed;
+        original.StoreVersion = 7;
+        original.ETag = "specific-version";
+        var fenced = new Mock<IJobStore>(MockBehavior.Strict);
+        fenced.Setup(store => store.GetJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), "contoso-legal"))
+            .ReturnsAsync((string id, CancellationToken _, string _) => id == original.JobId ? original : null);
+        fenced.Setup(store => store.UpsertJobAsync(It.Is<DocumentJob>(job =>
+            job.JobId == original.JobId && job.StoreVersion == 7 && job.ETag == "specific-version" &&
+            !job.FileName.Contains("Demo", StringComparison.OrdinalIgnoreCase)), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("Concurrent metadata change."));
+
+        // Act
+        var result = await fixture.ExecuteAsync(apply: true, commercial: true, jobs: fenced.Object);
+
+        // Assert
+        Assert.Equal(1, result);
+        Assert.Contains("DocumentChanged", fixture.Output.ToString());
+        Assert.Contains("Demo", original.FileName);
+        Assert.Equal(9, fixture.Tickets.Count);
+        fenced.Verify(store => store.UpsertJobAsync(It.IsAny<DocumentJob>(), It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task Commercial_Rename_Rechecks_Admin_Access_After_Reading_The_Original()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        await fixture.ExecuteAsync(apply: true);
+        foreach (var job in await fixture.Jobs.ListJobsByTenantAsync("contoso-legal"))
+            job.Status = JobStatus.Completed;
+        fixture.Artifacts.Setup(store => store.GetOriginalPdfAsync("contoso-legal", It.IsAny<string>(),
+            It.IsAny<CancellationToken>())).ReturnsAsync((string _, string id, CancellationToken _) =>
+        {
+            fixture.Access.Setup(service => service.ResolveAsync(fixture.Actor, "contoso-legal",
+                It.IsAny<CancellationToken>())).ReturnsAsync(DocumentAccessScope.Denied);
+            return fixture.Originals.GetValueOrDefault(id);
+        });
+
+        // Act
+        var result = await fixture.ExecuteAsync(apply: true, commercial: true);
+
+        // Assert
+        Assert.Equal(2, result);
+        Assert.Contains("CurrentAdministratorRequired", fixture.Output.ToString());
+        Assert.All(await fixture.Jobs.ListJobsByTenantAsync("contoso-legal"), job =>
+            Assert.Contains("Demo", job.FileName));
+        Assert.Equal(9, fixture.Tickets.Count);
+    }
+
+    [Fact]
+    public async Task Commercial_Inspection_Does_Not_Call_Untranslated_Foreign_Documents_Ready()
+    {
+        // Arrange
+        using var fixture = new Fixture();
+        await fixture.ExecuteAsync(apply: true, commercial: true);
+        foreach (var job in await fixture.Jobs.ListJobsByTenantAsync("contoso-legal"))
+        {
+            job.Status = JobStatus.Completed;
+            job.HasDevelopmentResults = false;
+            job.Segments = [new() { StartPage = 1, EndPage = job.TotalPages, BodyText = "Original source text." }];
+        }
+
+        // Act
+        var result = await fixture.ExecuteAsync(apply: false, commercial: true);
+
+        // Assert
+        Assert.Equal(1, result);
+        Assert.Contains("TranslationNotCompleted", fixture.Output.ToString());
+        Assert.Contains("PortfolioFeaturesIncomplete", fixture.Output.ToString());
+        Assert.Contains("OcrNotVerified", fixture.Output.ToString());
+        Assert.Equal(14, fixture.Tickets.Count);
+    }
+
     private sealed class Fixture : IDisposable
     {
         public ActorIdentity Actor { get; } = new(Guid.NewGuid(), Guid.NewGuid());
@@ -256,9 +381,11 @@ public sealed class DealVelocityWorkspaceSetupTests
                 });
         }
 
-        public Task<int> ExecuteAsync(bool apply, bool confirmed = true, bool live = true) =>
+        public Task<int> ExecuteAsync(bool apply, bool confirmed = true, bool live = true,
+            bool commercial = false, IJobStore? jobs = null) =>
             DealVelocityWorkspaceSetup.ExecuteAsync("contoso-legal", BasisId, apply, confirmed, live,
-                Harness.Object, Runs.Object, Access.Object, Jobs, Artifacts.Object, Queue.Object, Output);
+                Harness.Object, Runs.Object, Access.Object, jobs ?? Jobs, Artifacts.Object, Queue.Object, Output,
+                commercialPortfolio: commercial);
         public void Dispose() => Output.Dispose();
         private static TenantHarness Copy(TenantHarness tenant) =>
             JsonSerializer.Deserialize<TenantHarness>(JsonSerializer.SerializeToUtf8Bytes(tenant))!;

@@ -854,7 +854,7 @@ test('running and queued jobs with no segments do not claim the source is missin
   }
 });
 
-test('same-language documents show why translation was unnecessary without claiming translated output', () => {
+test('English source documents omit redundant translation notices without claiming translated output', () => {
   const app = documentRuntime({
     jobId: 'file', tenantId: 'one', fileName: 'English.pdf', status: 'Completed', hasWarnings: false,
     executionTrace: [{ executorName: 'TranslateDocumentsExecutor', executed: true, succeeded: true }],
@@ -862,8 +862,7 @@ test('same-language documents show why translation was unnecessary without claim
       wasTranslated: false, insightSummary: 'English document insight' }]
   });
   const html = renderDocumentTab(app, 'document');
-  assert.match(html, /Translation not needed: the detected and target language are EN/);
-  assert.match(html, /No translated PDF was generated/);
+  assert.doesNotMatch(html, /Translation not needed|No translated PDF was generated|pdf-translation-note/);
   assert.doesNotMatch(html, /\?translated=true|pdf-side-by-side|data-kind="warning"/);
   assert.equal(app.element('documentStatusNotice').hidden, true);
   assert.doesNotMatch(renderDocumentTab(app, 'insights'), /→ EN translated/);
@@ -991,14 +990,14 @@ test('Admin list and preview badge distinguish warning-only list responses from 
   assert.match(read('admin.css'), /\.status-pill-mini\.warning[^}]+var\(--warning-bg\)/);
 });
 
-test('Admin preview explains same-language skips and only requests translated PDFs for genuine translated output', () => {
+test('Admin preview omits English no-op notices and only requests genuine translated PDFs', () => {
   const app = documentRuntime({
     jobId: 'file', tenantId: 'one', fileName: 'File.pdf', status: 'Completed',
     segments: [{ segmentIndex: 0, startPage: 1, endPage: 4, detectedLanguage: 'en',
       targetLanguage: 'en', wasTranslated: false }]
   }, 'admin');
   const source = renderDocumentTab(app, 'document');
-  assert.match(source, /Translation not needed/);
+  assert.doesNotMatch(source, /Translation not needed|pdf-translation-note/);
   assert.match(source, /data-pdf-url="[^"]+\/slices\/0\/pdf"/);
   assert.doesNotMatch(source, /\?translated=true|<iframe[^>]+\bsrc=/);
   Object.assign(app.context.fixtureJob.segments[0], {

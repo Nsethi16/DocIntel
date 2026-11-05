@@ -92,8 +92,22 @@ test('a partly uncertain target-language candidate is not mislabeled as a same-l
     detectedLanguage: 'en', targetLanguage: 'en',
     languageDetection: { useAutomaticSourceLanguage: true }
   });
+
   assert.doesNotMatch(note.text, /Translation not needed/);
   assert.match(note.text, /Processing is still in progress/);
+});
+
+test('English regional variants omit no-op notices while explicit translation failures remain visible', () => {
+  const app = runtime(() => {});
+  assert.equal(app.translationPreviewNote({ status: 'Completed' }, {
+    detectedLanguage: 'en-US', targetLanguage: 'en', wasTranslated: false
+  }), null);
+  const failure = app.translationPreviewNote({ status: 'Completed' }, {
+    detectedLanguage: 'en', targetLanguage: 'en', wasTranslated: false,
+    translationErrorCode: 'translation_failed', translationErrorMessage: 'Stored failure.'
+  });
+  assert.equal(failure.kind, 'warning');
+  assert.match(failure.text, /Translation unavailable|Stored failure/);
 });
 
 test('only a successful PDF response starts the native viewer, using a bounded authenticated range request', async () => {

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -9,6 +10,7 @@ using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Models;
 using DocIntel.Core.Storage;
+using Microsoft.Azure.Cosmos;
 
 namespace DocIntel.Api.Diagnostics;
 
@@ -23,7 +25,7 @@ public static class DealVelocityWorkspaceSetup
         string tenantId, string basisRunId, bool apply, bool confirmed, bool liveProbingEnabled,
         IHarnessStore harnesses, IAskAiRunStore runs, ITenantAccessResolver access,
         IJobStore jobs, IArtifactStore artifacts, IJobQueue queue, TextWriter output,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool commercialPortfolio = false, IPdfSlicer? slicer = null)
     {
         if (tenantId != WorkspaceId || !PersonalEmailState.ValidRun(basisRunId) ||
             apply && (!confirmed || !liveProbingEnabled))
@@ -42,21 +44,23 @@ public static class DealVelocityWorkspaceSetup
                 basis.PendingEmail is null || basis.ReplyChannel.ChannelType != AskAiChannelType.Email)
                 throw new UnauthorizedAccessException("A saved human workspace request is required.");
             var current = await RequireAdministratorAsync(actor, harnesses, access, deadline.Token);
-            var documents = DealVelocityDemoCorpus.Build();
-            if (documents.Count != 9 || documents.Sum(document => (long)document.Bytes.Length) > 1024 * 1024)
+            var documents = commercialPortfolio ? CommercialPortfolioCorpus.Build() : DealVelocityDemoCorpus.Build();
+            var corpusVersion = commercialPortfolio ? CommercialPortfolioCorpus.Version : DealVelocityDemoCorpus.Version;
+            if (documents.Count != (commercialPortfolio ? 14 : 9) ||
+                documents.Sum(document => (long)document.Bytes.Length) > (commercialPortfolio ? 5 : 1) * 1024 * 1024)
                 throw new InvalidDataException("The fixed demonstration corpus exceeded its limits.");
             var extractor = new PdfPigLayoutExtractor();
             foreach (var document in documents)
                 if ((await extractor.ExtractGeometryAsync(document.Bytes, new(), deadline.Token)).Count != document.Pages)
                     throw new InvalidDataException("A demonstration PDF has unexpected pages.");
 
-            if (apply && current.DisplayName != WorkspaceName)
+            var desired = commercialPortfolio ? CommercialPortfolioConfiguration.Apply(current) : Clone(current);
+            desired.DisplayName = WorkspaceName;
+            if (apply && (current.DisplayName != WorkspaceName || SettingsStamp(current) != SettingsStamp(desired)))
             {
-                var preserved = SettingsStamp(current);
-                var updated = Clone(current);
-                updated.DisplayName = WorkspaceName;
+                var preserved = SettingsStamp(desired);
                 await RequireAdministratorAsync(actor, harnesses, access, deadline.Token);
-                var saved = await harnesses.UpsertTenantAsync(updated, deadline.Token);
+                var saved = await harnesses.UpsertTenantAsync(desired, deadline.Token);
                 if (saved.TenantId != WorkspaceId || saved.DisplayName != WorkspaceName ||
                     SettingsStamp(saved) != preserved)
                     throw new InvalidDataException("The workspace update did not preserve its settings.");
@@ -64,6 +68,8 @@ public static class DealVelocityWorkspaceSetup
                 if (current.DisplayName != WorkspaceName)
                     throw new InvalidDataException("The workspace name was not persisted.");
             }
+            if (apply && commercialPortfolio)
+                await RenameEarlierFilesAsync(actor, harnesses, access, jobs, artifacts, deadline.Token);
             await WriteAsync(output, "Workspace", current.DisplayName == WorkspaceName ? "Renamed" : "NotRenamed",
                 "None", workspaceName: current.DisplayName == WorkspaceName ? WorkspaceName : "Other",
                 version: current.HarnessVersion);
@@ -76,10 +82,11 @@ public static class DealVelocityWorkspaceSetup
                 if (JsonSerializer.Serialize(checkedWorkspace) != fingerprint)
                     throw new HarnessConflictException();
                 var hash = Convert.ToHexString(SHA256.HashData(document.Bytes));
-                var id = JobId(document);
+                var id = JobId(document, corpusVersion);
                 var job = await jobs.GetJobAsync(id, deadline.Token, WorkspaceId);
                 if (job is not null && (job.TenantId != WorkspaceId || job.JobId != id ||
-                    job.FileName != document.FileName || job.OriginalSha256 != hash || job.SubmittedBy != actor))
+                    (job.FileName != document.FileName && job.FileName != CleanFileName(document.FileName)) ||
+                    job.OriginalSha256 != hash || job.SubmittedBy != actor))
                     throw new InvalidDataException("A demonstration job conflicts with an existing document.");
                 if (job is null && apply)
                 {
@@ -113,12 +120,42 @@ public static class DealVelocityWorkspaceSetup
                     job.TotalPages != document.Pages || job.Segments.Count == 0 ||
                     job.Segments.Sum(slice => (long)DocumentPromptBoundary.OriginalSourceText(slice).Length) == 0))
                     throw new InvalidDataException("Live demonstration processing has no verified production provenance.");
+                var portfolioFailure = "None";
+                int? verifiedOcrPages = null;
+                if (commercialPortfolio && job?.Status == JobStatus.Completed)
+                {
+                    portfolioFailure = PortfolioFailure(document.Key, job);
+                    foreach (var slice in job.Segments.Where(slice => slice.WasTranslated))
+                    {
+                        if (slicer is null)
+                            throw new InvalidDataException("Translation inspection requires the real PDF reader.");
+                        var translated = await DocumentPdfReader.ReadSliceAsync(job, slice.SegmentIndex, true,
+                            artifacts, slicer, deadline.Token);
+                        if (translated is null || String.IsNullOrWhiteSpace(slice.TranslatedText) ||
+                            slice.TargetLanguage != "en" ||
+                            (await extractor.ExtractGeometryAsync(translated, new(), deadline.Token)).Count !=
+                                slice.EndPage - slice.StartPage + 1)
+                            throw new InvalidDataException("A reported PDF translation is not available.");
+                    }
+                    if (document.Key == "DVXScannedInvoice")
+                    {
+                        var layout = job.LayoutSha256 is { Length: 64 } && job.LayoutSha256.All(Char.IsAsciiHexDigit)
+                            ? await artifacts.GetLayoutAsync(WorkspaceId, job.ArtifactDocumentId ?? id,
+                                job.LayoutSha256, hash, deadline.Token) : null;
+                        verifiedOcrPages = layout?.Pages.Count(page =>
+                            page.TextSource == "ContentUnderstandingLayout" &&
+                            page.TextProvider == "AzureContentUnderstanding:prebuilt-layout" &&
+                            page.Words.Count > 0 && !String.IsNullOrWhiteSpace(page.NativeLayoutJson));
+                        if (verifiedOcrPages != document.Pages) portfolioFailure = "OcrNotVerified";
+                    }
+                }
+                failed |= portfolioFailure != "None";
                 await WriteAsync(output, document.Key, job?.Status.ToString() ?? "NotFound",
-                    job?.Status == JobStatus.Failed ? "ProcessingFailed" : "None",
-                    document: document, job: job);
+                    job?.Status == JobStatus.Failed ? "ProcessingFailed" : portfolioFailure,
+                    document: document, job: job, verifiedOcrPages: verifiedOcrPages);
             }
             await RequireAdministratorAsync(actor, harnesses, access, deadline.Token);
-            await WriteAsync(output, "Summary", apply ? "Submitted" : failed ? "Failed" : pending ? "Pending" : "Completed",
+            await WriteAsync(output, "Summary", failed ? "Failed" : apply ? "Submitted" : pending ? "Pending" : "Completed",
                 failed ? "ProcessingFailed" : "None");
             return failed ? 1 : !apply && pending ? 3 : 0;
         }
@@ -130,6 +167,11 @@ public static class DealVelocityWorkspaceSetup
         catch (HarnessConflictException)
         {
             await WriteAsync(output, "Summary", "Failed", "WorkspaceChanged");
+            return 1;
+        }
+        catch (DocumentLifecycleConflictException)
+        {
+            await WriteAsync(output, "Summary", "Failed", "DocumentChanged");
             return 1;
         }
         catch (InvalidDataException)
@@ -150,10 +192,72 @@ public static class DealVelocityWorkspaceSetup
     }
 
     /// <summary>Stable IDs make a confirmed retry reuse only identical, owned demonstration documents.</summary>
-    public static string JobId(DealVelocityDemoCorpus.Document document) =>
+    public static string JobId(DealVelocityDemoCorpus.Document document, string corpusVersion = DealVelocityDemoCorpus.Version) =>
         Convert.ToHexStringLower(SHA256.HashData(Encoding.UTF8.GetBytes(
-            DealVelocityDemoCorpus.Version + "|" + WorkspaceId + "|" + document.FileName + "|" +
+            corpusVersion + "|" + WorkspaceId + "|" + document.FileName + "|" +
             Convert.ToHexString(SHA256.HashData(document.Bytes)))).AsSpan(0, 16));
+
+    private static string CleanFileName(string name) =>
+        name.Replace("DV-Demo-DV-", "DV-", StringComparison.Ordinal).Replace("DV-Demo-", "DV-", StringComparison.Ordinal);
+
+    private static async Task RenameEarlierFilesAsync(
+        ActorIdentity actor, IHarnessStore harnesses, ITenantAccessResolver access, IJobStore jobs,
+        IArtifactStore artifacts, CancellationToken token)
+    {
+        foreach (var document in DealVelocityDemoCorpus.Build())
+        {
+            var id = JobId(document);
+            var known = await jobs.GetJobAsync(id, token, WorkspaceId);
+            if (known is null) continue;
+            if (known.TenantId != WorkspaceId || known.JobId != id ||
+                known.Status != JobStatus.Completed || known.SubmittedBy != actor ||
+                known.OriginalSha256 != Convert.ToHexString(SHA256.HashData(document.Bytes)) ||
+                (known.FileName != document.FileName && known.FileName != CleanFileName(document.FileName)))
+                throw new InvalidDataException("An earlier file no longer matches its owned source.");
+            if (known.FileName == CleanFileName(document.FileName)) continue;
+            if (await DocumentPdfReader.ReadOriginalAsync(known, artifacts, token) is null)
+                throw new InvalidDataException("An earlier file has no verified original.");
+            var node = JsonSerializer.SerializeToNode(known)?.AsObject()
+                ?? throw new InvalidDataException("An earlier document is unavailable.");
+            node[nameof(DocumentJob.FileName)] = CleanFileName(document.FileName);
+            var renamed = node.Deserialize<DocumentJob>()
+                ?? throw new InvalidDataException("An earlier document is unavailable.");
+            renamed.StoreVersion = known.StoreVersion;
+            await RequireAdministratorAsync(actor, harnesses, access, token);
+            try
+            {
+                await jobs.UpsertJobAsync(renamed, token);
+            }
+            catch (InvalidOperationException)
+            {
+                throw new DocumentLifecycleConflictException();
+            }
+            catch (CosmosException exception) when (exception.StatusCode is
+                HttpStatusCode.Conflict or HttpStatusCode.PreconditionFailed or HttpStatusCode.NotFound)
+            {
+                throw new DocumentLifecycleConflictException();
+            }
+        }
+    }
+
+    internal static string PortfolioFailure(string key, DocumentJob job)
+    {
+        if ((key is "DVXQuoteES" or "DVXPendingES" or "DVXQuoteFR" or "DVXPrivacyFR" or "DVXQuoteDE") &&
+            !job.Segments.Any(slice => slice.WasTranslated))
+            return "TranslationNotCompleted";
+        if (key == "DVXPacket" && !job.Segments.OrderBy(slice => slice.StartPage)
+            .Select(slice => (slice.StartPage, slice.EndPage)).SequenceEqual([(1, 4), (5, 5), (6, 7)]))
+            return "PacketSplitIncomplete";
+        if (job.HasWarnings || job.Segments.Any(slice =>
+            String.IsNullOrWhiteSpace(slice.IdentifiedDocumentName) ||
+            String.Equals(slice.IdentifiedDocumentName, "Undefined", StringComparison.OrdinalIgnoreCase) ||
+            slice.DataExtraction is null || String.IsNullOrWhiteSpace(slice.InsightSummary) ||
+            slice.ExtractedEntities.Count == 0 || new[] { "dvxclose", "dvxterms" }.Any(column =>
+                !slice.PromptColumnResults.Any(result => result.ColumnId == column &&
+                    result.Status == "Evaluated" && !String.IsNullOrWhiteSpace(result.ResultText)))))
+            return "PortfolioFeaturesIncomplete";
+        return "None";
+    }
 
     private static async Task<TenantHarness> RequireAdministratorAsync(
         ActorIdentity actor, IHarnessStore harnesses, ITenantAccessResolver access, CancellationToken token)
@@ -181,11 +285,18 @@ public static class DealVelocityWorkspaceSetup
 
     private static Task WriteAsync(TextWriter output, string stage, string status, string failureCode,
         string? workspaceName = null, int? version = null, DealVelocityDemoCorpus.Document? document = null,
-        DocumentJob? job = null) => output.WriteLineAsync("DOCINTEL_DIAGNOSTIC " + JsonSerializer.Serialize(new
+        DocumentJob? job = null, int? verifiedOcrPages = null) =>
+        output.WriteLineAsync("DOCINTEL_DIAGNOSTIC " + JsonSerializer.Serialize(new
         {
             phase = "DealVelocity", stage, status, failureCode, workspaceName, version,
             fileName = document?.FileName, jobId = job?.JobId, pages = job?.TotalPages,
             slices = job?.Segments.Count, hasWarnings = job?.HasWarnings,
+            translatedSlices = job?.Segments.Count(slice => slice.WasTranslated),
+            languages = job?.Segments.Select(slice => slice.DetectedLanguage).Distinct().ToArray(),
+            promptResults = job?.PromptColumnResults.Count,
+            insightCount = job?.Segments.Count(slice => !String.IsNullOrWhiteSpace(slice.InsightSummary)),
+            evaluatedPromptResults = job?.PromptColumnResults.Count(result => result.Status == "Evaluated"),
+            verifiedOcrPages,
             sourceCharacters = job?.Segments.Sum(slice => (long)DocumentPromptBoundary.OriginalSourceText(slice).Length),
             recognizedSlices = job?.Segments.Count(slice => !String.IsNullOrWhiteSpace(slice.IdentifiedDocumentName) &&
                 !String.Equals(slice.IdentifiedDocumentName, "Undefined", StringComparison.OrdinalIgnoreCase)),
