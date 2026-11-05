@@ -23,7 +23,7 @@ public sealed class AskAiAnalyticalAgentTests
         await jobs.UpsertJobAsync(new DocumentJob
         {
             JobId = "source", TenantId = "workspace", TenantDisplayName = "Workspace",
-            FileName = "quote.pdf", Status = JobStatus.Completed,
+            FileName = "quote.pdf", Status = JobStatus.Completed, AppliedHarnessVersion = 1,
             Segments = [new() { StartPage = 1, EndPage = 1, BodyText = text }]
         });
         var columns = new List<AskAiAnalysisInputColumn>
