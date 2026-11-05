@@ -94,6 +94,25 @@ public sealed class CommercialPortfolioTests
         Assert.Null(once.ValidateAndNormalizeDocumentCatalog());
     }
 
+    [Fact]
+    public async Task The_Real_Commercial_Packet_Uses_Printed_Fraction_Pagination_To_Preserve_Three_Documents()
+    {
+        // Arrange
+        var packet = Assert.Single(CommercialPortfolioCorpus.Build(), document => document.Key == "DVXPacket");
+        var extractor = new PdfPigLayoutExtractor();
+        var config = new SplittingConfig();
+
+        // Act
+        var pages = await extractor.ExtractPagesAsync(packet.Bytes, config);
+        var slices = SliceBoundaryAnalyzer.GroupPagesHeuristically(pages, config);
+
+        // Assert
+        Assert.Equal(new int?[] { 1, 2, 3, 4, 1, 1, 2 }, pages.Select(page => page.SubDocPageNumber).ToArray());
+        Assert.Equal(new int?[] { 4, 4, 4, 4, 1, 2, 2 }, pages.Select(page => page.SubDocTotalPages).ToArray());
+        Assert.Equal(new[] { (1, 4), (5, 5), (6, 7) },
+            slices.Select(slice => (slice.StartPage, slice.EndPage)).ToArray());
+    }
+
     [Theory]
     [InlineData("commercial-values")]
     [InlineData("commercial-billing")]

@@ -596,6 +596,8 @@ jobs that failed or have incomplete required capabilities. It preserves original
 attempt artifacts, refuses exhausted three-attempt jobs, and leaves running/queued work unchanged.
 Native classification samples bounded leading headings and identifiers across source pages, so
 branding or a wrapped title cannot consume the entire four-line header sample.
+Footer-only `n / total` pagination is recognized alongside `Page n of total`, allowing page-count
+resets to split a real combined packet even when generic confidentiality footers are ignored.
 The Azure diagnostic workflow's optional `ask_run_id` looks up that opaque reference in the app's
 linked log workspace over the past day, including prior revisions. It prints only allowlisted
 exception types/codes/sites, never raw log messages; missing logs or lookup failure are explicit.

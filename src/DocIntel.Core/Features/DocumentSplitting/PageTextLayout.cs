@@ -33,6 +33,9 @@ internal static class PageTextLayout
     private static readonly Regex PageXOfYRegex = new(
         @"\b(?:Page|Página|Pagina|Seite)\s+(\d+)\s+(?:of|de|von)\s+(\d+)\b",
         RegexOptions.IgnoreCase | RegexOptions.Compiled);
+    private static readonly Regex FooterFractionPaginationRegex = new(
+        @"(?:^|\s)(\d{1,5})\s*/\s*(\d{1,5})\s*$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     public static void Apply(PageLayout page, IEnumerable<LayoutTextWord> words, IReadOnlyList<string> ignoredFooters)
     {
@@ -47,13 +50,17 @@ internal static class PageTextLayout
             if (String.IsNullOrWhiteSpace(text)) continue;
             if (line.Key > page.PageHeight * 0.10) { bodyLines.Add(text); continue; }
             var pagination = PageXOfYRegex.Match(text);
-            if (pagination.Success)
+            if (!pagination.Success) pagination = FooterFractionPaginationRegex.Match(text);
+            if (pagination.Success &&
+                Int32.TryParse(pagination.Groups[1].Value, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var number) &&
+                Int32.TryParse(pagination.Groups[2].Value, System.Globalization.NumberStyles.None,
+                    System.Globalization.CultureInfo.InvariantCulture, out var total) &&
+                number >= 1 && total >= number)
             {
-                page.SubDocPageNumber = Int32.Parse(pagination.Groups[1].Value,
-                    System.Globalization.CultureInfo.InvariantCulture);
-                page.SubDocTotalPages = Int32.Parse(pagination.Groups[2].Value,
-                    System.Globalization.CultureInfo.InvariantCulture);
-                text = PageXOfYRegex.Replace(text, String.Empty).Trim();
+                page.SubDocPageNumber = number;
+                page.SubDocTotalPages = total;
+                text = text.Remove(pagination.Index, pagination.Length).Trim();
             }
             if (!String.IsNullOrWhiteSpace(text) && !IsIgnored(text, ignoredFooters))
                 footerWords.Add(text.Replace(" ", String.Empty, StringComparison.Ordinal));
