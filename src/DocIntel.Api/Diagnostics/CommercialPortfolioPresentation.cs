@@ -140,6 +140,17 @@ public static class CommercialPortfolioPresentation
                     var timer = Stopwatch.StartNew();
                     await GenerateDocumentInsightsExecutor.EvaluateJobInsightsAsync(
                         working, current, models, deadline.Token);
+                    if (working.Segments.Any(slice => !TryBrief(
+                        slice.InsightSummary, ["What matters", "Key terms", "Watch out", "Next action"], 90, out _)))
+                    {
+                        var refinement = Clone(current);
+                        refinement.Capabilities[FeatureHarness.DocumentInsightKey].DocumentInsight!.SummaryInstructions +=
+                            " Refinement: write at most 60 words including the four labels and bullet markers. " +
+                            "Keep the exact four-bullet format; retain the main sourced fact, risk and action. " +
+                            "Do not pad the answer or repeat identifiers.";
+                        await GenerateDocumentInsightsExecutor.EvaluateJobInsightsAsync(
+                            working, refinement, models, deadline.Token);
+                    }
                     await EvaluatePrivacyAsync(working, current, artifacts, models, deadline.Token);
                     var failure = QualityFailure(document.Key, working);
                     if (failure != "None" || working.HasDevelopmentResults != false)
@@ -274,11 +285,27 @@ public static class CommercialPortfolioPresentation
         var privacyOnly = Clone(tenant);
         privacyOnly.Capabilities[FeatureHarness.PromptColumnsKey].PromptColumns!.Columns.RemoveAll(
             column => column.ColumnId != PrivacyColumnId);
-        var generated = await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(
-            job, privacyOnly, models, artifacts, token);
+        var generated = (await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(
+            job, privacyOnly, models, artifacts, token)).Select(NormalizeMissingEvidence).ToArray();
         job.PromptColumnResults = generated.Concat(prior).ToList();
         foreach (var slice in job.Segments)
-            slice.PromptColumnResults = slice.PromptColumnResults.Concat(perSlice[slice.SegmentIndex]).ToList();
+            slice.PromptColumnResults = generated.Where(result => result.SegmentIndex == slice.SegmentIndex)
+                .Concat(perSlice[slice.SegmentIndex]).ToList();
+    }
+
+    internal static PromptColumnResult NormalizeMissingEvidence(PromptColumnResult result)
+    {
+        if (!TryBrief(result.ResultText, ["Decision", "Why", "Evidence", "Next"], 75, out var fields) ||
+            fields[0] is not ("REVIEW" or "NOT APPLICABLE"))
+            return result;
+        const string missing = "Not stated in this document.";
+        if (fields[2] != "\"" + missing + "\"" && fields[2] != "\u201c" + missing + "\u201d")
+            return result;
+        return result with
+        {
+            ResultText = $"- **Decision:** {fields[0]}\n- **Why:** {fields[1]}\n" +
+                $"- **Evidence:** {missing}\n- **Next:** {fields[3]}"
+        };
     }
 
     private static async Task RequireCurrentAsync(

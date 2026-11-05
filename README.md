@@ -609,7 +609,11 @@ become a privacy failure. Actual pending French/German approvals must produce a 
 Only insights and this new column are re-evaluated; all other columns, original PDFs, OCR,
 splitting, classifications, extraction and translations are retained. Output-shape, word-count and
 verbatim-quote checks run before version-fenced publication. Unacceptable generation never replaces
-the prior results or gets silently truncated. Matching completed results are reused on a confirmed
+the prior results or gets silently truncated. An overlong or malformed insight gets at most one
+source-based style rewrite with a stricter 60-word target; the original 90-word gate still applies.
+An explicitly quoted `Not stated in this document.` marker is rendered as absence, not as a source
+quotation, only for `REVIEW` or `NOT APPLICABLE`; it cannot substantiate `HOLD` or `READY`.
+Matching completed results are reused on a confirmed
 retry; `CommercialPolishInspect` is read-only. Diagnostic logs contain only counts, fixed verdicts
 and known failure codes, never the briefs, source quotations or identities.
 Refreshed derived content intentionally changes Ask AI source fingerprints: generate fresh

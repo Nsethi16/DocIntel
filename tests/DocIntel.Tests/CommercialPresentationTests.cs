@@ -219,6 +219,77 @@ public sealed class CommercialPresentationTests
             Assert.Equal(before[job.JobId], JsonSerializer.Serialize(job));
     }
 
+    [Fact]
+    public async Task One_Bounded_Style_Rewrite_Can_Produce_A_Valid_Short_Brief_Without_Truncation()
+    {
+        // Arrange
+        using var fixture = await Fixture.CreateAsync();
+        var firstInsight = true;
+        fixture.Response = (task, _) =>
+        {
+            if (task != "insight" || !firstInsight) return null;
+            firstInsight = false;
+            return JsonSerializer.Serialize(new
+            {
+                summary = Brief + " " + String.Join(" ", Enumerable.Repeat("extra", 100))
+            });
+        };
+
+        // Act
+        var result = await fixture.ExecuteAsync();
+
+        // Assert
+        Assert.Equal(0, result);
+        Assert.Equal(33, fixture.Calls);
+        Assert.All(await fixture.Jobs.ListJobsByTenantAsync("contoso-legal"),
+            job => Assert.All(job.Segments, slice => Assert.Equal(Brief, slice.InsightSummary)));
+    }
+
+    [Theory]
+    [InlineData("NOT APPLICABLE", "\"Not stated in this document.\"", "Not stated in this document.")]
+    [InlineData("REVIEW", "\u201cNot stated in this document.\u201d", "Not stated in this document.")]
+    [InlineData("HOLD", "\"Not stated in this document.\"", "\"Not stated in this document.\"")]
+    [InlineData("READY", "\"Not stated in this document.\"", "\"Not stated in this document.\"")]
+    [InlineData("NOT APPLICABLE", "\"A statement that is not sourced.\"", "\"A statement that is not sourced.\"")]
+    public void Only_An_Explicit_Absence_Marker_For_Non_Clearance_Decisions_Is_Canonicalized(
+        string decision, string evidence, string expected)
+    {
+        // Arrange
+        var result = Result(CommercialPortfolioPresentation.PrivacyColumnId, Privacy(decision, evidence), 0);
+
+        // Act
+        var normalized = CommercialPortfolioPresentation.NormalizeMissingEvidence(result);
+
+        // Assert
+        Assert.Contains("- **Evidence:** " + expected, normalized.ResultText);
+        Assert.Contains("- **Decision:** " + decision, normalized.ResultText);
+    }
+
+    [Fact]
+    public async Task Quoted_Absence_Markers_Are_Stored_As_Absence_Not_Fabricated_Source_Quotations()
+    {
+        // Arrange
+        using var fixture = await Fixture.CreateAsync();
+        fixture.Response = (task, input) => task == "privacy" &&
+            (input.Contains("SOURCE_KEY=DVXInvoice", StringComparison.Ordinal) ||
+             input.Contains("SOURCE_KEY=DVXScannedInvoice", StringComparison.Ordinal))
+            ? JsonSerializer.Serialize(new { result = Privacy("NOT APPLICABLE", "\"Not stated in this document.\"") })
+            : null;
+
+        // Act
+        var result = await fixture.ExecuteAsync();
+
+        // Assert
+        Assert.Equal(0, result);
+        var invoiceId = DealVelocityWorkspaceSetup.JobId(CommercialPortfolioCorpus.Build()
+            .Single(document => document.Key == "DVXInvoice"), CommercialPortfolioCorpus.Version);
+        var invoice = await fixture.Jobs.GetJobAsync(invoiceId, tenantId: "contoso-legal");
+        var outcome = Assert.Single(invoice!.Segments[0].PromptColumnResults,
+            item => item.ColumnId == CommercialPortfolioPresentation.PrivacyColumnId);
+        Assert.Contains("- **Evidence:** Not stated in this document.", outcome.ResultText);
+        Assert.DoesNotContain("\"Not stated in this document.\"", outcome.ResultText);
+    }
+
     [Theory]
     [InlineData("HOLD", "\"Privacy approval is pending.\"", "None")]
     [InlineData("READY", "\"Privacy approval is pending.\"", "PrivacyDecisionMismatch")]
