@@ -106,7 +106,8 @@ class CustomerAcceptanceWorkflowTests(unittest.TestCase):
                 self.assertNotEqual(0, result.returncode)
 
     def execute_runtime(self, case: str, records: list[dict[str, object]],
-                        returncode: int = 0) -> tuple[str, list[str]]:
+                        returncode: int = 0, mode: str = "CustomerAcceptance",
+                        reference: str = BASIS) -> tuple[str, list[str]]:
         """Mock the process boundary so no Azure CLI or remote command can actually execute."""
         commands = []
 
@@ -126,7 +127,9 @@ class CustomerAcceptanceWorkflowTests(unittest.TestCase):
             return subprocess.CompletedProcess(arguments, returncode, output, "private stderr")
 
         output = io.StringIO()
-        with mock.patch.dict(os.environ, environment(DIAGNOSTIC_CUSTOMER_CASE=case), clear=True):
+        with mock.patch.dict(os.environ, environment(
+            DIAGNOSTIC_CUSTOMER_CASE=case, DIAGNOSTIC_MODE=mode, DIAGNOSTIC_RUN=reference
+        ), clear=True):
             with mock.patch("subprocess.run", side_effect=run), redirect_stdout(output):
                 exec(compile(RUNTIME, "<bounded-operator-workflow>", "exec"), {})
         return output.getvalue(), commands
@@ -183,6 +186,68 @@ class CustomerAcceptanceWorkflowTests(unittest.TestCase):
         with mock.patch.dict(os.environ, {"DIAGNOSTIC_CUSTOMER_CASE": "documents"}):
             value = record(runId="a" * 64, sources=[{"jobId": BASIS, "sourceSha256": "b" * 64}])
             self.assertEqual(value, namespace["customer_record"](value))
+
+    def test_presentation_guards_require_polish_and_the_exact_workspace_request_basis(self) -> None:
+        basis = "mail-" + "A" * 64
+        for mode, confirmation in (("CommercialPolish", "POLISH"), ("CommercialPolishInspect", "")):
+            result = subprocess.run(
+                ["pwsh", "-NoProfile", "-NonInteractive", "-Command", GUARD],
+                env=environment(DIAGNOSTIC_MODE=mode, DIAGNOSTIC_CONFIRMATION=confirmation, DIAGNOSTIC_RUN=basis),
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            self.assertEqual(0, result.returncode, result.stderr)
+        for change in (
+            {"DIAGNOSTIC_CONFIRMATION": ""}, {"DIAGNOSTIC_CONFIRMATION": "polish"},
+            {"DIAGNOSTIC_TENANT": "other"}, {"DIAGNOSTIC_RUN": BASIS},
+        ):
+            result = subprocess.run(
+                ["pwsh", "-NoProfile", "-NonInteractive", "-Command", GUARD],
+                env=environment(**{
+                    "DIAGNOSTIC_MODE": "CommercialPolish", "DIAGNOSTIC_CONFIRMATION": "POLISH",
+                    "DIAGNOSTIC_RUN": basis, **change,
+                }),
+                capture_output=True, text=True, timeout=30, check=False,
+            )
+            self.assertNotEqual(0, result.returncode)
+
+    def test_presentation_projection_rejects_source_text_unsupported_verdicts_and_nested_private_data(self) -> None:
+        tree = ast.parse(RUNTIME)
+        function = next(node for node in tree.body if isinstance(node, ast.FunctionDef)
+                        and node.name == "presentation_record")
+        namespace = {"re": re}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), "<presentation-schema>", "exec"), namespace)
+        value = {"phase": "CommercialPresentation", "stage": "DVXPrivacyFR", "status": "Ready",
+                 "failureCode": "None", "jobId": BASIS, "slices": 1,
+                 "insightWordsMax": 65, "privacyWordsMax": 49,
+                 "decisions": [{"SegmentIndex": 0, "decision": "HOLD"}]}
+        self.assertEqual(value, namespace["presentation_record"](value))
+        for change in (
+            {"insightSummary": "private text"}, {"sourceQuote": "private text"}, {"stage": "private customer"},
+            {"failureCode": "private provider failure"}, {"insightWordsMax": True},
+            {"decisions": [{"SegmentIndex": 0, "decision": "Compliant"}]},
+            {"decisions": [{"SegmentIndex": 0, "decision": "HOLD", "evidence": "private source"}]},
+        ):
+            with self.subTest(change=change), self.assertRaises(RuntimeError):
+                namespace["presentation_record"]({**value, **change})
+
+    def test_presentation_execution_is_isolated_and_requires_a_complete_final_summary(self) -> None:
+        value = {"phase": "CommercialPresentation", "stage": "Summary", "status": "Completed", "failureCode": "None"}
+        basis = "mail-" + "A" * 64
+        for mode, action in (("CommercialPolish", "Apply"), ("CommercialPolishInspect", "Inspect")):
+            output, commands = self.execute_runtime("documents", [value], mode=mode, reference=basis)
+            self.assertNotIn("private", output)
+            remote = shlex.split(commands[0])
+            command = shlex.split(remote[remote.index("--command") + 1])
+            self.assertEqual([
+                "dotnet", "/app/DocIntel.Api.dll", "--commercial-presentation", basis,
+                "--presentation-action", action, "--diagnose-confirmation",
+                "POLISH" if action == "Apply" else "", "--diagnose-tenant", "contoso-legal",
+            ], command)
+        for changes in ({"stage": "DVXPrivacyFR", "status": "Updated"}, {"status": "Pending"}, {"status": "Failed"}):
+            with self.subTest(changes=changes), self.assertRaises(SystemExit):
+                self.execute_runtime("documents", [{**value, **changes}], mode="CommercialPolish", reference=basis)
+        with self.assertRaises(SystemExit):
+            self.execute_runtime("documents", [value], returncode=1, mode="CommercialPolish", reference=basis)
 
 
 if __name__ == "__main__":

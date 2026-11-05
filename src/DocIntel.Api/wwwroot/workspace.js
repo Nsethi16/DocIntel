@@ -1029,8 +1029,7 @@ let tenants = [];
                 </div>
                 ${prose ? `<a class="text-link-btn" href="${originalUrl}" target="_blank" rel="noopener noreferrer">Open File ↗</a>` : ''}
                 </div>
-                <div class="slice-card-body"><p class="insight-prose" style="margin:0;">${escapeHtml(prose ||
-                  missingMessage)}</p></div>
+                <div class="slice-card-body">${processingResultMarkup(prose || missingMessage)}</div>
               </article>
             </div>`;
           return;
@@ -1071,7 +1070,7 @@ let tenants = [];
                 </div>
               </div>
               <div class="slice-card-body">
-                <p class="insight-prose" style="margin:0;">${escapeHtml(prose)}</p>
+                ${processingResultMarkup(prose)}
               </div>
             </article>
           `;
@@ -1266,7 +1265,7 @@ let tenants = [];
                 </div>
               </div>
               <div class="slice-card-body">
-                <p class="insight-prose" style="margin:0;">${escapeHtml(cleanedOutcome || missingMessage)}</p>
+                ${processingResultMarkup(cleanedOutcome || missingMessage)}
               </div>
             </article>
           `;

@@ -40,6 +40,7 @@
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\CommercialPortfolioCorpus.cs" Link="Diagnostics\CommercialPortfolioCorpus.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\CommercialPortfolioConfiguration.cs" Link="Diagnostics\CommercialPortfolioConfiguration.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\CommercialPortfolioQuestions.cs" Link="Diagnostics\CommercialPortfolioQuestions.cs" />
+    <Compile Include="..\..\src\DocIntel.Api\Diagnostics\CommercialPortfolioPresentation.cs" Link="Diagnostics\CommercialPortfolioPresentation.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\AskAiDataDiagnostic.cs" Link="Diagnostics\AskAiDataDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\DocumentJobDiagnostic.cs" Link="Diagnostics\DocumentJobDiagnostic.cs" />
     <Compile Include="..\..\src\DocIntel.Api\Diagnostics\ProcessingAcceptanceDiagnostic.cs" Link="Diagnostics\ProcessingAcceptanceDiagnostic.cs" />

@@ -223,6 +223,27 @@ public sealed class DocumentInsightTests
         Assert.Empty(fixture.Inputs);
     }
 
+    [Fact]
+    public async Task Default_Briefs_Are_Bounded_And_Scannable_While_Custom_Admin_Instructions_Remain_Supported()
+    {
+        // Arrange
+        var tenant = Tenant();
+        tenant.Capabilities[FeatureHarness.DocumentInsightKey].DocumentInsight = new();
+        var fixture = Model();
+
+        // Act
+        await GenerateDocumentInsightsExecutor.EvaluateJobInsightsAsync(Job(Documents()), tenant, fixture.Catalog);
+        tenant.Capabilities[FeatureHarness.DocumentInsightKey].CustomSystemPrompt = "Focus on renewal obligations.";
+        await GenerateDocumentInsightsExecutor.EvaluateJobInsightsAsync(Job(Documents()), tenant, fixture.Catalog);
+
+        // Assert
+        Assert.Contains("at most 90 words", fixture.Instructions[0]);
+        Assert.Contains("exactly four Markdown bullets", fixture.Instructions[0]);
+        Assert.Contains("Missing information is not a proven violation", fixture.Instructions[0]);
+        Assert.Contains("Focus on renewal obligations.", fixture.Instructions[2]);
+        Assert.DoesNotContain("at most 90 words", fixture.Instructions[2]);
+    }
+
     private static TenantHarness Tenant(bool split = true, bool identify = true) => new()
     {
         TenantId = "tenant", DisplayName = "Workspace", DefaultModelId = "phi-4",

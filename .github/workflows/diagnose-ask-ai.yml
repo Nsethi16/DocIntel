@@ -14,7 +14,7 @@ on:
       mode:
         description: Choose saved diagnostics, synthetic checks, or explicit operator-only CustomerAcceptance over uploaded QA documents.
         type: choice
-        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview, DealVelocityApply, DealVelocityInspect, CommercialApply, CommercialInspect, CommercialQuestion, CommercialRefresh]
+        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview, DealVelocityApply, DealVelocityInspect, CommercialApply, CommercialInspect, CommercialQuestion, CommercialRefresh, CommercialPolish, CommercialPolishInspect]
         default: Inspect
       customer_case:
         description: CustomerAcceptance only. One bounded case per dispatch. submit-documents queues fixed embedded B-G PDFs through the backend, not the browser; documents is read-only.
@@ -22,7 +22,7 @@ on:
         options: [documents, submit-documents, ask-termination, ask-analysis, ask-followup, ask-no-evidence, ask-injection, ask-long-tail, schema-signature, schema-price, schema-long, commercial-values, commercial-billing, commercial-terms, commercial-risk]
         default: documents
       confirmation:
-        description: PORTFOLIO authorizes commercial processing definitions, clean filenames and multilingual PDF submission; ASK saves a fixed commercial web answer. DEALVELOCITY, TEST, REPLAY, PREVIEW, PROBE and REPROCESS retain their scoped meanings. Provider usage can incur charges.
+        description: POLISH refreshes only concise insights and Privacy Readiness on owned portfolio documents; PORTFOLIO configures/submits the portfolio; ASK saves a commercial web answer. Other confirmations retain their scoped meanings. Provider usage can incur charges.
         type: string
         default: ''
       translation_variant:
@@ -82,6 +82,14 @@ jobs:
           if ($env:DIAGNOSTIC_MODE -eq 'CommercialRefresh' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'REPROCESS') {
             throw 'CommercialRefresh requires REPROCESS; only owned failed/incomplete fixed portfolio documents can retry.'
           }
+          if ($env:DIAGNOSTIC_MODE -eq 'CommercialPolish' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'POLISH') {
+            throw 'CommercialPolish requires POLISH; only insights and Privacy Readiness are refreshed on the fixed owned portfolio.'
+          }
+          if ($env:DIAGNOSTIC_MODE -in @('CommercialPolish', 'CommercialPolishInspect') -and
+              ($env:DIAGNOSTIC_TENANT -cne 'contoso-legal' -or
+               $env:DIAGNOSTIC_RUN -cnotmatch '^mail-[A-Fa-f0-9]{64}$')) {
+            throw 'Commercial presentation requires the fixed workspace and saved request basis.'
+          }
           if ($env:DIAGNOSTIC_MODE -eq 'CommercialQuestion' -and
               ($env:DIAGNOSTIC_CONFIRMATION -cne 'ASK' -or
                $env:DIAGNOSTIC_CUSTOMER_CASE -cnotin @('commercial-values', 'commercial-billing', 'commercial-terms', 'commercial-risk'))) {
@@ -104,12 +112,12 @@ jobs:
             $env:TRANSLATION_VARIANT -eq 'WithoutGlossary' -and $env:DIAGNOSTIC_MODE -ne 'TranslationProbe') {
             throw 'A glossary comparison requires an explicit TranslationProbe.'
           }
-          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe', 'DocumentReprocess', 'ProcessingSynthetic', 'TranslationSynthetic', 'CustomerAcceptance', 'EmailPreview', 'DealVelocityApply', 'DealVelocityInspect', 'CommercialApply', 'CommercialInspect', 'CommercialQuestion', 'CommercialRefresh')) { throw 'Invalid diagnostic mode.' }
+          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe', 'DocumentReprocess', 'ProcessingSynthetic', 'TranslationSynthetic', 'CustomerAcceptance', 'EmailPreview', 'DealVelocityApply', 'DealVelocityInspect', 'CommercialApply', 'CommercialInspect', 'CommercialQuestion', 'CommercialRefresh', 'CommercialPolish', 'CommercialPolishInspect')) { throw 'Invalid diagnostic mode.' }
           if ($env:DIAGNOSTIC_TENANT -notmatch '^[a-z0-9][a-z0-9-]{0,127}$' -or
             ($env:DIAGNOSTIC_MODE -notin @('Contract', 'Synthetic', 'ProcessingSynthetic', 'TranslationSynthetic') -and
              $env:DIAGNOSTIC_RUN -notmatch '^[a-fA-F0-9]{32}$' -and
              -not ($env:DIAGNOSTIC_MODE -eq 'EmailPreview' -and $env:DIAGNOSTIC_RUN -cmatch '^mail-[A-Fa-f0-9]{64}$') -and
-             -not ($env:DIAGNOSTIC_MODE -in @('DealVelocityApply', 'DealVelocityInspect', 'CommercialApply', 'CommercialInspect', 'CommercialQuestion', 'CommercialRefresh') -and
+             -not ($env:DIAGNOSTIC_MODE -in @('DealVelocityApply', 'DealVelocityInspect', 'CommercialApply', 'CommercialInspect', 'CommercialQuestion', 'CommercialRefresh', 'CommercialPolish', 'CommercialPolishInspect') -and
                    $env:DIAGNOSTIC_TENANT -ceq 'contoso-legal' -and $env:DIAGNOSTIC_RUN -cmatch '^mail-[A-Fa-f0-9]{64}$') -and
              -not ($env:DIAGNOSTIC_MODE -eq 'Document' -and $env:DIAGNOSTIC_RUN -match '^[a-fA-F0-9]{64}$') -and
              -not ($env:DIAGNOSTIC_MODE -eq 'Inspect' -and $env:DIAGNOSTIC_RUN -ceq 'recent'))) {
@@ -135,6 +143,38 @@ jobs:
           import shlex
           import subprocess
           import sys
+
+          def presentation_record(value):
+              allowed = {"phase", "stage", "status", "failureCode", "jobId", "slices",
+                         "insightWordsMax", "privacyWordsMax", "decisions"}
+              stages = {"Summary", "DVXQuoteAR", "DVXAgreement", "DVXSow", "DVXOrder", "DVXInvoice",
+                        "DVXAmendment", "DVXQuoteES", "DVXPendingES", "DVXQuoteFR", "DVXPrivacyFR",
+                        "DVXQuoteDE", "DVXPacket", "DVXCopy", "DVXScannedInvoice"}
+              codes = {"None", "InvalidPresentationInput", "PortfolioNotReady", "CurrentAdministratorRequired",
+                       "WorkspaceChanged", "DocumentChanged", "SourceOrGenerationUnavailable",
+                       "InvalidGeneratedOutput", "TimedOut", "ProviderUnavailable", "InsightNotConcise",
+                       "PrivacyNotConcise", "PrivacyDecisionMismatch", "PrivacyEvidenceMismatch",
+                       "ProductionResultsRequired", "ResultQualityFailed"}
+              if (not isinstance(value, dict) or set(value) - allowed or
+                  value.get("phase") != "CommercialPresentation" or value.get("stage") not in stages or
+                  value.get("status") not in {"Updated", "Ready", "Pending", "Completed", "Failed", "Refused"} or
+                  value.get("failureCode") not in codes):
+                  raise RuntimeError("Invalid commercial presentation metadata.")
+              for key in ("slices", "insightWordsMax", "privacyWordsMax"):
+                  item = value.get(key)
+                  if item is not None and (type(item) is not int or not 0 <= item <= 1_000_000):
+                      raise RuntimeError("Invalid presentation count.")
+              job_id = value.get("jobId")
+              if job_id is not None and (not isinstance(job_id, str) or not re.fullmatch(r"[a-f0-9]{32}", job_id)):
+                  raise RuntimeError("Invalid presentation document reference.")
+              decisions = value.get("decisions")
+              if decisions is not None and (not isinstance(decisions, list) or len(decisions) > 16 or any(
+                  not isinstance(item, dict) or set(item) != {"SegmentIndex", "decision"} or
+                  type(item["SegmentIndex"]) is not int or not 0 <= item["SegmentIndex"] < 37 or
+                  item["decision"] not in {"HOLD", "REVIEW", "READY", "NOT APPLICABLE", "Unknown"}
+                  for item in decisions)):
+                  raise RuntimeError("Invalid presentation decision metadata.")
+              return value
 
           def customer_record(value):
               counts = {"pages", "slices", "translatedSlices", "sourceCharacters", "structuredDocuments",
@@ -247,7 +287,13 @@ jobs:
           if not replicas:
               raise RuntimeError("The current revision has no active replica.")
           replay = "true" if os.environ["DIAGNOSTIC_MODE"] == "Replay" else "false"
-          if os.environ["DIAGNOSTIC_MODE"] == "CommercialQuestion":
+          if os.environ["DIAGNOSTIC_MODE"] in ("CommercialPolish", "CommercialPolishInspect"):
+              diagnostic = shlex.join([
+                  "dotnet", "/app/DocIntel.Api.dll", "--commercial-presentation", os.environ["DIAGNOSTIC_RUN"],
+                  "--presentation-action", "Apply" if os.environ["DIAGNOSTIC_MODE"] == "CommercialPolish" else "Inspect",
+                  "--diagnose-confirmation", "POLISH" if os.environ["DIAGNOSTIC_MODE"] == "CommercialPolish" else "",
+                  "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"]])
+          elif os.environ["DIAGNOSTIC_MODE"] == "CommercialQuestion":
               diagnostic = shlex.join([
                   "dotnet", "/app/DocIntel.Api.dll", "--commercial-question", os.environ["DIAGNOSTIC_RUN"],
                   "--commercial-scenario", os.environ["DIAGNOSTIC_CUSTOMER_CASE"],
@@ -319,6 +365,11 @@ jobs:
               if marker < 0:
                   continue
               value = json.loads(line[marker + len("DOCINTEL_DIAGNOSTIC "):])
+              if os.environ["DIAGNOSTIC_MODE"] in ("CommercialPolish", "CommercialPolishInspect"):
+                  safe = presentation_record(value)
+                  print(json.dumps(safe))
+                  records.append(safe)
+                  continue
               if os.environ["DIAGNOSTIC_MODE"] == "CommercialQuestion":
                   if (value.get("phase") != "CommercialQuestion" or
                       value.get("scenario") != os.environ["DIAGNOSTIC_CUSTOMER_CASE"]):
@@ -386,14 +437,18 @@ jobs:
               records.append(safe)
           if not records:
               raise RuntimeError("The runtime diagnostic returned no verified result. Raw process output was not published.")
-          expected_phase = "CommercialQuestion" if os.environ["DIAGNOSTIC_MODE"] == "CommercialQuestion" else "DealVelocity" if os.environ["DIAGNOSTIC_MODE"] in ("DealVelocityApply", "DealVelocityInspect", "CommercialApply", "CommercialInspect", "CommercialRefresh") else os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance", "EmailPreview") else (
+          expected_phase = "CommercialPresentation" if os.environ["DIAGNOSTIC_MODE"] in ("CommercialPolish", "CommercialPolishInspect") else "CommercialQuestion" if os.environ["DIAGNOSTIC_MODE"] == "CommercialQuestion" else "DealVelocity" if os.environ["DIAGNOSTIC_MODE"] in ("DealVelocityApply", "DealVelocityInspect", "CommercialApply", "CommercialInspect", "CommercialRefresh") else os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance", "EmailPreview") else (
               "Replay" if replay == "true" else "Stored")
           if records[-1].get("phase") != expected_phase:
               raise RuntimeError("The requested diagnostic did not complete.")
           if records[-1].get("status") in ("Refused", "NotFound", "Pending") or (
-                  expected_phase in ("Data", "Replay", "Contract", "Synthetic", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance", "EmailPreview", "DealVelocity", "CommercialQuestion") and records[-1].get("status") == "Failed"):
+                  expected_phase in ("Data", "Replay", "Contract", "Synthetic", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance", "EmailPreview", "DealVelocity", "CommercialQuestion", "CommercialPresentation") and records[-1].get("status") == "Failed"):
               sys.exit(1)
           if expected_phase == "CustomerAcceptance" and (
                   result.returncode or records[-1].get("scenario") != "Summary" or
+                  records[-1].get("status") != "Completed"):
+              sys.exit(1)
+          if expected_phase == "CommercialPresentation" and (
+                  result.returncode or records[-1].get("stage") != "Summary" or
                   records[-1].get("status") != "Completed"):
               sys.exit(1)

@@ -1429,8 +1429,7 @@ let tenants = [];
           body.innerHTML = kpiStripHtml + `
             <div class="result-card"><h3 class="result-card-title">File Insights</h3>
               <p>Complete File · ${escapeHtml(job.fileName)} · ${job.totalPages || 0} pages</p>
-              <div class="insight-summary-box">${escapeHtml(summary ||
-                missingMessage)}</div></div>`;
+              ${processingResultMarkup(summary || missingMessage)}</div>`;
           return;
         }
         body.innerHTML = kpiStripHtml + activeSegs.filter(s => String(s.insightSummary || '').trim()).map(s => `
@@ -1446,9 +1445,7 @@ let tenants = [];
                 <button type="button" class="copy-chip-btn" data-click="jumpToSlicePdf_arg" data-args="[${s.segmentIndex}]" title="Open this slice in View Document">📄 View Slice PDF</button>
               </div>
             </div>
-            <div class="insight-summary-box">
-              ${escapeHtml(s.insightSummary)}
-            </div>
+            ${processingResultMarkup(s.insightSummary)}
             <details>
               <summary style="cursor:pointer;font-size:12px;color:var(--text-secondary);font-weight:600;user-select:none;">View Extracted / Translated Source Text (${(s.translatedText || s.bodyText || '').length.toLocaleString()} chars)</summary>
               <pre style="background:var(--surface-soft);padding:14px;border-radius:10px;border:1px solid var(--border);font-size:12px;line-height:1.55;white-space:pre-wrap;margin-top:8px;max-height:240px;overflow:auto;">${escapeHtml(s.translatedText || s.bodyText)}</pre>

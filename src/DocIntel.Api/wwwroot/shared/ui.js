@@ -7,6 +7,45 @@ function escapeJsArg(value) {
   return escapeHtml(JSON.stringify(String(value ?? '')));
 }
 
+function processingResultMarkup(value) {
+  const blocks = [];
+  let items = [];
+  let paragraph = [];
+  const inline = text => {
+    const decision = text.match(/^(?:\*\*)?Decision:(?:\*\*)?\s*(HOLD|REVIEW|READY|NOT APPLICABLE)\s*\.?$/i);
+    if (decision) {
+      const label = decision[1].toUpperCase();
+      return `<span class="result-verdict-label">Decision</span> ` +
+        `<strong class="result-verdict" data-status="${label.toLowerCase().replace(/ /g, '-')}">${label}</strong>`;
+    }
+    return escapeHtml(text).replace(/\*\*([^*\n]+)\*\*/g, '<strong>$1</strong>');
+  };
+  const flushParagraph = () => {
+    if (paragraph.length) blocks.push(`<p>${paragraph.map(inline).join('<br>')}</p>`);
+    paragraph = [];
+  };
+  const flushItems = () => {
+    if (items.length) blocks.push(`<ul>${items.map(item => `<li>${inline(item)}</li>`).join('')}</ul>`);
+    items = [];
+  };
+  for (const raw of String(value ?? '').replace(/\r\n?/g, '\n').split('\n')) {
+    const line = raw.trim();
+    if (!line) {
+      flushParagraph();
+      flushItems();
+    } else if (/^(?:[-*]|\u2022)\s+/.test(line)) {
+      flushParagraph();
+      items.push(line.replace(/^(?:[-*]|\u2022)\s+/, ''));
+    } else {
+      flushItems();
+      paragraph.push(line);
+    }
+  }
+  flushParagraph();
+  flushItems();
+  return `<div class="processing-result">${blocks.join('')}</div>`;
+}
+
 function showToast(message) {
   const toast = document.getElementById('toast');
   toast.textContent = message;

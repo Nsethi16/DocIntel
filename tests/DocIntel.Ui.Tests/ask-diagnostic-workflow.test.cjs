@@ -37,7 +37,7 @@ test('recent failure references can only be inspected and cannot authorize a rep
 });
 
 test('contract probing is a distinct document-free mode and does not weaken saved-question replay approval', () => {
-  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview, DealVelocityApply, DealVelocityInspect, CommercialApply, CommercialInspect, CommercialQuestion, CommercialRefresh\]/);
+  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview, DealVelocityApply, DealVelocityInspect, CommercialApply, CommercialInspect, CommercialQuestion, CommercialRefresh, CommercialPolish, CommercialPolishInspect\]/);
   assert.match(workflow, /Contract checks do not accept saved run identifiers/);
   assert.match(workflow, /"--diagnose-ask-contract", "true"/);
   assert.match(workflow, /"--diagnose-ask-synthetic", "true"/);
@@ -99,4 +99,16 @@ test('the diagnostic CLI exits before web hosting and background workers start',
   assert.match(program.slice(diagnostic, diagnosticEnd), /AskAiRunDiagnostic.ExecuteAsync/);
   assert.match(program.slice(diagnostic, diagnosticEnd), /await app.DisposeAsync\(\);\s*return;/);
   assert.ok(program.indexOf('app.Run();') > diagnosticEnd);
+});
+
+test('concise portfolio refresh is separately confirmed and logs only bounded counts and verdicts', () => {
+  assert.match(workflow, /CommercialPolish requires POLISH/);
+  assert.match(workflow, /"--commercial-presentation", os.environ\["DIAGNOSTIC_RUN"\]/);
+  assert.match(workflow, /def presentation_record\(value\):/);
+  assert.match(workflow, /"insightWordsMax", "privacyWordsMax", "decisions"/);
+  assert.match(workflow, /records\[-1\]\.get\("stage"\) != "Summary"/);
+  assert.match(program, /builder\.Configuration\["diagnose-confirmation"\] == "POLISH"/);
+  const entry = program.indexOf('if (commercialPresentationMode)', program.indexOf('var app = builder.Build()'));
+  assert.ok(entry > 0 && entry < program.indexOf('app.UseDocIntelResponseHeaders()'));
+  assert.doesNotMatch(workflow, /"insightSummary",|"resultText",|"sourceQuote",/);
 });

@@ -81,6 +81,49 @@ function renderDocumentTab(app, tab) {
   return app.element('docCenterBody').innerHTML;
 }
 
+test('workspace and Admin insights render readable source-linked briefs instead of raw Markdown', () => {
+  const summary = '- **What matters:** Customer services.\n- **Key terms:** USD 158,400.\n' +
+    '- **Watch out:** Approval pending.\n- **Next action:** Confirm with Procurement.';
+  const job = {
+    jobId: 'one', tenantId: 'one', fileName: 'offer.pdf', totalPages: 3, status: 'Completed',
+    packetSummary: summary, segments: [{
+      segmentIndex: 0, startPage: 1, endPage: 3, identifiedDocumentName: 'Commercial Quote',
+      insightSummary: summary
+    }]
+  };
+  for (const page of ['index', 'admin']) {
+    const app = documentRuntime(job, page);
+    const markup = renderDocumentTab(app, 'insights');
+    assert.match(markup, /class="processing-result"/);
+    assert.match(markup, /<strong>Watch out:<\/strong> Approval pending/);
+    assert.match(markup, /jumpToSlicePdf/);
+    assert.doesNotMatch(markup, /\*\*What matters/);
+  }
+  job.segments[0].insightSummary = null;
+  for (const page of ['index', 'admin']) {
+    const markup = renderDocumentTab(documentRuntime(job, page), 'insights');
+    assert.match(markup, /<strong>Key terms:<\/strong> USD 158,400/);
+  }
+});
+
+test('the privacy prompt view keeps the exact verdict, reason and evidence next to source navigation', () => {
+  const job = {
+    jobId: 'one', tenantId: 'one', fileName: 'privacy-agreement.pdf', totalPages: 2, status: 'Completed',
+    segments: [{ segmentIndex: 0, startPage: 1, endPage: 2, identifiedDocumentName: 'Data Processing Addendum',
+      promptColumnResults: [{
+        columnId: 'dvxprivacy', columnName: 'Privacy Readiness', filterMatched: true, segmentIndex: 0,
+        resultText: '- **Decision:** HOLD\n- **Why:** Subprocessor approval pending.\n' +
+          '- **Evidence:** "The final list awaits approval."\n- **Next:** Privacy must approve before production.'
+      }] }]
+  };
+  const markup = renderDocumentTab(documentRuntime(job), 'prompt:dvxprivacy');
+  assert.match(markup, /data-status="hold">HOLD/);
+  assert.match(markup, /Subprocessor approval pending/);
+  assert.match(markup, /&quot;The final list awaits approval\.&quot;/);
+  assert.match(markup, /jumpToSlicePdf/);
+  assert.doesNotMatch(markup, /\*\*Decision/);
+});
+
 test('the familiar three Admin sections and document result views are retained without new navigation', () => {
   const admin = read('admin.html');
   assert.equal([...admin.matchAll(/role="tab"\s/g)].length, 3);

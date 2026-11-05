@@ -20,6 +20,7 @@ var askDataMode = args.Contains("--diagnose-ask-data", StringComparer.Ordinal);
 var emailPreviewMode = args.Contains("--diagnose-email-preview", StringComparer.Ordinal);
 var dealVelocityMode = args.Contains("--manage-deal-velocity", StringComparer.Ordinal);
 var commercialQuestionMode = args.Contains("--commercial-question", StringComparer.Ordinal);
+var commercialPresentationMode = args.Contains("--commercial-presentation", StringComparer.Ordinal);
 var documentDiagnosticMode = args.Contains("--diagnose-document", StringComparer.Ordinal);
 var documentReprocessMode = args.Contains("--reprocess-document", StringComparer.Ordinal);
 var processingSyntheticMode = args.Contains("--diagnose-processing-synthetic", StringComparer.Ordinal);
@@ -27,7 +28,7 @@ var translationSyntheticMode = args.Contains("--diagnose-translation-synthetic",
 var customerAcceptanceMode = args.Contains("--diagnose-customer-acceptance", StringComparer.Ordinal);
 var diagnosticMode = args.Contains("--diagnose-ask-run", StringComparer.Ordinal) ||
     askContractMode || askSyntheticMode || askDataMode || emailPreviewMode || dealVelocityMode ||
-    commercialQuestionMode || documentDiagnosticMode ||
+    commercialQuestionMode || commercialPresentationMode || documentDiagnosticMode ||
     documentReprocessMode || processingSyntheticMode || translationSyntheticMode || customerAcceptanceMode;
 WebApplicationBuilder builder;
 try
@@ -110,6 +111,24 @@ builder.Services.AddHostedService<AskAiRunWorker>();
 builder.Services.AddHealthChecks().AddCheck<CloudAskAiReadinessCheck>("execution-storage", tags: ["ready"]);
 
 var app = builder.Build();
+if (commercialPresentationMode)
+{
+    var action = builder.Configuration["presentation-action"];
+    if (action is not ("Apply" or "Inspect"))
+        throw new ArgumentException("Choose Apply or Inspect for commercial presentation results.");
+    Environment.ExitCode = await CommercialPortfolioPresentation.ExecuteAsync(
+        builder.Configuration["diagnose-tenant"] ?? String.Empty,
+        builder.Configuration["commercial-presentation"] ?? String.Empty, action == "Apply",
+        builder.Configuration["diagnose-confirmation"] == "POLISH", startupReadiness.ProbeModelsOnStartup,
+        app.Services.GetRequiredService<DocIntel.Core.Harness.IHarnessStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Features.AskAi.IAskAiRunStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Authorization.ITenantAccessResolver>(),
+        app.Services.GetRequiredService<DocIntel.Core.Jobs.IJobStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Storage.IArtifactStore>(),
+        app.Services.GetRequiredService<DocIntel.Core.Models.IModelCatalog>(), Console.Out);
+    await app.DisposeAsync();
+    return;
+}
 if (commercialQuestionMode)
 {
     Environment.ExitCode = await CommercialPortfolioQuestions.ExecuteAsync(

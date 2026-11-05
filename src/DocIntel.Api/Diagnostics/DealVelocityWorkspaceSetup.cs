@@ -252,7 +252,7 @@ public static class DealVelocityWorkspaceSetup
         }
     }
 
-    private static async Task SaveFencedAsync(IJobStore jobs, DocumentJob job, CancellationToken token)
+    internal static async Task SaveFencedAsync(IJobStore jobs, DocumentJob job, CancellationToken token)
     {
         try
         {
@@ -288,7 +288,7 @@ public static class DealVelocityWorkspaceSetup
         return "None";
     }
 
-    private static async Task<TenantHarness> RequireAdministratorAsync(
+    internal static async Task<TenantHarness> RequireAdministratorAsync(
         ActorIdentity actor, IHarnessStore harnesses, ITenantAccessResolver access, CancellationToken token)
     {
         var scope = await access.ResolveAsync(actor, WorkspaceId, token);

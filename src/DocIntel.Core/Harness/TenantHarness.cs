@@ -106,8 +106,19 @@ public sealed class DocumentTranslationConfig
 /// </summary>
 public sealed class DocumentInsightConfig
 {
-    public string SummaryInstructions { get; set; } =
-        "Summarize the document concisely, highlighting the customer entity, agreement/quote identifiers, key commercial terms, and total financial value.";
+    /// <summary>Default business brief; administrators can replace it with their own summary instructions.</summary>
+    public const string DefaultSummaryInstructions =
+        "Write an executive brief in plain English, at most 90 words in total. " +
+        "Return exactly four Markdown bullets, one line per bullet, with these bold labels: " +
+        "**What matters:** the document's business purpose and customer; " +
+        "**Key terms:** the one or two most important amounts, dates or obligations; " +
+        "**Watch out:** the most material stated risk, condition or missing information; " +
+        "**Next action:** one practical next step, explicitly phrased as a recommendation where not required by the source. " +
+        "Use one short sentence per bullet. Preserve currencies, dates and approval/payment qualifiers exactly. " +
+        "Do not repeat all identifiers, enumerate clauses, add an introduction or conclusion, or restate the source. " +
+        "Do not infer approval, signature, payment or legal compliance. Missing information is not a proven violation.";
+
+    public string SummaryInstructions { get; set; } = DefaultSummaryInstructions;
 }
 
 /// <summary>

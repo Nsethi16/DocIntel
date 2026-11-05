@@ -599,6 +599,22 @@ datasets supply their own same-unit `sharePercent` values without weakening sour
 `CommercialRefresh` requires `REPROCESS` and requeues only the identical, owned fixed portfolio
 jobs that failed or have incomplete required capabilities. It preserves original PDFs and earlier
 attempt artifacts, refuses exhausted three-attempt jobs, and leaves running/queued work unchanged.
+`CommercialPolish` is a separate `POLISH`-confirmed, current-administrator operation over only those
+fourteen immutable, owned originals. It replaces the workspace's insight instructions with a
+four-point executive brief (maximum 90 words) and adds **Privacy Readiness** (maximum 75 words):
+an explicit `HOLD`, `REVIEW`, `READY` or `NOT APPLICABLE`, one reason, a short verbatim evidence
+quote, and one recommended next action. These are document-stated production privacy prerequisites,
+not a regulatory certification. Missing evidence is not a proven violation, and an invoice does not
+become a privacy failure. Actual pending French/German approvals must produce a hold.
+Only insights and this new column are re-evaluated; all other columns, original PDFs, OCR,
+splitting, classifications, extraction and translations are retained. Output-shape, word-count and
+verbatim-quote checks run before version-fenced publication. Unacceptable generation never replaces
+the prior results or gets silently truncated. Matching completed results are reused on a confirmed
+retry; `CommercialPolishInspect` is read-only. Diagnostic logs contain only counts, fixed verdicts
+and known failure codes, never the briefs, source quotations or identities.
+Refreshed derived content intentionally changes Ask AI source fingerprints: generate fresh
+recording answers afterward rather than bypassing source-version guards. Both document UIs render
+escaped bullets and bold labels, including older complete results without hiding or truncating them.
 Native classification samples bounded leading headings and identifiers across source pages, so
 branding or a wrapped title cannot consume the entire four-line header sample.
 Footer-only `n / total` pagination is recognized alongside `Page n of total`, allowing page-count
