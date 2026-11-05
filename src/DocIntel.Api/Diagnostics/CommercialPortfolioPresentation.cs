@@ -21,6 +21,11 @@ public static class CommercialPortfolioPresentation
     public const string PrivacyColumnId = "dvxprivacy";
     public const string PrivacyColumnName = "Privacy Readiness";
     private const string RefreshStep = "RefreshCommercialPresentation";
+    internal const string ScopeClarification =
+        "A hypothetical future transfer outside approved regions is not a current production blocker: " +
+        "use REVIEW when no completed privacy clearance is stated and only conditional regional restrictions exist. " +
+        "A purchase order, fee amendment or invoice containing only commercial/billing terms is NOT APPLICABLE, " +
+        "not REVIEW merely because privacy is not discussed. Commercial procurement approval is not privacy approval. ";
     internal const string PrivacyInstructions =
         "Check only the production-data privacy prerequisites explicitly stated in this document. " +
         "This is document readiness, not a legal certification; never claim GDPR, SOC 2 or overall regulatory compliance. " +
@@ -40,7 +45,10 @@ public static class CommercialPortfolioPresentation
         "**Next:** one concise recommended action and responsible role, not an invented person. " +
         "Do not infer signatures, payments, approvals or missing-document contents. " +
         "Do not treat a conditional future transfer restriction as evidence that an unapproved transfer occurred. " +
+        ScopeClarification +
         "Write the explanation in plain English. No introduction, clause inventory or conclusion.";
+    internal static string LegacyPrivacyInstructions =>
+        PrivacyInstructions.Replace(ScopeClarification, String.Empty, StringComparison.Ordinal);
 
     /// <summary>Changes only the requested insight instructions and the owned privacy column.</summary>
     public static TenantHarness Configure(TenantHarness source)
@@ -61,12 +69,15 @@ public static class CommercialPortfolioPresentation
             String.Equals(column.ColumnId, PrivacyColumnId, StringComparison.OrdinalIgnoreCase)).ToArray();
         if (existing.Length > 1 || existing.Any(column => column.ColumnId != PrivacyColumnId ||
             column.ColumnName != PrivacyColumnName ||
-            column.PromptInstructions != PrivacyInstructions || column.FilterMode != "All" ||
+            column.PromptInstructions != PrivacyInstructions && column.PromptInstructions != LegacyPrivacyInstructions ||
+            column.FilterMode != "All" ||
             !column.IsActive || column.EntityFilters.Count != 0))
             throw new HarnessConflictException();
         if (existing.Length == 0)
             columns.Insert(0, new() { ColumnId = PrivacyColumnId, ColumnName = PrivacyColumnName,
                 PromptInstructions = PrivacyInstructions, FilterMode = "All" });
+        else
+            existing[0].PromptInstructions = PrivacyInstructions;
         return tenant;
     }
 
@@ -130,6 +141,7 @@ public static class CommercialPortfolioPresentation
             {
                 await RequireCurrentAsync(current, actor, harnesses, access, deadline.Token);
                 var input = InputFingerprint(source, desired, models);
+                var legacyInput = InputFingerprint(source, desired, models, legacyPrivacy: true);
                 var ready = source.ExecutionTrace.Any(step =>
                     step.ExecutorName == RefreshStep && step.Executed && step.Succeeded && step.Notes == input) &&
                     QualityFailure(document.Key, source) == "None";
@@ -138,21 +150,44 @@ public static class CommercialPortfolioPresentation
                     var working = Clone(source);
                     working.StoreVersion = source.StoreVersion;
                     var timer = Stopwatch.StartNew();
-                    await GenerateDocumentInsightsExecutor.EvaluateJobInsightsAsync(
-                        working, current, models, deadline.Token);
-                    if (working.Segments.Any(slice => !TryBrief(
-                        slice.InsightSummary, ["What matters", "Key terms", "Watch out", "Next action"], 90, out _)))
+                    var reusableBriefs = source.ExecutionTrace.Any(step => step.ExecutorName == RefreshStep &&
+                        step.Executed && step.Succeeded && (step.Notes == input || step.Notes == legacyInput)) &&
+                        source.Segments.All(slice => TryBrief(slice.InsightSummary,
+                            ["What matters", "Key terms", "Watch out", "Next action"], 90, out _));
+                    if (!reusableBriefs)
                     {
-                        var refinement = Clone(current);
-                        refinement.Capabilities[FeatureHarness.DocumentInsightKey].DocumentInsight!.SummaryInstructions +=
-                            " Refinement: write at most 60 words including the four labels and bullet markers. " +
-                            "Keep the exact four-bullet format; retain the main sourced fact, risk and action. " +
-                            "Do not pad the answer or repeat identifiers.";
                         await GenerateDocumentInsightsExecutor.EvaluateJobInsightsAsync(
-                            working, refinement, models, deadline.Token);
+                            working, current, models, deadline.Token);
+                        if (working.Segments.Any(slice => !TryBrief(
+                            slice.InsightSummary, ["What matters", "Key terms", "Watch out", "Next action"], 90, out _)))
+                        {
+                            var refinement = Clone(current);
+                            refinement.Capabilities[FeatureHarness.DocumentInsightKey].DocumentInsight!.SummaryInstructions +=
+                                " Refinement: write at most 60 words including the four labels and bullet markers. " +
+                                "Keep the exact four-bullet format; retain the main sourced fact, risk and action. " +
+                                "Do not pad the answer or repeat identifiers.";
+                            await GenerateDocumentInsightsExecutor.EvaluateJobInsightsAsync(
+                                working, refinement, models, deadline.Token);
+                        }
                     }
                     await EvaluatePrivacyAsync(working, current, artifacts, models, deadline.Token);
                     var failure = QualityFailure(document.Key, working);
+                    if (failure is "PrivacyNotConcise" or "PrivacyDecisionMismatch" or "PrivacyEvidenceMismatch")
+                    {
+                        var refinement = Clone(current);
+                        refinement.Capabilities[FeatureHarness.PromptColumnsKey].PromptColumns!.Columns
+                            .Single(column => column.ColumnId == PrivacyColumnId).PromptInstructions +=
+                            " Refinement: assess only this logical document, not another document in its file. " +
+                            "Use at most 55 words and exactly the four required bullets. " +
+                            "HOLD requires an explicit current privacy prerequisite blocking production, " +
+                            "not a hypothetical future transfer or a commercial approval. " +
+                            "A commercial-only administrative document is NOT APPLICABLE. " +
+                            "When relevant controls exist but privacy clearance is not evidenced, use REVIEW. " +
+                            "Copy a 3-12 word source excerpt exactly; if no relevant statement exists, write " +
+                            "Evidence: Not stated in this document. without quotation marks.";
+                        await EvaluatePrivacyAsync(working, refinement, artifacts, models, deadline.Token);
+                        failure = QualityFailure(document.Key, working);
+                    }
                     if (failure != "None" || working.HasDevelopmentResults != false)
                     {
                         failed = true;
@@ -165,11 +200,12 @@ public static class CommercialPortfolioPresentation
                     if (latest?.Status != JobStatus.Completed || latest.SubmittedBy != actor ||
                         AskAiConversationContext.Fingerprint(latest) != AskAiConversationContext.Fingerprint(source))
                         throw new AskAiSourceChangedException();
-                    working.ExecutionTrace.Add(new(nameof(GenerateDocumentInsightsExecutor), true, true,
-                        models.ResolveModelId(current,
-                            current.Capabilities[FeatureHarness.DocumentInsightKey].ModelIdOverride),
-                        timer.Elapsed.TotalMilliseconds,
-                        $"Refreshed the concise document brief with workspace v{current.HarnessVersion}."));
+                    if (!reusableBriefs)
+                        working.ExecutionTrace.Add(new(nameof(GenerateDocumentInsightsExecutor), true, true,
+                            models.ResolveModelId(current,
+                                current.Capabilities[FeatureHarness.DocumentInsightKey].ModelIdOverride),
+                            timer.Elapsed.TotalMilliseconds,
+                            $"Refreshed the concise document brief with workspace v{current.HarnessVersion}."));
                     working.ExecutionTrace.Add(new(nameof(EvaluatePromptColumnsExecutor), true, true,
                         models.ResolveModelId(current,
                             current.Capabilities[FeatureHarness.PromptColumnsKey].ModelIdOverride),
@@ -244,7 +280,10 @@ public static class CommercialPortfolioPresentation
             var decision = fields[0];
             if (decision is not ("HOLD" or "REVIEW" or "READY" or "NOT APPLICABLE") ||
                 (key is "DVXPrivacyFR" or "DVXQuoteFR" or "DVXQuoteDE") && decision != "HOLD" ||
-                (key is "DVXInvoice" or "DVXScannedInvoice") && decision != "NOT APPLICABLE")
+                (key is "DVXInvoice" or "DVXScannedInvoice" or "DVXOrder" or "DVXAmendment" or "DVXPendingES") &&
+                    decision != "NOT APPLICABLE" ||
+                (key == "DVXAgreement" || key == "DVXPacket" && slice.SegmentIndex == 0) && decision != "REVIEW" ||
+                key == "DVXPacket" && (slice.SegmentIndex is 1 or 2) && decision != "NOT APPLICABLE")
                 return "PrivacyDecisionMismatch";
             if (fields[2] == "Not stated in this document." && decision is not ("HOLD" or "READY")) continue;
             var quote = fields[2];
@@ -316,7 +355,8 @@ public static class CommercialPortfolioPresentation
         if (JsonSerializer.Serialize(current) != JsonSerializer.Serialize(expected)) throw new HarnessConflictException();
     }
 
-    private static string InputFingerprint(DocumentJob job, TenantHarness tenant, IModelCatalog models) =>
+    internal static string InputFingerprint(
+        DocumentJob job, TenantHarness tenant, IModelCatalog models, bool legacyPrivacy = false) =>
         Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
         {
             version = 1, job.OriginalSha256,
@@ -324,7 +364,8 @@ public static class CommercialPortfolioPresentation
                 tenant.Capabilities[FeatureHarness.DocumentInsightKey].ModelIdOverride),
             privacyModel = models.ResolveModelId(tenant,
                 tenant.Capabilities[FeatureHarness.PromptColumnsKey].ModelIdOverride),
-            DocumentInsightConfig.DefaultSummaryInstructions, PrivacyInstructions,
+            DocumentInsightConfig.DefaultSummaryInstructions,
+            PrivacyInstructions = legacyPrivacy ? LegacyPrivacyInstructions : PrivacyInstructions,
             documents = job.Segments.Select(slice => new
             {
                 slice.SegmentIndex, slice.StartPage, slice.EndPage, slice.IdentifiedDocumentName,

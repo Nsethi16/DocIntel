@@ -23,6 +23,9 @@ public sealed class CommercialPresentationTests
         "- **Key terms:** The document defines the commercial scope.\n" +
         "- **Watch out:** Privacy clearance needs confirmation.\n" +
         "- **Next action:** Recommend Privacy confirm the production prerequisites.";
+    private const string ConditionalTransfer =
+        "A proposed transfer outside the approved regions requires documented approval.";
+    private const string ConditionalQuote = "\"A proposed transfer outside the approved regions\"";
 
     [Fact]
     public void Configuration_Is_Idempotent_And_Preserves_Every_Unrelated_Setting_And_User_Column()
@@ -68,6 +71,25 @@ public sealed class CommercialPresentationTests
         // Act / Assert
         Assert.Throws<HarnessConflictException>(() => CommercialPortfolioPresentation.Configure(tenant));
         Assert.Equal(before, JsonSerializer.Serialize(tenant));
+    }
+
+    [Fact]
+    public void The_Previous_Owned_Privacy_Policy_Is_Updated_Without_Overwriting_User_Policies()
+    {
+        // Arrange
+        var source = CommercialPortfolioPresentation.Configure(new()
+            { TenantId = "contoso-legal", DisplayName = "Deal Velocity" });
+        source.Capabilities[FeatureHarness.PromptColumnsKey].PromptColumns!.Columns[0].PromptInstructions =
+            CommercialPortfolioPresentation.LegacyPrivacyInstructions;
+
+        // Act
+        var updated = CommercialPortfolioPresentation.Configure(source);
+
+        // Assert
+        Assert.Equal(CommercialPortfolioPresentation.LegacyPrivacyInstructions,
+            source.Capabilities[FeatureHarness.PromptColumnsKey].PromptColumns!.Columns[0].PromptInstructions);
+        Assert.Contains(CommercialPortfolioPresentation.ScopeClarification,
+            updated.Capabilities[FeatureHarness.PromptColumnsKey].PromptColumns!.Columns[0].PromptInstructions);
     }
 
     [Theory]
@@ -290,6 +312,83 @@ public sealed class CommercialPresentationTests
         Assert.DoesNotContain("\"Not stated in this document.\"", outcome.ResultText);
     }
 
+    [Fact]
+    public async Task Already_Validated_Briefs_Are_Reused_When_Only_The_Privacy_Policy_Changes()
+    {
+        // Arrange
+        using var fixture = await Fixture.CreateAsync();
+        fixture.Tenant = CommercialPortfolioPresentation.Configure(fixture.Tenant);
+        fixture.Tenant.Capabilities[FeatureHarness.PromptColumnsKey].PromptColumns!.Columns[0].PromptInstructions =
+            CommercialPortfolioPresentation.LegacyPrivacyInstructions;
+        foreach (var job in await fixture.Jobs.ListJobsByTenantAsync("contoso-legal"))
+        {
+            foreach (var slice in job.Segments) slice.InsightSummary = Brief;
+            job.PacketSummary = Brief;
+            job.ExecutionTrace.Add(new("RefreshCommercialPresentation", true, true, null, 1,
+                CommercialPortfolioPresentation.InputFingerprint(job, fixture.Tenant, fixture.Models, legacyPrivacy: true)));
+        }
+        fixture.Response = (task, _) => task == "insight"
+            ? throw new InvalidOperationException("Validated insights must not be regenerated.")
+            : null;
+
+        // Act
+        var result = await fixture.ExecuteAsync();
+
+        // Assert
+        Assert.Equal(0, result);
+        Assert.Equal(16, fixture.Calls);
+        Assert.All(await fixture.Jobs.ListJobsByTenantAsync("contoso-legal"),
+            job => Assert.All(job.Segments, slice => Assert.Equal(Brief, slice.InsightSummary)));
+    }
+
+    [Theory]
+    [InlineData("DVXAgreement", "REVIEW", "None")]
+    [InlineData("DVXAgreement", "HOLD", "PrivacyDecisionMismatch")]
+    [InlineData("DVXPacket", "REVIEW", "None")]
+    [InlineData("DVXPacket", "HOLD", "PrivacyDecisionMismatch")]
+    public void Conditional_Transfer_Restrictions_Are_Not_Mislabeled_As_Current_Production_Blocks(
+        string key, string decision, string expected)
+    {
+        // Arrange
+        var job = QualityJob(decision, ConditionalQuote);
+        job.Segments[0].BodyText = ConditionalTransfer;
+
+        // Act
+        var failure = CommercialPortfolioPresentation.QualityFailure(key, job);
+
+        // Assert
+        Assert.Equal(expected, failure);
+    }
+
+    [Fact]
+    public async Task One_Source_Based_Privacy_Refinement_Can_Resolve_A_Conditional_Clause_Misclassification()
+    {
+        // Arrange
+        using var fixture = await Fixture.CreateAsync();
+        var firstAgreement = true;
+        fixture.Response = (task, input) =>
+        {
+            if (task != "privacy" || !firstAgreement ||
+                !input.Contains("SOURCE_KEY=DVXAgreement", StringComparison.Ordinal)) return null;
+            firstAgreement = false;
+            return JsonSerializer.Serialize(new { result = Privacy("HOLD", ConditionalQuote) });
+        };
+
+        // Act
+        var result = await fixture.ExecuteAsync();
+
+        // Assert
+        Assert.Equal(0, result);
+        Assert.Equal(33, fixture.Calls);
+        var agreementId = DealVelocityWorkspaceSetup.JobId(CommercialPortfolioCorpus.Build()
+            .Single(document => document.Key == "DVXAgreement"), CommercialPortfolioCorpus.Version);
+        var agreement = await fixture.Jobs.GetJobAsync(agreementId, tenantId: "contoso-legal");
+        var outcome = Assert.Single(agreement!.Segments[0].PromptColumnResults,
+            item => item.ColumnId == CommercialPortfolioPresentation.PrivacyColumnId);
+        Assert.Contains("- **Decision:** REVIEW", outcome.ResultText);
+        Assert.Contains(ConditionalQuote, outcome.ResultText);
+    }
+
     [Theory]
     [InlineData("HOLD", "\"Privacy approval is pending.\"", "None")]
     [InlineData("READY", "\"Privacy approval is pending.\"", "PrivacyDecisionMismatch")]
@@ -479,11 +578,15 @@ public sealed class CommercialPresentationTests
                     Calls++;
                     var input = messages.Last(message => message.Role == ChatRole.User).Text!;
                     var insight = options.Instructions!.Contains("[TASK:DOCUMENT_INSIGHT]", StringComparison.Ordinal);
-                    var decision = input.Contains("SOURCE_KEY=DVXInvoice", StringComparison.Ordinal) ||
-                        input.Contains("SOURCE_KEY=DVXScannedInvoice", StringComparison.Ordinal)
-                        ? "NOT APPLICABLE" : "HOLD";
+                    var conditional = input.Contains("SOURCE_KEY=DVXAgreement", StringComparison.Ordinal) ||
+                        input.Contains("SOURCE_KEY=DVXPacket", StringComparison.Ordinal) &&
+                        input.Contains("pages=1-4", StringComparison.Ordinal);
+                    var administrative = new[] { "DVXInvoice", "DVXScannedInvoice", "DVXOrder", "DVXAmendment", "DVXPendingES" }
+                        .Any(key => input.Contains("SOURCE_KEY=" + key, StringComparison.Ordinal)) ||
+                        input.Contains("SOURCE_KEY=DVXPacket", StringComparison.Ordinal) && !conditional;
+                    var decision = conditional ? "REVIEW" : administrative ? "NOT APPLICABLE" : "HOLD";
                     var evidence = decision == "NOT APPLICABLE"
-                        ? "Not stated in this document." : "\"Privacy approval is pending.\"";
+                        ? "Not stated in this document." : conditional ? ConditionalQuote : "\"Privacy approval is pending.\"";
                     var json = Response?.Invoke(insight ? "insight" : "privacy", input) ??
                         (insight ? JsonSerializer.Serialize(new { summary = Brief }) :
                             JsonSerializer.Serialize(new { result = Privacy(decision, evidence) }));
@@ -513,7 +616,9 @@ public sealed class CommercialPresentationTests
                 };
                 for (var index = 0; index < slices.Length; index++)
                 {
-                    var source = "SOURCE_KEY=" + document.Key + "\nPrivacy approval is pending.";
+                    var conditional = document.Key == "DVXAgreement" || document.Key == "DVXPacket" && index == 0;
+                    var source = "SOURCE_KEY=" + document.Key + "\n" +
+                        (conditional ? ConditionalTransfer : "Privacy approval is pending.");
                     var slice = new DocumentSlice
                     {
                         SegmentIndex = index, StartPage = slices[index].Item1, EndPage = slices[index].Item2,

@@ -613,6 +613,13 @@ the prior results or gets silently truncated. An overlong or malformed insight g
 source-based style rewrite with a stricter 60-word target; the original 90-word gate still applies.
 An explicitly quoted `Not stated in this document.` marker is rendered as absence, not as a source
 quotation, only for `REVIEW` or `NOT APPLICABLE`; it cannot substantiate `HOLD` or `READY`.
+Conditional future transfer restrictions must not become invented current production blocks:
+the identical standalone/packet MSA is `REVIEW`, while commercial-only orders and fee amendments
+are `NOT APPLICABLE`. This is checked against the fixed portfolio's original facts, not forced
+into the model's answer. At most one source-based privacy refinement can repair an invalid
+decision, quote or output shape; the same evidence and quality gates still apply afterward.
+The prior owned privacy template migrates without overwriting user-authored policies. Previously
+validated insight briefs are reused when only that privacy policy changes.
 Matching completed results are reused on a confirmed
 retry; `CommercialPolishInspect` is read-only. Diagnostic logs contain only counts, fixed verdicts
 and known failure codes, never the briefs, source quotations or identities.
