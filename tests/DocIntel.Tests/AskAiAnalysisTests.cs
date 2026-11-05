@@ -5,6 +5,96 @@ namespace DocIntel.Tests;
 
 public sealed class AskAiAnalysisTests
 {
+    [Theory]
+    [InlineData("")]
+    [InlineData("Quote QA-001 Customer Contoso Amount 100.00 USD")]
+    [InlineData("Quote QA-001; Customer Contoso; Amount 100.00 USD.")]
+    public void Explicit_Record_Ids_Allow_Repeated_Headers_And_Deduplicate_Identical_Document_Copies(string quote)
+    {
+        // Arrange
+        const string header = "Quote QA-001; Customer Contoso; Amount 100.00 USD.";
+        var evidence = new Dictionary<string, AskAiAnalysisEvidence>
+        {
+            ["e1"] = new(header + "\nPage two repeats:\n" + header, "source-A"),
+            ["e2"] = new(header + "\nA different physical copy.", "source-B")
+        };
+        var request = new AskAiAnalysisRequest
+        {
+            Title = "Quote totals", Operation = "sum", Visualization = "bar", GroupBy = "customer",
+            ValueColumn = "amount", RecordIdColumn = "quote_id",
+            Columns =
+            [
+                new() { Key = "customer", Label = "Customer", Kind = "text" },
+                new() { Key = "amount", Label = "Amount", Kind = "number" },
+                new() { Key = "quote_id", Label = "Quote ID", Kind = "text" }
+            ],
+            Rows = new[] { "e1", "e2" }.Select(id => new AskAiAnalysisInputRow
+            {
+                EvidenceId = id, SourceQuote = quote, Unit = "USD",
+                Cells = new() { ["customer"] = "Contoso", ["amount"] = "100.00", ["quote_id"] = "QA-001" }
+            }).ToList()
+        };
+
+        // Act
+        var result = AskAiAnalysisEngine.Compute("a1", request, evidence);
+
+        // Assert
+        Assert.Equal("bar", result.Visualization);
+        Assert.Equal(100m, Assert.Single(result.Rows).Cells["value"]);
+        Assert.Equal(1, result.Coverage.RecordsIncluded);
+        Assert.Equal(1, result.Coverage.DuplicatesExcluded);
+        Assert.Equal(100m, Assert.Single(result.Rows).Cells["sharePercent"]);
+    }
+
+    [Fact]
+    public void Repeated_Headers_Remain_Ambiguous_Without_An_Explicit_Record_Identifier()
+    {
+        // Arrange
+        var fixture = Invoices("sum", "bar", "supplier", ("Contoso", "100.00", "USD", "2026-01-01"));
+        fixture.Evidence["e1"] = fixture.Evidence["e1"] with
+        {
+            SourceText = fixture.Evidence["e1"].SourceText + "\n" + fixture.Evidence["e1"].SourceText
+        };
+
+        // Act / Assert
+        Assert.Throws<ArgumentException>(() => AskAiAnalysisEngine.Compute("a1", fixture.Request, fixture.Evidence));
+    }
+
+    [Theory]
+    [InlineData("conflict")]
+    [InlineData("missing-id")]
+    [InlineData("group-as-id")]
+    [InlineData("unit-as-id")]
+    public void Declared_Record_Ids_Cannot_Merge_Conflicting_Facts_Or_Use_A_Customer_Or_Unit_As_Identity(string issue)
+    {
+        // Arrange
+        var evidence = new Dictionary<string, AskAiAnalysisEvidence>
+        {
+            ["e1"] = new("Quote QA-001; Customer Contoso; Amount 100.00 USD.", "source-A"),
+            ["e2"] = new("Quote QA-001; Customer Contoso; Amount 150.00 USD.", "source-B")
+        };
+        var request = new AskAiAnalysisRequest
+        {
+            Title = "Quote totals", Operation = "sum", Visualization = "bar", GroupBy = "customer",
+            ValueColumn = "amount", RecordIdColumn = issue == "group-as-id" ? "customer" : "quote_id",
+            Columns =
+            [
+                new() { Key = "customer", Label = "Customer", Kind = "text" },
+                new() { Key = "amount", Label = "Amount", Kind = "number" },
+                new() { Key = "quote_id", Label = "Quote ID", Kind = "text" }
+            ],
+            Rows = new[] { "e1", "e2" }.Select(id => new AskAiAnalysisInputRow
+            {
+                EvidenceId = id, SourceQuote = String.Empty, Unit = "USD",
+                Cells = new() { ["customer"] = "Contoso", ["amount"] = id == "e1" ? "100.00" : "150.00",
+                    ["quote_id"] = issue == "missing-id" ? null : issue == "unit-as-id" ? "USD" : "QA-001" }
+            }).ToList()
+        };
+
+        // Act / Assert
+        Assert.Throws<ArgumentException>(() => AskAiAnalysisEngine.Compute("a1", request, evidence));
+    }
+
     [Fact]
     public void Rejected_Analysis_Diagnostics_Never_Expose_Unexpected_Exception_Content()
     {

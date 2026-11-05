@@ -1072,6 +1072,13 @@ public sealed class AskAiOrchestrator
                 Prefer sourceQuote="" to let the server locate a bounded verbatim span from those exact values.
                 Include a unique text anchor such as the source quote/invoice ID. Repeated numeric values need
                 a specific verbatim sourceQuote to disambiguate the record; do not rewrite a paragraph as a quote.
+                For quote/invoice deduplication, declare that raw identifier as a text column and set
+                recordIdColumn to its key. Include the identifier in every row. This allows the same record's
+                header to repeat across pages and identical document copies without making the source ambiguous.
+                recordIdColumn must not be the customer/grouping or unit column. Do not merge conflicting facts.
+                Quote-total example: columns quote_id(text), customer(text), amount(number);
+                groupBy="customer", valueColumn="amount", recordIdColumn="quote_id",
+                operation="sum", visualization="bar". Copy raw quote IDs and amounts from original text.
                 Never infer USD from '$'.
                 Include a source-record identifier column when otherwise identical records are distinct.
                 groupBy names a column; valueColumn names a numeric column; dateBucket is none/month/quarter/year.
@@ -1338,6 +1345,7 @@ public sealed class AskAiOrchestrator
             "min, max and IQR outliers. Use exact source quotes, explicit parsing formats and source-supported " +
             "units. Returns validated calculations, coverage and an analysisId. Include that ID and its " +
             "evidenceIds in the final answer. Detailed request rules are in the system instructions. " +
+            "For repeated headers/copies, include the exact record ID and set recordIdColumn to its text column. " +
             "An error means no result was published.")
     ];
 

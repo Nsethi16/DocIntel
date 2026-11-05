@@ -524,6 +524,11 @@ values in that same inspected excerpt, with a unique non-unit text anchor, unamb
 and a 2,000-character context bound. It never accepts a rewritten model paragraph as source evidence.
 Signs, formatting, units, missing values, record deduplication and source citations retain their
 existing checks. Repeated values need an explicit, unique verbatim quote to disambiguate them.
+For repeated quote/invoice headers and copies, `recordIdColumn` explicitly identifies a source-backed
+text ID distinct from the customer/grouping and currency columns. The record's exact quote may then
+repeat across pages; identical facts with that ID are counted once across copies. Every cell still
+needs original source support. Conflicting facts for the same ID/group/unit are rejected rather than
+silently added together or merged. Without this explicit identity, ambiguity checks remain unchanged.
 If a record is rejected, the tool identifies its evidence reference and column and returns a bounded
 verbatim source candidate to the already-authorized model for correction. It does not silently
 substitute or calculate an unsupported cell. Source repair text never enters diagnostic logs.

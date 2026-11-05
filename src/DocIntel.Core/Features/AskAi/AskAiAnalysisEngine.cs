@@ -21,6 +21,7 @@ public static class AskAiAnalysisEngine
             "A record quote must identify one occurrence in inspected original text." => "AnalysisQuote",
             "The record values do not identify a unique bounded span in inspected original text." => "AnalysisQuote",
             "A repeated numeric value needs an explicit unique source quote." => "AnalysisQuote",
+            "Conflicting facts share the same declared record identifier, group and unit." => "AnalysisRecord",
             "Use an explicit source-supported unit; ambiguous currency symbols cannot be aggregated." => "AnalysisUnit",
             "Every supplied cell must occur in that record's original-source quote." => "AnalysisCell",
             "The record unit and unit cell must agree." => "AnalysisUnitConflict",
@@ -57,8 +58,11 @@ public static class AskAiAnalysisEngine
             throw new ArgumentException("Analysis columns require unique safe keys, labels, types and explicit parsing formats.");
         var groupColumn = request.Columns.FirstOrDefault(column => column.Key == request.GroupBy);
         var valueColumn = request.Columns.FirstOrDefault(column => column.Key == request.ValueColumn);
+        var recordColumn = request.Columns.FirstOrDefault(column => column.Key == request.RecordIdColumn);
         if (request.GroupBy is not null && groupColumn is null ||
             request.ValueColumn is not null && valueColumn is null ||
+            request.RecordIdColumn is not null && (recordColumn?.Kind != "text" ||
+                request.RecordIdColumn == request.GroupBy || request.RecordIdColumn == "unit") ||
             request.Operation is not ("rows" or "count") && valueColumn?.Kind != "number" ||
             request.DateBucket is not ("none" or "month" or "quarter" or "year") ||
             request.DateBucket != "none" && groupColumn?.Kind != "date" ||
@@ -68,6 +72,7 @@ public static class AskAiAnalysisEngine
 
         var records = new List<SourceRecord>();
         var seen = new HashSet<string>(StringComparer.Ordinal);
+        var recordFacts = new Dictionary<string, string>(StringComparer.Ordinal);
         var duplicates = 0;
         var missing = 0;
         var locatedSourceSpan = false;
@@ -82,16 +87,21 @@ public static class AskAiAnalysisEngine
             var text = Normalize(source.SourceText);
             var rawUnit = String.IsNullOrWhiteSpace(row.Unit) ? row.Cells.GetValueOrDefault("unit") : row.Unit;
             var unit = Normalize(rawUnit ?? String.Empty);
+            if (recordColumn is not null &&
+                (!row.Cells.TryGetValue(recordColumn.Key, out var recordId) || String.IsNullOrWhiteSpace(recordId) ||
+                 String.Equals(Normalize(recordId), unit, StringComparison.Ordinal)))
+                throw RecordError("Each record requires inspected evidence, an exact source quote and declared cells.",
+                    row, recordColumn.Key);
             var quoteOffset = quote.Length == 0 ? -1 : text.IndexOf(quote, StringComparison.Ordinal);
             if (quoteOffset < 0)
             {
-                if (!TryLocateSourceSpan(text, row, request.Columns, unit, out quote))
+                if (!TryLocateSourceSpan(text, row, request.Columns, unit, recordColumn?.Key, out quote))
                     throw RecordError(
                         "The record values do not identify a unique bounded span in inspected original text.", row);
                 quoteOffset = text.IndexOf(quote, StringComparison.Ordinal);
                 locatedSourceSpan = true;
             }
-            if (text.IndexOf(quote, quoteOffset + 1, StringComparison.Ordinal) >= 0)
+            if (recordColumn is null && text.IndexOf(quote, quoteOffset + 1, StringComparison.Ordinal) >= 0)
                 throw RecordError("A record quote must identify one occurrence in inspected original text.", row);
             if (unit.Length > 64 || unit is "$" or "\u20ac" or "\u00a3" ||
                 unit.Length > 0 && !Regex.IsMatch(quote,
@@ -121,8 +131,21 @@ public static class AskAiAnalysisEngine
             if (cells.TryGetValue("unit", out var suppliedUnitCell) && suppliedUnitCell is string suppliedUnit &&
                 unit.Length > 0 && !String.Equals(suppliedUnit, unit, StringComparison.Ordinal))
                 throw new ArgumentException("The record unit and unit cell must agree.");
-            var key = source.DocumentIdentity + "\n" +
-                JsonSerializer.Serialize(cells.OrderBy(cell => cell.Key, StringComparer.Ordinal)) + "\n" + unit;
+            var facts = JsonSerializer.Serialize(cells.OrderBy(cell => cell.Key, StringComparer.Ordinal));
+            if (recordColumn is not null)
+            {
+                var identity = JsonSerializer.Serialize(new
+                {
+                    id = cells[recordColumn.Key],
+                    group = groupColumn is null ? null : cells[groupColumn.Key],
+                    unit
+                });
+                if (recordFacts.TryGetValue(identity, out var previousFacts) && previousFacts != facts)
+                    throw RecordError(
+                        "Conflicting facts share the same declared record identifier, group and unit.", row, recordColumn.Key);
+                recordFacts[identity] = facts;
+            }
+            var key = (recordColumn is null ? source.DocumentIdentity : String.Empty) + "\n" + facts + "\n" + unit;
             if (!seen.Add(key))
             {
                 duplicates++;
@@ -150,6 +173,9 @@ public static class AskAiAnalysisEngine
         if (locatedSourceSpan)
             notes.Add("Source spans were located from exact field values in inspected original text; " +
                 "model-rewritten paragraphs were not accepted as quotations.");
+        if (recordColumn is not null)
+            notes.Add("Repeated headers and identical copies are counted once using the declared source-record " +
+                "identifier and all supplied facts; conflicting facts are not silently merged.");
         notes.AddRange(request.Columns.Where(column => column.Kind == "date")
             .Select(column => $"Date parsing: {column.Label}: {column.DateFormat}."));
         notes.AddRange(request.Columns.Where(column => column.Kind == "number")
@@ -299,12 +325,15 @@ public static class AskAiAnalysisEngine
 
     private static bool TryLocateSourceSpan(
         string text, AskAiAnalysisInputRow row, IReadOnlyList<AskAiAnalysisInputColumn> columns,
-        string unit, out string quote)
+        string unit, string? recordIdColumn, out string quote)
     {
         quote = String.Empty;
         var start = text.Length;
         var end = 0;
         var hasUniqueTextAnchor = false;
+        var recordOffset = recordIdColumn is null ? -1 :
+            text.IndexOf(Normalize(row.Cells[recordIdColumn]!), StringComparison.OrdinalIgnoreCase);
+        if (recordIdColumn is not null && recordOffset < 0) return false;
         foreach (var column in columns)
         {
             if (!row.Cells.TryGetValue(column.Key, out var supplied) || String.IsNullOrWhiteSpace(supplied)) continue;
@@ -313,12 +342,13 @@ public static class AskAiAnalysisEngine
                 throw RecordError("Every supplied cell must occur in that record's original-source quote.",
                     row, column.Key);
             if (column.Key == "unit" || String.Equals(raw, unit, StringComparison.Ordinal)) continue;
-            var index = text.IndexOf(raw, StringComparison.OrdinalIgnoreCase);
+            var index = recordIdColumn is null ? text.IndexOf(raw, StringComparison.OrdinalIgnoreCase) :
+                NearestOccurrence(text, raw, recordOffset);
             if (index < 0) return false;
             var repeated = text.IndexOf(raw, index + 1, StringComparison.OrdinalIgnoreCase) >= 0;
-            if (column.Kind == "number" && repeated)
+            if (recordIdColumn is null && column.Kind == "number" && repeated)
                 throw RecordError("A repeated numeric value needs an explicit unique source quote.", row, column.Key);
-            if (column.Kind == "text" && !repeated) hasUniqueTextAnchor = true;
+            if (column.Kind == "text" && (!repeated || column.Key == recordIdColumn)) hasUniqueTextAnchor = true;
             start = Math.Min(start, index);
             end = Math.Max(end, index + raw.Length);
         }
@@ -338,6 +368,15 @@ public static class AskAiAnalysisEngine
         if (end - start > 2_000) return false;
         quote = text[start..end];
         return true;
+    }
+
+    private static int NearestOccurrence(string text, string value, int anchor)
+    {
+        var nearest = -1;
+        var offset = -1;
+        while ((offset = text.IndexOf(value, offset + 1, StringComparison.OrdinalIgnoreCase)) >= 0)
+            if (nearest < 0 || Math.Abs(offset - anchor) < Math.Abs(nearest - anchor)) nearest = offset;
+        return nearest;
     }
 
     private static ArgumentException RecordError(

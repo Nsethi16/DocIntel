@@ -23,13 +23,27 @@ public sealed class AskAiAnalyticalAgentTests
             ("Contoso", "100.25", "USD", "2026-01-01"),
             ("Contoso", "50.50", "USD", "2026-01-02"),
             (singleCustomer ? "Contoso" : "Woodgrove", "300.00", "USD", "2026-01-03"));
+        fixture.Request = new AskAiAnalysisRequest
+        {
+            Title = fixture.Request.Title, Operation = "sum", Visualization = "bar",
+            GroupBy = "supplier", ValueColumn = "amount", RecordIdColumn = "invoice",
+            Rows = fixture.Request.Rows,
+            Columns = fixture.Request.Columns.Append(new AskAiAnalysisInputColumn
+                { Key = "invoice", Label = "Invoice ID", Kind = "text" }).ToList()
+        };
         for (var number = 0; number < fixture.Request.Rows.Count; number++)
         {
             var row = fixture.Request.Rows[number];
+            row.Cells["invoice"] = "Invoice " + (number + 1);
             fixture.Request.Rows[number] = new()
             {
                 EvidenceId = row.EvidenceId, Unit = row.Unit, Cells = row.Cells,
                 SourceQuote = "The model rephrased this record instead of copying a paragraph."
+            };
+            fixture.Evidence[row.EvidenceId] = fixture.Evidence[row.EvidenceId] with
+            {
+                SourceText = fixture.Evidence[row.EvidenceId].SourceText + "\nRepeated page header:\n" +
+                    fixture.Evidence[row.EvidenceId].SourceText
             };
         }
         var jobs = new InMemoryJobStore();
@@ -50,6 +64,7 @@ public sealed class AskAiAnalyticalAgentTests
             {
                 Assert.Contains("Do not draw ASCII/block-character charts", options.Instructions);
                 Assert.Contains("\"by customer\" means groupBy the customer column", options.Instructions);
+                Assert.Contains("recordIdColumn=\"quote_id\"", options.Instructions);
                 await InvokeAsync(options, "browse_documents", new()
                     { ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery()) }, token);
                 for (var number = 1; number <= 3; number++)

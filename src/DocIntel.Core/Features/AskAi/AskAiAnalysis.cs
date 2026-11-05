@@ -73,6 +73,8 @@ public sealed class AskAiAnalysisRequest
     public string Visualization { get; init; } = "table";
     public string? GroupBy { get; init; }
     public string? ValueColumn { get; init; }
+    /// <summary>Explicit source-record identity, such as a quote number, for repeated headers and document copies.</summary>
+    public string? RecordIdColumn { get; init; }
     public string DateBucket { get; init; } = "none";
     public List<AskAiAnalysisInputColumn> Columns { get; init; } = [];
     public List<AskAiAnalysisInputRow> Rows { get; init; } = [];
