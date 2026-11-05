@@ -373,6 +373,8 @@ public sealed class CommercialPresentationTests
                 TenantId = "contoso-legal", DisplayName = "Deal Velocity", HarnessVersion = 7,
                 DefaultModelId = "phi-4", AllowedModels = ["phi-4"]
             });
+            Tenant.Capabilities[FeatureHarness.DocumentInsightKey].ModelIdOverride = "phi-4";
+            Tenant.Capabilities[FeatureHarness.PromptColumnsKey].ModelIdOverride = "phi-4";
             Tenant.Capabilities[FeatureHarness.DocumentInsightKey].CustomSystemPrompt = "Original report instructions.";
             Runs.Setup(store => store.GetRunAsync("contoso-legal", BasisId, It.IsAny<CancellationToken>()))
                 .ReturnsAsync(new AskAiRun
