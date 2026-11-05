@@ -593,6 +593,9 @@ model resources/capacity are not changed. English already-target-language previe
 omitted in both UIs; explicit failures and uncertain detection remain visible.
 Stored question inspection also reports allowlisted analytical rejection categories without
 printing row values, source quotations, raw step descriptions or model answers.
+Analytical instructions and rejection repair separate raw source inputs from calculated outputs:
+shares, rankings, inferred exclusion labels and derived totals are not source cells. Sum/count
+datasets supply their own same-unit `sharePercent` values without weakening source validation.
 `CommercialRefresh` requires `REPROCESS` and requeues only the identical, owned fixed portfolio
 jobs that failed or have incomplete required capabilities. It preserves original PDFs and earlier
 attempt artifacts, refuses exhausted three-attempt jobs, and leaves running/queued work unchanged.

@@ -139,6 +139,8 @@ public sealed class AskAiAnalyticalAgentTests
                 Assert.Contains("Do not draw ASCII/block-character charts", options.Instructions);
                 Assert.Contains("\"by customer\" means groupBy the customer column", options.Instructions);
                 Assert.Contains("recordIdColumn=\"quote_id\"", options.Instructions);
+                Assert.Contains("Do not add a calculated", options.Instructions);
+                Assert.Contains("Sum/count outputs already include sharePercent", options.Instructions);
                 await InvokeAsync(options, "browse_documents", new()
                     { ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery()) }, token);
                 for (var number = 1; number <= 3; number++)
@@ -156,6 +158,8 @@ public sealed class AskAiAnalyticalAgentTests
                     Assert.Equal("amount", repair.GetProperty("columnKey").GetString());
                     Assert.Contains("100.25", repair.GetProperty("inspectedSourceText").GetString());
                     Assert.DoesNotContain("999999.00", repair.GetProperty("sourceQuote").GetString());
+                    Assert.Contains("remove that input column", repair.GetProperty("instruction").GetString());
+                    Assert.Contains("already supply sharePercent", repair.GetProperty("instruction").GetString());
                 }
                 fixture.Request.Rows[0].Cells["amount"] = exactAmount;
                 var result = await InvokeAsync(options, "analyze_evidence",

@@ -986,7 +986,10 @@ public sealed class AskAiOrchestrator
                             "group separators, signs and units. Do not copy a formatted display value. " +
                             "You may use this sourceQuote if it contains all values for that record, " +
                             "or copy a more specific contiguous verbatim span. " +
-                            "Do not replace missing values with zero or calculate totals yourself."
+                            "Do not replace missing values with zero or calculate totals yourself. " +
+                            "If the rejected column is a calculated share, rank, total or an analyst-created " +
+                            "label rather than a raw source fact, remove that input column instead of trying " +
+                            "to find the derived value in the document. Sum/count outputs already supply sharePercent."
                     };
                 }
                 return new { error = exception is OverflowException
@@ -1079,6 +1082,11 @@ public sealed class AskAiOrchestrator
                 Quote-total example: columns quote_id(text), customer(text), amount(number);
                 groupBy="customer", valueColumn="amount", recordIdColumn="quote_id",
                 operation="sum", visualization="bar". Copy raw quote IDs and amounts from original text.
+                Use only the raw source columns needed for the requested calculation. Do not add a calculated
+                share, percentage, grand total, rank or analyst-created inclusion/exclusion label to input cells.
+                These are outputs, not original facts; adding them as source inputs makes the whole request invalid.
+                Sum/count outputs already include sharePercent: use that returned value rather than supplying
+                percentages as another input column. Describe excluded/missing documents in the answer, not invented cells.
                 If validation returns repair, use its evidenceId and rejected column to fix that record.
                 Copy repair.sourceQuote verbatim when it includes that record's values and currency;
                 do not retry the same rewritten paragraph or empty quote when its unit lies outside the located span.
