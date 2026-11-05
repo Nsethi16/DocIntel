@@ -119,7 +119,7 @@ public sealed class CommercialPortfolioTests
     public void Portfolio_Enables_Needed_Ocr_Without_Overriding_An_Existing_Always_Policy(OcrMode before, OcrMode after)
     {
         // Arrange
-        var tenant = new TenantHarness { TenantId = "contoso-legal" };
+        var tenant = new TenantHarness { TenantId = "contoso-legal", DisplayName = "Deal Velocity" };
         tenant.Ocr.Mode = before;
 
         // Act
