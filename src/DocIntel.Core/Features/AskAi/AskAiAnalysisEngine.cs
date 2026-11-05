@@ -107,7 +107,8 @@ public static class AskAiAnalysisEngine
                 unit.Length > 0 && !Regex.IsMatch(quote,
                     $@"(?<!\p{{L}}){Regex.Escape(unit)}(?![\p{{L}}\p{{N}}])",
                     RegexOptions.CultureInvariant))
-                throw new ArgumentException("Use an explicit source-supported unit; ambiguous currency symbols cannot be aggregated.");
+                throw RecordError("Use an explicit source-supported unit; ambiguous currency symbols cannot be aggregated.",
+                    row, "unit");
             var cells = new Dictionary<string, object?>(StringComparer.Ordinal);
             foreach (var column in request.Columns)
             {

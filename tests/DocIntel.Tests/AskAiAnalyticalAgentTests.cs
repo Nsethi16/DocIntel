@@ -13,6 +13,70 @@ namespace DocIntel.Tests;
 
 public sealed class AskAiAnalyticalAgentTests
 {
+    [Fact]
+    public async Task A_Currency_Before_A_Repeated_Record_Header_Can_Be_Repaired_With_The_Exact_Source_Quote()
+    {
+        // Arrange
+        const string text = "Billing currency: USD.\nInvoice INV-001; Supplier Contoso; Amount 100.00;\n" +
+            "Repeated page header:\nInvoice INV-001; Supplier Contoso; Amount 100.00;";
+        var jobs = new InMemoryJobStore();
+        await jobs.UpsertJobAsync(new DocumentJob
+        {
+            JobId = "source", TenantId = "workspace", TenantDisplayName = "Workspace",
+            FileName = "quote.pdf", Status = JobStatus.Completed,
+            Segments = [new() { StartPage = 1, EndPage = 1, BodyText = text }]
+        });
+        var columns = new List<AskAiAnalysisInputColumn>
+        {
+            new() { Key = "supplier", Label = "Supplier", Kind = "text" },
+            new() { Key = "amount", Label = "Amount", Kind = "number" },
+            new() { Key = "invoice", Label = "Invoice ID", Kind = "text" }
+        };
+        AskAiAnalysisRequest Request(string quote) => new()
+        {
+            Title = "Supplier totals", Operation = "sum", Visualization = "bar",
+            GroupBy = "supplier", ValueColumn = "amount", RecordIdColumn = "invoice", Columns = columns,
+            Rows = [new() { EvidenceId = "e1", SourceQuote = quote, Unit = "USD",
+                Cells = new() { ["supplier"] = "Contoso", ["amount"] = "100.00", ["invoice"] = "INV-001" } }]
+        };
+        var client = new Mock<IChatClient>();
+        client.Setup(chat => chat.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(async (IEnumerable<ChatMessage> _, ChatOptions options, CancellationToken token) =>
+            {
+                await InvokeAsync(options, "browse_documents", new()
+                    { ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery()) }, token);
+                await InvokeAsync(options, "inspect_document_slice",
+                    new() { ["jobId"] = "source", ["sliceIndex"] = 0, ["textOffset"] = 0 }, token);
+                var failure = await InvokeAsync(options, "analyze_evidence",
+                    new() { ["request"] = JsonSerializer.SerializeToElement(Request(String.Empty)) }, token);
+                using var rejected = JsonSerializer.SerializeToDocument(failure);
+                Assert.Equal("AnalysisUnit", rejected.RootElement.GetProperty("failureCode").GetString());
+                var repair = rejected.RootElement.GetProperty("repair");
+                Assert.Equal("unit", repair.GetProperty("columnKey").GetString());
+                Assert.Equal(text, repair.GetProperty("sourceQuote").GetString());
+                var calculated = await InvokeAsync(options, "analyze_evidence",
+                    new() { ["request"] = JsonSerializer.SerializeToElement(Request(
+                        repair.GetProperty("sourceQuote").GetString()!)) }, token);
+                using var result = JsonSerializer.SerializeToDocument(calculated);
+                Assert.Equal("a1", result.RootElement.GetProperty("analysisId").GetString());
+                return Response("""
+                    {"kind":"DocumentAnswer","answer":"The cited supplier total is shown below.",
+                    "evidenceIds":["e1"],"analysisIds":["a1"]}
+                    """);
+            });
+        var run = new AskAiRun { RunId = "one", TenantId = "workspace", Question = "Show supplier spend as a bar chart.",
+            ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Email } };
+
+        // Act
+        await Orchestrator(jobs, client.Object).ExecuteRunAsync(run);
+
+        // Assert
+        Assert.Equal(100m, Assert.Single(Assert.Single(run.Analyses).Rows).Cells["value"]);
+        Assert.Contains("aria-label=\"Bar chart\"", run.EmailHtmlBody);
+        Assert.Contains("100.00%", run.EmailHtmlBody);
+    }
+
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
