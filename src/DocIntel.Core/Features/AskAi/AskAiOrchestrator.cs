@@ -1154,43 +1154,97 @@ public sealed class AskAiOrchestrator
             throw new InvalidOperationException("Document retrieval failed; no answer was produced.", retrievalFailure);
         }
 
-        var text = response.Messages.LastOrDefault(m => m.Role == ChatRole.Assistant)?.Text ?? String.Empty;
-        var answer = JsonSerializer.Deserialize<AgentAnswer>(
-            ReasoningCleanupChatClient.CleanModelText(text),
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-        if (answer is null || answer.Kind is null || !Enum.IsDefined(answer.Kind.Value) ||
-            String.IsNullOrWhiteSpace(answer.Answer) ||
-            answer.Answer.Length > 64_000 || answer.EvidenceIds is null ||
-            answer.EvidenceIds.Distinct(StringComparer.Ordinal).Count() != answer.EvidenceIds.Count ||
-            answer.AnalysisIds is null || answer.AnalysisIds.Count > 4 ||
-            answer.AnalysisIds.Distinct(StringComparer.Ordinal).Count() != answer.AnalysisIds.Count ||
-            answer.AnalysisIds.Any(id => !computedAnalyses.ContainsKey(id)))
+        (AgentAnswer Answer, List<AskAiAnalysis> Analyses) ReadCompletion(ChatResponse completion)
         {
-            throw new InvalidOperationException("The model returned an invalid answer or unrecognized citation.");
-        }
-        if (answer.EvidenceIds.Any(id => !evidence.ContainsKey(id)))
-            throw new InvalidOperationException("The model cited evidence that was not inspected.");
-        if ((answer.Kind == AgentAnswerKind.DocumentAnswer && answer.EvidenceIds.Count == 0) ||
-            (answer.Kind != AgentAnswerKind.DocumentAnswer &&
-                (answer.EvidenceIds.Count > 0 || answer.AnalysisIds.Count > 0)))
-        {
-            throw new InvalidOperationException("Document answers require evidence; conversational answers do not.");
+            var text = completion.Messages.LastOrDefault(m => m.Role == ChatRole.Assistant)?.Text ?? String.Empty;
+            var parsed = JsonSerializer.Deserialize<AgentAnswer>(
+                ReasoningCleanupChatClient.CleanModelText(text),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            if (parsed is null || parsed.Kind is null || !Enum.IsDefined(parsed.Kind.Value) ||
+                String.IsNullOrWhiteSpace(parsed.Answer) || parsed.Answer.Length > 64_000 ||
+                parsed.EvidenceIds is null ||
+                parsed.EvidenceIds.Distinct(StringComparer.Ordinal).Count() != parsed.EvidenceIds.Count ||
+                parsed.AnalysisIds is null || parsed.AnalysisIds.Count > 4 ||
+                parsed.AnalysisIds.Distinct(StringComparer.Ordinal).Count() != parsed.AnalysisIds.Count ||
+                parsed.AnalysisIds.Any(id => !computedAnalyses.ContainsKey(id)))
+                throw new InvalidOperationException("The model returned an invalid answer or unrecognized citation.");
+            if (parsed.EvidenceIds.Any(id => !evidence.ContainsKey(id)))
+                throw new InvalidOperationException("The model cited evidence that was not inspected.");
+            if (parsed.Kind == AgentAnswerKind.DocumentAnswer && parsed.EvidenceIds.Count == 0 ||
+                parsed.Kind != AgentAnswerKind.DocumentAnswer &&
+                    (parsed.EvidenceIds.Count > 0 || parsed.AnalysisIds.Count > 0))
+                throw new InvalidOperationException("Document answers require evidence; conversational answers do not.");
+            if (parsed.Kind == AgentAnswerKind.DocumentAnswer && computedAnalyses.Count > 0 &&
+                parsed.AnalysisIds.Count == 0)
+                throw new InvalidOperationException("The final answer did not select a calculated analytical result.");
+
+            var numbers = Regex.Matches(parsed.Answer, @"\[(\d+)\]")
+                .Select(match => Int32.Parse(match.Groups[1].Value,
+                    System.Globalization.CultureInfo.InvariantCulture)).ToHashSet();
+            var selected = parsed.AnalysisIds.Select(id => computedAnalyses[id]).ToList();
+            foreach (var analysis in selected)
+            {
+                if (analysis.EvidenceIds.Any(id => !parsed.EvidenceIds.Contains(id, StringComparer.Ordinal)))
+                    throw new InvalidOperationException("The model cited evidence that was not inspected.");
+                foreach (var id in analysis.EvidenceIds) numbers.Add(parsed.EvidenceIds.IndexOf(id) + 1);
+                foreach (var row in analysis.Rows)
+                    row.CitationNumbers = row.EvidenceIds.Select(id => parsed.EvidenceIds.IndexOf(id) + 1).ToList();
+            }
+            if (!numbers.SetEquals(Enumerable.Range(1, parsed.EvidenceIds.Count)))
+                throw new InvalidOperationException("The answer's citation markers do not match its evidence.");
+            return (parsed, selected);
         }
 
-        var citedNumbers = Regex.Matches(answer.Answer, @"\[(\d+)\]")
-            .Select(m => Int32.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture)).ToHashSet();
-        var selectedAnalyses = answer.AnalysisIds.Select(id => computedAnalyses[id]).ToList();
-        foreach (var analysis in selectedAnalyses)
+        AgentAnswer answer;
+        List<AskAiAnalysis> selectedAnalyses;
+        try
         {
-            if (analysis.EvidenceIds.Any(id => !answer.EvidenceIds.Contains(id, StringComparer.Ordinal)))
-                throw new InvalidOperationException("The model cited evidence that was not inspected.");
-            foreach (var id in analysis.EvidenceIds) citedNumbers.Add(answer.EvidenceIds.IndexOf(id) + 1);
-            foreach (var row in analysis.Rows)
-                row.CitationNumbers = row.EvidenceIds.Select(id => answer.EvidenceIds.IndexOf(id) + 1).ToList();
+            (answer, selectedAnalyses) = ReadCompletion(response);
         }
-        if (!citedNumbers.SetEquals(Enumerable.Range(1, answer.EvidenceIds.Count)))
+        catch (InvalidOperationException exception) when (computedAnalyses.Count > 0 &&
+            exception.Message is "The answer's citation markers do not match its evidence." or
+                "The final answer did not select a calculated analytical result.")
         {
-            throw new InvalidOperationException("The answer's citation markers do not match its evidence.");
+            var currentAccess = await ResolveAccessAsync(cancellationToken);
+            foreach (var (id, version) in sourceVersions)
+            {
+                if (!currentAccess.CanReadDocument(id))
+                    throw new UnauthorizedAccessException("A source used by the answer is no longer authorized.");
+                var current = await _jobStore.GetJobAsync(id, cancellationToken, tenant.TenantId);
+                if (current is not { Status: JobStatus.Completed } ||
+                    AskAiConversationContext.Fingerprint(current) != version) throw new AskAiSourceChangedException();
+            }
+            var repairData = JsonSerializer.Serialize(new
+            {
+                validatedAnalyses = computedAnalyses.Values.Select(analysis => new
+                {
+                    analysis.AnalysisId, analysis.Title, analysis.Operation, analysis.Visualization,
+                    analysis.Columns, analysis.Notes, analysis.Coverage, analysis.EvidenceIds,
+                    rows = analysis.Rows.Select(row => new { row.Cells, row.EvidenceIds })
+                })
+            });
+            if (repairData.Length > 32_000)
+                throw new InvalidOperationException("The analytical answer cannot be repaired within its context limit.");
+            var repairOptions = new ChatOptions
+            {
+                MaxOutputTokens = options.MaxOutputTokens,
+                AllowMultipleToolCalls = false,
+                ResponseFormat = options.ResponseFormat,
+                Tools = [],
+                Instructions = options.Instructions + "\nThe final response violated the analytical/citation contract. " +
+                    "Return corrected JSON only; do not call tools, recompute values or invent evidence. " +
+                    "Select the successful analysisIds matching the original question and include every selected " +
+                    "analysis's evidenceIds. Inline [n] markers must refer to their position in your evidenceIds list. " +
+                    "The renderer provides the real charts/tables; do not replace them with a description or offer. " +
+                    "Use only the validated calculations supplied as data below."
+            };
+            var repairTimer = Stopwatch.StartNew();
+            var repaired = await agentClient.GetResponseAsync(
+                [new ChatMessage(ChatRole.User, run.Question),
+                 new ChatMessage(ChatRole.User, DocumentPromptBoundary.Wrap(repairData))],
+                repairOptions, cancellationToken);
+            (answer, selectedAnalyses) = ReadCompletion(repaired);
+            await RecordStepAsync("answer_contract_repaired", repairTimer, cancellationToken);
         }
 
         var finalAccess = await ResolveAccessAsync(cancellationToken);

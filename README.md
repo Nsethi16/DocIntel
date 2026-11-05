@@ -532,6 +532,11 @@ silently added together or merged. Without this explicit identity, ambiguity che
 If a record is rejected, the tool identifies its evidence reference and column and returns a bounded
 verbatim source candidate to the already-authorized model for correction. It does not silently
 substitute or calculate an unsupported cell. Source repair text never enters diagnostic logs.
+After a successful calculation, a response that omits its analytical result or has inconsistent
+citation numbering gets one bounded, tool-free JSON repair using only the validated datasets.
+Current access and source versions are rechecked before that call, and the complete evidence/citation
+contract is validated again afterward. An invalid second response still fails; datasets, source
+IDs and numbers are never silently invented, substituted or renumbered.
 The manual Ask AI diagnostic workflow also has a `Contract` mode. It requires the existing
 `Readiness:ProbeModelsOnStartup` live-probing opt-in, sends at most four tiny synthetic requests
 to compare plain, JSON-only, tools-only and combined contracts through the production model adapter,
@@ -553,7 +558,10 @@ failure categories, bounded stage counts and safe HTTP status are printed; quest
 source content and generated answers are never published. `recent` cannot be used with `Replay`.
 For a delivered email whose chart is missing, `EmailPreview` with that exact opaque `mail-` run ID
 and explicit confirmation `PREVIEW` repeats only the read-only analysis in memory under the original
-actor's current access and email policy. It requires live probing and no extension tools. It never
+actor's current access and email policy. Completed answers reuse the existing verified conversation
+context to locate their source documents, not a new unconstrained keyword search; those documents
+must remain source-current and are reinspected before new evidence/calculations. It requires live
+probing and no extension tools. It never
 queues, saves, sends or resends a question, and prints only counts and fixed analytical rejection
 categories; a missing bar dataset is an explicit failure, not a successful chart. Existing failed-web
 `Replay` restrictions remain unchanged.

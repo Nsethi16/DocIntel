@@ -121,11 +121,21 @@ public sealed class AskAiAnalyticalAgentTests
                 Segments = [new() { StartPage = 1, EndPage = 1, BodyText = source.SourceText }]
             });
         }
+        var completions = 0;
         var client = new Mock<IChatClient>();
         client.Setup(chat => chat.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
                 It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
-            .Returns(async (IEnumerable<ChatMessage> _, ChatOptions options, CancellationToken token) =>
+            .Returns(async (IEnumerable<ChatMessage> messages, ChatOptions options, CancellationToken token) =>
             {
+                if (++completions > 1)
+                {
+                    Assert.Empty(options.Tools!);
+                    Assert.Contains(messages, message => message.Text?.Contains("validatedAnalyses") == true);
+                    return Response("""
+                        {"kind":"DocumentAnswer","answer":"The inspected supplier totals are shown below.",
+                        "evidenceIds":["e1","e2","e3"],"analysisIds":["a1"]}
+                        """);
+                }
                 Assert.Contains("Do not draw ASCII/block-character charts", options.Instructions);
                 Assert.Contains("\"by customer\" means groupBy the customer column", options.Instructions);
                 Assert.Contains("recordIdColumn=\"quote_id\"", options.Instructions);
@@ -152,10 +162,15 @@ public sealed class AskAiAnalyticalAgentTests
                     new() { ["request"] = JsonSerializer.SerializeToElement(fixture.Request) }, token);
                 using var computed = JsonSerializer.SerializeToDocument(result);
                 Assert.Equal("a1", computed.RootElement.GetProperty("analysisId").GetString());
-                return Response("""
-                    {"kind":"DocumentAnswer","answer":"The inspected supplier totals are shown below.",
-                    "evidenceIds":["e1","e2","e3"],"analysisIds":["a1"]}
-                    """);
+                return Response(singleCustomer
+                    ? """
+                      {"kind":"DocumentAnswer","answer":"The totals are available [1] [2] [3].",
+                      "evidenceIds":["e1","e2","e3"],"analysisIds":[]}
+                      """
+                    : """
+                      {"kind":"DocumentAnswer","answer":"The totals are available [9].",
+                      "evidenceIds":["e1","e2","e3"],"analysisIds":["a1"]}
+                      """);
             });
         var run = new AskAiRun
         {
@@ -187,7 +202,65 @@ public sealed class AskAiAnalyticalAgentTests
         Assert.DoesNotContain("Full tables and visualizations", run.EmailHtmlBody);
         Assert.Contains("Full tables", run.TeamsAdaptiveCardJson);
         Assert.Contains(run.Steps, step => step.StepName == "analyze_evidence");
+        Assert.Contains(run.Steps, step => step.StepName == "answer_contract_repaired");
+        Assert.Equal(2, completions);
         Assert.Equal(JobStatus.Completed, run.Status);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task Contract_Repair_Is_Bounded_And_Does_Not_Resend_Data_After_A_Source_Changes(bool changeSource)
+    {
+        // Arrange
+        var fixture = AskAiAnalysisTests.Invoices("sum", "bar", "supplier",
+            ("Contoso", "100.00", "USD", "2026-01-01"));
+        var jobs = new InMemoryJobStore();
+        var source = new DocumentJob
+        {
+            JobId = "source", TenantId = "workspace", TenantDisplayName = "Workspace", AppliedHarnessVersion = 1,
+            FileName = "invoice.pdf", Status = JobStatus.Completed,
+            Segments = [new() { StartPage = 1, EndPage = 1, BodyText = fixture.Evidence["e1"].SourceText }]
+        };
+        await jobs.UpsertJobAsync(source);
+        var calls = 0;
+        var client = new Mock<IChatClient>();
+        client.Setup(chat => chat.GetResponseAsync(It.IsAny<IEnumerable<ChatMessage>>(),
+                It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
+            .Returns(async (IEnumerable<ChatMessage> _, ChatOptions options, CancellationToken token) =>
+            {
+                if (++calls == 1)
+                {
+                    await InvokeAsync(options, "browse_documents", new()
+                        { ["query"] = JsonSerializer.SerializeToElement(new DocumentQuery()) }, token);
+                    await InvokeAsync(options, "inspect_document_slice",
+                        new() { ["jobId"] = "source", ["sliceIndex"] = 0, ["textOffset"] = 0 }, token);
+                    await InvokeAsync(options, "analyze_evidence",
+                        new() { ["request"] = JsonSerializer.SerializeToElement(fixture.Request) }, token);
+                    if (changeSource)
+                    {
+                        source.Segments[0].BodyText = "Replacement source content.";
+                        await jobs.UpsertJobAsync(source, token);
+                    }
+                }
+                else Assert.Empty(options.Tools!);
+                return Response("""
+                    {"kind":"DocumentAnswer","answer":"Invalid marker [9].","evidenceIds":["e1"],"analysisIds":["a1"]}
+                    """);
+            });
+        var run = new AskAiRun { RunId = "repair", TenantId = "workspace", Question = "Compare supplier spend." };
+
+        // Act / Assert
+        if (changeSource)
+            await Assert.ThrowsAsync<AskAiSourceChangedException>(() =>
+                Orchestrator(jobs, client.Object).ExecuteRunAsync(run));
+        else
+            await Assert.ThrowsAsync<InvalidOperationException>(() =>
+                Orchestrator(jobs, client.Object).ExecuteRunAsync(run));
+        Assert.Equal(changeSource ? 1 : 2, calls);
+        Assert.Null(run.Answer);
+        Assert.Empty(run.Analyses);
+        Assert.Empty(run.Citations);
     }
 
     [Fact]

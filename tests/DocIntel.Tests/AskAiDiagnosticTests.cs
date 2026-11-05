@@ -44,6 +44,7 @@ public sealed class AskAiDiagnosticTests
         // Arrange
         var source = EmailSource(JobStatus.Completed, ChannelDeliveryStatus.Sent);
         source.PendingEmail!.ConfirmedAtUtc = DateTimeOffset.UtcNow;
+        source.Answer = "private prior answer";
         var original = JsonSerializer.Serialize(source);
         var store = Store(source);
         var client = Client("""{"kind":"Conversation","answer":"Private model response.","evidenceIds":[]}""");
@@ -52,7 +53,7 @@ public sealed class AskAiDiagnosticTests
         // Act
         var result = await AskAiRunDiagnostic.ExecuteEmailPreviewAsync(
             "tenant", source.RunId, true, true, store.Object,
-            Orchestrator(client, Access(DocumentAccessScope.Unrestricted)), output);
+            Orchestrator(client, Access(DocumentAccessScope.Unrestricted), runStore: store.Object), output);
 
         // Assert
         Assert.Equal(1, result);
@@ -60,7 +61,7 @@ public sealed class AskAiDiagnosticTests
         Assert.Contains("\"failureCode\":\"ChartNotProduced\"", output.ToString());
         Assert.DoesNotContain("private", output.ToString(), StringComparison.OrdinalIgnoreCase);
         Assert.Equal(original, JsonSerializer.Serialize(source));
-        store.Verify(service => service.GetRunAsync("tenant", source.RunId, It.IsAny<CancellationToken>()), Times.Once);
+        store.Verify(service => service.GetRunAsync("tenant", source.RunId, It.IsAny<CancellationToken>()), Times.Exactly(2));
         store.VerifyNoOtherCalls();
     }
 
@@ -486,7 +487,7 @@ public sealed class AskAiDiagnosticTests
     }
 
     private static AskAiOrchestrator Orchestrator(Mock<IChatClient> client, Mock<ITenantAccessResolver> access,
-        IEnumerable<IAskAiToolProvider>? providers = null)
+        IEnumerable<IAskAiToolProvider>? providers = null, IAskAiRunStore? runStore = null)
     {
         var tenant = new TenantHarness { TenantId = "tenant", DisplayName = "Tenant" };
         var harness = new Mock<IHarnessStore>();
@@ -496,6 +497,6 @@ public sealed class AskAiDiagnosticTests
             [tenant.DefaultModelId] = client.Object
         });
         return new AskAiOrchestrator(harness.Object, new InMemoryJobStore(), catalog, providers,
-            NullLogger<AskAiOrchestrator>.Instance, access.Object);
+            NullLogger<AskAiOrchestrator>.Instance, access.Object, runStore: runStore);
     }
 }

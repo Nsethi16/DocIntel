@@ -45,6 +45,8 @@ public static class AskAiRunDiagnostic
         {
             RunId = Guid.NewGuid().ToString("N"), TenantId = tenantId, Actor = source.Actor,
             Question = source.Question, PendingEmail = source.PendingEmail,
+            PreviousRunId = source.Status == JobStatus.Completed && !String.IsNullOrWhiteSpace(source.Answer)
+                ? source.RunId : null,
             ReplyChannel = new AskAiReplyChannel { ChannelType = AskAiChannelType.Email }
         };
         try
