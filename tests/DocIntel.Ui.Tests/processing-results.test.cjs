@@ -13,6 +13,7 @@ test('processing briefs render readable bullets and labels without dropping deta
   const markup = render('- **What matters:** Customer offer.\n- **Key terms:** USD 158,400.\n' +
     '- **Watch out:** Approval pending.\n- **Next action:** Confirm with Procurement.');
   assert.equal([...markup.matchAll(/<li>/g)].length, 4);
+  assert.match(markup, /<ul class="processing-result-fields" role="list">/);
   assert.match(markup, /<strong>Key terms:<\/strong> USD 158,400\./);
   assert.match(markup, /Approval pending/);
   assert.match(markup, /Confirm with Procurement/);
@@ -47,4 +48,30 @@ test('legacy paragraphs, line breaks and long results remain complete and readab
   assert.match(markup, /<p>First line\.<br>Second line\.<\/p>/);
   assert.ok(markup.includes(tail.trim()));
   assert.equal(render(null), '<div class="processing-result"></div>');
+});
+
+test('only complete labeled briefs use the responsive field layout', () => {
+  const privacy = render('- **Decision:** HOLD\n- **Why:** Approval pending.\n' +
+    '- **Evidence:** "Privacy clearance is outstanding."\n- **Next:** Ask Privacy to confirm.');
+  assert.match(privacy, /class="processing-result-fields"/);
+  assert.match(privacy, /data-status="hold">HOLD/);
+  for (const text of [
+    '- First step.\n- Second step.\n- Third step.\n- Fourth step.',
+    '- **What matters:** Offer.\n- **Key terms:** USD 158,400.',
+    '- **Next action:** Confirm.\n- **Watch out:** Pending.\n- **Key terms:** USD 158,400.\n- **What matters:** Offer.'
+  ]) {
+    assert.doesNotMatch(render(text), /class="processing-result-fields"/);
+  }
+});
+
+test('processing results fill their available width and adapt to the result container rather than the viewport', () => {
+  const css = fs.readFileSync(path.join(root, 'shared', 'shell.css'), 'utf8');
+  const result = css.match(/\.processing-result\s*\{([^}]+)\}/)[1];
+  assert.match(result, /width:100%/);
+  assert.match(result, /min-width:0/);
+  assert.match(result, /max-width:none/);
+  assert.match(result, /container-type:inline-size/);
+  assert.match(result, /font-size:16px/);
+  assert.doesNotMatch(result, /max-width:\s*\d+ch/);
+  assert.match(css, /@container \(min-width:860px\)\s*\{\s*\.processing-result \.processing-result-fields\s*\{[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
 });

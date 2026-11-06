@@ -25,7 +25,16 @@ function processingResultMarkup(value) {
     paragraph = [];
   };
   const flushItems = () => {
-    if (items.length) blocks.push(`<ul>${items.map(item => `<li>${inline(item)}</li>`).join('')}</ul>`);
+    if (items.length) {
+      const labels = items.map(item => item.match(/^\*\*([^*\n]+):\*\*\s+/)?.[1]);
+      const fields = [
+        ['What matters', 'Key terms', 'Watch out', 'Next action'],
+        ['Decision', 'Why', 'Evidence', 'Next']
+      ].some(expected => expected.length === labels.length &&
+        expected.every((label, index) => label === labels[index]));
+      blocks.push(`<ul${fields ? ' class="processing-result-fields" role="list"' : ''}>` +
+        `${items.map(item => `<li>${inline(item)}</li>`).join('')}</ul>`);
+    }
     items = [];
   };
   for (const raw of String(value ?? '').replace(/\r\n?/g, '\n').split('\n')) {

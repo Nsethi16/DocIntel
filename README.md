@@ -626,6 +626,9 @@ and known failure codes, never the briefs, source quotations or identities.
 Refreshed derived content intentionally changes Ask AI source fingerprints: generate fresh
 recording answers afterward rather than bypassing source-version guards. Both document UIs render
 escaped bullets and bold labels, including older complete results without hiding or truncating them.
+Processing results use the full available content width and 16px body text. Complete four-point
+insight/privacy briefs use two clearly labeled columns in wide result containers and stack into
+one column below 860px; ordinary lists and legacy prose retain their reading order.
 Native classification samples bounded leading headings and identifiers across source pages, so
 branding or a wrapped title cannot consume the entire four-line header sample.
 Footer-only `n / total` pagination is recognized alongside `Page n of total`, allowing page-count
