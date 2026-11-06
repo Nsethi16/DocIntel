@@ -570,8 +570,10 @@ public sealed class CommercialPresentationTests
                 Assert.Equal(previous.TranslatedText, slice.TranslatedText);
                 Assert.Equal(previous.InsightSummary, slice.InsightSummary);
                 Assert.Equal(JsonSerializer.Serialize(previous.DataExtraction), JsonSerializer.Serialize(slice.DataExtraction));
-                Assert.Equal(previous.PromptColumnResults.Single(result => result.ColumnId == "dvxprivacy"),
-                    slice.PromptColumnResults.Single(result => result.ColumnId == "dvxprivacy"));
+                Assert.Equal(JsonSerializer.Serialize(previous.PromptColumnResults.Single(
+                        result => result.ColumnId == "dvxprivacy")),
+                    JsonSerializer.Serialize(slice.PromptColumnResults.Single(
+                        result => result.ColumnId == "dvxprivacy")));
                 Assert.Equal(6, slice.PromptColumnResults.Count);
             }
         }
