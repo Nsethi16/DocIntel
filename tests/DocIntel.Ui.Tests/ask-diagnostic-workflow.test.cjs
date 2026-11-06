@@ -37,7 +37,7 @@ test('recent failure references can only be inspected and cannot authorize a rep
 });
 
 test('contract probing is a distinct document-free mode and does not weaken saved-question replay approval', () => {
-  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview, DealVelocityApply, DealVelocityInspect, CommercialApply, CommercialInspect, CommercialQuestion, CommercialRefresh, CommercialPolish, CommercialPolishInspect\]/);
+  assert.match(workflow, /options: \[Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview, DealVelocityApply, DealVelocityInspect, CommercialApply, CommercialInspect, CommercialQuestion, CommercialRefresh, CommercialPolish, CommercialPolishInspect, CommercialPrompts, CommercialPromptsInspect\]/);
   assert.match(workflow, /Contract checks do not accept saved run identifiers/);
   assert.match(workflow, /"--diagnose-ask-contract", "true"/);
   assert.match(workflow, /"--diagnose-ask-synthetic", "true"/);
@@ -107,8 +107,11 @@ test('concise portfolio refresh is separately confirmed and logs only bounded co
   assert.match(workflow, /def presentation_record\(value\):/);
   assert.match(workflow, /"insightWordsMax", "privacyWordsMax", "decisions"/);
   assert.match(workflow, /records\[-1\]\.get\("stage"\) != "Summary"/);
-  assert.match(program, /builder\.Configuration\["diagnose-confirmation"\] == "POLISH"/);
+  assert.match(program, /builder\.Configuration\["diagnose-confirmation"\] == \(promptColumns \? "PROMPTS" : "POLISH"\)/);
   const entry = program.indexOf('if (commercialPresentationMode)', program.indexOf('var app = builder.Build()'));
   assert.ok(entry > 0 && entry < program.indexOf('app.UseDocIntelResponseHeaders()'));
   assert.doesNotMatch(workflow, /"insightSummary",|"resultText",|"sourceQuote",/);
+  assert.match(workflow, /CommercialPrompts requires PROMPTS/);
+  assert.match(workflow, /"--presentation-prompts", "true" if prompt_columns else "false"/);
+  assert.match(workflow, /"promptWordsMax", "evaluatedPromptResults", "skippedPromptResults"/);
 });

@@ -21,6 +21,13 @@ public static class CommercialPortfolioPresentation
     public const string PrivacyColumnId = "dvxprivacy";
     public const string PrivacyColumnName = "Privacy Readiness";
     private const string RefreshStep = "RefreshCommercialPresentation";
+    private const string PromptRefreshStep = "RefreshPromptColumnBrief";
+    private static readonly (string Id, string Name)[] BriefColumns =
+    [
+        ("col-summary", "Summary"), ("col-highlights", "Highlights"),
+        ("col-contract-check", "Contract Check"), ("dvxclose", "Closing Readiness"),
+        ("dvxterms", "Commercial Exceptions")
+    ];
     internal const string ScopeClarification =
         "A hypothetical future transfer outside approved regions is not a current production blocker: " +
         "use REVIEW when no completed privacy clearance is stated and only conditional regional restrictions exist. " +
@@ -81,12 +88,33 @@ public static class CommercialPortfolioPresentation
         return tenant;
     }
 
+    /// <summary>Updates only the five existing commercial prompt instructions, retaining names, IDs and filters.</summary>
+    public static TenantHarness ConfigurePromptColumns(TenantHarness source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (source.TenantId != DealVelocityWorkspaceSetup.WorkspaceId)
+            throw new ArgumentException("Only the fixed commercial workspace can be configured.", nameof(source));
+        var tenant = Clone(source);
+        var feature = tenant.Capabilities.GetValueOrDefault(FeatureHarness.PromptColumnsKey);
+        if (feature is not { Enabled: true, PromptColumns: { } prompts }) throw new HarnessConflictException();
+        foreach (var (id, name) in BriefColumns)
+        {
+            var matches = prompts.Columns.Where(column =>
+                String.Equals(column.ColumnId, id, StringComparison.OrdinalIgnoreCase)).ToArray();
+            if (matches.Length != 1 || matches[0].ColumnId != id || matches[0].ColumnName != name)
+                throw new HarnessConflictException();
+            matches[0].PromptInstructions = PromptColumnBriefs.Templates.Single(
+                template => template.ColumnName == name).Instructions;
+        }
+        return tenant;
+    }
+
     /// <summary>Apply requires POLISH and live opt-in; inspection never generates or changes results.</summary>
     public static async Task<int> ExecuteAsync(
         string tenantId, string basisRunId, bool apply, bool confirmed, bool live,
         IHarnessStore harnesses, IAskAiRunStore runs, ITenantAccessResolver access, IJobStore jobs,
         IArtifactStore artifacts, IModelCatalog models, TextWriter output,
-        CancellationToken cancellationToken = default)
+        CancellationToken cancellationToken = default, bool promptColumns = false)
     {
         if (tenantId != DealVelocityWorkspaceSetup.WorkspaceId || !PersonalEmailState.ValidRun(basisRunId) ||
             apply && (!confirmed || !live))
@@ -126,15 +154,20 @@ public static class CommercialPortfolioPresentation
                     throw new InvalidDataException("A fixed original is unavailable or changed.");
                 sources.Add((document, job));
             }
-            var desired = Configure(current);
+            TenantHarness Desired(TenantHarness tenant) =>
+                promptColumns ? ConfigurePromptColumns(tenant) : Configure(tenant);
+            var desired = Desired(current);
             if (apply && JsonSerializer.Serialize(current) != JsonSerializer.Serialize(desired))
             {
                 await RequireCurrentAsync(current, actor, harnesses, access, deadline.Token);
                 current = await harnesses.UpsertTenantAsync(desired, deadline.Token);
-                if (JsonSerializer.Serialize(current) != JsonSerializer.Serialize(Configure(current)))
+                if (JsonSerializer.Serialize(current) != JsonSerializer.Serialize(Desired(current)))
                     throw new HarnessConflictException();
             }
-            var configured = JsonSerializer.Serialize(current) == JsonSerializer.Serialize(Configure(current));
+            var configured = JsonSerializer.Serialize(current) == JsonSerializer.Serialize(Desired(current));
+            if (promptColumns)
+                return await RefreshPromptColumnsAsync(sources, current, configured, apply, actor,
+                    harnesses, access, jobs, artifacts, models, output, deadline.Token);
             var pending = !configured;
             var failed = false;
             foreach (var (document, source) in sources)
@@ -267,6 +300,128 @@ public static class CommercialPortfolioPresentation
         }
     }
 
+    private static async Task<int> RefreshPromptColumnsAsync(
+        List<(DealVelocityDemoCorpus.Document Document, DocumentJob Job)> sources,
+        TenantHarness tenant, bool configured, bool apply, ActorIdentity actor,
+        IHarnessStore harnesses, ITenantAccessResolver access, IJobStore jobs,
+        IArtifactStore artifacts, IModelCatalog models, TextWriter output, CancellationToken token)
+    {
+        var failed = 0;
+        var pending = configured ? 0 : 1;
+        var writer = TextWriter.Synchronized(output);
+        var feature = tenant.Capabilities[FeatureHarness.PromptColumnsKey];
+        var columns = feature.PromptColumns!.Columns
+            .Where(column => column.IsActive && BriefColumns.Any(item => item.Id == column.ColumnId)).ToArray();
+        await Parallel.ForEachAsync(sources,
+            new ParallelOptions { MaxDegreeOfParallelism = 2, CancellationToken = token }, async (item, ct) =>
+        {
+            foreach (var column in columns)
+            {
+                await RequireCurrentAsync(tenant, actor, harnesses, access, ct);
+                var source = await jobs.GetJobAsync(item.Job.JobId, ct, tenant.TenantId);
+                if (source is not { Status: JobStatus.Completed, HasDevelopmentResults: false } ||
+                    source.SubmittedBy != actor || source.OriginalSha256 != item.Job.OriginalSha256)
+                    throw new AskAiSourceChangedException();
+                var input = PromptInputFingerprint(source, tenant, column, models);
+                var ready = source.ExecutionTrace.Any(step => step.ExecutorName == PromptRefreshStep &&
+                    step.Executed && step.Succeeded && step.Notes == input) &&
+                    PromptQualityFailure(source, column) is null;
+                if (ready || !apply)
+                {
+                    if (!ready) Interlocked.Exchange(ref pending, 1);
+                    await WritePromptAsync(writer, item.Document.Key, ready ? "Ready" : "Pending",
+                        "None", column.ColumnId, source);
+                    continue;
+                }
+                var working = Clone(source);
+                working.StoreVersion = source.StoreVersion;
+                var timer = Stopwatch.StartNew();
+                await EvaluateBriefColumnAsync(working, tenant, column.ColumnId, artifacts, models, ct);
+                var failure = PromptQualityFailure(working, column);
+                if (failure is not null)
+                {
+                    var refinement = Clone(tenant);
+                    refinement.Capabilities[FeatureHarness.PromptColumnsKey].PromptColumns!.Columns
+                        .Single(value => value.ColumnId == column.ColumnId).PromptInstructions += PromptColumnBriefs.Refinement;
+                    await EvaluateBriefColumnAsync(working, refinement, column.ColumnId, artifacts, models, ct);
+                    failure = PromptQualityFailure(working, column);
+                }
+                if (failure is not null || working.HasDevelopmentResults != false)
+                {
+                    Interlocked.Exchange(ref failed, 1);
+                    await WritePromptAsync(writer, item.Document.Key, "Failed",
+                        failure ?? "ProductionResultsRequired", column.ColumnId, working);
+                    continue;
+                }
+                await RequireCurrentAsync(tenant, actor, harnesses, access, ct);
+                var latest = await jobs.GetJobAsync(source.JobId, ct, tenant.TenantId);
+                if (latest?.Status != JobStatus.Completed || latest.SubmittedBy != actor ||
+                    AskAiConversationContext.Fingerprint(latest) != AskAiConversationContext.Fingerprint(source))
+                    throw new AskAiSourceChangedException();
+                working.ExecutionTrace.Add(new(nameof(EvaluatePromptColumnsExecutor), true, true,
+                    models.ResolveModelId(tenant, feature.ModelIdOverride), timer.Elapsed.TotalMilliseconds,
+                    $"Refreshed only {column.ColumnName} with workspace v{tenant.HarnessVersion}."));
+                working.ExecutionTrace.Add(new(PromptRefreshStep, true, true, null,
+                    timer.Elapsed.TotalMilliseconds, input));
+                await DealVelocityWorkspaceSetup.SaveFencedAsync(jobs, working, ct);
+                await WritePromptAsync(writer, item.Document.Key, "Updated", "None", column.ColumnId, working);
+            }
+        });
+        await RequireCurrentAsync(tenant, actor, harnesses, access, token);
+        await WriteAsync(output, "Summary", failed != 0 ? "Failed" : pending != 0 ? "Pending" : "Completed",
+            failed != 0 ? "ResultQualityFailed" : "None");
+        return failed != 0 ? 1 : pending != 0 ? 3 : 0;
+    }
+
+    internal static string? PromptQualityFailure(DocumentJob job, PromptColumnDefinition column)
+    {
+        foreach (var slice in job.Segments)
+        {
+            var name = slice.IdentifiedDocumentName ?? slice.DocumentTypeName ?? $"Slice #{slice.SegmentIndex + 1}";
+            var (matched, filter, _) = EvaluatePromptColumnsExecutor.EvaluateEntityFilter(column, slice, name);
+            var results = slice.PromptColumnResults.Where(result => result.ColumnId == column.ColumnId).ToArray();
+            if (results.Length != 1 || results[0].ColumnName != column.ColumnName ||
+                results[0].FilterMatched != matched || results[0].FilterSummary != filter ||
+                results[0].PromptInstructions != column.PromptInstructions &&
+                    results[0].PromptInstructions != column.PromptInstructions + PromptColumnBriefs.Refinement ||
+                results[0].Status != (matched ? "Evaluated" : "SkippedByFilter"))
+                return "PromptResultsIncomplete";
+            if (matched && PromptColumnBriefs.GetError(results[0].ResultText,
+                DocumentPromptBoundary.SourceText(slice)) is { } error) return error;
+        }
+        return job.Segments.Count == 0 ? "PortfolioNotReady" : null;
+    }
+
+    private static string PromptInputFingerprint(
+        DocumentJob job, TenantHarness tenant, PromptColumnDefinition column, IModelCatalog models) =>
+        Convert.ToHexString(SHA256.HashData(JsonSerializer.SerializeToUtf8Bytes(new
+        {
+            version = 1, job.OriginalSha256, column.ColumnId, column.ColumnName, column.PromptInstructions,
+            column.FilterMode, column.EntityFilters,
+            model = models.ResolveModelId(tenant, tenant.Capabilities[FeatureHarness.PromptColumnsKey].ModelIdOverride),
+            documents = job.Segments.Select(slice => new
+            {
+                slice.SegmentIndex, slice.StartPage, slice.EndPage, slice.IdentifiedDocumentName,
+                text = DocumentPromptBoundary.SourceText(slice), slice.ExtractedEntities
+            })
+        })));
+
+    private static Task WritePromptAsync(
+        TextWriter output, string stage, string status, string failureCode, string columnId, DocumentJob job) =>
+        output.WriteLineAsync("DOCINTEL_DIAGNOSTIC " + JsonSerializer.Serialize(new
+        {
+            phase = "CommercialPresentation", stage, status, failureCode, columnId, jobId = job.JobId,
+            slices = job.Segments.Count,
+            promptWordsMax = job.Segments.SelectMany(slice => slice.PromptColumnResults)
+                .Where(result => result.ColumnId == columnId && result.FilterMatched)
+                .Select(result => Regex.Matches(result.ResultText ?? String.Empty, @"\S+").Count)
+                .DefaultIfEmpty(0).Max(),
+            evaluatedPromptResults = job.Segments.SelectMany(slice => slice.PromptColumnResults)
+                .Count(result => result.ColumnId == columnId && result.Status == "Evaluated"),
+            skippedPromptResults = job.Segments.SelectMany(slice => slice.PromptColumnResults)
+                .Count(result => result.ColumnId == columnId && result.Status == "SkippedByFilter")
+        }));
+
     internal static string QualityFailure(string key, DocumentJob job)
     {
         foreach (var slice in job.Segments)
@@ -315,17 +470,28 @@ public static class CommercialPortfolioPresentation
         return true;
     }
 
-    private static async Task EvaluatePrivacyAsync(
-        DocumentJob job, TenantHarness tenant, IArtifactStore artifacts, IModelCatalog models, CancellationToken token)
+    private static Task EvaluatePrivacyAsync(
+        DocumentJob job, TenantHarness tenant, IArtifactStore artifacts, IModelCatalog models, CancellationToken token) =>
+        EvaluateColumnAsync(job, tenant, PrivacyColumnId, artifacts, models, NormalizeMissingEvidence, token);
+
+    private static Task EvaluateBriefColumnAsync(
+        DocumentJob job, TenantHarness tenant, string columnId,
+        IArtifactStore artifacts, IModelCatalog models, CancellationToken token) =>
+        EvaluateColumnAsync(job, tenant, columnId, artifacts, models,
+            result => result with { ResultText = PromptColumnBriefs.NormalizeMissingEvidence(result.ResultText) }, token);
+
+    private static async Task EvaluateColumnAsync(
+        DocumentJob job, TenantHarness tenant, string columnId, IArtifactStore artifacts, IModelCatalog models,
+        Func<PromptColumnResult, PromptColumnResult> normalize, CancellationToken token)
     {
-        var prior = job.PromptColumnResults.Where(result => result.ColumnId != PrivacyColumnId).ToArray();
+        var prior = job.PromptColumnResults.Where(result => result.ColumnId != columnId).ToArray();
         var perSlice = job.Segments.ToDictionary(slice => slice.SegmentIndex,
-            slice => slice.PromptColumnResults.Where(result => result.ColumnId != PrivacyColumnId).ToArray());
-        var privacyOnly = Clone(tenant);
-        privacyOnly.Capabilities[FeatureHarness.PromptColumnsKey].PromptColumns!.Columns.RemoveAll(
-            column => column.ColumnId != PrivacyColumnId);
+            slice => slice.PromptColumnResults.Where(result => result.ColumnId != columnId).ToArray());
+        var selected = Clone(tenant);
+        selected.Capabilities[FeatureHarness.PromptColumnsKey].PromptColumns!.Columns.RemoveAll(
+            column => column.ColumnId != columnId);
         var generated = (await EvaluatePromptColumnsExecutor.EvaluateJobPromptsAsync(
-            job, privacyOnly, models, artifacts, token)).Select(NormalizeMissingEvidence).ToArray();
+            job, selected, models, artifacts, token)).Select(normalize).ToArray();
         job.PromptColumnResults = generated.Concat(prior).ToList();
         foreach (var slice in job.Segments)
             slice.PromptColumnResults = generated.Where(result => result.SegmentIndex == slice.SegmentIndex)

@@ -37,6 +37,7 @@ public static class HarnessEndpoints
             {
                 models = modelCatalog.ListModels().Select(m => m.ModelId).ToArray(),
                 modelDescriptors = modelCatalog.ListModels(),
+                promptColumnTemplates = PromptColumnBriefs.Templates,
                 storageLocation,
                 capabilities = new object[]
                 {

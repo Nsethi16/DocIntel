@@ -6,6 +6,7 @@ using DocIntel.Core.Authorization;
 using DocIntel.Core.Channels;
 using DocIntel.Core.Features.AskAi;
 using DocIntel.Core.Features.DocumentSplitting;
+using DocIntel.Core.Features.PromptColumns;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Jobs;
 using DocIntel.Core.Models;
@@ -26,6 +27,10 @@ public sealed class CommercialPresentationTests
     private const string ConditionalTransfer =
         "A proposed transfer outside the approved regions requires documented approval.";
     private const string ConditionalQuote = "\"A proposed transfer outside the approved regions\"";
+    private const string ColumnBrief =
+        "- **Answer:** Privacy clearance needs confirmation.\n" +
+        "- **Evidence:** \"Privacy approval is pending.\"\n" +
+        "- **Next:** Privacy should confirm the stated prerequisite.";
 
     [Fact]
     public void Configuration_Is_Idempotent_And_Preserves_Every_Unrelated_Setting_And_User_Column()
@@ -498,6 +503,128 @@ public sealed class CommercialPresentationTests
             job => Assert.Equal("Original insight.", job.PacketSummary));
     }
 
+    [Fact]
+    public void Prompt_Configuration_Preserves_Every_Setting_Except_The_Five_Requested_Instructions()
+    {
+        // Arrange
+        var source = CommercialPortfolioPresentation.Configure(CommercialPortfolioConfiguration.Apply(new()
+            { TenantId = "contoso-legal", DisplayName = "Deal Velocity" }));
+        var columns = source.Capabilities[FeatureHarness.PromptColumnsKey].PromptColumns!.Columns;
+        var prior = columns.ToDictionary(column => column.ColumnId, column => column.PromptInstructions);
+        foreach (var column in columns.Where(column => column.ColumnId != "dvxprivacy"))
+            column.PromptInstructions = "An old verbose report.";
+        var before = JsonSerializer.Serialize(source);
+
+        // Act
+        var configured = CommercialPortfolioPresentation.ConfigurePromptColumns(source);
+        var repeated = CommercialPortfolioPresentation.ConfigurePromptColumns(configured);
+
+        // Assert
+        Assert.Equal(before, JsonSerializer.Serialize(source));
+        Assert.Equal(JsonSerializer.Serialize(configured), JsonSerializer.Serialize(repeated));
+        var updated = configured.Capabilities[FeatureHarness.PromptColumnsKey].PromptColumns!.Columns;
+        Assert.Equal(prior["dvxprivacy"], updated.Single(column => column.ColumnId == "dvxprivacy").PromptInstructions);
+        foreach (var column in updated.Where(column => column.ColumnId != "dvxprivacy"))
+        {
+            Assert.Contains("at most 60 words", column.PromptInstructions);
+            column.PromptInstructions = "An old verbose report.";
+        }
+        Assert.Equal(before, JsonSerializer.Serialize(configured));
+    }
+
+    [Fact]
+    public async Task Prompt_Refresh_Only_Changes_Selected_Columns_And_Reuses_Checkpointed_Results()
+    {
+        // Arrange
+        using var fixture = await Fixture.CreateAsync();
+        foreach (var job in await fixture.Jobs.ListJobsByTenantAsync("contoso-legal"))
+        {
+            foreach (var slice in job.Segments)
+                slice.PromptColumnResults.Add(Result("dvxprivacy", "Existing privacy result.", slice.SegmentIndex));
+            job.PromptColumnResults = job.Segments.SelectMany(slice => slice.PromptColumnResults).ToList();
+        }
+        var before = (await fixture.Jobs.ListJobsByTenantAsync("contoso-legal"))
+            .ToDictionary(job => job.JobId, job => JsonSerializer.Serialize(job));
+
+        // Act
+        Assert.Equal(0, await fixture.ExecuteAsync(promptColumns: true));
+        var calls = fixture.Calls;
+        Assert.Equal(0, await fixture.ExecuteAsync(promptColumns: true));
+        Assert.Equal(0, await fixture.ExecuteAsync(apply: false, confirmed: false, live: false, promptColumns: true));
+
+        // Assert
+        Assert.Equal(64, calls);
+        Assert.Equal(calls, fixture.Calls);
+        foreach (var job in await fixture.Jobs.ListJobsByTenantAsync("contoso-legal"))
+        {
+            var original = JsonSerializer.Deserialize<DocumentJob>(before[job.JobId])!;
+            Assert.Equal(original.PacketSummary, job.PacketSummary);
+            Assert.Equal(original.OriginalSha256, job.OriginalSha256);
+            Assert.Equal(original.LayoutSha256, job.LayoutSha256);
+            Assert.Equal(original.ExecutionAttempts, job.ExecutionAttempts);
+            Assert.Equal(JsonSerializer.Serialize(original.DataExtractions), JsonSerializer.Serialize(job.DataExtractions));
+            foreach (var slice in job.Segments)
+            {
+                var previous = original.Segments.Single(value => value.SegmentIndex == slice.SegmentIndex);
+                Assert.Equal(previous.BodyText, slice.BodyText);
+                Assert.Equal(previous.TranslatedText, slice.TranslatedText);
+                Assert.Equal(previous.InsightSummary, slice.InsightSummary);
+                Assert.Equal(JsonSerializer.Serialize(previous.DataExtraction), JsonSerializer.Serialize(slice.DataExtraction));
+                Assert.Equal(previous.PromptColumnResults.Single(result => result.ColumnId == "dvxprivacy"),
+                    slice.PromptColumnResults.Single(result => result.ColumnId == "dvxprivacy"));
+                Assert.Equal(6, slice.PromptColumnResults.Count);
+            }
+        }
+        Assert.DoesNotContain("Privacy approval is pending.", fixture.Output.ToString());
+    }
+
+    [Fact]
+    public async Task Prompt_Inspection_Does_Not_Configure_Or_Generate_Results()
+    {
+        // Arrange
+        using var fixture = await Fixture.CreateAsync();
+        var before = JsonSerializer.Serialize(fixture.Tenant);
+
+        // Act
+        var result = await fixture.ExecuteAsync(apply: false, confirmed: false, live: false, promptColumns: true);
+
+        // Assert
+        Assert.Equal(3, result);
+        Assert.Equal(before, JsonSerializer.Serialize(fixture.Tenant));
+        Assert.Equal(0, fixture.Calls);
+    }
+
+    [Fact]
+    public async Task Accepted_Column_Checkpoints_Survive_A_Later_Save_Conflict_And_Are_Not_Recomputed()
+    {
+        // Arrange
+        using var fixture = await Fixture.CreateAsync();
+        var writes = 0;
+        var store = new Mock<IJobStore>(MockBehavior.Strict);
+        store.Setup(service => service.GetJobAsync(It.IsAny<string>(), It.IsAny<CancellationToken>(), "contoso-legal"))
+            .Returns((string id, CancellationToken token, string? tenant) => fixture.Jobs.GetJobAsync(id, token, tenant));
+        store.Setup(service => service.UpsertJobAsync(It.IsAny<DocumentJob>(), It.IsAny<CancellationToken>()))
+            .Returns((DocumentJob job, CancellationToken token) =>
+            {
+                if (Interlocked.Increment(ref writes) == 3)
+                    throw new InvalidOperationException("A concurrent write won.");
+                return fixture.Jobs.UpsertJobAsync(job, token);
+            });
+
+        // Act
+        var interrupted = await fixture.ExecuteAsync(jobs: store.Object, promptColumns: true);
+        var saved = (await fixture.Jobs.ListJobsByTenantAsync("contoso-legal"))
+            .Sum(job => job.ExecutionTrace.Count(step => step.ExecutorName == "RefreshPromptColumnBrief"));
+        var calls = fixture.Calls;
+        var completed = await fixture.ExecuteAsync(promptColumns: true);
+
+        // Assert
+        Assert.Equal(1, interrupted);
+        Assert.InRange(saved, 1, 69);
+        Assert.Equal(0, completed);
+        Assert.True(fixture.Calls - calls < 64);
+    }
+
     private static DocumentJob QualityJob(string decision, string evidence)
     {
         var slice = new DocumentSlice
@@ -531,7 +658,8 @@ public sealed class CommercialPresentationTests
         public Mock<IArtifactStore> Artifacts { get; } = new(MockBehavior.Strict);
         public ModelCatalog Models { get; }
         public StringWriter Output { get; } = new();
-        public int Calls { get; private set; }
+        private int _calls;
+        public int Calls => Volatile.Read(ref _calls);
         public Func<string, string, string?>? Response { get; set; }
         public Action? AfterCall { get; set; }
         private readonly Dictionary<string, byte[]> _originals = new();
@@ -575,9 +703,11 @@ public sealed class CommercialPresentationTests
                     It.IsAny<ChatOptions>(), It.IsAny<CancellationToken>()))
                 .Returns((IEnumerable<ChatMessage> messages, ChatOptions options, CancellationToken _) =>
                 {
-                    Calls++;
+                    Interlocked.Increment(ref _calls);
                     var input = messages.Last(message => message.Role == ChatRole.User).Text!;
-                    var insight = options.Instructions!.Contains("[TASK:DOCUMENT_INSIGHT]", StringComparison.Ordinal);
+                    var instructions = options.Instructions ?? String.Empty;
+                    var insight = instructions.Contains("[TASK:DOCUMENT_INSIGHT]", StringComparison.Ordinal);
+                    var brief = instructions.Contains("**Answer:**", StringComparison.Ordinal);
                     var conditional = input.Contains("SOURCE_KEY=DVXAgreement", StringComparison.Ordinal) ||
                         input.Contains("SOURCE_KEY=DVXPacket", StringComparison.Ordinal) &&
                         input.Contains("pages=1-4", StringComparison.Ordinal);
@@ -587,9 +717,12 @@ public sealed class CommercialPresentationTests
                     var decision = conditional ? "REVIEW" : administrative ? "NOT APPLICABLE" : "HOLD";
                     var evidence = decision == "NOT APPLICABLE"
                         ? "Not stated in this document." : conditional ? ConditionalQuote : "\"Privacy approval is pending.\"";
-                    var json = Response?.Invoke(insight ? "insight" : "privacy", input) ??
+                    var json = Response?.Invoke(insight ? "insight" : brief ? "brief" : "privacy", input) ??
                         (insight ? JsonSerializer.Serialize(new { summary = Brief }) :
-                            JsonSerializer.Serialize(new { result = Privacy(decision, evidence) }));
+                            brief ? JsonSerializer.Serialize(new { result = conditional
+                                ? ColumnBrief.Replace("\"Privacy approval is pending.\"", ConditionalQuote, StringComparison.Ordinal)
+                                : ColumnBrief }) :
+                                JsonSerializer.Serialize(new { result = Privacy(decision, evidence) }));
                     AfterCall?.Invoke();
                     return Task.FromResult(new ChatResponse(new ChatMessage(ChatRole.Assistant, json)));
                 });
@@ -639,9 +772,11 @@ public sealed class CommercialPresentationTests
             return fixture;
         }
 
-        public Task<int> ExecuteAsync(bool apply = true, bool confirmed = true, bool live = true, IJobStore? jobs = null) =>
+        public Task<int> ExecuteAsync(
+            bool apply = true, bool confirmed = true, bool live = true, IJobStore? jobs = null, bool promptColumns = false) =>
             CommercialPortfolioPresentation.ExecuteAsync("contoso-legal", BasisId, apply, confirmed, live,
-                Harnesses.Object, Runs.Object, Access.Object, jobs ?? Jobs, Artifacts.Object, Models, Output);
+                Harnesses.Object, Runs.Object, Access.Object, jobs ?? Jobs, Artifacts.Object, Models, Output,
+                promptColumns: promptColumns);
 
         public void Dispose() => Output.Dispose();
         private static TenantHarness Copy(TenantHarness tenant) =>

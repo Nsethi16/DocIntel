@@ -55,6 +55,10 @@ test('only complete labeled briefs use the responsive field layout', () => {
     '- **Evidence:** "Privacy clearance is outstanding."\n- **Next:** Ask Privacy to confirm.');
   assert.match(privacy, /class="processing-result-fields"/);
   assert.match(privacy, /data-status="hold">HOLD/);
+  const prompt = render('- **Answer:** PO increase pending.\n' +
+    '- **Evidence:** "Customer procurement approval remains pending."\n- **Next:** Procurement should approve the increase.');
+  assert.match(prompt, /class="processing-result-fields"/);
+  assert.equal([...prompt.matchAll(/<li>/g)].length, 3);
   for (const text of [
     '- First step.\n- Second step.\n- Third step.\n- Fourth step.',
     '- **What matters:** Offer.\n- **Key terms:** USD 158,400.',
@@ -74,4 +78,5 @@ test('processing results fill their available width and adapt to the result cont
   assert.match(result, /font-size:16px/);
   assert.doesNotMatch(result, /max-width:\s*\d+ch/);
   assert.match(css, /@container \(min-width:860px\)\s*\{\s*\.processing-result \.processing-result-fields\s*\{[^}]*repeat\(2, minmax\(0, 1fr\)\)/);
+  assert.match(css, /\.processing-result-fields > li:first-child:nth-last-child\(3\)\s*\{\s*grid-column:1 \/ -1/);
 });

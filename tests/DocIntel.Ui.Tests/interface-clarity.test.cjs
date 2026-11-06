@@ -124,6 +124,43 @@ test('the privacy prompt view keeps the exact verdict, reason and evidence next 
   assert.doesNotMatch(markup, /\*\*Decision/);
 });
 
+test('quick prompt templates use the canonical catalog without saving workspace changes', async () => {
+  const app = runtime('admin');
+  const requests = [];
+  app.context.fetch = async (url, options) => {
+    requests.push({ url, options });
+    return { ok: true, json: async () => ({ promptColumnTemplates: [{
+      key: 'summary', columnName: 'Summary', instructions: 'One short Answer / Evidence / Next response.'
+    }] }) };
+  };
+  await app.context.applyQuickPromptTemplate('summary');
+  assert.equal(app.element('promptColumnNameInput').value, 'Summary');
+  assert.equal(app.element('promptInstructionsInput').value, 'One short Answer / Evidence / Next response.');
+  assert.equal(app.element('promptFilterModeSelect').value, 'All');
+  assert.deepEqual(requests.map(item => item.url), ['/api/harness/catalog']);
+  assert.equal(requests[0].options, undefined);
+});
+
+test('failed or stale quick-template reads do not overwrite a user draft', async () => {
+  const app = runtime('admin');
+  app.context.fetch = async () => ({ ok: false });
+  app.element('promptColumnNameInput').value = 'My draft';
+  await assert.rejects(app.context.applyQuickPromptTemplate('summary'));
+  assert.equal(app.element('promptColumnNameInput').value, 'My draft');
+  let release;
+  app.context.fetch = () => new Promise(resolve => { release = resolve; });
+  const messages = [];
+  app.context.showToast = text => messages.push(text);
+  const pending = app.context.applyQuickPromptTemplate('summary');
+  app.element('promptInstructionsInput').value = 'My newer instruction';
+  release({ ok: true, json: async () => ({ promptColumnTemplates: [{
+    key: 'summary', columnName: 'Summary', instructions: 'A fetched template.'
+  }] }) });
+  await pending;
+  assert.equal(app.element('promptInstructionsInput').value, 'My newer instruction');
+  assert.deepEqual(messages, ['Template not applied because the form changed.']);
+});
+
 test('the familiar three Admin sections and document result views are retained without new navigation', () => {
   const admin = read('admin.html');
   assert.equal([...admin.matchAll(/role="tab"\s/g)].length, 3);

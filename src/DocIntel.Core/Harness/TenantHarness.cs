@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using DocIntel.Core.Features.PromptColumns;
 
 namespace DocIntel.Core.Harness;
 
@@ -472,7 +473,7 @@ public sealed class TenantHarness
                         {
                             ColumnId = "col-summary",
                             ColumnName = "Summary",
-                            PromptInstructions = "Summarize the contents of {{Document.Content}} in a clear and concise manner. Focus on key points, main arguments, and important conclusions.",
+                            PromptInstructions = PromptColumnBriefs.SummaryInstructions,
                             FilterMode = "All",
                             EntityFilters = []
                         },
@@ -480,7 +481,7 @@ public sealed class TenantHarness
                         {
                             ColumnId = "col-highlights",
                             ColumnName = "Highlights",
-                            PromptInstructions = "Extract the most important commercial, financial, and operational highlights from {{Document.Content}} as concise bullet points.",
+                            PromptInstructions = PromptColumnBriefs.HighlightsInstructions,
                             FilterMode = "All",
                             EntityFilters = []
                         },
@@ -488,7 +489,7 @@ public sealed class TenantHarness
                         {
                             ColumnId = "col-contract-check",
                             ColumnName = "Contract Check",
-                            PromptInstructions = "Verify contract identifiers, MBA/MBSA reference numbers, legal customer entity names, and formalization clauses in {{Document.Content}}.",
+                            PromptInstructions = PromptColumnBriefs.ContractInstructions,
                             FilterMode = "Or",
                             EntityFilters =
                             [

@@ -14,7 +14,7 @@ on:
       mode:
         description: Choose saved diagnostics, synthetic checks, or explicit operator-only CustomerAcceptance over uploaded QA documents.
         type: choice
-        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview, DealVelocityApply, DealVelocityInspect, CommercialApply, CommercialInspect, CommercialQuestion, CommercialRefresh, CommercialPolish, CommercialPolishInspect]
+        options: [Inspect, Data, Replay, Contract, Synthetic, Document, TranslationProbe, DocumentReprocess, ProcessingSynthetic, TranslationSynthetic, CustomerAcceptance, EmailPreview, DealVelocityApply, DealVelocityInspect, CommercialApply, CommercialInspect, CommercialQuestion, CommercialRefresh, CommercialPolish, CommercialPolishInspect, CommercialPrompts, CommercialPromptsInspect]
         default: Inspect
       customer_case:
         description: CustomerAcceptance only. One bounded case per dispatch. submit-documents queues fixed embedded B-G PDFs through the backend, not the browser; documents is read-only.
@@ -22,7 +22,7 @@ on:
         options: [documents, submit-documents, ask-termination, ask-analysis, ask-followup, ask-no-evidence, ask-injection, ask-long-tail, schema-signature, schema-price, schema-long, commercial-values, commercial-billing, commercial-terms, commercial-risk]
         default: documents
       confirmation:
-        description: POLISH refreshes only concise insights and Privacy Readiness on owned portfolio documents; PORTFOLIO configures/submits the portfolio; ASK saves a commercial web answer. Other confirmations retain their scoped meanings. Provider usage can incur charges.
+        description: PROMPTS refreshes only five known prompt columns; POLISH refreshes insights and Privacy Readiness on owned portfolio documents; PORTFOLIO configures/submits the portfolio; ASK saves a web answer. Provider usage can incur charges.
         type: string
         default: ''
       translation_variant:
@@ -85,7 +85,10 @@ jobs:
           if ($env:DIAGNOSTIC_MODE -eq 'CommercialPolish' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'POLISH') {
             throw 'CommercialPolish requires POLISH; only insights and Privacy Readiness are refreshed on the fixed owned portfolio.'
           }
-          if ($env:DIAGNOSTIC_MODE -in @('CommercialPolish', 'CommercialPolishInspect') -and
+          if ($env:DIAGNOSTIC_MODE -eq 'CommercialPrompts' -and $env:DIAGNOSTIC_CONFIRMATION -cne 'PROMPTS') {
+            throw 'CommercialPrompts requires PROMPTS; only five known prompt-column instructions and results are refreshed.'
+          }
+          if ($env:DIAGNOSTIC_MODE -in @('CommercialPolish', 'CommercialPolishInspect', 'CommercialPrompts', 'CommercialPromptsInspect') -and
               ($env:DIAGNOSTIC_TENANT -cne 'contoso-legal' -or
                $env:DIAGNOSTIC_RUN -cnotmatch '^mail-[A-Fa-f0-9]{64}$')) {
             throw 'Commercial presentation requires the fixed workspace and saved request basis.'
@@ -112,12 +115,12 @@ jobs:
             $env:TRANSLATION_VARIANT -eq 'WithoutGlossary' -and $env:DIAGNOSTIC_MODE -ne 'TranslationProbe') {
             throw 'A glossary comparison requires an explicit TranslationProbe.'
           }
-          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe', 'DocumentReprocess', 'ProcessingSynthetic', 'TranslationSynthetic', 'CustomerAcceptance', 'EmailPreview', 'DealVelocityApply', 'DealVelocityInspect', 'CommercialApply', 'CommercialInspect', 'CommercialQuestion', 'CommercialRefresh', 'CommercialPolish', 'CommercialPolishInspect')) { throw 'Invalid diagnostic mode.' }
+          if ($env:DIAGNOSTIC_MODE -notin @('Inspect', 'Data', 'Replay', 'Contract', 'Synthetic', 'Document', 'TranslationProbe', 'DocumentReprocess', 'ProcessingSynthetic', 'TranslationSynthetic', 'CustomerAcceptance', 'EmailPreview', 'DealVelocityApply', 'DealVelocityInspect', 'CommercialApply', 'CommercialInspect', 'CommercialQuestion', 'CommercialRefresh', 'CommercialPolish', 'CommercialPolishInspect', 'CommercialPrompts', 'CommercialPromptsInspect')) { throw 'Invalid diagnostic mode.' }
           if ($env:DIAGNOSTIC_TENANT -notmatch '^[a-z0-9][a-z0-9-]{0,127}$' -or
             ($env:DIAGNOSTIC_MODE -notin @('Contract', 'Synthetic', 'ProcessingSynthetic', 'TranslationSynthetic') -and
              $env:DIAGNOSTIC_RUN -notmatch '^[a-fA-F0-9]{32}$' -and
              -not ($env:DIAGNOSTIC_MODE -eq 'EmailPreview' -and $env:DIAGNOSTIC_RUN -cmatch '^mail-[A-Fa-f0-9]{64}$') -and
-             -not ($env:DIAGNOSTIC_MODE -in @('DealVelocityApply', 'DealVelocityInspect', 'CommercialApply', 'CommercialInspect', 'CommercialQuestion', 'CommercialRefresh', 'CommercialPolish', 'CommercialPolishInspect') -and
+             -not ($env:DIAGNOSTIC_MODE -in @('DealVelocityApply', 'DealVelocityInspect', 'CommercialApply', 'CommercialInspect', 'CommercialQuestion', 'CommercialRefresh', 'CommercialPolish', 'CommercialPolishInspect', 'CommercialPrompts', 'CommercialPromptsInspect') -and
                    $env:DIAGNOSTIC_TENANT -ceq 'contoso-legal' -and $env:DIAGNOSTIC_RUN -cmatch '^mail-[A-Fa-f0-9]{64}$') -and
              -not ($env:DIAGNOSTIC_MODE -eq 'Document' -and $env:DIAGNOSTIC_RUN -match '^[a-fA-F0-9]{64}$') -and
              -not ($env:DIAGNOSTIC_MODE -eq 'Inspect' -and $env:DIAGNOSTIC_RUN -ceq 'recent'))) {
@@ -146,7 +149,8 @@ jobs:
 
           def presentation_record(value):
               allowed = {"phase", "stage", "status", "failureCode", "jobId", "slices",
-                         "insightWordsMax", "privacyWordsMax", "decisions"}
+                         "insightWordsMax", "privacyWordsMax", "decisions", "columnId",
+                         "promptWordsMax", "evaluatedPromptResults", "skippedPromptResults"}
               stages = {"Summary", "DVXQuoteAR", "DVXAgreement", "DVXSow", "DVXOrder", "DVXInvoice",
                         "DVXAmendment", "DVXQuoteES", "DVXPendingES", "DVXQuoteFR", "DVXPrivacyFR",
                         "DVXQuoteDE", "DVXPacket", "DVXCopy", "DVXScannedInvoice"}
@@ -154,19 +158,24 @@ jobs:
                        "WorkspaceChanged", "DocumentChanged", "SourceOrGenerationUnavailable",
                        "InvalidGeneratedOutput", "TimedOut", "ProviderUnavailable", "InsightNotConcise",
                        "PrivacyNotConcise", "PrivacyDecisionMismatch", "PrivacyEvidenceMismatch",
-                       "ProductionResultsRequired", "ResultQualityFailed"}
+                       "ProductionResultsRequired", "ResultQualityFailed", "PromptNotConcise",
+                       "PromptEvidenceMismatch", "PromptResultsIncomplete"}
               if (not isinstance(value, dict) or set(value) - allowed or
                   value.get("phase") != "CommercialPresentation" or value.get("stage") not in stages or
                   value.get("status") not in {"Updated", "Ready", "Pending", "Completed", "Failed", "Refused"} or
                   value.get("failureCode") not in codes):
                   raise RuntimeError("Invalid commercial presentation metadata.")
-              for key in ("slices", "insightWordsMax", "privacyWordsMax"):
+              for key in ("slices", "insightWordsMax", "privacyWordsMax", "promptWordsMax",
+                          "evaluatedPromptResults", "skippedPromptResults"):
                   item = value.get(key)
                   if item is not None and (type(item) is not int or not 0 <= item <= 1_000_000):
                       raise RuntimeError("Invalid presentation count.")
               job_id = value.get("jobId")
               if job_id is not None and (not isinstance(job_id, str) or not re.fullmatch(r"[a-f0-9]{32}", job_id)):
                   raise RuntimeError("Invalid presentation document reference.")
+              if value.get("columnId") not in {None, "col-summary", "col-highlights", "col-contract-check",
+                                               "dvxclose", "dvxterms"}:
+                  raise RuntimeError("Invalid prompt-column reference.")
               decisions = value.get("decisions")
               if decisions is not None and (not isinstance(decisions, list) or len(decisions) > 16 or any(
                   not isinstance(item, dict) or set(item) != {"SegmentIndex", "decision"} or
@@ -287,11 +296,14 @@ jobs:
           if not replicas:
               raise RuntimeError("The current revision has no active replica.")
           replay = "true" if os.environ["DIAGNOSTIC_MODE"] == "Replay" else "false"
-          if os.environ["DIAGNOSTIC_MODE"] in ("CommercialPolish", "CommercialPolishInspect"):
+          if os.environ["DIAGNOSTIC_MODE"] in ("CommercialPolish", "CommercialPolishInspect", "CommercialPrompts", "CommercialPromptsInspect"):
+              prompt_columns = os.environ["DIAGNOSTIC_MODE"] in ("CommercialPrompts", "CommercialPromptsInspect")
+              apply_presentation = os.environ["DIAGNOSTIC_MODE"] in ("CommercialPolish", "CommercialPrompts")
               diagnostic = shlex.join([
                   "dotnet", "/app/DocIntel.Api.dll", "--commercial-presentation", os.environ["DIAGNOSTIC_RUN"],
-                  "--presentation-action", "Apply" if os.environ["DIAGNOSTIC_MODE"] == "CommercialPolish" else "Inspect",
-                  "--diagnose-confirmation", "POLISH" if os.environ["DIAGNOSTIC_MODE"] == "CommercialPolish" else "",
+                  "--presentation-action", "Apply" if apply_presentation else "Inspect",
+                  "--presentation-prompts", "true" if prompt_columns else "false",
+                  "--diagnose-confirmation", ("PROMPTS" if prompt_columns else "POLISH") if apply_presentation else "",
                   "--diagnose-tenant", os.environ["DIAGNOSTIC_TENANT"]])
           elif os.environ["DIAGNOSTIC_MODE"] == "CommercialQuestion":
               diagnostic = shlex.join([
@@ -365,7 +377,7 @@ jobs:
               if marker < 0:
                   continue
               value = json.loads(line[marker + len("DOCINTEL_DIAGNOSTIC "):])
-              if os.environ["DIAGNOSTIC_MODE"] in ("CommercialPolish", "CommercialPolishInspect"):
+              if os.environ["DIAGNOSTIC_MODE"] in ("CommercialPolish", "CommercialPolishInspect", "CommercialPrompts", "CommercialPromptsInspect"):
                   safe = presentation_record(value)
                   print(json.dumps(safe))
                   records.append(safe)
@@ -437,7 +449,7 @@ jobs:
               records.append(safe)
           if not records:
               raise RuntimeError("The runtime diagnostic returned no verified result. Raw process output was not published.")
-          expected_phase = "CommercialPresentation" if os.environ["DIAGNOSTIC_MODE"] in ("CommercialPolish", "CommercialPolishInspect") else "CommercialQuestion" if os.environ["DIAGNOSTIC_MODE"] == "CommercialQuestion" else "DealVelocity" if os.environ["DIAGNOSTIC_MODE"] in ("DealVelocityApply", "DealVelocityInspect", "CommercialApply", "CommercialInspect", "CommercialRefresh") else os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "TranslationProbe", "DocumentReprocess", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance", "EmailPreview") else (
+          expected_phase = "CommercialPresentation" if os.environ["DIAGNOSTIC_MODE"] in ("CommercialPolish", "CommercialPolishInspect", "CommercialPrompts", "CommercialPromptsInspect") else "CommercialQuestion" if os.environ["DIAGNOSTIC_MODE"] == "CommercialQuestion" else "DealVelocity" if os.environ["DIAGNOSTIC_MODE"] in ("DealVelocityApply", "DealVelocityInspect", "CommercialApply", "CommercialInspect", "CommercialRefresh") else os.environ["DIAGNOSTIC_MODE"] if os.environ["DIAGNOSTIC_MODE"] in ("Data", "Contract", "Synthetic", "Document", "DocumentReprocess", "TranslationProbe", "ProcessingSynthetic", "TranslationSynthetic", "CustomerAcceptance", "EmailPreview") else (
               "Replay" if replay == "true" else "Stored")
           if records[-1].get("phase") != expected_phase:
               raise RuntimeError("The requested diagnostic did not complete.")

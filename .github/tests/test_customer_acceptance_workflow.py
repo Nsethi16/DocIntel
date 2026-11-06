@@ -189,7 +189,8 @@ class CustomerAcceptanceWorkflowTests(unittest.TestCase):
 
     def test_presentation_guards_require_polish_and_the_exact_workspace_request_basis(self) -> None:
         basis = "mail-" + "A" * 64
-        for mode, confirmation in (("CommercialPolish", "POLISH"), ("CommercialPolishInspect", "")):
+        for mode, confirmation in (("CommercialPolish", "POLISH"), ("CommercialPolishInspect", ""),
+                                   ("CommercialPrompts", "PROMPTS"), ("CommercialPromptsInspect", "")):
             result = subprocess.run(
                 ["pwsh", "-NoProfile", "-NonInteractive", "-Command", GUARD],
                 env=environment(DIAGNOSTIC_MODE=mode, DIAGNOSTIC_CONFIRMATION=confirmation, DIAGNOSTIC_RUN=basis),
@@ -226,6 +227,8 @@ class CustomerAcceptanceWorkflowTests(unittest.TestCase):
             {"failureCode": "private provider failure"}, {"insightWordsMax": True},
             {"decisions": [{"SegmentIndex": 0, "decision": "Compliant"}]},
             {"decisions": [{"SegmentIndex": 0, "decision": "HOLD", "evidence": "private source"}]},
+            {"columnId": "private customer column"},
+            {"promptWordsMax": True},
         ):
             with self.subTest(change=change), self.assertRaises(RuntimeError):
                 namespace["presentation_record"]({**value, **change})
@@ -233,15 +236,19 @@ class CustomerAcceptanceWorkflowTests(unittest.TestCase):
     def test_presentation_execution_is_isolated_and_requires_a_complete_final_summary(self) -> None:
         value = {"phase": "CommercialPresentation", "stage": "Summary", "status": "Completed", "failureCode": "None"}
         basis = "mail-" + "A" * 64
-        for mode, action in (("CommercialPolish", "Apply"), ("CommercialPolishInspect", "Inspect")):
+        for mode, action in (("CommercialPolish", "Apply"), ("CommercialPolishInspect", "Inspect"),
+                             ("CommercialPrompts", "Apply"), ("CommercialPromptsInspect", "Inspect")):
             output, commands = self.execute_runtime("documents", [value], mode=mode, reference=basis)
             self.assertNotIn("private", output)
             remote = shlex.split(commands[0])
             command = shlex.split(remote[remote.index("--command") + 1])
             self.assertEqual([
                 "dotnet", "/app/DocIntel.Api.dll", "--commercial-presentation", basis,
-                "--presentation-action", action, "--diagnose-confirmation",
-                "POLISH" if action == "Apply" else "", "--diagnose-tenant", "contoso-legal",
+                "--presentation-action", action,
+                "--presentation-prompts", "true" if mode.startswith("CommercialPrompts") else "false",
+                "--diagnose-confirmation",
+                ("PROMPTS" if mode.startswith("CommercialPrompts") else "POLISH") if action == "Apply" else "",
+                "--diagnose-tenant", "contoso-legal",
             ], command)
         for changes in ({"stage": "DVXPrivacyFR", "status": "Updated"}, {"status": "Pending"}, {"status": "Failed"}):
             with self.subTest(changes=changes), self.assertRaises(SystemExit):

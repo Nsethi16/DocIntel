@@ -136,6 +136,7 @@ color:var(--text-secondary);
 }
 @container (min-width:860px) {
 .processing-result .processing-result-fields { grid-template-columns:repeat(2, minmax(0, 1fr)); }
+.processing-result-fields > li:first-child:nth-last-child(3) { grid-column:1 / -1; }
 }
 .result-verdict-label { color:var(--text-secondary); margin-right:6px; }
 .result-verdict { display:inline-block; padding:3px 10px; border-radius:5px; font-size:13px; letter-spacing:.02em; }

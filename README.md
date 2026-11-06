@@ -629,6 +629,20 @@ escaped bullets and bold labels, including older complete results without hiding
 Processing results use the full available content width and 16px body text. Complete four-point
 insight/privacy briefs use two clearly labeled columns in wide result containers and stack into
 one column below 860px; ordinary lists and legacy prose retain their reading order.
+The standard Summary, Highlights, Contract Check, Closing Readiness and Commercial Exceptions
+prompts use **Answer / Evidence / Next**: at most 60 words, one direct answer, one exact source-text
+excerpt (or an explicit missing-evidence marker), and one practical next action. The answer spans
+the full row, with evidence and action below in wide result containers. Admin quick templates
+and new-workspace defaults share the same canonical definitions from the catalog.
+`CommercialPrompts` requires `PROMPTS` and refreshes only those five existing column IDs on the
+fourteen owned originals; IDs, names, active state and entity filters are retained. The already
+concise Privacy Readiness column, insights and other processing results are not changed.
+Each accepted column is version-fenced and checkpointed, so bounded continuations reuse it.
+At most two documents generate prompt results concurrently; invalid formats/quotes get one
+bounded source-based refinement and are never silently truncated or substituted.
+`CommercialPromptsInspect` is read-only. Diagnostics expose only known column IDs, counts and
+fixed failure codes, never answers or source excerpts. Refresh saved questions after completion
+rather than weakening source-version checks.
 Native classification samples bounded leading headings and identifiers across source pages, so
 branding or a wrapped title cannot consume the entire four-line header sample.
 Footer-only `n / total` pagination is recognized alongside `Page n of total`, allowing page-count

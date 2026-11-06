@@ -29,7 +29,8 @@ function processingResultMarkup(value) {
       const labels = items.map(item => item.match(/^\*\*([^*\n]+):\*\*\s+/)?.[1]);
       const fields = [
         ['What matters', 'Key terms', 'Watch out', 'Next action'],
-        ['Decision', 'Why', 'Evidence', 'Next']
+        ['Decision', 'Why', 'Evidence', 'Next'],
+        ['Answer', 'Evidence', 'Next']
       ].some(expected => expected.length === labels.length &&
         expected.every((label, index) => label === labels[index]));
       blocks.push(`<ul${fields ? ' class="processing-result-fields" role="list"' : ''}>` +

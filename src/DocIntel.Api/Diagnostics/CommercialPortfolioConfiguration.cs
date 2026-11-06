@@ -1,4 +1,5 @@
 using System.Text.Json;
+using DocIntel.Core.Features.PromptColumns;
 using DocIntel.Core.Harness;
 using DocIntel.Core.Ocr;
 
@@ -82,13 +83,9 @@ public static class CommercialPortfolioConfiguration
         }
         var prompts = tenant.Capabilities[FeatureHarness.PromptColumnsKey].PromptColumns ??= new();
         AddPrompt(prompts, "dvxclose", "Closing Readiness",
-            "From this document only, summarize approval status, expiry, missing commercial information and explicit " +
-            "delivery/privacy dependencies. Quote the relevant facts. Distinguish stated risks from recommendations. " +
-            "Do not infer signatures, payment or approval from a reference to another document.");
+            PromptColumnBriefs.ClosingInstructions);
         AddPrompt(prompts, "dvxterms", "Commercial Exceptions",
-            "Identify unusual payment, liability, termination, availability, data-residency and change-control terms " +
-            "in this document. State the original amounts/currency and relevant identifiers. Do not combine an invoice, " +
-            "purchase order or repeated copy as an additional quotation.");
+            PromptColumnBriefs.ExceptionsInstructions);
         var error = tenant.ValidateAndNormalizeDocumentCatalog();
         if (error is not null) throw new InvalidDataException(error);
         return tenant;

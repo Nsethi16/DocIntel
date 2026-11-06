@@ -4,6 +4,7 @@ let tenants = [];
     let ocrBudgetTenantId = null;
     let ocrBudgetRevision = 0;
     let ocrBudgetSaving = false;
+    let promptTemplateRevision = 0;
 
     async function loadOcrUsage() {
       const tenantId = currentTenant?.tenantId;
@@ -675,39 +676,39 @@ let tenants = [];
       }
     }
 
-    function applyQuickPromptTemplate(kind) {
+    async function applyQuickPromptTemplate(kind) {
+      if (!['summary', 'highlights', 'language', 'contract'].includes(kind))
+        throw new Error('Unknown prompt template.');
+      const revision = ++promptTemplateRevision;
+      const tenantId = currentTenant?.tenantId;
       const nameInput = document.getElementById('promptColumnNameInput');
       const instrInput = document.getElementById('promptInstructionsInput');
       const filterSelect = document.getElementById('promptFilterModeSelect');
       const rulesList = document.getElementById('promptFilterRulesList');
-
-      if (kind === 'summary') {
-        nameInput.value = 'Summary';
-        instrInput.value = 'Summarize the contents of {{Document.Content}} in a clear and concise manner. Focus on key points, main arguments, and important conclusions.';
-        filterSelect.value = 'All';
-        rulesList.innerHTML = '';
-        onPromptFilterModeChanged();
-      } else if (kind === 'highlights') {
-        nameInput.value = 'Highlights';
-        instrInput.value = 'Extract the most important commercial, financial, and operational highlights from {{Document.Content}} as concise bullet points.';
-        filterSelect.value = 'All';
-        rulesList.innerHTML = '';
-        onPromptFilterModeChanged();
-      } else if (kind === 'language') {
-        nameInput.value = 'Language';
-        instrInput.value = 'Identify the primary source language and tone of {{Document.Content}}, noting any bilingual or translated clauses.';
-        filterSelect.value = 'All';
-        rulesList.innerHTML = '';
-        onPromptFilterModeChanged();
-      } else if (kind === 'contract') {
-        nameInput.value = 'Contract Check';
-        instrInput.value = 'Verify contract identifiers, MBA/MBSA reference numbers, legal customer entity names, and formalization clauses in {{Document.Content}}.';
-        filterSelect.value = 'Or';
-        rulesList.innerHTML = '';
-        onPromptFilterModeChanged();
+      const before = JSON.stringify([nameInput.value, instrInput.value, filterSelect.value, rulesList.innerHTML]);
+      const response = await fetch('/api/harness/catalog');
+      if (!response.ok) throw new Error('Prompt templates could not be loaded.');
+      const catalog = await response.json();
+      if (!Array.isArray(catalog.promptColumnTemplates)) throw new Error('Prompt templates are unavailable.');
+      const template = catalog.promptColumnTemplates.find(item => item.key === kind);
+      if (!template || typeof template.columnName !== 'string' || !template.columnName || template.columnName.length > 100 ||
+          typeof template.instructions !== 'string' || !template.instructions || template.instructions.length > 8000)
+        throw new Error('The prompt template is unavailable.');
+      if (revision !== promptTemplateRevision || currentTenant?.tenantId !== tenantId ||
+          document.getElementById('promptColumnNameInput') !== nameInput) return;
+      if (before !== JSON.stringify([nameInput.value, instrInput.value, filterSelect.value, rulesList.innerHTML])) {
+        showToast('Template not applied because the form changed.');
+        return;
+      }
+      nameInput.value = template.columnName;
+      instrInput.value = template.instructions;
+      filterSelect.value = kind === 'contract' ? 'Or' : 'All';
+      rulesList.innerHTML = '';
+      if (kind === 'contract') {
         addPromptEntityFilterRow('Contract Number', 'Exists', '');
         addPromptEntityFilterRow('MBA/MBSA Number', 'Exists', '');
       }
+      onPromptFilterModeChanged();
     }
 
     function onPromptFilterModeChanged() {
